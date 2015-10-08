@@ -5791,13 +5791,198 @@ ATL_mmnode_t *TimeExtraBlockings(char pre, int verb)
    return(eb);
 }
 
-@beginskip
-ATL_mmnode_t *GetGenKernForNB(int nb)
+ATL_mmnode_t *GetGenKernForNB(char pre, int nb)
 {
-   int u;
-   u
+   static ATL_mmnode_t *mmM=NULL, *mmK=NULL;
+   ATL_mmnode_t *mp=NULL, *kp=NULL;
+   char upr = pre;
+
+   if (upr == 'z')
+      upr = 'd';
+   if (upr == 'c')
+      upr = 's';
+
+   if (!nb)
+   {
+      if (mmM)
+         KillAllMMNodes(mmM);
+      if (mmK)
+         KillAllMMNodes(mmK);
+      return(NULL);
+   }
+   if (!mmM)
+   {
+      mmM = ReadMMFileWithPath(upr, "res", "gmvAMMUR.sum");
+      if (mmM)
+      {
+         if (mmM->next)
+         {
+            KillAllMMNodes(mmM->next);
+            mmM->next = NULL;
+         }
+         if (mmM->genstr)
+            free(mmM->genstr);
+         if (mmM->rout)
+            free(mmM->rout);
+         mmM->genstr = mmM->rout=NULL;
+      }
+   }
+   if (!mmK)
+   {
+      mmK = ReadMMFileWithPath(upr, "res", "gkvAMMUR.sum");
+      if (mmK)
+      {
+         if (mmK->next)
+         {
+            KillAllMMNodes(mmK->next);
+            mmK->next = NULL;
+         }
+         if (mmK->genstr)
+            free(mmK->genstr);
+         if (mmK->rout)
+            free(mmK->rout);
+         mmK->genstr = mmK->rout=NULL;
+      }
+   }
+   assert(mmM || mmK);
+/*
+ * Find a legal M-vec (or unvectorized) kernel based on best M kernel
+ */
+   if (mmM)
+   {
+      int vl=mmM->vlen, u;
+      mp = CloneMMNode(mmM);
+/*
+ *    Find a vlen compatible with this MB; may become 1 -> unvectorized
+ */
+      while (vl > 1 && nb % vl)  /* make vlen evenly divide nb */
+         vl >>= 1;
+      mp->vlen = vl;
+      mp->mu = (mmM->mu / mmM->vlen) * vl;  /* use same # of regs */
+/*
+ *    Make mu evenly divide MB (vl already does)
+ */
+      for (u=mp->mu; u > vl && nb%u; u -= vl);
+      mp->mu = u;
+/*
+ *    Make nu evenly divide NB
+ */
+      for (u=mp->nu; nb%u; u--);
+      if (FLAG_IS_SET(mp->flag, MMF_NOBCAST))
+      {
+         if (u > vl)
+            u = (u/vl)*vl;
+         else
+            mp->flag &= (1<<MMF_NOBCAST);
+      }
+      mp->nu = u;
+/*
+ *    Make ku evenly divide KB
+ */
+      for (u=mp->ku; nb%u; u--);
+      mp->ku = u;
+   }
+/*
+ * Find a legal K-vec kernel if possible
+ */
+   if (mmK)
+   {
+      int mu=0, nu=0, vl;
+/*
+ *    Make vlen evenly divide KB
+ */
+      for(vl=mmK->vlen; vl > 1 && nb%vl; vl >>= 1);
+      if (vl > 1)
+      {
+         int i, j;
+         float minrat=0.0;
+/*
+ *       Find mu & nu such that mu*nu % vl == 0
+ */
+         for (i=mmK->mu; i > 0; i--)
+         {
+            for (j=mmK->nu; j > 0; j--)
+            {
+               if ((i*j)%vl == 0 && i%nb == 0 && j%nb == 0)
+               {
+                  float ratio = (i+j)/(i*j);
+                  if (minrat == 0.0 || ratio < minrat)
+                  {
+                     minrat = ratio;
+                     mu = i;
+                     nu = j;
+                  }
+               }
+            }
+         }
+/*
+ *       Do we have a legal k-vectorized kernel?
+ */
+         if (vl > 1 & mu > 1 && nu > 1)
+         {
+/*
+ *          Make ku divide KB & vl
+ */
+            i = mmK->ku;
+            if (i%vl)
+            {
+               if (i > vl)
+                  i = (i/vl)*vl;
+               else
+                  i = vl;
+            }
+            for (; i > vl && nb%i; i -= vl);
+            if (nb%i)
+            {
+               kp = CloneMMNode(mmK);
+               kp->vlen = vl;
+               kp->mu = mu;
+               kp->nu = nu;
+               kp->ku = i;
+            }
+         }
+      }
+   }
+/*
+ * put best kernel in mp, free other
+ */
+   if (mp && kp)  /* wt both K & M, guess best */
+   {
+      if (kp->vlen > mp->vlen)
+      {
+         KillMMNode(mp);
+         mp = kp;
+      }
+      else if (mp->vlen > kp->vlen)
+         KillMMNode(kp);
+      else /* vlen same, break tie on relative speed & load/use ratio */
+      {
+         double krat, mrat;
+         krat = (kp->mu + kp->nu);
+         krat /= (kp->mu * kp->nu);
+         mrat = kp->mu / kp->vlen;
+         mrat = (mrat+kp->nu) / (mrat*kp->nu);
+         if (mmM->mflop[0] != 0.0 && mmK->mflop[0] != 0)
+            krat *= mmM->mflop[0] / mmK->mflop[0];
+         if (krat < 0.0)
+            krat = -krat;
+         if (krat < mrat)
+         {
+            KillMMNode(mp);
+            mp = kp;
+         }
+         else
+            KillMMNode(kp);
+      }
+   }
+   else if (!mp)
+      mp = kp;
+   assert(mp);
+   mp->rout = MMGetGenName(pre, nb, mp);
+   mp->genstr = MMGetGenString(pre, mp);
+   return(mp);
 }
-@endskip
+
 ATL_mmnode_t *BestForThisNB
 (
    int verb, 
@@ -5869,11 +6054,36 @@ ATL_mmnode_t *BestForThisNB
    }
    if (!mmB)
    {
+      int i;
+      mmB = GetGenKernForNB(pre, nb);
+      assert(mmB);
+      i = MMKernelFailsTest(pre, nb, nb, nb, 0, mmB);
+      if (!i)
+         i = MMKernelFailsTest(pre, nb, nb, nb, 1, mmB);
+      if (!i)
+         i = MMKernelFailsTest(pre, nb, nb, nb, -1, mmB);
+      if (i)
+      {
+         printf("BEST KERNEL FAILS TESTER FOR NB=%d\n", nb);
+         exit(i);
+      }
+      mfB = TimeMMKernel(verb, 0, mmB, pre, nb, nb, nb, 1, 0, -1);
+      if (FLAG_IS_SET(mmB->flag, MMF_KRUNTIME))
+         mfB /= KRUNMUL;
+      printf("BEST KERNEL FOUND FOR NB=%d: ID#%d '%s' %.2f MFLOPS\n\n", 
+             nb, mmB->ID, mmB->rout, mfB);
+      mmB->mflop[0] = mfB;
+      return(mmB);
+   }
+@beginskip
+   if (!mmB)
+   {
 @skip      mmB = GetGenKernForNB(nb);
       printf("NO KERNEL POSSIBLE FOR NB=%d\n", nb);
       mmB = GetMMNode();
       mmB->mbB = mmB->nbB = mmB->kbB = nb;
    }
+@endskip
    else
    {
       int i, kb = mmB->kbB;
@@ -8698,7 +8908,11 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB,
 {
    ATL_mmnode_t *mmp, *mmSQ=NULL, *prev=NULL;
    int maxU=0, i;
+   int vlen;
 
+   vlen = GetNativeVLEN(pre);
+   if (vlen < 1)
+      vlen = 1;
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
       if (mmp->mu > maxU)
@@ -8714,25 +8928,22 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB,
          maxNB = mmp->kbB;
 @endskip
    }
+   maxNB = 1.2 * maxNB;
    maxNB = ((maxNB+maxU-1) / maxU)*maxU;
 @skip   gmm = DecentGenCase(verb, pre, nregs);
 @skip   gmm->next = mmb;
 
-   for (i=4; i <= maxNB; i++)
+   mmSQ = prev = BestForThisNB(verb, pre, mmb, 4, 4-1, 4+1, 1);
+   for (i=(vlen > 4) ? vlen : 4+vlen; i <= maxNB; i += vlen)
    {
       mmp = BestForThisNB(verb, pre, mmb, i, i-1, i+1, 1);
-      if (mmSQ)
-      {
-         if (prev->mflop[0] >= mmp->mflop[0])
-            KillMMNode(mmp);
-         else
-         {
-            prev->next = mmp;
-            prev = mmp;
-         }
-      }
+      if (prev->mflop[0] >= mmp->mflop[0])
+         KillMMNode(mmp);
       else
-         mmSQ = prev = mmp;
+      {
+         prev->next = mmp;
+         prev = mmp;
+      }
    }
    return(mmSQ);
 }
@@ -9378,6 +9589,7 @@ int main(int nargs, char **args)
    KillAllMMNodes(mmb);
    WriteMMFileWithPath(pre, "res", "AMMFRCLST.sum", mp);
    KillAllMMNodes(mp);
+   GetGenKernForNB(pre, 0);
    exit(0);
 }
 @ROUT uammsearch
