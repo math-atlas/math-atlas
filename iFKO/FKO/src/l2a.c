@@ -2139,6 +2139,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	                                archvfregs[-VFREGBEG-op3],
 	                                archfregs[-FREGBEG-op1]);
             #endif
+            break;
    #endif
       case FNEG:
          #ifdef X86

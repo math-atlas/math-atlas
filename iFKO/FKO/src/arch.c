@@ -87,12 +87,13 @@ int RevealArchMemUses(void)
  * may be violated!!
  */
 {
+   int j;
    BBLOCK *bp;
    INSTQ *ip, *ipN;
    enum inst inst;
    /*short op, ir;*/
-   short op3, vr;
-   int nchanges, arinst, j;
+   short op3, vr, ir;
+   int nchanges, arinst;
    extern int DTabs, DTabsd, DTnzero, DTnzerod;
    /*extern int DTabss, DTabsds, DTnzeros, DTnzerods;*/
    extern BBLOCK *bbbase;
@@ -107,12 +108,21 @@ int RevealArchMemUses(void)
  *       Since x86 only supports vector operation for and/xor, we always change
  *       following instructions into compatible x86 inst.
  */
+         if (inst == FABS || inst == FABSD || inst == FNEG || inst == FNEGD 
+             || inst == VFABS || inst == VDABS || inst == VFNEG 
+             || inst == VDNEG)
+         {
+            j = ireg2type(-ip->inst[1]);
+            ir = GetReg(j);
+            while(ir == -ip->inst[1] || ir == -ip->inst[2])
+               ir = GetReg(j);
+         }
          /*if (ip->inst[3] >= 0)*/
          switch(inst)
          {
             case FABS:
                op3 = SToff[DTabs-1].sa[2];
-               vr = GetReg(T_VFLOAT);
+               vr = ir - FREGBEG + VFREGBEG;
                ipN = InsNewInst(NULL, NULL, ip, VFLD, -vr, op3, 0);
                ip->inst[0] = VFSABS;
                ip->inst[3] = -vr;
@@ -123,7 +133,7 @@ int RevealArchMemUses(void)
                break;
             case FABSD:
                op3 = SToff[DTabsd-1].sa[2];
-               vr = GetReg(T_VDOUBLE);
+               vr = ir - DREGBEG + VDREGBEG;
                ipN = InsNewInst(NULL, NULL, ip, VDLD, -vr, op3, 0);
                ip->inst[0] = VDSABS;
                ip->inst[3] = -vr;
@@ -134,7 +144,7 @@ int RevealArchMemUses(void)
                break;
             case FNEG:
                op3 = SToff[DTnzero-1].sa[2];
-               vr = GetReg(T_VFLOAT);
+               vr = ir - FREGBEG + VFREGBEG;
                ipN = InsNewInst(NULL, NULL, ip, VFLD, -vr, op3, 0);
                ip->inst[0] = VFSNEG;
                ip->inst[3] = -vr;
@@ -145,7 +155,7 @@ int RevealArchMemUses(void)
                break;
             case FNEGD:
                op3 = SToff[DTnzerod-1].sa[2];
-               vr = GetReg(T_VDOUBLE);
+               vr = ir - DREGBEG + VDREGBEG;
                ipN = InsNewInst(NULL, NULL, ip, VDLD, -vr, op3, 0);
                ip->inst[0] = VDSNEG;
                ip->inst[3] = -vr;
@@ -157,9 +167,7 @@ int RevealArchMemUses(void)
             case VFABS:
                op3 = SToff[DTabs-1].sa[2];
                j = T_VFLOAT;
-               vr = GetReg(j);
-               while (vr == -ip->inst[1] || vr == -ip->inst[2])
-                  vr = GetReg(j);
+               vr = ir;
                ipN = InsNewInst(NULL, NULL, ip, VFLD, -vr, op3, 0);
                ip->inst[3] = -vr;
                GetReg(-1);
@@ -169,10 +177,7 @@ int RevealArchMemUses(void)
                   break;
             case VDABS:
                op3 = SToff[DTabsd-1].sa[2];
-               j = T_VDOUBLE;
-               vr = GetReg(j);
-               while (vr == -ip->inst[1] || vr == -ip->inst[2])
-                  vr = GetReg(j);
+               vr = ir;
                ipN = InsNewInst(NULL, NULL, ip, VDLD, -vr, op3, 0);
                ip->inst[3] = -vr;
                GetReg(-1);
@@ -182,10 +187,7 @@ int RevealArchMemUses(void)
                break;
             case VFNEG:
                op3 = SToff[DTnzero-1].sa[2];
-               j = T_VFLOAT;
-               vr = GetReg(j);
-               while (vr == -ip->inst[1] || vr == -ip->inst[2])
-                  vr = GetReg(j);
+               vr = ir;
                ipN = InsNewInst(NULL, NULL, ip, VFLD, -vr, op3, 0);
                ip->inst[3] = -vr;
                GetReg(-1);
@@ -195,10 +197,7 @@ int RevealArchMemUses(void)
                break;
             case VDNEG:
                op3 = SToff[DTnzerod-1].sa[2];
-               j = T_VDOUBLE;
-               vr = GetReg(j);
-               while (vr == -ip->inst[1] || vr == -ip->inst[2])
-                  vr = GetReg(j);
+               vr = ir;
                ipN = InsNewInst(NULL, NULL, ip, VDLD, -vr, op3, 0);
                ip->inst[3] = -vr;
                GetReg(-1);
