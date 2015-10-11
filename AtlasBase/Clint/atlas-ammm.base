@@ -5548,6 +5548,12 @@ int main(int nargs, char **args)
 
    return(0);
 }
+@ROUT gmmsearch
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015
+#include "atlas_misc.h"
+#include "atlas_mmtesttime.h"
+
+@extract -b @(basd)/atlas.base rout=Mylcm
 @ROUT ammsearch uammsearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012 -def cwdate 2013 -def cwdate 2015
 #include "atlas_misc.h"
@@ -5597,6 +5603,7 @@ ATL_mmnode_t *GetGenCases(char pre)
    return(mb);
 }
 
+@ROUT ammsearch uammsearch gmmsearch
 double TimeMMKernel_KB
 (
    int verb,                    /* 0: no output, 1 min output, 2: full output */
@@ -5637,6 +5644,7 @@ double TimeMMKernel_KB
    }
    return(mf);
 }
+@ROUT ammsearch uammsearch
 /*
  * Finds best blocking factors for kernel mmp trying all legal values
  * between [b0, bN]
@@ -6858,6 +6866,7 @@ ATL_mmnode_t *FindBestUserCases(int verb, char pre, int *nbs, ATL_mmnode_t *mmb)
    return(mmp);
 }
 
+@ROUT ammsearch uammsearch gmmsearch
 ATL_mmnode_t *MergeCases
 (
    int imf,
@@ -6962,6 +6971,7 @@ ATL_mmnode_t *MergeCases
    }
    return(mb);
 }
+@ROUT ammsearch uammsearch
 
 #define HUGE_NB 180
 ATL_mmnode_t *WinnowHugeNB
@@ -7013,6 +7023,7 @@ ATL_mmnode_t *WinnowHugeNB
   return(mb);
 }
 
+@ROUT ammsearch uammsearch gmmsearch
 ATL_mmnode_t *WinnowCases
 (
    int imf,
@@ -7042,6 +7053,7 @@ ATL_mmnode_t *WinnowCases
    }
    return(mb);
 }
+@ROUT ammsearch uammsearch
 
 ATL_mmnode_t *MergeAndWinnowCases
 (
@@ -7558,6 +7570,7 @@ int MMKernCompsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 }
 @endskip
 
+@ROUT ammsearch uammsearch gmmsearch
 int KernelIsUnique(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
 /*
  * Determines if mmp is the first mention of a unique kernel in mmb, or not.
@@ -7575,6 +7588,7 @@ int KernelIsUnique(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
          return(0);
    return(1);  /* didn't find it, must be first time in list */
 }
+@ROUT ammsearch uammsearch
 
 @beginskip
 int MMKernCompIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
@@ -8161,6 +8175,26 @@ void FindBestKU1
 {
 }
 
+@ROUT ammsearch uammsearch gmmsearch
+double CacheRatio_all3pAB(size_t CS, size_t mb, size_t nb, size_t kb, 
+                          size_t mu, size_t nu)
+{ /* RETURNS: ratio of util cache A,B,C + next A & B */
+   double dret = 2.0*kb*(mb+nb)+mb*nb;
+   return(dret/CS);
+}
+double CacheRatio_all3pA(size_t CS, size_t mb, size_t nb, size_t kb, 
+                         size_t mu, size_t nu)
+{ /* RETURNS: ratio of utilized cache to keep all 3 mm ops + next A in CS */
+   double dret = kb*(mb+mb+nb)+mb*nb;
+   return(dret/CS);
+}
+double CacheRatio_all3pB(size_t CS, size_t mb, size_t nb, size_t kb, 
+                         size_t mu, size_t nu)
+{ /* RETURNS: ratio of utilized cache to keep all 3 mm ops + next A in CS */
+   double dret = kb*(mb+nb+nb)+mb*nb;
+   return(dret/CS);
+}
+
 double CacheRatio_all3(size_t CS, size_t mb, size_t nb, size_t kb, 
                        size_t mu, size_t nu)
 { /* RETURNS: ratio of utilized cache to keep all 3 mm ops in CS */
@@ -8186,18 +8220,28 @@ typedef void (*BudgetFunc_t)(double, size_t, size_t, size_t, size_t,
                              size_t*, size_t*, size_t*);
 
 #define MAXNB 512
-void GetBlkFromBudget_all3(double thresh, size_t CS, 
+void GetBlkFromBudget_allP(char extra, double thresh, size_t CS, 
                            size_t mu, size_t nu, size_t ku,
                            size_t *MB, size_t *NB, size_t *KB)
 {
+   double (*cacheRatio)(size_t,size_t,size_t,size_t,size_t,size_t);
    size_t mb=mu, nb=nu, kb=ku;
    int MGROW, NGROW, KGROW;
+
+   if (extra == 'A')
+      cacheRatio = CacheRatio_all3pA;
+   else if (extra == 'B')
+      cacheRatio = CacheRatio_all3pB;
+   else if (extra == '2')
+      cacheRatio = CacheRatio_all3pAB;
+   else  /* nothing extra */
+      cacheRatio = CacheRatio_all3;
    do
    {
       size_t mn=mb+mu, nn=nb+nu, kn=kb+ku;
-      MGROW = mn < MAXNB && (CacheRatio_all3(CS, mn, nb, kb, mu, nu) <= thresh);
-      NGROW = nn < MAXNB && (CacheRatio_all3(CS, mb, nn, kb, mu, nu) <= thresh);
-      KGROW = kn < MAXNB && (CacheRatio_all3(CS, mb, nb, kn, mu, nu) <= thresh);
+      MGROW = mn < MAXNB && (cacheRatio(CS, mn, nb, kb, mu, nu) <= thresh);
+      NGROW = nn < MAXNB && (cacheRatio(CS, mb, nn, kb, mu, nu) <= thresh);
+      KGROW = kn < MAXNB && (cacheRatio(CS, mb, nb, kn, mu, nu) <= thresh);
       if (KGROW && ((!MGROW && !NGROW) || (kn <= nn && kn <= mn)))
          kb = kn;
       else if (MGROW && (!NGROW || mb < nb))
@@ -8209,6 +8253,31 @@ void GetBlkFromBudget_all3(double thresh, size_t CS,
    *MB = mb;
    *NB = nb;
    *KB = kb;
+}
+
+void GetBlkFromBudget_all3pA(double thresh, size_t CS, 
+                           size_t mu, size_t nu, size_t ku,
+                           size_t *MB, size_t *NB, size_t *KB)
+{
+   GetBlkFromBudget_allP('A', thresh, CS, mu, nu, ku, MB, NB, KB);
+}
+void GetBlkFromBudget_all3pB(double thresh, size_t CS, 
+                           size_t mu, size_t nu, size_t ku,
+                           size_t *MB, size_t *NB, size_t *KB)
+{
+   GetBlkFromBudget_allP('B', thresh, CS, mu, nu, ku, MB, NB, KB);
+}
+void GetBlkFromBudget_all3pAB(double thresh, size_t CS, 
+                           size_t mu, size_t nu, size_t ku,
+                           size_t *MB, size_t *NB, size_t *KB)
+{
+   GetBlkFromBudget_allP('2', thresh, CS, mu, nu, ku, MB, NB, KB);
+}
+void GetBlkFromBudget_all3(double thresh, size_t CS, 
+                           size_t mu, size_t nu, size_t ku,
+                           size_t *MB, size_t *NB, size_t *KB)
+{
+   GetBlkFromBudget_allP('N', thresh, CS, mu, nu, ku, MB, NB, KB);
 }
 
 void GetBlkFromBudget_one(double thresh, size_t CS, 
@@ -8287,8 +8356,13 @@ ATL_mmnode_t *FindBestCacheBudgetCase
       GetBlocking(thresh, CS, mp->mu, mp->nu, mp->ku, &mb, &nb, &kb);
       p = CloneMMNode(mp);  /* can't use mp, since may switch KRUNTIME */
       mf = TimeMMKernel_KB(verb, 0, p, pre, mb, nb, kb, 1, 0, -1);
+@ROUT gmmsearch
+      printf("   RT='%s' B=(%d,%d,%d), MFLOP=%.2f\n", p->rout,
+             (int)mb, (int)nb, (int)kb, mf);
+@ROUT ammsearch uammsearch
       printf("   ID=%d, mb=%d, nb=%d, kb=%d, RTK=%d, MFLOP=%.2f\n", p->ID,
              (int)mb, (int)nb, (int)kb, FLAG_IS_SET(p->flag, MMF_KRUNTIME), mf);
+@ROUT ammsearch uammsearch gmmsearch
       if (mf > mfB)
       {
          if (mmB)
@@ -8486,6 +8560,7 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
  */
    if (pre == 'c' || pre == 'z')
       CS += CS;
+@ROUT ammsearch uammsearch
 /*
  * See if we just need to rerun cases
  */
@@ -8514,6 +8589,7 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
       printf("DONE %d CASES.\n\n", i);
       return(mm3b);
    }
+@ROUT ammsearch uammsearch gmmsearch
 /*
  * Find best performing kernels for each of our 3 cache budgets
  */
@@ -8542,9 +8618,10 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
  * Now, get rid of any blocking factor that is slower than the preceeding one
  */
    mmb = WinnowCases(0, mmb);
-   WriteMMFileWithPath(pre, "res", "bAMMRES.sum", mmb);
+@ROUT ammsearch uammsearch `   WriteMMFileWithPath(pre, "res", "bAMMRES.sum", mmb);`
    return(mmb);
 }
+@ROUT ammsearch uammsearch
 
 @beginskip
 ATL_mmnode_t *DecentGenCase(int verb, char pre, int nreg)
@@ -10319,11 +10396,6 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT gmmsearch
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2015
-#include "atlas_misc.h"
-#include "atlas_mmtesttime.h"
-
-@extract -b @(basd)/atlas.base rout=Mylcm
 
 int NumberBetaFails(FILE *fperr, char pre, int nb, ATL_mmnode_t *p)
 {
@@ -11392,6 +11464,159 @@ int FindBlockingRegions(int flag, int verb, char pre)
 
    return(maxNB);
 }
+
+int TryPref(char pre, int verb, ATL_mmnode_t *mp, int ibet, int imf, 
+            int ipf, int pfLS)
+/*
+ * Times mmb with present prefetch setting, and (ipf,pfLS), and returns
+ * in mmb the best.  mp->mflop[imf] must contain the timing for the present
+ * prefetch settings.
+ * RETURNS: 1 if new settings taken, 0 if old are kept
+ */
+{
+   char *gs0=mp->genstr, *rt0=mp->rout;
+   int ipf0=mp->pref, pfLS0=mp->pfLS;
+   double mf0=mp->mflop[imf], mfN;
+
+   if (mp->pref == ipf && mp->pfLS == pfLS)
+   {
+      printf("      pref settings unchanged!\n");
+      return;
+   }
+   mp->pref = ipf;
+   mp->pfLS = pfLS;
+   mp->rout = MMGetGenName(pre, mp->kbB, mp);
+   mp->genstr = MMGetGenString(pre, mp);
+   mfN = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, ibet, 0, -1);
+   printf("      old=(%d,%d,%.2f), new=(%d,%d,%.2f), spdup=%.3f\n", 
+          ipf0, pfLS0, mf0, mp->pref, mp->pfLS, mfN, mfN/mf0);
+   if (mfN > mf0)  /* new settings win */
+   {
+      if (gs0)
+         free(gs0);
+      if (rt0)
+         free(rt0);
+      mp->mflop[imf] = mfN;
+      return(1);
+   }
+   else  /* old settings best */
+   {
+      free(mp->genstr);
+      mp->genstr = gs0;
+      free(mp->rout);
+      mp->rout = rt0;
+      mp->pref = ipf0;
+      mp->pfLS = pfLS0;
+   }
+   return(0);
+}
+
+void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
+/*
+ * Given routs times with no prefetch (mflop stored at imf), try various
+ * prefetch strategies, and return the best
+ */
+{
+   ATL_mmnode_t *mp;
+   char *ctxt[5]={"3BLKS IN L1", "1BLKS IN L1", "0 BLKS IN L1", 
+                  "4BLKS IN L1", "5 BLKS IN L1"};
+                    /* Lx(A)  ; Lx(B),   Lx(A&B)       2(A),x(B),  x(A),2(B) */
+   const int ipfs[11]={2|8192, 4|16384, 2|4|8192|16384, 2|4|16384, 2|8192|4,
+                  /*L2(A); L2(B);L2(A&B);1(A),2(B);2(A)1(B),    L1(A&B) */
+                        2,     4, 2|4,   2|64|4,   2|4|128, 2|64|4|128};
+   int k;
+
+   printf("START PREFETCH TUNING FOR ALL CACHE CONTEXTS\n");
+/*
+ * First, try A/B prefetch, since they are N^3
+ */
+   for (k=0,mp=mmb; mp; k++,mp = mp->next)
+   {
+      const int ipf=mp->pref;
+      int npf, i;
+      double mf0=mp->mflop[0];
+      if (k <= 2) /* for cases where L1 is full */
+         npf = 8; /* only try prefetches to L2 (really last level cache) */
+      else if (k == 3) /* room for one block */
+         npf = 9;      /* try fetching one block to L1 */
+      else             /* room for 5 blocks */
+         npf = 11;     /* try all cases */
+      printf("   TUNING A/B PREFETCH FOR %s\n", ctxt[k]);
+      for (i=0; i < npf; i++)
+         TryPref(pre, verb, mp, 1, 0, ipf|ipfs[i], 64);
+      printf("   A/B PREFETCH FOR %s SPEEDUP=%.3f\n", ctxt[k],mp->mflop[0]/mf0);
+   }
+   printf("\n");
+/*
+ * First, try prefC for each kernel
+ */
+   for (k=0,mp=mmb; mp; k++,mp = mp->next)
+   {
+      const int ipf=mp->pref;
+      double mf0=mp->mflop[0];
+      printf("   TUNING C PREFETCH FOR %s\n", ctxt[k]);
+      TryPref(pre, verb, mp, 1, 0, ipf|1, 64);
+      TryPref(pre, verb, mp, 1, 0, ipf|1|32, 64);
+      TryPref(pre, verb, mp, 1, 0, ipf|1|256, 64);
+      printf("   C PREFETCH FOR %s SPEEDUP=%.3f\n", ctxt[k], mp->mflop[0]/mf0);
+   }
+   printf("DONE  PREFETCH TUNING FOR ALL CACHE CONTEXTS\n\n");
+}
+
+void DoBlock(char pre, int flg, int verb)
+{
+   int L1ELTS;
+   ATL_mmnode_t *mmb, *mm3, *mp;
+   int b;
+   char upr;
+
+   if (pre == 'c')
+      upr = 's';
+   else 
+      upr = (pre == 'z') ? 'd' : pre;
+/*
+ * Compute # of L1 cache elements, and join M- & K-vec kernels found so far
+ */
+   L1ELTS = GetL1CacheElts(pre);
+   mmb = ReadMMFileWithPath(pre, "res", "gmvAMMUR.sum");
+   assert(mmb);
+   mp = ReadMMFileWithPath(pre, "res", "gkvAMMUR.sum");
+   ATL_LastMMNode(mmb)->next = mp;
+   MMFillInGenStrings(pre, mmb);
+/*
+ * mm3: A,B,C in L1, mm3->next: B fits in L1, 
+ * mm3->next->next: mu*KB panel of A fits in L1 (L2 blocked)
+ */
+   mm3 = FindBestCacheBudgetCases(verb, pre, L1ELTS, mmb);
+   mm3->mflop[0] = mm3->mflop[1]; mm3->mflop[1] = 0.0;
+   mp = mm3->next;
+   mp->mflop[0] = mp->mflop[2]; mp->mflop[2] = 0.0;
+   mp = mp->next;
+   mp->mflop[0] = mp->mflop[3]; mp->mflop[3] = 0.0;
+   b = mm3->mbB; b = Mmin(b, mm3->nbB); b = Mmin(b, mm3->kbB);
+   if (b > 16)
+   {
+      mp = FindBestCacheBudgetCase(verb, pre, (mm3->mbB > mm3->nbB) ? 
+              GetBlkFromBudget_all3pA:GetBlkFromBudget_all3pB,
+              1.0, L1ELTS, 4, mmb);
+      mp->mflop[0] = mp->mflop[4]; mp->mflop[4] = 0.0;
+      mm3->next->next->next = mp;
+      b = mp->mbB; b = Mmin(b, mp->nbB); b = Mmin(b, mp->kbB);
+      if (b > 16)
+      {
+         mp->next = FindBestCacheBudgetCase(verb, pre, 
+                       GetBlkFromBudget_all3pAB, 1.0, L1ELTS, 5, mmb);
+         mp = mp->next;
+         mp->mflop[0] = mp->mflop[5]; mp->mflop[5] = 0.0;
+      }
+   }
+   KillAllMMNodes(mmb);
+   mmb = mm3;
+   DoPref(pre, flg, verb, mmb);
+   WriteMMFileWithPath(pre, "res", "gAMMRES.sum", mmb);
+   KillAllMMNodes(mmb);
+}
+
 int main(int nargs, char **args)
 {
    int flg, verb, nreg, VLEN, NB, TEST;
@@ -11400,6 +11625,7 @@ int main(int nargs, char **args)
    if (TEST)
       return(CountFails(flg, verb, pre, NB, nreg, VLEN));
    FindInfo(flg, verb, pre, NB, &nreg, &VLEN);
+   DoBlock(pre, flg, verb);
 @skip   DoSquare(flg, verb, pre, nreg, VLEN);
    return(0);
 }

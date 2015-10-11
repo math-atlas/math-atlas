@@ -24,16 +24,22 @@ pf bit location meanings:
    pfA/B : can prefetch next mu/nu A/B within K-loop
    nA/nB : can prefetch next block outside K-loop 
    take pf integer bitvec bit/additive means:
-      0/1  : prefetch C before K-loop
-      1/2  : prefetch next block of A before K-loop
-      2/4  : prefetch next block of B before K-loop
-      3/8  : prefetch next mu*K iter of A inside K-loop
-      4/16 : prefetch next nu*K iter of B inside K-loop
-      5/32 : pref of C should use ATL_pfl1 instead of ATL_pfl2
-      6/64 : pref of next blk of A should use ATL_pfl1 not ATL_pfl2
-      7/128: pref of next blk of B should use ATL_pfl1 not ATL_pfl2
-      8/256: K-loop pref of A use ATL_pfl1 not ATL_pfl2
-      9/512: K-loop pref of B use ATL_pfl1 not ATL_pfl2
+      0/1   : prefetch C before K-loop
+      1/2   : prefetch next block of A before K-loop
+      2/4   : prefetch next block of B before K-loop
+      3/8   : prefetch next mu*K iter of A inside K-loop
+      4/16  : prefetch next nu*K iter of B inside K-loop
+      5/32  : pref of C should use ATL_pfl1 instead of ATL_pfl2
+      6/64  : pref of next blk of A should use ATL_pfl1 not ATL_pfl2
+      7/128 : pref of next blk of B should use ATL_pfl1 not ATL_pfl2
+      8/256 : pref of C should use ATL_pflX instead of ATL_pflX
+      9/512 : pref of next blk of A should use ATL_pflX not ATL_pfl2
+     10/1024: pref of next blk of B should use ATL_pflX not ATL_pfl2
+     11/2048: K-loop pref of A use ATL_pfl1 not ATL_pfl2
+     12/4096: K-loop pref of B use ATL_pfl1 not ATL_pfl2
+     13/8192: K-loop pref of A use ATL_pflX not ATL_pfl2
+    14/16384: K-loop pref of B use ATL_pflX not ATL_pfl2
+
    We'll put pf bitvec in rout name, and then the search will find that
    we want to pref everything to L1 for small NB, only C &  block of A for
    medium size, and no pref for large, for instance.
@@ -56,10 +62,17 @@ During tuning, think about several regions for prefetch:
 @ifdef ! pfLS
    @define pfLS @64@
 @endifdef
+@iif pfLS = 0
+   @define pfLS @64@
+@endiif
 @iexp pfLS @(sz) @(pfLS) /
 @iexp kk @(pf) 32 &
 @iif kk = 0
    @define pfC @ATL_pfl2W@
+@endiif
+@iexp kk @(pf) 256 &
+@iif kk = 0
+   @define pfC @ATL_pflXW@
 @endiif
 @ifdef ! pfC
    @define pfC @ATL_pfl1W@
@@ -68,6 +81,10 @@ During tuning, think about several regions for prefetch:
 @iif kk ! 0
    @define pfA @ATL_pfl1R@
 @endiif
+@iexp kk @(pf) 512 &
+@iif kk ! 0
+   @define pfA @ATL_pflXR@
+@endiif
 @ifdef ! pfA
    @define pfA @ATL_pfl2R@
 @endifdef
@@ -75,25 +92,39 @@ During tuning, think about several regions for prefetch:
 @iif kk ! 0
    @define pfB @ATL_pfl1R@
 @endiif
+@iexp kk @(pf) 1024 &
+@iif kk ! 0
+   @define pfB @ATL_pflXR@
+@endiif
 @ifdef ! pfB
    @define pfB @ATL_pfl2R@
 @endifdef
 @iexp kk @(pf) 8 &
 @iif kk ! 0
    @define pfAk @ATL_pfl2R@
-   @iexp kk @(pf) 256 &
+   @iexp kk @(pf) 2048 &
    @iif kk ! 0
       @undef pfAk
       @define pfAk @ATL_pfl1R@
+   @endiif
+   @iexp kk @(pf) 8192 &
+   @iif kk ! 0
+      @undef pfAk
+      @define pfAk @ATL_pflXR@
    @endiif
 @endiif
 @iexp kk @(pf) 16 &
 @iif kk ! 0
    @define pfBk @ATL_pfl2R@
-   @iexp kk @(pf) 512 &
+   @iexp kk @(pf) 4096 &
    @iif kk ! 0
       @undef pfBk
       @define pfBk @ATL_pfl1R@
+   @endiif
+   @iexp kk @(pf) 16384 &
+   @iif kk ! 0
+      @undef pfBk
+      @define pfBk @ATL_pflXR@
    @endiif
 @endiif
 @iexp kk @(mu) @(nu) 1 @(pf) & * *
@@ -131,7 +162,7 @@ During tuning, think about several regions for prefetch:
    #define TYPE @(typ)
 #endif
 #include "atlas_simd.h"
-@iexp pf @(pf) 31 &
+@skip @iexp pf @(pf) 31 &
 @iif pf ! 0
 #include "atlas_prefetch.h"
 @endiif
@@ -409,7 +440,6 @@ During tuning, think about several regions for prefetch:
    @define kk @dum@
    @skip kk = (mo == 0 || (vmu == 2 && vnu == 2))
    @iexp kk @(vnu) 2 = @(vmu) 2 = & @(mo) 0 = |
-@print kk=@(kk), mo=@(mo) ipf=@(ipf), npfC=@(npfC), npfA=@(npfA), npfB=@(npfB)
    @iif kk ! 0
       @iif ipf < npfC
          @iexp kk @(ipf) @(pfLS) *

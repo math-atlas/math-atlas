@@ -79,6 +79,7 @@ struct MMNode
    int vlen;            /* vector length, 0 or 1 if scalar code */
 @skip   int kmaj;            /* k-major access storage? */
    int pref;            /* pref strategy used */
+   int pfLS;            /* pref line size */
    int ivar;            /* int param used for various purposes */
    int mbB, nbB, kbB;   /* best blocking dims found by search */
    enum ATLAS_TRANS TA, TB;
@@ -2172,7 +2173,8 @@ static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 {
 /*
  * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
- * NOTE: if we make generator handle muladd, etc, MUST UPDATE HERE!!!
+ * NOTE: pref & pfLS do not affect output, and so are not checked!
+ * NOTE: any extension of generator functionality should extend this check!
  */
    if (p0->ID == 0 && p1->ID == 0)
       return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
@@ -2934,11 +2936,12 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
    char *rout;
-   rout = malloc(32);
+   rout = malloc(48);
    assert(rout);
-   /* ATL_<pre>amm<kb>_<vlen>[k,m]_<mu>x<nu>x<ku>.c */
-   sprintf(rout, "ATL_%camm%d_%d%c_%dx%dx%d.c", pre, kb, mp->vlen, 
-           FLAG_IS_SET(mp->flag,MMF_KVEC)?'k':'m', mp->mu, mp->nu, mp->ku);
+   /* ATL_<pre>amm<kb>_<vlen>[k,m]_<mu>x<nu>x<ku>_pf<pf>x<pfLS>_<flag>.c */
+   sprintf(rout, "ATL_%camm%d_%d%c_%dx%dx%d_pf%xx%d_%x.c", pre, kb, mp->vlen, 
+           FLAG_IS_SET(mp->flag,MMF_KVEC)?'k':'m', mp->mu, mp->nu, mp->ku,
+           mp->pref, mp->pfLS, mp->flag);
    return(rout);
 }
 @iexp ip @(ip) 1 +
@@ -2949,8 +2952,8 @@ char *MMGetGenString
    ATL_mmnode_t *mp             /* mmkern ptr */
 )
 {
-   char *frm=
-      "make gen_amm pre=%c rt=%s vec=%s vlen=%d mu=%d nu=%d ku=%d bcast=%d";
+   char *frm="make gen_amm pre=%c rt=%s vec=%s vlen=%d mu=%d nu=%d ku=%d"
+             " bcast=%d pf=%d pfLS=%d";
    char *vec="mdim";
    char *gs;
    int len;
@@ -2967,7 +2970,7 @@ char *MMGetGenString
    else 
       assert(mp->mu % mp->vlen == 0);
    sprintf(gs, frm, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, mp->ku,
-           !FLAG_IS_SET(mp->flag, MMF_NOBCAST));
+           !FLAG_IS_SET(mp->flag, MMF_NOBCAST), mp->pref, mp->pfLS);
    return(gs);
 }
 
@@ -3432,32 +3435,36 @@ double TimeMMKernel
       assert(!MMDoGenString(verb, mmp->genstr));
    else if (verb > 2)
       printf("NO genstr\n");
+/*
+ * Figure out the name of the output file
+ */
+   if (FORCETIME)
+      strcpy(fnam, "res/tmpout.ktim");
+/*
+ * PREammID_MBxNBxKB_MUxNUxKU_FLAG_v[M,K]VLENbBETA_CFLUSH
+ */
+   else
+   {
+      if (mmp->vlen < 2)
+         ch = 'S';
+      else
+         ch = (FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? 'K' : 'M';
+
+      sprintf(fnam, 
+      "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
+              pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, mmp->ku, 
+              mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
+   }
+/* 
+ * If we actually need to do timing, must also construct timer call
+ */
+   if (!FORCETIME)
+      DOTIME = !FileExists(fnam);
+/* 
+ * Normal timing uses parallel timer 
+ */
    #ifndef ATL_SERIAL_INSTALL
       #define RESACT 2   /* want average frm ReadResultsFile for parallel */
-/*
- *    Figure out the name of the output file
- */
-      if (FORCETIME)
-         strcpy(fnam, "res/tmpout.ktim");
-/*
- *    PREammID_MBxNBxKB_MUxNUxKU_FLAG_v[M,K]VLENbBETA_CFLUSH
- */
-      else
-      {
-         if (mmp->vlen < 2)
-            ch = 'S';
-         else
-            ch = (FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? 'K' : 'M';
-
-         sprintf(fnam, "res/%cammm%d_%dx%dx%d_%dx%dx%d_%d_v%c%db%d_%d.ktim",
-                 pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, mmp->ku, mmp->flag,
-                 ch, mmp->vlen, beta, cflush);
-      }
-/* 
- *    If we actually need to do timing, must also construct timer call
- */
-      if (!FORCETIME)
-         DOTIME = !FileExists(fnam);
       if (DOTIME)
       {
          i = sprintf(ln, "make x%cammtime_pt mb=%d nb=%d kb=%d",
@@ -3479,6 +3486,13 @@ double TimeMMKernel
          if (FLAG_IS_SET(mmp->flag, MMF_MVC))
             i += sprintf(ln+i, " -DATL_MOVEC");
          i += sprintf(ln+i, "\"");
+         if (mmp->pref)
+         {
+            if (mmp->pfLS)
+               i += sprintf(ln+i, " pf=%d pfLS=%d", mmp->pref, mmp->pfLS);
+            else
+               i += sprintf(ln+i, " pf=%d", mmp->pref);
+         }
          if (beta == 1 || beta == 0)
             i += sprintf(ln+i, " beta=%d", beta);
          else
@@ -3492,26 +3506,6 @@ double TimeMMKernel
       }
    #else
       #define RESACT 0   /* ReadResultsFile uses ACTION=0 */
-   
-      if (beta == 0)
-         be = "b0";
-      else if (beta == 1)
-         be = "b1";
-      else if (beta == -1)
-         be = "bn1";
-      else 
-         be = "bX";
-      if (FORCETIME)
-         sprintf(fnam, "res/tmpout");
-      else /*dmmMNK%d_JMMBxNBxKB_muxnuk#xku_rtK_LDTOP_vlen_pf_a1_bX_MV_flushKB*/
-         sprintf(fnam, 
-         "res/%cmm%s%d_%dx%dd%dx%d_%dx%dx%d_rtK%d__v%d_%d_%d_a1_%s_%d_%d.ktim",
-                 pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
-                 mmp->ID, mb, nb, FLAG_IS_SET(mmp->flag,MMF_KVEC), kb, 
-                 mmp->mu, mmp->nu, mmp->ku, 
-                 FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
-                 FLAG_IS_SET(mmp->flag, MMF_LDCTOP), 
-                 mmp->vlen, mmp->pref, be, MV, cflush);
    
       if (!FORCETIME)
          DOTIME = !FileExists(fnam);
