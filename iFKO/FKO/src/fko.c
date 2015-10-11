@@ -118,12 +118,6 @@ struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
    op->nopt = nopt;
    op->flag = flag;
    op->next = NULL;
-/*
- * NOTE: right now, blist blocks is only updated from the function which init 
- * defualt optimizations. So, I updated from there, keeping the list NULL here.
- * FIXME: should have option to update that from argument
- */
-   op->blocks = NULL;
 #if 1
 /*
  * added nspill to keep track of resgister spilling (# of live-range which 
@@ -170,10 +164,8 @@ void KillAllOptBlocks(struct optblkq *head)
       KillAllOptBlocks(head->ifblk);
    if (head->opts) free(head->opts);
 /*
- * delete the newly added block list 
+ * delete the newly added nspill  
  */
-   if (head->blocks)
-      KillBlockList(head->blocks); /*kill blist without killing the blks itself*/
    if (head->nspill)
       free(head->nspill);
    free(head);
@@ -207,8 +199,6 @@ struct optblkq *SproutNode(struct optblkq *head, struct optblkq *seed)
    if (i || !n)
    {
       new = NewOptBlock(seed->bnum, seed->maxN, i, seed->flag);
-      if (seed->blocks) 
-         new->blocks = CopyBlockList(seed->blocks);  /* copied the scope */
       for (n=i,i=0; i < n; i++)
          new->opts[i] = seed->opts[i];
    }
@@ -217,10 +207,6 @@ struct optblkq *SproutNode(struct optblkq *head, struct optblkq *seed)
  */
    else
    {
-/*
- *    FIXME: there is a relationship between # of nodes and dummy ops in first
- *    nodes. figure it out!!!!!
- */
       op = FindOptBlockUsingNext(head, seed->opts[0]-MaxOpt);
       assert(op);
       new = SproutNode(head, op);
@@ -232,13 +218,6 @@ struct optblkq *SproutNode(struct optblkq *head, struct optblkq *seed)
    if (n != seed->nopt)
    {
       op = NewOptBlock(seed->bnum, 0, seed->nopt-n, seed->flag);
-      /*fprintf(stderr, "--- %d \n",op->bnum);*/
-/*
- *    How to handle scope!!!
- */
-      if (seed->blocks) 
-         op->blocks = CopyBlockList(seed->blocks);  /* copied the scope */
-
       for (i=n; i < seed->nopt; i++)
          op->opts[i-n] = seed->opts[i];
       new->down = SproutNode(head, op);
@@ -267,7 +246,6 @@ void PrintOptTree(FILE *fpout, struct optblkq *optree)
       if (optree->flag & IOPT_GLOB)
          fprintf(fpout, "(GLOBAL) :");
       else if (optree->flag & IOPT_SCOP)
-         //fprintf(fpout, "(%s) :", PrintBlockList(optree->blocks));
          fprintf(fpout, "(SCOPED) :");
       else if (!optree->flag)
          fprintf(fpout, "(OPTLOOP) :");
@@ -308,24 +286,10 @@ struct optblkq *OptBlockQtoTree(struct optblkq *head)
  * NOTE: deletes sequential queue when done
  */
 {
-#if 0   
-   int i;
-   struct optblkq *op;
-#endif
    struct optblkq *root;
    root = FindOptBlockUsingNext(head, 1);
    assert(root);
    root = SproutNode(head, root);
-
-#if 0
-   //PrintOptTree(root);
-   fprintf(stderr, "\n head = %d\n", head->bnum);
-   PrintOptTree(stderr, head);
-   fprintf(stderr, "\n root = %d\n", root->bnum);
-   PrintOptTree(stderr, root);
-   fprintf(stderr, "\n");
-   //exit(0);
-#endif
    KillAllOptBlocks(head);
    return(root);
 }
@@ -742,8 +706,10 @@ struct optblkq *GetFlagsN(int nargs, char **args,
              * else do what 'G' does
              */
          case 'G':
+            /*op = NewOptBlock(atoi(args[i+1]), atoi(args[i+2]), atoi(args[i+3]),
+                             args[i][1] == 'G' ? IOPT_GLOB : 0);*/
             op = NewOptBlock(atoi(args[i+1]), atoi(args[i+2]), atoi(args[i+3]),
-                             args[i][1] == 'G' ? IOPT_GLOB : 0);
+                             args[i][1] == 'G' ? IOPT_GLOB : IOPT_SCOP);
             i += 3;
             for (j=0; j < op->nopt; j++)
             {
@@ -1836,6 +1802,102 @@ void SaveFKOState0()
    WriteState0MiscToFile(ln); /* this function is diff than old one */
 }
 
+int GetNumLoopScopes()
+/*
+ * returns total number of loop scopes
+ */
+{
+   int i;
+   LOOPQ *lpq;
+   extern LOOPQ *loopq;
+
+   if (!CFLOOP)
+      FindLoops();
+
+   lpq = loopq;
+   i = 0;
+   while(lpq)
+   {
+      i++;
+      lpq = lpq->next;
+   }
+   return(i);
+}
+
+BLIST *GetLoopScopebyNum(int id)
+/*
+ * returns blist for specific loop scope... scope number starts from 0.. 
+ * If number of scopes is N, then id N means the global scope
+ */
+{
+   int i;
+   LOOPQ *lpq;
+   BLIST *scope;
+   BBLOCK *bp;
+   extern LOOPQ *loopq;
+   extern BBLOCK *bbbase;
+
+   if (!CFLOOP)
+      FindLoops();
+
+   lpq = loopq;
+   i = 0;
+   while(lpq)
+   {
+      if (i == id)
+      {
+         scope = CopyBlockList(lpq->blocks);
+         return(scope);
+      }
+      i++;
+      lpq = lpq->next;
+   }
+
+   if (i == id) /* id == N, means it's global*/
+   {
+      for (scope=NULL,bp=bbbase; bp; bp = bp->down)
+         scope = AddBlockToList(scope, bp);
+   }
+   else /* invalid id*/
+   {
+      scope = NULL;
+   }
+   
+   return(scope);
+}
+
+BLIST **LoopBlocks(int *N)
+/*
+ * returns the blocklist of each loop: from depth most to upper 
+ * (staring with optloop)
+ */
+{
+   int i;
+   LOOPQ *lpq;
+   BLIST **scopes;
+   extern LOOPQ *loopq;
+   
+   if (!CFLOOP)
+      FindLoops();
+
+   lpq = loopq;
+   i = 0;
+   while(lpq)
+   {
+      i++;
+      lpq = lpq->next;
+   }
+   *N = i;
+
+   scopes = malloc((*N)*sizeof(BLIST*));
+   assert(scopes);
+
+   for (i=0, lpq=loopq; i < *N; i++, lpq=lpq->next)
+      scopes[i] = CopyBlockList(lpq->blocks);
+   
+   return(scopes);
+}
+
 int CheckPreheaderPosttails(BLIST *scope)
 {
    int nerr = 0, pred =0, npred = 0;
@@ -2050,62 +2112,66 @@ void FixPreheaderPosttails(BLIST *scope)
    }
 }
 
-
-int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
+int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int *nspill)
 /*
  * Performs the nopt optimization in the sequence given by ops, returning
  * 0 if no transformations applied, nonzero if some changes were made
- * Now, we have three different scopes (instead of global & optloop) in scstate:
+ * Now, we have two states
  *    1. IOPT_GLOB = all blocks inside the routine
  *    2. IOP_SCOP = blk list specified in optblks->blocks
- *    3. 0  =  optloop // not used anymore
+ *  0  =  optloop is not used anymore
  */
 {
+   int i, j, k, nchanges=0, nc0;
+   int *nsp;
    BLIST *scope;
    BBLOCK *bp;
-   int i, j, k, nchanges=0, nc0;
    static short nlab=0, labs[4];
    /*static int iopt = 0, bv = 0;*/ /* Majedul: for opt logger, bv -> */
    static int iopt = 0, bv = 0; /* Majedul: for opt logger, bv -> */
-   extern LOOPQ *optloop;
+   /*extern LOOPQ *optloop;*/
+   extern BBLOCK *bbbase;;
 /*
  * Form scope based on global setting
  */
    scope = NULL;
-   *nsp = 0;
-   if (!scstate) /* optloop as scope*/
+
+   if (!global) /* IOPT_SCOP */ 
    {
-      if (!optloop)
+      scope = GetLoopScopebyNum(iscope0);
+      if (!scope)
          return(0);
-/*
- *    Recalculate optloop info if it has changed due to previous opt
- */
-      if (!CFLOOP)
-         FindLoops();
-      scope = CopyBlockList(optloop->blocks);
-      /*scope = optloop->blocks;*/
-   }
-   else /* IOPT_SCOP || IOPT_GLOB */
-   {
-/*
- *    NOTE: optimization may change the CFG anyway...
- *    HERE HERE !!! we recalculated the scopes only for the IOPT_SCOP
- *    so, we need to recalcute the scope here for all other case
- */
-      if (scstate & IOPT_SCOP) /* scope is specified in scope0*/
-/*
- *       FIXED: the repeatable optimization itself may change the CFG. So, scope
- *       calculated prior that would not be valid!!! 
- *       NOTE: we recalculate the scope in optblks if any changes of CFG 
- *       occurred (see DoOptBlock function).
- */
-         scope = CopyBlockList(scope0);
-      else /* global scope, add all blks in CFG */
+      else /* has loops, valid scope */
       {
-         for (scope=NULL,bp=bbbase; bp; bp = bp->down)
-            scope = AddBlockToList(scope, bp);
+/*
+ *       if we have IgReg in the packet, we need to check whether it has proper
+ *       preheader/posttails
+ */
+         if ( HasScopeIGReg(nopt, ops) && CheckPreheaderPosttails(scope))
+         {
+            FixPreheaderPosttails(scope);
+/*
+ *          update CFG now
+ */
+            InvalidateLoopInfo();
+            bbbase = NewBasicBlocks(bbbase);
+            CheckFlow(bbbase, __FILE__, __LINE__);
+            FindLoops();
+            CheckFlow(bbbase, __FILE__, __LINE__);
+/*
+ *          delete previous scope and recompute it again       
+ */
+            free(scope);
+            scope = GetLoopScopebyNum(iscope0);
+         }
       }
    }
+   else /* IOPT_GLOB */
+   {
+      for (scope=NULL,bp=bbbase; bp; bp = bp->down)
+         scope = AddBlockToList(scope, bp);
+   }
+
 /*
  * NOTE: Need a way to eliminate _IFKO_EPILOGUE iff this is last optimization
  */
@@ -2117,6 +2183,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
    }
    if (!scope)
       return(0);
+/*
+ * Now, perform the optimizations specified in the optblk
+ */
    for (i=0; i < nopt; i++)
    {
       nc0 = nchanges;
@@ -2129,23 +2198,38 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
  *       I made this obsolete for scalar code too. So, this opt has no longer
  *       been used!
  */
-         assert(scstate & IOPT_GLOB);
-         fko_error(__LINE__, "\n\n Global Reg ASg used!!!\n\n");
-         nchanges += DoLoopGlobalRegAssignment(optloop);  
+         fko_error(__LINE__, "\n Global Reg Asg is obsolete now, "
+                   "change optblk's configuration !!!\n\n");
+         /* nchanges += DoLoopGlobalRegAssignment(optloop);*/
          break;
       case RegAsg:
-         
-         nchanges += DoScopeRegAsg(scope, scstate ? 2:1, &j, nsp); 
-         
+/*
+ *       create space for reg info
+ */
+         nsp = malloc(NTYPES*sizeof(int));
+         assert(nsp);
+/*
+ *       now, perform the IG reg asg 
+ */
+         nchanges += DoScopeRegAsg(scope, global ? 2:1, &j, nsp); 
+/*
+ *       update nspill 
+ *       NOTE: we will save nspill only for the optloop when IOPT_SCOP is 
+ *       applied, otherwise for global scope
+ */
+         if (global || !iscope0) /* scope no. 0 represents the optloop */
+         {
+            for (j=0; j < NTYPES; j++)
+               nspill[j] = nsp[j];
+         }
+         else
+            free(nsp); /* delete other nspill info */
          break;
       case CopyProp:
          nchanges += DoCopyProp(scope);
-/*
- *       NOTE: copy propagation may change the use set of inst. so, check it
- */
-      #if IFKO_DEBUG_LEVEL >= 1         
-         CheckUseSet();
-      #endif         
+         #if IFKO_DEBUG_LEVEL >= 1         
+            CheckUseSet();
+         #endif         
          break;
       case RemoveOneUseLoads:
          nchanges += DoRemoveOneUseLoads(scope);
@@ -2155,12 +2239,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
          break;
       case ReverseCopyProp:
          nchanges += DoReverseCopyProp(scope);
-/*
- *       NOTE: RCP may change the use set of inst. so, verify use/set
- */
-      #if IFKO_DEBUG_LEVEL >= 1         
-         CheckUseSet();
-      #endif         
+         #if IFKO_DEBUG_LEVEL >= 1         
+            CheckUseSet();
+         #endif         
          break;
       case EnforceLoadStore:
          nchanges += DoEnforceLoadStore(scope);
@@ -2180,71 +2261,20 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
          fko_error(__LINE__, "Unknown optimization %d\n", ops[i]);
       }
       optchng[noptrec] = nchanges - nc0;
-      optrec[noptrec++] = scstate ? k+MaxOpt : k;
-#if 0
+      optrec[noptrec++] = global ? k+MaxOpt : k;
+
+   #if 0
+/*
+ *    to print the log of all optimizations who make changes
+ */
       if (nchanges-nc0)
-         PrintOptInst(stdout, ++iopt, k, scope, scstate, nchanges-nc0);
-#endif
+         PrintOptInst(stdout, ++iopt, k, scope, global, nchanges-nc0);
+   #endif
    }
    if (scope) KillBlockList(scope);
    return(nchanges);
 }
 
-
-#if 0
-/*
- * Majedul: to find out scope for register assignment
- */
-
-BLIST *FindBlksInBetween0(BLIST *bl, BBLOCK *head, BBLOCK *tail, 
-      INT_BVI visitedblks, INT_BVI scope)
-{
-/*
- * don't add the toblk anyway. recurse upto frblk reach toblk
- */
-   if (!head || head == tail)
-      return(bl);
-#if 0
-   fprintf(stderr, "( %d  %d) \n", head->bnum, tail->bnum);
-#endif
-/*
- * add a block
- */
-   SetVecBit(visitedblks, head->bnum-1, 1);
-   if (BitVecCheck(scope, head->bnum-1))
-   {
-      bl = AddBlockToList(bl, head);
-   }
-/*
- * recurse only unvisited successors
- */
-   if (head->usucc && !BitVecCheck(visitedblks, head->usucc->bnum-1))
-      bl = FindBlksInBetween0(bl, head->usucc, tail, visitedblks, scope);
-
-   if (head->csucc && !BitVecCheck(visitedblks, head->csucc->bnum-1))
-      bl = FindBlksInBetween0(bl, head->csucc, tail, visitedblks, scope);
-
-   return(bl);
-}
-
-BLIST *FindBlksInBetween(BBLOCK *frblk, BBLOCK *toblk, BLIST *scope)
-{
-   INT_BVI visitedblks;
-   INT_BVI bvscope;
-   BLIST *bl, *bln;
-   bln = NULL;
-   
-   bvscope = NewBitVec(32);
-   for (bl=scope; bl; bl=bl->next)
-      SetVecBit(bvscope, bl->blk->bnum-1, 1);
-   visitedblks = NewBitVec(32);
-   SetVecAll(visitedblks, 0);
-   bln = FindBlksInBetween0(bln, frblk, toblk, visitedblks, bvscope);
-   KillBitVec(visitedblks);
-   KillBitVec(bvscope);
-   return(bln);
-}
-#endif
 #if 0
 LOOPQ *LoopOrder()
 {
@@ -2272,339 +2302,6 @@ LOOPQ *LoopOrder()
 }
 #endif
 
-BLIST **LoopBlocks(int *N)
-/*
- * returns the blocklist of each loop: from depth most to upper 
- * (staring with optloop)
- */
-{
-   int i;
-   LOOPQ *lpq;
-   BLIST **scopes;
-   extern LOOPQ *loopq;
-   
-   if (!CFLOOP)
-      FindLoops();
-
-   lpq = loopq;
-   i = 0;
-   while(lpq)
-   {
-      i++;
-      lpq = lpq->next;
-   }
-   *N = i;
-
-   scopes = malloc((*N)*sizeof(BLIST*));
-   assert(scopes);
-
-   for (i=0, lpq=loopq; i < *N; i++, lpq=lpq->next)
-      scopes[i] = CopyBlockList(lpq->blocks);
-   
-   return(scopes);
-}
-
-BLIST **SplitScope(int *N)
-{
-   int i, k, maxdep, lpcount;
-   BLIST *bl, *scope, **lpscope, **scopes;
-   LOOPQ *lp;
-   BBLOCK *bp;
-   extern LOOPQ *loopq;
-   extern LOOPQ *optloop;
-   extern BBLOCK *bbbase;
-
-   lpcount = 0;
-   
-   if (!CFLOOP)
-      FindLoops();
-/*
- * 
- */
-   if (!loopq)
-   {
-      *N = 0;
-      return NULL;
-   }
-#if 0
-   PrintLoop(stderr, loopq);
-   exit(0);
-#endif
-/*
- * Order of the scope:
- * optloop, all loops of the same depth as optloop, blocks are not in optloop
- * depth but in above loops. 
- */
-   maxdep = loopq->depth;
-   lpscope = malloc(sizeof(BLIST*) * (maxdep+1));
-   assert(lpscope);
-/*
- * add all blocks on lpscope[0]
- */
-   for (bl=NULL, bp=bbbase; bp; bp=bp->down)
-      bl = AddBlockToList(bl,bp);
-   lpscope[0] = bl;
-
-   for (i=maxdep; i > 0; i--)
-   {
-      scope = NULL;
-      for (lp=loopq; lp; lp=lp->next)
-      {
-         if (lp->depth == i)
-         {
-            /*fprintf(stderr, "loop = %d (%d ) : %s\n", lp->loopnum, lp->depth, 
-                  PrintBlockList(lp->blocks));*/
-            bl = CopyBlockList(lp->blocks); 
-            scope = MergeBlockLists(scope, bl);
-            lpcount++;
-         }
-         else if (lp->depth < i) /*loopq is in sorted with depth  */
-            break;
-      }
-      lpscope[i] = scope; 
-   }
-   
-   *N = lpcount + maxdep + 1;
-   scopes = malloc(sizeof(BLIST*) * (*N));
-   assert(scopes);
-   k = 0;
-   for (i=maxdep; i > 0; i--)
-   {
-      for (lp=loopq; lp; lp=lp->next)
-      {
-         if (lp->depth == i)
-         {
-            bl = CopyBlockList(lp->blocks);
-            scopes[k++] = bl;
-         }
-         else if (lp->depth < i)
-            break;
-      }
-      bl = CopyBlockList(lpscope[i-1]);
-      bl = RemoveBlksFromList(bl, lpscope[i]);
-      /*scopes[k++] = bl;*/
-      //scopes[k++] = bl;
-      scopes[k++] = NULL; /* testing ... ....!!!!!!!!!!!!!! */
-
-   }
-   bl = CopyBlockList(lpscope[0]);
-   scopes[k] = bl;
-
-#if 1
-   fprintf(stderr, "scopes: \n");
-   for (i=0; i < *N; i++)
-      fprintf(stderr, "%d: %s\n", i, PrintBlockList(scopes[i]));
-#endif
-   
-/*
- * free all temporary
- */
-   for (i=0; i <= maxdep; i++)
-      if (lpscope[i]) free(lpscope[i]);
-   free(lpscope);
-
-   return (scopes);
-}
-
-
-void UpdateOptsNewScope(struct optblkq *op)
-{
-   int id, i, k, n;
-   /*int maxdep;*/
-   BLIST **scopes;
-   /*BLIST *scope, **lpscope;*/
-   struct optblkq *obp, *obp0, *obp1;
-   BLIST *bl;
-   /*LOOPQ *lpq, *lpq0, *nlp, *lp;*/
-   /*extern LOOPQ *loopq;*/
-
-/*
- * Need to recalculate the scope for this. bbbase is already changed
- * NOTE: whenever CFG is changed, recalculate scope for all scope based 
- * optimizations. 
- * For now, scope based optimization starts with IOPT_SCOP flag just check 
- * that and recalculate for next of them
- *                
- * Assumption:
- * 1. All the optimizations, which change the CFG, wouldn't be mixed with 
- *    scoped based optimizations
- * 2. There would be a packet of repeatable opts applied on global scope 
- *
- */
-   for (obp = op; obp; obp=obp->next)
-      if (obp->flag & IOPT_SCOP)
-         break;
-#if 0
-   fprintf(stderr, "opt = %d, loopq=%d\n", obp->bnum, 
-         loopq->loopnum);
-   exit(0);
-#endif
-   if (obp) /* scope start from next block */
-   {
-/*
- *    As CFG is changed, all the loop info also becomes invalid calculate them \
- *    again.
- *    FIXED: number of scopes may change... we need to recreate optblks based 
- *    on that. 
- *    delete all those and recreate new list
- */
-      for (obp0=obp; obp0->next && (obp0->next->flag & IOPT_SCOP); )
-      {
-         if (obp0->next->opts) free(obp0->next->opts);
-         if (obp0->next->blocks) KillBlockList(obp0->next->blocks);
-         obp1 = obp0->next->next;
-         /*fprintf(stderr, "deleting = %d\n", obp0->next->bnum);*/
-         free(obp0->next);
-         obp0->next = obp1;
-      }
-      if (!CFLOOP)
-         FindLoops();
-/*
- *    kept first optblk as ref. so, update it separately
- */
-      assert(loopq);
-      assert(obp && (obp->flag & IOPT_SCOP));
-      if (obp->blocks) KillBlockList(obp->blocks);
-      obp->blocks = CopyBlockList(loopq->blocks);
-      id = obp->bnum;
-
-      obp0 = obp;
-      obp1 = obp->next;
-/*
- *    FIXME: the scoping algo only works for nested loop... so, scope out 
- *    only the nested loop starting from optloop!
- *    1st element of loopq is always the optloop.
- */
-
-#if 0
-      //SplitScope(); 
-/*
- *    Order of the scope:
- *    optloop, all loops of the same depth as optloop, blocks are not in optloop
- *    depth but in above loops. 
- */
-      maxdep = loopq->depth;
-      lpscope = malloc(sizeof(BLIST*) * (maxdep+1));
-      assert(lpscope);
-/*
- *    add all blocks on lpscope[0]
- */
-      for (bl=NULL, bp=bbbase; bp; bp=bp->down)
-         bl = AddBlockToList(bl,bp);
-      lpscope[0] = bl;
-
-      for (i=maxdep; i > 0; i--)
-      {
-         scope = NULL;
-         for (lp=loopq; lp; lp=lp->next)
-         {
-            if (lp->depth == i)
-            {
-               bl = CopyBlockList(lp->blocks); 
-               scope = MergeBlockLists(scope, bl);
-            }
-            else if (lp->depth < i) /*loopq is in sorted with depth  */
-               break;
-         }
-         lpscope[i] = scope; 
-      }
-#if 0
-      for (i=0; i <= maxdep; i++)
-      {
-         fprintf(stderr, "lpscope[%d] = %s\n",i, PrintBlockList(lpscope[i]));
-      }
-#endif
-      for (i=maxdep; i > 0; i--)
-      {
-         for (lp=loopq; lp; lp=lp->next)
-         {
-            if (lp->depth == i)
-            {
-               //fprintf(stderr, "loops[%d] = %s\n", i, PrintBlockList(lp->blocks));
-               bl = CopyBlockList(lp->blocks);
-               id++;
-               obp0->next = NewOptBlock(id, obp->maxN, obp->nopt, IOPT_SCOP);
-               obp0 = obp0->next;
-               obp0->blocks = bl;
-               for (k=0; k < obp->nopt; k++)
-               {
-                  obp0->opts[k] = obp->opts[k];
-               }
-            }
-            else if (lp->depth < i)
-               break;
-         }
-         bl = CopyBlockList(lpscope[i-1]);
-         bl = RemoveBlksFromList(bl, lpscope[i]);
-         //fprintf(stderr, "remblks[%d] = %s\n", i, PrintBlockList(bl));
-         if (bl)
-         {
-            id++;
-            obp0->next = NewOptBlock(id, obp->maxN, obp->nopt, IOPT_SCOP);
-            obp0 = obp0->next;
-            obp0->blocks = bl;
-            for (k=0; k < obp->nopt; k++)
-            {
-               obp0->opts[k] = obp->opts[k];
-            }
-         }
-      }
-/*
- * free all temporary list 
- */
-      for (i=0; i <= maxdep; i++) 
-         if (lpscope[i]) free(lpscope[i]);
-      free(lpscope);
-#else
-      scopes = SplitScope(&n); 
-   #if 1
-      for (i=0; i<n; i++)
-      {
-         if (scopes[i])
-         {
-            bl = CopyBlockList(scopes[i]);
-            id++;
-            obp0->next = NewOptBlock(id, obp->maxN, obp->nopt, IOPT_SCOP);
-            obp0 = obp0->next;
-            obp0->blocks = bl;
-            for (k=0; k < obp->nopt; k++)
-            {
-               obp0->opts[k] = obp->opts[k];
-            }
-         }
-      }
-   #else /* tesing ... only the whole scope */
-      if (scopes[n-1])
-      {
-         bl = CopyBlockList(scopes[n-1]);
-         id++;
-         obp0->next = NewOptBlock(id, obp->maxN, obp->nopt, IOPT_SCOP);
-         obp0 = obp0->next;
-         obp0->blocks = bl;
-         for (k=0; k < obp->nopt; k++)
-         {
-            obp0->opts[k] = obp->opts[k];
-         }
-      }
-   #endif
-/*
- * now it's safe to delete the list 
- */
-      for (i=0; i<n; i++)
-         if (scopes[i]) free(scopes[i]);
-      if (scopes) free(scopes);
-
-#endif
-      obp0->next = obp1;
-   }
-#if 0
-   fprintf(stderr, "\n updated scoped optblks = \n");
-   PrintOptTree(op);
-   fprintf(stderr, "\n");
-#endif
-
-}
-
 int HasScopeIGReg(int nopt, enum FKOOPT *ops)
 {
    int i;
@@ -2617,325 +2314,49 @@ int HasScopeIGReg(int nopt, enum FKOOPT *ops)
    return(0);
 }
 
-int DoScopedOptBlock(int nopt, enum FKOOPT *ops, int maxN, int *nspill)
+int DoOptBlock(int igscope, int ilscope, struct optblkq *op)
 /*
- * this function will call DoListOpt function with different scopes
- * Here, scopes are the block list of loops. The order of scopes loops are: 
- * optloop -> all loops of the same depth as optloop -> blocks are not in 
- * optloop depth but in above loops. 
- *
+ * returns: nchanges applied
  */
 {
-   int i, j, k;
-   int nc, tnc;
-   int *nsp;
-   int nsc; /* count of scope */
-   BLIST *scope;
-   BLIST **scopes;
-   extern BBLOCK *bbbase;
-/*
- * create space for reg info temporarily
- */
-   nsp = malloc(NTYPES*sizeof(int)); 
-   assert(nsp);
-   for (i=0; i < NTYPES; i++)
-      nsp[i] = -1;
-   
-   scopes = LoopBlocks(&nsc);
-
-   for (i=0; i < nsc; i++)
-   {
-      scope = scopes[i];
-      if (!scope) continue;
-      if (HasScopeIGReg(nopt, ops) && CheckPreheaderPosttails(scope))
-      {
-         FixPreheaderPosttails(scope);
-/*
- *       update CFG
- */
-         InvalidateLoopInfo();
-         bbbase = NewBasicBlocks(bbbase);
-         CheckFlow(bbbase, __FILE__, __LINE__);
-         FindLoops();
-         CheckFlow(bbbase, __FILE__, __LINE__);
-/*
- *       delete the previous scopes and recompute them
- */
-         for (j=0; j<nsc; j++)
-            if (scopes[j]) free(scopes[j]);
-         if (scopes) free(scopes);
-         scopes = LoopBlocks(&nsc);
-         scope = scopes[i];   
-      }
-/*
- *    apply optlist now
- */  
-      for (j=0; j < maxN; j++)
-      {
-         nc = DoOptList(nopt, ops, scope, IOPT_SCOP, nsp);
-         if (!nc)
-            break;
-      }
-      if (nc && (FKO_FLAG & IFF_VERBOSE))
-         fprintf(stderr, "On last (%d) iteration, still had %d changes " 
-                 "on scope id =%d!\n", maxN, nc, i);
-/*
- *    stored only for the optloop (1st one) 
- */
-      if (!i)
-      {
-         for (j=0; j < NTYPES; j++)
-            nspill[j] = nsp[j];
-      } 
-   }
-
-/*
- * delete nsp and scopes
- */
-   if(nsp) free(nsp);
-   for (j=0; j<nsc; j++)
-      if (scopes[j]) free(scopes[j]);
-   if (scopes) free(scopes);
-   
-   return(nc);
-}
-
-#if 0
-int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
-/*
- * Returns: nchanges applied
- */
-{
-   int i, j, k, nc, tnc=0, scstate;
-   int maxN;
+   int i, j, k, nc, tnc=0, global;
    struct optblkq *dp;
-   BLIST *scope = NULL;
-   extern LOOPQ *loopq;
-   /*struct optblkq *obp, *obp0, *obp1;*/
-   /*LOOPQ *lpq, *lpq0;*/
-   /*BLIST *bl, *bl0;*/
-/*
- * Scopes are now three: global, optloop, and Scoped
- * So, added extra checking
- */
-#if 0   
-   scstate = op->flag & (IOPT_GLOB | IOPT_SCOP);
-   if (op->flag & IOPT_SCOP)
-   {
-      scope = op->blocks;
-      fprintf(stderr, "op->blocks = %s\n", PrintBlockList(scope));
-   }
-   else
-      scope = scstate ? gscope : lscope;
-#else
-   scstate = 0;
-   if (!op->flag) /* 0 means scope is optloop*/
-   {
-      scope = lscope; /* scope is recalculated if optloop is changed!!! */
-   }
-   else if (op->flag & IOPT_SCOP)
-   {
-      scope = op->blocks;
-      scstate = IOPT_SCOP;
-   }
-   else if (op->flag & IOPT_GLOB)
-   {
-      scope = gscope;
-      scstate = IOPT_GLOB;
-   }
-#endif
-#if 0
-   fprintf(stderr, "gl = %d\n", scstate);
-   fprintf(stderr, "scope = %s\n", PrintBlockList(scope));
-#endif
-/*
- * if we have conditional optimization block, handle it
- * FIXME: some optimizations may change the CFG which may invalidate the 
- * precalculated CFG. I considered and fixed this issue in normal 
- * while(changes) optblk scheme, but not here; since it is not applied in my
- * test cases
- */
-   if (op->ifblk)
-   {
-      tnc = DoOptBlock(gscope, lscope, op->ifblk);
-      if (tnc)
-      {
-         if (op->down)
-            tnc += DoOptBlock(gscope, lscope, op->down);
-      }
-      else if (op->next)
-         tnc += DoOptBlock(gscope, lscope, op->next);
-   }
-/*
- * If we've got a one-time list, handle it
- */
-#if 0   
-   else if (!op->maxN)
-      nc = DoOptList(op->nopt, op->opts, scope, scstate, &nspill);
-#else
-   else if (!op->maxN)
-   {
-      nc = DoOptList(op->nopt, op->opts, scope, scstate, op->nspill);
-#if 0      
-      for (j=0; j < op->nopt; j++)
-      {
-         if (op->opts[j] == RegAsg )
-         {
-            op->nspill = nspill;
-            break;
-         }
-      }
-#endif      
-   }
-#endif
-/*
- * Otherwise, we have normal while(changes) optblk
- * NOTE: this is the case we apply always. Recalculated the scope if CFG 
- * changes.
- */
-   else
-   {
-      maxN = op->maxN;      
-      for (i=0; i < maxN; i++)
-      {
-         nc = DoOptList(op->nopt, op->opts, scope, scstate, op->nspill);
-#if 0
-/*
- *       updated nspill inside loop, overwirtten with latest nspill everytime
- *       NOTE: updated right after the DoOptList function call, may be optimized
- *       it by updating outside of the loop... did it here to avoid redirection
- *       caused by recursion!!
- */
-         for (j=0; j < op->nopt; j++)
-         {
-            if (op->opts[j] == RegAsg )
-            {
-               op->nspill = nspill;
-               break;
-            }
-         }
-#endif
-         for (dp=op->down; dp; dp = dp->down)
-            nc += DoOptBlock(gscope, lscope, op);
-         if (!nc)
-            break;
-         tnc += nc;
-      }
-      if (nc && (FKO_FLAG & IFF_VERBOSE))
-         fprintf(stderr, "On last (%d) iteration, still had %d changes!\n",
-                 maxN, nc);
-#if 1
-/*
- *    FIXED: scope may be changed due to the change of CFG
- *    CFG can be changed for following optimizations: 
- *       UselessLabElim, UselessJmpElim, BranchChaining
- *    Track whether those changes the CFG using the global variables : 
- *       int noptrec=0;
- *       enum FKOOPT optrec[512];
- *       short optchng[512];
- */
-/*
- * check whether the CFG of the code already been changed
- */
-      i = (i==maxN)? maxN-1 : i;  /* decrement if came from loop condition */
-      for (j = 0; j < (op->nopt) * (i+1); j++)
-      {
-         k = optrec[noptrec-j-1];
-         if (k >= MaxOpt)
-         {
-            k -= MaxOpt;
-         }
-         if (k == UselessJmpElim || k == UselessLabElim || k == BranchChain)
-         {
-            if (optchng[noptrec-j-1])
-            {
-/*
- *             update the scope of the remaining scoped block with new scope
- *             since the CFG has changed.
- */
-#if 0               
-               fprintf(stderr, "\n%d: %s = %d\n",noptrec-j, 
-                       optmnem[k], 
-                       optchng[noptrec-j-1]);
-#endif
-               UpdateOptsNewScope(op);
-               break;
-            }
-         }
-      }
-#endif
-   }
-   if (op->next)
-      tnc += DoOptBlock(gscope, lscope, op->next);
-   return(tnc);
-}
-#else
+   int iscope, maxN;
 
-int ApplyOptBlockList(struct optblkq *op, int maxN)
-{
-   int i;
-   int nc;
-   //int *nspill;
-/*
- * apply opt list in global scope 
- */
-   if (op->flag & IOPT_GLOB)
-   {
-      /*maxN = op->maxN;*/
-      for (i=0; i < maxN; i++)
-      {
-         nc = DoOptList(op->nopt, op->opts, NULL, op->flag, op->nspill);
-         if (!nc)
-            break;
-      }
-   }
-   else if (op->flag & IOPT_SCOP)
-      nc = DoScopedOptBlock(op->nopt, op->opts, maxN, op->nspill);
-   
-   return(nc);
-}
-
-
-int DoOptBlock(struct optblkq *op)
-{
-   int i, j, k, nc, tnc=0, scstate;
-   struct optblkq *dp;
-   int maxN;
+   global = op->flag & IOPT_GLOB;
+   iscope = global ? igscope : ilscope;
 /*
  * if we have conditional optimization block, handle it
  */   
    if (op->ifblk)
    {
-      tnc = DoOptBlock(op->ifblk);
+      tnc = DoOptBlock(igscope, ilscope, op->ifblk);
       if (tnc)
       {
          if (op->down)
-            tnc += DoOptBlock(op->down);
+            tnc += DoOptBlock(igscope, ilscope, op->down);
       }
       else if (op->next)
-         tnc += DoOptBlock(op->next);
+         tnc += DoOptBlock(igscope, ilscope, op->next);
    }
 /*
- * apply opts on this block
+ * If we've got a one time list, handle it
  */
    else if (!op->maxN)
-      nc = ApplyOptBlockList(op, 1);
+      nc = DoOptList(op->nopt, op->opts, iscope, global, op->nspill);
 /*
  * otherwise, we have while(changes) optblk ... using down branch
- * NOTE: HERE HERE, we are dealing with two maxN... one is applied on 
- * opblk->down sequence; other is implicit on the scopes of loops!!!
- * FIXME: using the same maxN for both right now. 
  */
    else
    {
       maxN = op->maxN;
-      //for (i=0; i < maxN; i++)
+      for (i=0; i < maxN; i++)
       {
-         nc = ApplyOptBlockList(op, maxN);
+         nc = DoOptList(op->nopt, op->opts, iscope, global, op->nspill);
          for (dp=op->down; dp; dp = dp->down)
-            nc += DoOptBlock(dp);
-      //   if (!nc)
-      //      break;
+            nc += DoOptBlock(igscope, ilscope, dp);
+         if (!nc)
+            break;
          tnc += nc;
       }
       if (nc && (FKO_FLAG & IFF_VERBOSE))
@@ -2944,51 +2365,10 @@ int DoOptBlock(struct optblkq *op)
    }
    
    if (op->next)
-      tnc += DoOptBlock(op->next);
+      tnc += DoOptBlock(igscope, ilscope, op->next);
    return(tnc);
 }
-#endif
-
-
 #if 0
-void FindScope()
-{
-   BBLOCK *bp;
-   BLIST *bl, *upbl, *downbl, *bl0;
-   extern BBLOCK *bbbase;
-   extern LOOPQ *optloop;
-   extern LOOPQ *loopq;
-
-   LOOPQ *lpq, *lpprev;
-   
-   ShowFlow("cfg.dot",bbbase);
-   PrintLoop(stderr, optloop);
-
-/*
- * NOTE: in loopq, the order of loops:
- *       optloop -> outer loop -> next depth loop -> ...
- *       loopq isn't used 
- *       NOTE: I will change that like, this:
- *       optloop: d depth loop -> d-1 depth loop -> d-2 depth loop ... ...  
- */
-   lpprev = loopq;
-   for (lpq = loopq->next; lpq; lpq = lpq->next)
-   {
-      upbl = FindBlksInBetween(lpq->header, lpprev->header, lpq->blocks );
-/*
- *    need to copy the blist... use new reverse list for now
- */
-      fprintf(stderr, "Scope list before optloop = %s\n", PrintBlockList(upbl));
-      bl0 = NewReverseBlockList(lpq->blocks);
-      bl0 = RemoveBlksFromList(bl0, lpprev->blocks);
-      bl0 = RemoveBlksFromList(bl0, upbl);
-      fprintf(stderr, "down scope list = %s\n", PrintBlockList(bl0));
-      /*need to kill bl0 list without deleting the blocks itself*/
-      lpprev = lpq; 
-   }
-}
-#endif
-
 int PerformOptN(int SAVESP, struct optblkq *optblks)
 /*
  * Returns: # of changes
@@ -3025,6 +2405,36 @@ int PerformOptN(int SAVESP, struct optblkq *optblks)
    INDEADU2D = CFUSETU2D = 0;
    return(nc);
 }
+
+#else
+
+int PerformOptN(struct optblkq *optblks)
+{
+   int i, n;
+   int nc = 0;
+/*
+ * Assumption: repeatable optimization may change the CFG, but can't get rid of 
+ * any loop all together. It's fundamental optimization where we can use loop 
+ * unroll to get rid of any loop. So, the number of scopes will never change, 
+ * despite the change of CFG.
+ */
+   n = GetNumLoopScopes();
+/*
+ * apply optblks for each loop scopes
+ */
+   if (n)
+   {
+      for (i=0; i < n; i++)
+         nc += DoOptBlock(n, i, optblks); 
+   }
+   else
+      nc = DoOptBlock(n, -1, optblks); /* -1 means no loop scope */ 
+
+   INDEADU2D = CFUSETU2D = 0; /* is it necessary? */
+   return(nc);
+}
+
+#endif
 
 int PerformOpt(int SAVESP)
 /*
@@ -3216,6 +2626,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
    return(0);
 }
 #endif
+
 void DumpOptsPerformed(FILE *fpout, int verbose)
 {
    int i, k, j=1;
@@ -3432,31 +2843,25 @@ struct optblkq *DefaultOptBlocks(void)
  *     -G 5 10 3 bc uj ul 
  */
 {
-   int id;
    struct optblkq *base, *op;
 
-   id = 1;
-#if 1
 /*
  * use encapsulated blk so that sprout node can gen the tree on next
  */
-   op = base = NewOptBlock(id++, 0, 5, IOPT_SCOP);
+   op = base = NewOptBlock(1, 0, 5, IOPT_SCOP);
    op->opts[0] = EnforceLoadStore;
    op->opts[1] = MaxOpt+2;
    op->opts[2] = MaxOpt+3;
    op->opts[3] = MaxOpt+4;
    op->opts[4] = MaxOpt+5;
-#else
-   op = base = NewOptBlock(id++, 0, 1, IOPT_SCOP);
-   op->opts[0] = EnforceLoadStore;
-#endif
-   op->next = NewOptBlock(id++, 10, 3, IOPT_GLOB);
+   
+   op->next = NewOptBlock(2, 10, 3, IOPT_GLOB);
    op = op->next;
    op->opts[0] = BranchChain;
    op->opts[1] = UselessJmpElim;
    op->opts[2] = UselessLabElim;
 
-   op->next = NewOptBlock(id++, 10, 5, IOPT_SCOP); /* this is for optloop */
+   op->next = NewOptBlock(3, 10, 5, IOPT_SCOP); /* this is for optloop */
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
@@ -3464,7 +2869,7 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[3] = RemoveOneUseLoads;
    op->opts[4] = LastUseLoadRemoval;
    
-   op->next = NewOptBlock(id++, 10, 5, IOPT_GLOB); /* this is for optloop */
+   op->next = NewOptBlock(4, 10, 5, IOPT_GLOB); /* this is for optloop */
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
@@ -3472,7 +2877,7 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[3] = RemoveOneUseLoads;
    op->opts[4] = LastUseLoadRemoval;
    
-   op->next = NewOptBlock(id++, 10, 3, IOPT_GLOB);
+   op->next = NewOptBlock(5, 10, 3, IOPT_GLOB);
    op = op->next;
    op->opts[0] = BranchChain;
    op->opts[1] = UselessJmpElim;
@@ -4096,6 +3501,121 @@ void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
    
 }
 
+struct optblkq *PerformRepeatableOpts(struct optblkq *optblks)
+{
+/*
+ * generate optblks if not specified command line
+ */
+   if (!optblks)
+      optblks = DefaultOptBlocks();
+   optblks = OptBlockQtoTree(optblks);
+/*
+ * update use/set and dead variables if needed 
+ */
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+   #ifdef X86
+/*
+ * handle system constant specially for X86 
+ */
+      RevealArchMemUses(); /* to handle ABS in X86 */
+      if (!CFUSETU2D)
+      {
+         CalcInsOuts(bbbase);
+         CalcAllDeadVariables();
+      }
+   #endif
+/*
+ * Perform repeatable optimizations based on optblks 
+ */
+   PerformOptN(optblks);
+
+   return(optblks);
+}
+
+void GenAssembly(FILE *fpout)
+/*
+ * finalize prologue/epilogue and generate assembly from final LIL 
+ */
+{
+   int i; 
+   struct assmln *abase;
+   extern struct locinit *ParaDerefQ;
+/*
+ * redo all the data flow analysis, may be needed to finalize prologue
+ */
+   INUSETU2D = INDEADU2D = CFUSETU2D = 0;
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   if (!CFLOOP)
+      FindLoops();
+#if 0  
+   AddBlockComments(bbbase);
+   AddLoopComments();   
+#endif   
+#if 0
+      fprintf(stdout, "\n LIL Before FinalizePrologueEpilogue\n");
+      PrintInst(stdout,bbbase);
+      exit(0);
+#endif
+   i = FinalizePrologueEpilogue(bbbase,0 );
+   KillAllLocinit(ParaDerefQ);
+   ParaDerefQ = NULL;
+   if (i)
+      fprintf(stderr, "ERR from PrologueEpilogue\n");
+   CheckFlow(bbbase, __FILE__,__LINE__);
+#if 0
+   PrintST(stdout);
+   fprintf(stdout, "Final LIL \n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif   
+   DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
+   abase = lil2ass(bbbase);
+   KillAllBasicBlocks(bbbase);
+   bbbase=NULL;                  /* whenever Kill it here, make it NULL */
+   dump_assembly(fpout, abase);
+   KillAllAssln(abase);
+}
+
+
+void FinalStage(FILE *fpout, struct optblkq *optblks)
+/*
+ * final stage to generate assembly after performing repeatable optimizations
+ */
+{
+/*
+ * perform repeatable optimization
+ */
+   optblks = PerformRepeatableOpts(optblks);
+/*
+ * feedback live range spilling info if requested 
+ */
+   if (fpLRSINFO)
+   {
+      FeedbackLValSpill(fpLRSINFO, optblks);
+      KillAllGlobalData(optblks);
+      return;
+   }
+/*
+ * Non Temporal writes if requested
+ */
+   if (NWNT)
+      NAWNT = DoStoreNT(NULL);
+/*
+ * finalize prologue/epilogue and generate assembly
+ */
+   GenAssembly(fpout);
+/*
+ * kill all global data structures 
+ */
+   KillAllGlobalData(optblks); 
+}
+
+#if 0
 void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
 /*
  * NOTE: this is used temporarily to genarate assembly and test the output
@@ -4135,12 +3655,13 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
       CalcAllDeadVariables();
    }
 #if 0
-   fprintf(stdout, "LIL before Repeatable Opt \n");
+   PrintInst(stdout, bbbase);
    PrintInst(stdout, bbbase);
    //exit(0);
 #endif  
 
-   PerformOptN(0, optblks);
+   /*PerformOptN(0, optblks);*/
+   PerformOptN(optblks);
 /*
  * if -ra is applied, send back the live-range spilling info and die/return
  */
@@ -4181,7 +3702,6 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
  */
    }
 
-
    INUSETU2D = INDEADU2D = CFUSETU2D = 0;
    if (!INDEADU2D)
       CalcAllDeadVariables();
@@ -4215,6 +3735,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
    dump_assembly(fpout, abase);
    KillAllAssln(abase);
 }
+#endif
 
 int IsControlFlowInLoop(BLIST *lpblks, BBLOCK *header)
 {
@@ -4391,29 +3912,6 @@ int main(int nargs, char **args)
  * later in repeatable optimization.
  */
    optblks = GetFlagsN(nargs, args, &fin, &fpin, &fpout);
-
-#if 0    /* done inside GetFlagsN function */
-/*
- * if arch info is requested, we will provide that and exit
- */
-   if (fpARCHINFO)
-   {
-      FeedbackArchInfo(fpARCHINFO);
-      KillAllGlobalData(optblks); 
-      return(0);
-   }
-#endif
-/*
- * NOTE: Repeatable optimization is now going to be applied on arbriatry scope of 
- * block list of CFG. It is shifted in GenerateAssembly function where we do 
- * the repeatable optimization. FIXME: should create a separate function for 
- * repeatable optimizations to visualize them better!
- */
-#if 0   
-   if (!optblks)
-      optblks = DefaultOptBlocks();
-   optblks = OptBlockQtoTree(optblks);
-#endif
 /*
  * If we have already saved the program state into files, load that (if it is
  * requested from command line).
@@ -4453,26 +3951,9 @@ int main(int nargs, char **args)
    bp->inst1 = bp->instN = NULL;
    yyparse();
    fclose(fpin);
-#if 0
 /*
- * check the parsing and quit
+ * save state0 so that we can restore problem from that  
  */
-   PrintInst(stdout, bbbase);
-   exit(0);
-#endif
-/*
- * To provide feedback to the tuning scripts 
- */
-#if 0
-/*
- * old implementation
- */
-   SaveFKOState(0); 
-   if (fpLOOPINFO)
-   {
-      PrintLoopInfo();
-   }
-#else 
    SaveFKOState0(); /* this function works for state0. */
 /*
  * if we need information for tunning, generate and return those info.
@@ -4483,8 +3964,6 @@ int main(int nargs, char **args)
       KillAllGlobalData(optblks); 
       exit(0);
    }
-#endif
-
 #if 0
    if (FKO_FLAG & IFF_GENINTERM && state0) /*flag state0 is not impl yet */
    {
@@ -4505,39 +3984,26 @@ int main(int nargs, char **args)
 /*
  * Get code into standard form for analysis
  */
-#if 0
-   PrintInst(stdout, bbbase);
-   exit(1);
-#endif
    GenPrologueEpilogueStubs(bbbase, 0); /* rsav = 0, normal case */
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase,__FILE__,__LINE__);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
-#if 0
-   fprintf(stdout, "1st LIL\n");
-   PrintInst(stdout, bbbase);
-   //PrintST(stdout);
-   //ShowFlow("cfg.dot", bbbase);
-   //PrintLoop(stderr,optloop);
-   exit(0);
-#endif   
 /*
  * NOTE: if there is no optloop, we can't perform transformation of 
  * State1~State3. So, we will jump to State4 to generate code
  */
    if (!optloop)
    {
-      GenerateAssemblyWithCommonOpts(fpout, optblks );
-      KillAllGlobalData(optblks); 
+/*
+ *    perform repeatable optimization, NWNT and genrate assembly
+ */
+      FinalStage(fpout, optblks);
       return(0);
    }
-
-#if 0   
-   fprintf(stdout, "Before Fall-thru conversion\n");
-   PrintInst(stdout, bbbase);
-   fflush(stdout);
-#endif   
+/*
+ * Apply fall thru transformation if mandated in commandline 
+ */
    if (path != -1)
    {
       /*PrintFallThruLoopPath(optloop); */
@@ -4552,10 +4018,6 @@ int main(int nargs, char **args)
       CheckFlow(bbbase, __FILE__,__LINE__);
       FindLoops();
       CheckFlow(bbbase, __FILE__, __LINE__);
-#if 0      
-      PrintLoopPaths();
-      ShowFlow("fall.dot",bbbase);
-#endif      
    }
 #if 0   
    fprintf(stdout, "After Fall-thru conversion\n");
@@ -4563,7 +4025,6 @@ int main(int nargs, char **args)
    ShowFlow("fall.dot",bbbase);
    exit(0);
 #endif   
-
 /*
  * Right now, we will consider only optloop for theses transformation, but
  * it can be applied anywhere. 
@@ -4599,7 +4060,6 @@ int main(int nargs, char **args)
          fprintf(stdout, "LIL Before RC\n");
          PrintInst(stdout, bbbase);
          ShowFlow("cfg.dot", bbbase);
-         exit(0);
 #endif   
          /*assert(!IterativeRedCom());*/
 /*
@@ -4660,13 +4120,9 @@ int main(int nargs, char **args)
  */
    if (VECT_FLAG & VECT_INTRINSIC)
    {
-      /*fprintf(stderr, "***********vec_intrinsic\n");*/
       if (FKO_FLAG & IFF_VECTORIZE)
          fko_warn(__LINE__, "Already vectorize by HIL intrinsic\n");
       UpdateVecLoop(optloop);
-#if 0
-      PrintLoop(stderr, optloop);
-#endif
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {
@@ -4702,22 +4158,15 @@ int main(int nargs, char **args)
 #if 0
          fprintf(stdout, "LIL AFTER LARGER BET \n");
          PrintInst(stdout, bbbase);
-         //PrintST(stdout);
          exit(0);
 #endif         
-         #if 0
-            //GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
-            GenerateAssemblyWithCommonOpts(fpout, optblks );
-            exit(0);
-         #endif
 /*
- *                NOTE: need to parameterize the vectorization.
- *                Haven't fixed the issue if there is outof Regs!!!
+ *       NOTE: Haven't fixed the issue if there is outof Regs!!!
  */
-                 /* FKO_UR = 1;*/  /* forced to unroll factor 1*/
+         /* FKO_UR = 1;*/  /* forced to unroll factor 1*/
       }
       
-      else /*if(RCapp)*/
+      else /*if(RCapp)*/ /* use RcVec as a general pupose vec method*/
       {
          VECT_FLAG &= ~VECT_SV;
          VECT_FLAG |= VECT_NCONTRL;
@@ -4833,7 +4282,6 @@ int main(int nargs, char **args)
 #if 0
          fprintf(stdout, "LIL AFTER UNROLL \n");
          PrintInst(stdout, bbbase);
-         //PrintST(stdout);
          exit(0);
 #endif         
    }
@@ -4856,7 +4304,6 @@ int main(int nargs, char **args)
          fprintf(stdout, "LIL after Unrolling \n");
          PrintInst(stdout, bbbase);
          PrintLoop(stderr, optloop);
-         //exit(0);
          //GenerateAssemblyWithCommonOpts(fpout, optblks );
          exit(0);
 #endif         
@@ -4923,19 +4370,24 @@ int main(int nargs, char **args)
          && IsAlignLoopSpecNeeded(optloop))
       UnalignLoopSpecialization(optloop);
 /*
+ * FINAL STAGE: 
+ *    1. Apply repeatable optimization
+ *    2. Non Temporal writes if requested
+ *    3. Finalize the prologue epilogue
+ *    4. General assembly from final LIL
+ *    5. Free all memory for global data 
  * Now, it's time to apply repeatable optimizations 
  */
-#if 1 
-         #if 0
-            fprintf(stdout, "LIL Before Repeat Opt \n");
-            PrintInst(stdout, bbbase);
-            PrintST(stdout);
-            exit(0);
-         #else
-            GenerateAssemblyWithCommonOpts(fpout, optblks );
-            KillAllGlobalData(optblks); 
-         #endif
-#endif         
+#if 0
+   fprintf(stdout, "LIL Before Repeat Opt \n");
+   PrintInst(stdout, bbbase);
+   PrintST(stdout);
+   exit(0);
+#else
+   /*GenerateAssemblyWithCommonOpts(fpout, optblks );
+   KillAllGlobalData(optblks);*/ 
+   FinalStage(fpout, optblks);
+#endif
 
    return(0);
 

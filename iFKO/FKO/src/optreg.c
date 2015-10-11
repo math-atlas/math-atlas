@@ -1411,11 +1411,13 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
    for (i=0; i < N; i++)
    {
       ig = igs[i];
+      ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
 #if 0
       fprintf(stderr, "**********reg assignment for: %s\n", STname[ig->var-1]);
       fprintf(stderr, "liveregs = %s\n", BV2VarNames(ig->liveregs));
+      if (ig->reg) 
+         fprintf(stderr, "%s : %s\n", STname[ig->var-1], Int2Reg0(-ig->reg));
 #endif
-      ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
       if (ig->reg)
       {
          ivused = Reg2Regstate(ig->reg);
@@ -2949,6 +2951,8 @@ int DoCopyProp(BLIST *scope)
       }
    }
 /*   fprintf(stderr, "\nCopyProp CHANGE=%d\n", CHANGE); */
+   if (CHANGE)
+      CFUSETU2D = INDEADU2D = 0;
    return(CHANGE);
 }
 
