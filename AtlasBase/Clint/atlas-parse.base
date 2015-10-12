@@ -3011,6 +3011,7 @@ void MMFillInGenStrings(char pre, ATL_mmnode_t *mmb)
 /* procedure @(ip) : assumed kbB for routname */
 void MMFillInGenNames(char pre, ATL_mmnode_t *mmb)
 {
+   ATL_mmnode_t *mp;
    if (pre == 'z')
       pre = 'd';
    else if (pre == 'c')
@@ -3463,22 +3464,35 @@ double TimeMMKernel
 {
    char fnam[128], ln[4096];  /* security from 1991 */
    const char *LO = FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "IJK": "JIK";
+   const int vl=mmp->vlen;
    const int ku=mmp->ku;
-   const int KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+ku-1)/ku)*ku;
+   const int KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+vl-1)/vl)*vl;
    const int FORCETIME = flag&1, SERIAL=flag&2;
+   int KU=mmp->ku;
    int DOTIME=1;
    int MV=3;  /* bit pattern on move CBA (C=4, B=2, A=1) */
-   char *be;
+   char *be, *gs0=mmp->genstr;
    int i, j;
    char ch;
    double *dp;
    MV = ((mmp->flag) >> MMF_MVA)&7;
 /*
- * If it's a emit_mm generated file w/o the genstring, create the genstring
- * assuming it is a mmK
+ * If it's a emit_mm generated file with a missing or bad genstring, make it
  */
-   if (mmp->ID == 0 && !mmp->genstr)
+   
+   if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
+      KU = KB;
+   else if (ku > KB)
+      KU = KB;
+   if (mmp->ID == 0 && (KB != mmp->kbB || KU != mmp->ku || !mmp->genstr))
+   {
+      int kb0=mmp->kbB, ku0=mmp->ku;
+      mmp->kbB = KB;
+      mmp->ku = KU;
       mmp->genstr = MMGetGenString(pre, mmp);
+      mmp->kbB = kb0;
+      mmp->ku = ku0;
+   }
 /*
  * If the file is generated, call generator to create it
  */
@@ -3503,7 +3517,7 @@ double TimeMMKernel
 
       sprintf(fnam, 
       "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
-              pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, mmp->ku, 
+              pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, KU, 
               mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
    }
 /* 
@@ -3526,7 +3540,7 @@ double TimeMMKernel
             i += sprintf(ln+i, " mmrout=%s", mmp->rout);
          else
             i += sprintf(ln+i, " mmrout=AMMCASES/%s", mmp->rout);
-         i += sprintf(ln+i, " mu=%d nu=%d ku=%d", mmp->mu, mmp->nu, mmp->ku);
+         i += sprintf(ln+i, " mu=%d nu=%d ku=%d", mmp->mu, mmp->nu, KU);
          i += sprintf(ln+i, " mvA=%d mvB=%d mvC=%d", ((mmp->flag >> MMF_MVA)&1), 
                       ((mmp->flag >> MMF_MVB)&1), ((mmp->flag >> MMF_MVC)&1));
          i += sprintf(ln+i, " kmoves=\"");
@@ -3597,7 +3611,7 @@ double TimeMMKernel
                       pre, mb, nb, KB, 0, 0,
                       FLAG_IS_SET(mmp->flag, MMF_KRUNTIME) ? 0:KB);
          i += sprintf(ln+i, "mu=%d nu=%d ku=%d beta=%d",
-                      mmp->mu, mmp->nu, mmp->ku, beta);
+                      mmp->mu, mmp->nu, KU, beta);
       }
    }
    #endif
@@ -3620,6 +3634,11 @@ double TimeMMKernel
          exit(-1);
       }
    }
+   if (mmp->genstr != gs0)  /* put genstr back to original value */
+   {
+      free(mmp->genstr);
+      mmp->genstr = gs0;
+   }
    dp = ReadResultsFile(RESACT, 0, fnam);
    if (!dp)
    {
@@ -3641,10 +3660,10 @@ double TimeMMKernel
       mf = (mf / KB)*kb;
       return(mf);
    }
-
    return(*((double*)ReadResultsFile(RESACT, 0, fnam)));
    #undef RESACT
-}
+}  /* end TimeMMKernel */
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int MMKernCanHandleCase(ATL_mmnode_t *mp, int mb, int nb, int kb)
