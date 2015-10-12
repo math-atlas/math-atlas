@@ -2187,6 +2187,19 @@ static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
       return(p0->ID == p1->ID && p0->flag == p1->flag);
    return(0);  /* Can't be the same if above criteria fails */
 }
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMKernsPerfSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * ignoring blocking params, are kernels the same?  This version does not
+ * ignore setting that effect only performance (eg, prefetch settings).
+ */
+{
+   if (p0->ID == 0 && p1->ID == 0 && 
+       (p0->pref != p1->pref || p0->pfLS != p1->pfLS))
+      return(0);
+   return(MMKernsSame(p0, p1));
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -2944,6 +2957,7 @@ char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
            mp->pref, mp->pfLS, mp->flag);
    return(rout);
 }
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 char *MMGetGenString
@@ -2952,7 +2966,7 @@ char *MMGetGenString
    ATL_mmnode_t *mp             /* mmkern ptr */
 )
 {
-   char *frm="make gen_amm pre=%c rt=%s vec=%s vlen=%d mu=%d nu=%d ku=%d"
+   char *frm="make gen_amm pre=%c rt=%s vec=%s vlen=%d mu=%d nu=%d ku=%d KB=%d"
              " bcast=%d pf=%d pfLS=%d";
    char *vec="mdim";
    char *gs;
@@ -2970,6 +2984,7 @@ char *MMGetGenString
    else 
       assert(mp->mu % mp->vlen == 0);
    sprintf(gs, frm, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, mp->ku,
+           FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0:mp->kbB, 
            !FLAG_IS_SET(mp->flag, MMF_NOBCAST), mp->pref, mp->pfLS);
    return(gs);
 }
@@ -2989,6 +3004,22 @@ void MMFillInGenStrings(char pre, ATL_mmnode_t *mmb)
    {
       if (mp->ID == 0 && !mp->genstr)
          mp->genstr = MMGetGenString(pre, mp);
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) : assumed kbB for routname */
+void MMFillInGenNames(char pre, ATL_mmnode_t *mmb)
+{
+   if (pre == 'z')
+      pre = 'd';
+   else if (pre == 'c')
+      pre = 's';
+
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (mp->ID == 0 && !mp->rout)
+         mp->rout = MMGetGenName(pre, mp->kbB, mp);
    }
 }
 
@@ -3171,6 +3202,26 @@ int MMKernelFailsTest
    }
    free(ln);
    return(i);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int MMKernelFailsAnyBeta
+(
+   char pre,                    /* precision/type prefix */
+   int mb, int nb, int kb,      /* dimensions to test */
+   ATL_mmnode_t *umm            /* mmkern ptr */
+)
+/*
+ * RETURNS: 0 on success, non-zero on failure
+ */
+{
+   int i;
+
+   for (i=-1; i < 2; i++)
+      if (MMKernelFailsTest(pre, mb, nb, kb, i, umm))
+        return(1);
+   return(0);
 }
 
 @iexp ip @(ip) 1 +
@@ -3801,16 +3852,18 @@ static ATL_mmnode_t *TimeMMFileWithPath
    char pre, 
    char *path, 
    char *file, 
-   int imf,                     /* index of mflop array to check/set */
-   int verb,                    /* 0: no output, 1 min output, 2: full output */
-   int FORCETIME,               /* 1: ignore any prior output file */
-   int beta,                    /* beta to time */
-   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
-   int cflush                   /* >0: size of cache flush, else ignored */
+   int imf,                    /* index of mflop array to check/set */
+   int verb,                   /* 0: no output, 1 min output, 2: full output */
+   int FORCETIME,              /* 1: ignore any prior output file */
+   int beta,                   /* beta to time */
+   int mflop,                  /* >0: force mflop MFLOPs in each time interv */
+   int cflush                  /* >0: size of cache flush, else ignored */
 )
 {
    ATL_mmnode_t *mmb;
    mmb = ReadMMFileWithPath(pre, path, file);
+   if (!mmb)
+      return(NULL);
    MMFillInGenStrings(pre, mmb);
    if (TimeNegMMKernels(imf, verb, FORCETIME, mmb, pre, beta, mflop, cflush))
       WriteMMFileWithPath(pre, path, file, mmb);
