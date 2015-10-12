@@ -149,8 +149,8 @@ During tuning, think about several regions for prefetch:
    @iexp npf @(npf) @(npfB) +
    @iexp npfB @(npf) 0 +
 @endiif
-@skip if (nu%vl) bc = 1 -> can't use vld/vsplat unless nu%vl == 0!
-@iexp bc @(bc) @(vl) @(nu) % 0 ! |
+@skip bc = (bc != 0 || (vl < 2) || nu%vl != 0);
+@iexp bc 0 @(bc) ! 2 @(vl) < | @(vl) @(nu) % 0 ! |
 #define ATL_VLEN @(vl)
 #if !defined(SREAL) && !defined(DREAL) && !defined(SCPLX) && !defined(DCPLX)
 @PRE C `   #define SCPLX 1`
@@ -420,12 +420,14 @@ During tuning, think about several regions for prefetch:
 @iif vnu = 1
    @iexp TWOD 0 0 +
 @endiif
+@skip NOKLOOP = (kb == ku);
+@iexp NOKLOOP @(kb) @(ku) =
 @iexp nlb 0 0 +
-@iif vku = 1
+@iif NOKLOOP = 0
    @iexp ia -1 0 +
    @iexp ib -1 0 +
 @endiif
-@iif vku ! 1
+@iif NOKLOOP ! 0
    @iexp ia 0 0 +
    @iexp ib 0 0 +
 @endiif
@@ -526,8 +528,8 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
       @iif vmu = 1
          @iexp DN 1 0 +
          ATL_vld(rA0, pA+@(ia));
-         @iexp ia @(ia) @(incAk) +
-@skip         pA += @(incAk);
+         @iexp ia @(ia) @(vl) +
+@skip         @iexp ia @(ia) @(incAk) +
          @iexp j 0 0 +
          @iwhile j < @(vnu)
             @callproc ldB 6 rC0_@(j) @(j)
@@ -543,7 +545,6 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                 @iexp ib @(ib) @(vl) +
             @endiif
          @endiwhile
-@skip         pB += @(incBk);
       @endiif
    @endiif
 @SKIP 2-D case assumes all but last rB already loaded
@@ -583,6 +584,104 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @iif i = il
                @iif j ! jl
             @callproc ldB 9 rB@(j) @(j)
+               @endiif
+            @endiif
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @endiif
+@SKIP pop our defs so caller's macros of same name aren't changed
+   @undef DN
+   @undef i
+   @undef j
+   @undef kk
+@ENDPROC
+@SKIP Do normal iteration
+@SKIP ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl, jpf
+@BEGINPROC DoIter_k
+@SKIP define internal vars, so they can popped off to leave caller unchanged
+   @define DN @0@
+   @define i @0@
+   @define j @0@
+   @define kk @0@
+@SKIP 1-D with NU=1
+   @iif vnu = 1
+      @iexp DN 1 0 +
+         @callproc ldB 9 rB0 0
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            ATL_vld(rA0, pA+@(ia));
+            @iexp ia @(ia) @(vl) +
+            ATL_vmac(rC@(i)_0, rA0, rB0);
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+   @endiif
+@SKIP 1-D with MU=1
+   @iif DN = 0
+      @iif vmu = 1
+         @iexp DN 1 0 +
+            ATL_vld(rA0, pA+@(ia));
+            @iexp ia @(ia) @(vl) +
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @callproc ldB 9 rB0 @(j)
+            ATL_vmac(rC0_@(j), rA0, rB0);
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp j @(j) 1 +
+            @skip if (bc==0 && j%vl==0)
+            @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
+            @iif kk ! 0
+               @iexp kk @(vl) @(j) / -1 +
+             ATL_vld(vB@(kk), pB+@(ib));
+               @iexp ib @(ib) @(vl) +
+            @endiif
+         @endiwhile
+      @endiif
+   @endiif
+@SKIP 2-D case assumes all but last rB already loaded
+   @iif DN = 0
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @iexp mo 0 0 +
+            @iexp nlb 0 0 +
+            ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
+            @iif i = 0
+               @iif j = 0
+                  @iexp kk @(jl) @(bmul) *
+               @callproc ldB 12 rB@(jl) @(jl)
+                  @iif lb ! 0
+                     @iexp lb @(lb) -1 +
+               ATL_vld(vB@(lb), pB+@(ib));
+                     @iexp ib @(ib) @(vl) +
+                     @iexp mo 1 0 +
+                     @iexp lb 0 0 +
+                  @endiif
+               @endiif
+            @endiif
+            @iif j = jl
+               ATL_vld(rA@(i), pA+@(ia));
+               @iexp ia @(ia) @(vl) +
+               @iexp mo 1 0 +
+            @endiif
+            @iif j ! jl
+               @iif i = il
+               @callproc ldB 12 rB@(j) @(j)
+               @endiif
+            @endiif
+            @iif nlb = 0
+               @iif lb ! 0
+                  @iexp lb @(lb) -1 +
+               ATL_vld(vB@(lb), pB+@(ib));
+                  @iexp ib @(ib) @(vl) +
+                  @iexp mo 1 0 +
+                  @iexp lb 0 0 +
                @endiif
             @endiif
             @callproc DoPref
@@ -701,104 +800,6 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
 @ENDPROC
 @SKIP Do normal iteration
 @SKIP ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl, jpf
-@BEGINPROC DoIter_k
-@SKIP define internal vars, so they can popped off to leave caller unchanged
-   @define DN @0@
-   @define i @0@
-   @define j @0@
-   @define kk @0@
-@SKIP 1-D with NU=1
-   @iif vnu = 1
-      @iexp DN 1 0 +
-@skip            @(ldB)(rB0, pB+@(ib));
-@skip            @iexp ib @(ib) (incBk) +
-         @callproc ldB 9 rB0 0
-         @iexp i 0 0 +
-         @iwhile i < @(vmu)
-            ATL_vld(rA0, pA+@(ia));
-            @iexp ia @(ia) @(vl) +
-            ATL_vmac(rC@(i)_0, rA0, rB0);
-            @iexp mo 0 0 +
-            @callproc DoPref
-            @iexp i @(i) 1 +
-         @endiwhile
-   @endiif
-@SKIP 1-D with MU=1
-   @iif DN = 0
-      @iif vmu = 1
-         @iexp DN 1 0 +
-            ATL_vld(rA0, pA+@(ia));
-            @iexp ia @(ia) @(incAk) +
-         @iexp j 0 0 +
-         @iwhile j < @(vnu)
-            @callproc ldB 9 rB0 @(j)
-            ATL_vmac(rC0_@(j), rA0, rB0);
-            @iexp mo 0 0 +
-            @callproc DoPref
-            @iexp j @(j) 1 +
-            @skip if (bc==0 && j%vl==0)
-            @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
-            @iif kk ! 0
-               @iexp kk @(vl) @(j) / -1 +
-             ATL_vld(vB@(kk), pB+@(ib));
-               @iexp ib @(ib) @(vl) +
-            @endiif
-         @endiwhile
-      @endiif
-   @endiif
-@SKIP 2-D case assumes all but last rB already loaded
-   @iif DN = 0
-      @iexp j 0 0 +
-      @iwhile j < @(vnu)
-         @iexp i 0 0 +
-         @iwhile i < @(vmu)
-            @iexp mo 0 0 +
-            @iexp nlb 0 0 +
-            ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
-            @iif i = 0
-               @iif j = 0
-                  @iexp kk @(jl) @(bmul) *
-               @callproc ldB 12 rB@(jl) @(jl)
-                  @iif lb ! 0
-                     @iexp lb @(lb) -1 +
-               ATL_vld(vB@(lb), pB+@(ib));
-                     @iexp ib @(ib) @(vl) +
-                     @iexp mo 1 0 +
-                     @iexp lb 0 0 +
-                  @endiif
-               @endiif
-            @endiif
-            @iif j = jl
-               ATL_vld(rA@(i), pA+@(ia));
-               @iexp ia @(ia) @(vl) +
-               @iexp mo 1 0 +
-            @endiif
-            @iif j ! jl
-               @iif i = il
-               @callproc ldB 12 rB@(j) @(j)
-               @endiif
-            @endiif
-            @iif nlb = 0
-               @iif lb ! 0
-                  @iexp lb @(lb) -1 +
-               ATL_vld(vB@(lb), pB+@(ib));
-                  @iexp ib @(ib) @(vl) +
-                  @iexp mo 1 0 +
-                  @iexp lb 0 0 +
-               @endiif
-            @endiif
-            @callproc DoPref
-            @iexp i @(i) 1 +
-         @endiwhile
-         @iexp j @(j) 1 +
-      @endiwhile
-   @endiif
-@SKIP pop our defs so caller's macros of same name aren't changed
-   @undef DN
-   @undef i
-   @undef j
-   @undef kk
-@ENDPROC
 @BEGINPROC DoIter
 @SKIP define internal vars, so they can popped off to leave caller unchanged
    @define DN @0@
@@ -995,7 +996,12 @@ void ATL_USERMM
       ATL_vld(vB@(kk), pB+@(j));
          @iexp j @(j) @(vl) +
       @endiwhile
+      @iif NOKLOOP ! 0
+         @iexp ib @(ib) @(nu) +
+      @endiif
+      @iif NOKLOOP = 0
       pB += @(incBk);
+      @endiif
    @endiif
    @iif vmu > 1
       @iexp j 0 0 +
@@ -1005,8 +1011,14 @@ void ATL_USERMM
          @iexp kk @(bc) 0 = @(TWOD) & @(vl) @(j) 1 + % 0 = &
          @iif kk ! 0
             @iexp kk @(vl) @(j) /
-            @iexp jj @(kk) @(vl) *
+            @iif ib < 0
+               @iexp jj @(kk) @(vl) *
       ATL_vld(vB@(kk), pB+@(jj));
+            @endiif
+            @iif ib > -1
+      ATL_vld(vB@(kk), pB+@(ib));
+               @iexp ib @(vl) @(ib) +
+            @endiif
          @endiif
          @iexp j @(j) 1 +
       @endiwhile
@@ -1014,7 +1026,7 @@ void ATL_USERMM
       for (j=0; j < nnus; j++)
       {
          /* Peel K=0 iteration to avoid zero of rCxx and extra add  */
-   @iif kb = ku
+   @iif NOKLOOP ! 0
       @iexp IN_K 0 0 +
          @CALLPROC DoIter0_k
       @VEC KDIM `@iexp incK @(vl) 0 +`
@@ -1032,7 +1044,7 @@ void ATL_USERMM
          @iexp k @(k) @(incK) +
       @endiwhile
    @endiif
-   @iif vku = 1
+   @iif NOKLOOP = 0
          @iexp IN_K 0 0 +
          @iexp npeel 1 0 +
          @CALLPROC DoIter0
@@ -1061,7 +1073,7 @@ KDONE:
          @CALLPROC storeC 6
          @iexp kk @(mu) @(nu) *
          pC += @(kk);
-   @iif ku = kb
+   @iif NOKLOOP ! 0
          pB += incBn;
    @endiif
    @iif ku ! kb

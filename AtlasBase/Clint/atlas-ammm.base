@@ -6340,7 +6340,7 @@ ATL_mmnode_t *BestForThisNB
             free(mmB->genstr);
          if (mmB->rout)
             free(mmB->rout);
-         mmB->kbB = nb;
+         mmB->mbB = mmB->nbB = mmB->kbB = nb;
          if (FLAG_IS_SET(mmB->flag, MMF_KUISKB))
              mmB->ku = nb;
          mmB->rout = MMGetGenName(pre, nb, mmB);
@@ -6497,15 +6497,19 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE,
  * NREG has been stored by search in ivar.  Read it, and then zero ivar so
  * it won't propogate, making .sum files confusing
  */
-   k = mmb->ivar;
    if (*NREG == 0)
-      *NREG = k;
-   for (mp=mmb; mp; mp = mp->next)
    {
-      if (mp->ivar != 0)
+      ATL_mmnode_t *mp;
+      char upr=pre;
+      if (pre == 'z')
+         upr = 'd';
+      else if (pre == 'c')
+         upr = 's';
+      mp = ReadMMFileWithPath(upr, "res", "gmvAMMUR.sum");
+      if (mp)
       {
-         assert(mp->ivar == k);
-         mp->ivar = 0;
+         *NREG = mp->ivar;
+         KillAllMMNodes(mp);
       }
    }
    if (*CS == 0)
@@ -11679,10 +11683,23 @@ void DoSquare(int flag, int verb, char pre, int nreg, int VL)
    maxNB = GetMaxNB(flag, verb, pre, mp);
 }
 
+int TestWithKU(int verb, char pre, int NB, ATL_mmnode_t *mp, FILE *fperr)
+{
+   int nf;
+   mp->flag |= (1<<MMF_KUISKB);
+   mp->kbB = mp->ku = NB;
+   free(mp->rout);
+   free(mp->genstr);
+   mp->rout = MMGetGenName(pre, NB, mp);
+   mp->genstr = MMGetGenString(pre, mp);
+   nf = NumberBetaFails(fperr, pre, NB, mp);
+   return(nf);
+}
+
 int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
 {
    int i, j, ntest=0, nfail=0;
-   char *frm="%8d %4d %3d %3d %2d   %c %2d  %5d\n";
+   char *frm="%8d %4d %3d %3d %3d %2d   %c %2d  %5d\n";
    FILE *fperr;
 
    fperr = fopen("res/FAIL.OUT", "w");
@@ -11691,11 +11708,11 @@ int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
    assert(VL);
    assert(nreg);
    assert(NB > 0);
-   printf("     NUM   B   MU  NU VL VEC BC  NPASS\n");
-   printf("======== ==== === === == === ==  =====\n");
-   for (i=1; i < nreg; i++)
+   printf("     NUM    B  MU  NU  KU  VL VEC BC  NPASS\n");
+   printf("======== ==== === === ===  == === ==  =====\n");
+   for (i=1; i <= nreg; i++)
    {
-      for (j=1; j < nreg; j++)
+      for (j=1; j <= nreg; j++)
       {
          ATL_mmnode_t *mp;
          int nf;
@@ -11703,27 +11720,48 @@ int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
             continue;
          mp = MMGetNodeGEN(pre, 0, NB, i*VL, j, 1, VL, 0, NULL);
          nf = NumberBetaFails(fperr, pre, NB, mp);
-         printf(frm, ntest, NB, mp->mu, mp->nu, VL, 'M', 0, 3-nf);
-         mp = KillMMNode(mp);
+         printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 0, 3-nf);
          nfail += nf;
          ntest += 3;
+         if (!nf)  /* try fully unrolled case if rolled worked*/
+         {
+            nf = TestWithKU(verb, pre, NB, mp, fperr);
+            printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 0, 3-nf);
+            nfail += nf;
+            ntest += 3;
+         }
+         mp = KillMMNode(mp);
          if (j%VL == 0)  /* try m-vec w/o bcast */
          {
             mp = MMGetNodeGEN(pre, 1, NB, i*VL, j, 1, VL, 0, NULL);
             nf = NumberBetaFails(fperr, pre, NB, mp);
-            printf(frm, ntest, NB, mp->mu, mp->nu, VL, 'M', 0, 3-nf);
-            mp = KillMMNode(mp);
+            printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 0, 3-nf);
             nfail += nf;
             ntest += 3;
+            if (!nf)  /* try fully unrolled case if rolled worked*/
+            {
+               nf = TestWithKU(verb, pre, NB, mp, fperr);
+               printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 0, 3-nf);
+               nfail += nf;
+               ntest += 3;
+            }
+            mp = KillMMNode(mp);
          }
          if ((i*j)%VL == 0) /* try k-vec wt bcast */
          {
             mp = MMGetNodeGEN(pre, 0, NB, i, j, VL, VL, 1, NULL);
             nf = NumberBetaFails(fperr, pre, NB, mp);
-            printf(frm, ntest, NB, mp->mu, mp->nu, VL, 'K', 0, 3-nf);
-            mp = KillMMNode(mp);
+            printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'K', 0, 3-nf);
             nfail += nf;
             ntest += 3;
+            if (!nf)  /* try fully unrolled case if rolled worked*/
+            {
+               nf = TestWithKU(verb, pre, NB, mp, fperr);
+               printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 0, 3-nf);
+               nfail += nf;
+               ntest += 3;
+            }
+            mp = KillMMNode(mp);
          }
       }
    }
@@ -11930,9 +11968,14 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
       for (i=0; i < npf; i++)
          TryPref(pre, verb, mp, 1, 0, ipf|ipfs[i], 64);
 /*
- *    Now let's try K-loop prefetch
- *    HERE HERE
+ *    Now let's try K-loop prefetch, both in addition to prior setting and
+ *    w/o other prefetch
  */
+      for (i=0; i < npf; i++)
+      {
+         const int kpf = mp->ipf;
+         TryPref(pre, verb, mp, 1, 0, ipf|ipfs[i], 64);
+      }
       printf("   A/B PREFETCH FOR %s SPEEDUP=%.3f\n", ctxt[k],mp->mflop[0]/mf0);
    }
    printf("\n");
