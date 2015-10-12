@@ -30,7 +30,19 @@ void HandleUseSet(INT_BVI iv, INT_BVI iuse, int I)
          if (SToff[i].sa[1] < 0)
             BitVecComb(iuse, iuse, Reg2Regstate(-SToff[i].sa[1]), '|');
          else if (SToff[i].sa[1])  /* local deref means use/set of local */
+#if 1            
             SetVecBit(iv, SToff[I].sa[1]-1+tnreg, 1);
+#else
+/*
+ *          SToff[].sa[1] and STpts2[] are same but not for new vector type
+ *          here, SToff[].sa[1] is the parent vetcor and STpts2[] is the scalar
+ *          elem... still on test
+ */
+         {
+            SetVecBit(iv, SToff[I].sa[1]-1+tnreg, 1);
+            SetVecBit(iv, STpts2[i]-1+tnreg, 1);
+         }
+#endif
 /*
  *       Indicate non-local deref in set/use
  */

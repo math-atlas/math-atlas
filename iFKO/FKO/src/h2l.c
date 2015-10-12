@@ -1768,9 +1768,6 @@ void DoReduce(short sid, short vid, char op, short iconst)
          fko_error(__LINE__, 
                   "supported element count in vector: 2,4,8!!!");
 #endif
-#if 1
-      fprintf(stderr, "0x%x\n", k);
-#endif
       r0 = GetReg(FLAG2TYPE(flag));
       InsNewInst(NULL, NULL, NULL, vld, -r0, SToff[vid-1].sa[2], 0);
       if (i)

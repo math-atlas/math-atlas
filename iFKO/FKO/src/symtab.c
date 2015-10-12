@@ -584,6 +584,8 @@ void NumberLocalsByType()
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
+      /*if ((IS_PARA(fl) || IS_LOCAL(fl)) && SToff[SToff[k].sa[2]-1].sa[0] 
+            && !IS_VECELEM(fl))*/
       if ((IS_PARA(fl) || IS_LOCAL(fl)) && SToff[SToff[k].sa[2]-1].sa[0])
       {
          type = FLAG2PTYPE(fl);
@@ -628,6 +630,10 @@ void CreateLocalDerefs()
 {
    short k;
    int fl;
+   short st; 
+   int i, vl, stype;
+   char ln[512];
+
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
@@ -636,28 +642,73 @@ void CreateLocalDerefs()
          SToff[k].sa[0] = SToff[k].i;
          SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
          SToff[k].sa[3] = 0; /* by default 0, remain 0 for 1D array */
-/*
- *       NOTE: after creating deref entry for each parameter, sa[3] is 
- *       available. we use this sa[3] ST entry to point the STarr
- *       shifted to CreateArrayLdas() function.
- */
-#if 0
-         if (IS_PTR(STflag[k]))
-         {
-            for (i=0; i < Narr; i++)
-            {
-               if (STarr[i].ptr == k+1)
-               {
-                  SToff[k].sa[3] = i+1;
-               }
-            }
-         }
-#endif
       }
       else if (IS_LOCAL(fl))
+      {
+#if 0         
+         if (!IS_VECELEM(fl))
+            SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+         else
+            SToff[k].sa[2] = AddDerefEntry(-REG_SP, SToff[k].sa[0], -k-1, 0, 
+                                           k+1);
+/*
+ *       adding scalars for each vector elements
+ *       For local, SToff[].sa[0] is unused. we used this to point the parent 
+ *       vector ST
+ */
+         if (IS_VEC(fl))
+         {
+            SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+            SToff[k].sa[1] = 0; /* will be changed later! */
+            vl = vtype2elem(FLAG2TYPE(fl));
+            if (IS_VFLOAT(fl))
+               stype = T_FLOAT;
+            else if (IS_VDOUBLE(fl))
+               stype = T_DOUBLE;
+            else if (IS_VINT(fl))
+               stype = T_INT;
+
+            for (i=0; i < vl; i++)
+            {
+               sprintf(ln, "_%s_%d", STname[k], i);
+               st = STdef(ln, VELEM_BIT | LOCAL_BIT | stype, 0);
+               SToff[st-1].sa[0] = k+1;
+               SToff[st-1].sa[1] = i+1;
+            }
+         }
+         else if (IS_VECELEM(fl))
+            SToff[k].sa[2] = AddDerefEntry(-REG_SP, SToff[k].sa[0],-k-1,0, k+1);
+         else
+            SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+#else
          SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+#endif
+      }
    }
+#if 0
+   PrintST(stderr);
+   exit(0);
+#endif
 }
+
+#if 0
+short FindSTVecElem(short vid, int el)
+{
+   short i;
+   int fl;
+
+   for (i=0; i != N; i++)
+   {
+      fl = STflag[i];
+      if (IS_VECELEM(fl))
+      {
+         if (SToff[i].sa[0] == vid && el == SToff[i].sa[1])
+            return(i+1);
+      }
+   }
+   return(0);
+}
+#endif
 
 void UpdateLocalDerefs(int isize)
 /*
@@ -679,6 +730,26 @@ void UpdateLocalDerefs(int isize)
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
+#if 0
+      if (IS_VECELEM(fl) && SToff[SToff[k].sa[2]-1].sa[0]) /* vector element */
+      {
+         if (IS_FLOAT(fl)) 
+         {
+            SToff[SToff[k].sa[2]-1].sa[3] = 
+               SToff[SToff[SToff[k].sa[0]-1].sa[2]-1].sa[3] 
+               + (SToff[k].sa[1]-1) * 4;
+         }
+         else if (IS_DOUBLE(fl))
+         {
+            SToff[SToff[k].sa[2]-1].sa[3] = 
+               SToff[SToff[SToff[k].sa[0]-1].sa[2]-1].sa[3] 
+               + (SToff[k].sa[1]-1) * 8;
+         }
+         else
+            fko_error(__LINE__, "vtype not imp yet");
+      }
+      else
+#endif
       if ((IS_PARA(fl) || IS_LOCAL(fl)) && SToff[SToff[k].sa[2]-1].sa[0])
       {
 /* fprintf(stderr, "Updating local %s\n", STname[k]); */

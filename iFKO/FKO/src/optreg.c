@@ -652,18 +652,18 @@ void CalcBlockIG(BBLOCK *bp)
  *          Find ignode associated with var
  */
             k += 1 - TNREG;
-#if 0
-            fprintf(stderr, "dead var = %s\n", STname[k-1]);
-#endif
             for (j=nn-1; j >= 0; j--)
                if (myIG[j] && myIG[j]->var == k) break;
             assert(j >= 0);
+#if 0
+            fprintf(stderr, "******dead var = %s ignode=%d\n", STname[k-1], j);
+#endif
 /*
  *          If dying range ends with a write, indicate it
  */
             if (BitVecCheck(ip->set, k+TNREG-1))
             {
-               fprintf(stderr,
+              fprintf(stderr,
                        "Inst dead on write, block=%d, inst='%s %s %s %s'!\n",
                        bp->bnum, instmnem[ip->inst[0]], op2str(ip->inst[1]),
                        op2str(ip->inst[2]), op2str(ip->inst[3]));
@@ -737,8 +737,24 @@ void CalcBlockIG(BBLOCK *bp)
                SetVecBit(bp->ignodes, node->ignum, 1);
                node->nwrite++;
 #if 0
-            fprintf(stderr, "nwrite var = %s\n", STname[k-1]);
+               fprintf(stderr, "nwrite var = %s\n", STname[k-1]);
 #endif
+            }
+            else
+            {
+               if ( myIG[j]->var 
+                     && strcmp(STname[myIG[j]->var-1], "_NONLOCDEREF") 
+                     &&  !myIG[j]->nread)
+               {
+#if 1            
+                  fprintf(stderr, "%s(%d) set but already exits, ignode = %d\n", 
+                          STname[myIG[j]->var-1], myIG[j]->var, j);
+                  PrintThisInst(stderr, 100, ip);
+#endif
+                  fko_error(__LINE__, "Live range of %s is set again without " 
+                            "being used! Need to apply useless expression " 
+                            "elimination first", STname[myIG[j]->var-1]);
+               }
             }
          }
 /*
@@ -864,6 +880,12 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
    KillIGNode(snode);
 }
 
+
+int CreatePreHeader(BBLOCK *blk)
+{
+
+}
+
 void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
 /*
  * Attempt to combine preds IG with succ
@@ -936,12 +958,21 @@ void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
  *       NOTE: we can consider it for stpush now but scope out after combining
  *       all the IG nodes!!!
  */
-         //if (node->nwrite && BitVecCheck(succ->ins, node->var+TNREG-1) )
+         /*if (node->nwrite && BitVecCheck(succ->ins, node->var+TNREG-1) )*/
          if (BitVecCheck(succ->ins, node->var+TNREG-1))
          {
 #if 0
          fprintf(stderr, "############## stpush = %s\n", STname[node->var-1]);
 #endif
+/*          Posttails:
+ *          FIXME: Successor can't have predeccessor other than this pred blk
+ *          if it does, we create new blk as posttails
+ */
+            if (succ->preds->next)
+            {
+               fko_error(__LINE__, "can't have pred other than blk=%d", 
+                     pred->bnum);
+            }
             node->stpush = AddBlockToList(node->stpush, succ);
             if (succ->ainst1)
             {
@@ -962,6 +993,24 @@ void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
       sig = BitVec2StaticArray(succ->conin);
       for (n=sig[0], i=1; i <= n; i++)
       {
+/*
+ *       FIXME: predecessor can't have successor other than this blk
+ */
+         if (pred->csucc )
+         {
+            ShowFlow("cfg-error.dot", bbbase);
+            fprintf(stderr, "---------------------------------------\n");
+            fprintf(stderr, "scope = %s\n", PrintBlockList(scope));
+            fprintf(stderr, "preds = %s\n", PrintBlockList(succ->preds));
+               fprintf(stderr, "succ=%d pred=%d\n", succ->bnum, pred->bnum);
+               if (pred->csucc)
+                  fprintf(stderr, "pred->csucc=%d\n", pred->csucc->bnum);
+               if (pred->usucc)
+                  fprintf(stderr, "pred->usucc=%d\n", pred->usucc->bnum);
+            fprintf(stderr, "---------------------------------------\n");
+
+            fko_error(__LINE__, "pred can't have any csucc");
+         }
          node = IG[sig[i]];
          node->ldhoist = AddBlockToList(node->ldhoist, pred);
          if (pred->ainstN)
@@ -1091,7 +1140,7 @@ int CalcScopeIG(BLIST *scope)
  *       Majedul: 
  *       NOTE: should not assume any order of execution!!! 
  *       stpush depends on the nwrite... which may not be seen in a 
- *       specific order!!!
+ *       specific order!!! FIXED.
  */
          if (bl->blk->csucc)
             CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
@@ -1405,6 +1454,11 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
       fprintf(stderr, "liveregs = %s\n", BV2VarNames(ig->liveregs));
 #endif
       ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
+#if 0
+      fprintf(stderr, "**********reg assignment for: %d(%s)\n", ig->ignum, 
+              STname[ig->var-1]);
+      fprintf(stderr, "**********assigned reg = %d\n", ig->reg);
+#endif
       if (ig->reg)
       {
          ivused = Reg2Regstate(ig->reg);

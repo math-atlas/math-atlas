@@ -10818,13 +10818,14 @@ ILIST **FindAdjMem(INSTQ *ipscope, int *npt)
 #endif
 }
 
-void FilterOutRegs(INT_BVI iv)
+INT_BVI FilterOutRegs(INT_BVI iv)
 {
    int i;
    extern short STderef;
    for (i=0; i < TNREG; i++)
       SetVecBit(iv, i, 0);
    SetVecBit(iv, STderef+TNREG-1, 0);
+   return(iv);
 }
 
 INSTQ *DelMatchInstQ(INSTQ *instq, INSTQ* delq)
@@ -11357,6 +11358,7 @@ INSTQ *InstdefsVar(INT_BVI bvvar, INSTQ *upackq)
    ip = upackq;
    while (ip)
    {
+      //PrintThisInst(stderr, 1, ip);
       if (BitVecCheckComb(bvvar, ip->set, '&'))
       {
 #if 0
@@ -11624,7 +11626,11 @@ int IsInitPackInUse(PACK *ipk)
    return(0);
 }
 
-INSTQ *ExtendPack(INSTQ *upackq)
+INSTQ *ExtendPack(INSTQ *upackq, int ipk)
+/*
+ * ipk is initial pack number to start with... need to added that to extend
+ * from pre-head
+ */
 {
    int i, j, npk, changes, change;
    int cseed = 0;
@@ -11660,7 +11666,7 @@ INSTQ *ExtendPack(INSTQ *upackq)
       }
    } while (changes);
    #else
-   for (i=0; i < NPACK; i++)
+   for (i=ipk; i < NPACK; i++)
    {
       pk = PACKS[i];
       if (pk)
@@ -11690,7 +11696,7 @@ INSTQ *ExtendPack(INSTQ *upackq)
  * delete those initial packs which can't be extended
  * FIXED: they can be in use in some packs... need to check that too
  */
-   for (i=0; i < NPACK; i++)
+   for (i=ipk; i < NPACK; i++)
    {
       pk = PACKS[i];
       if (pk)
@@ -11781,13 +11787,14 @@ int IsSameInst(INSTQ *ip0, INSTQ *ip1)
       return(1);
 }
 
-PACK *FindPackFromInst(INSTQ *ipuse)
+PACK *FindPackFromInst(INSTQ *ipuse, int ipk)
 {
    int i, k, nosame;
    INSTQ *ip0, *ip1, *ip;
    ILIST *il;
 
-   for (i=0; i < NPACK; i++)
+   //for (i=0; i < NPACK; i++)
+   for (i=ipk; i < NPACK; i++)
    {
       if (PACKS[i])
       {
@@ -11833,7 +11840,7 @@ PACK *FindPackFromInst(INSTQ *ipuse)
    return(NULL);
 }
 
-void UpdateDep(INSTQ *bip)
+void UpdateDep(INSTQ *bip, int ipk)
 {  
    int i, k, n;
    INSTQ *ip;
@@ -11908,7 +11915,7 @@ void UpdateDep(INSTQ *bip)
 /*
  *                find pack which has this ip inst
  */
-                  pk = FindPackFromInst(ip);
+                  pk = FindPackFromInst(ip, ipk);
                   if (pk)
                   {
                      //fprintf(stderr, "******Found the pack = %d\n", pk->pnum);
@@ -11972,7 +11979,7 @@ void UpdateDep(INSTQ *bip)
 #endif
 #if 0   
    fprintf(stderr, "Pack info:\n");
-   for (i=0; i < NPACK; i++)
+   for (i=ipk; i < NPACK; i++)
    {
       if (PACKS[i])
       {
@@ -12043,7 +12050,7 @@ INSTQ *SchInstQ(PACK *pk, BBLOCK *nsbp, BBLOCK *sbp, INSTQ *anchor)
 }
 
 //INSTQ *SchedulePack(INSTQ *biq, INSTQ *sbiq)
-void SchedulePack(BBLOCK *nsbp, BBLOCK *sbp)
+void SchedulePack(BBLOCK *nsbp, BBLOCK *sbp, int ipk)
 {
    int nosch, isstore;
    INSTQ *ip, *ip0, *ip1;
@@ -12067,7 +12074,7 @@ void SchedulePack(BBLOCK *nsbp, BBLOCK *sbp)
 /*
  *    find pack from inst
  */
-      pk = FindPackFromInst(ip);
+      pk = FindPackFromInst(ip, ipk);
       if (pk) /* found in a pack */
       {
          il = pk->depil;
@@ -12604,7 +12611,8 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
 }
 
 
-SLP_VECTOR *CreateVector(SLP_VECTOR *vlist, PACK *pk, short *svars, int islivein)
+SLP_VECTOR *CreateVector(SLP_VECTOR *vlist, int flag, int vlen, short *svars, 
+      int islivein)
 /*
  * added at the endof the list ;
  */
@@ -12634,8 +12642,8 @@ SLP_VECTOR *CreateVector(SLP_VECTOR *vlist, PACK *pk, short *svars, int islivein
  */
    vl->islive = 1;  /* always live at creation */
    vl->islivein = islivein; /* livein at the entry of blk */
-   vl->flag = pk->vflag;
-   vl->vlen = pk->vlen;
+   vl->flag = flag;
+   vl->vlen = vlen;
    n = svars[0];
    vl->svars = malloc((n+1)*sizeof(short));
    assert(vl->svars);
@@ -12645,6 +12653,45 @@ SLP_VECTOR *CreateVector(SLP_VECTOR *vlist, PACK *pk, short *svars, int islivein
  * create new vector variable
  */
    vl->vec = InsertSlpVector(vl->flag);
+
+   return(vlist);
+}
+
+SLP_VECTOR *AddVectorInList(SLP_VECTOR *vlist, SLP_VECTOR *vec, int islivein)
+{
+   int i, n;
+   SLP_VECTOR *vl;
+
+   if (vlist)
+   {
+      for (vl=vlist; vl->next; vl = vl->next)
+         ;
+      vl->next = malloc(sizeof(SLP_VECTOR));
+      assert(vl->next);
+      vl = vl->next;
+      vl->next = NULL;
+   }
+   else
+   {
+      vl = vlist = malloc(sizeof(SLP_VECTOR));
+      assert(vl);
+      vl->next = NULL;
+   }
+
+/*
+ * copy the vector
+ */
+   vl->islive = 1; // need to test 
+   vl->islivein = islivein; /* livein at the entry of blk */
+   
+   vl->flag = vec->flag;
+   vl->vlen = vec->vlen;
+   n = vec->svars[0];
+   vl->svars = malloc((n+1)*sizeof(short));
+   assert(vl->svars);
+   for (i=0; i <= n; i++)
+      vl->svars[i] = vec->svars[i];
+   vl->vec = vec->vec;
 
    return(vlist);
 }
@@ -12811,6 +12858,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
    vd = vs1 = vs2 = NULL;
 /*
  * all inst in pck are isomorphic; so, checking one ilist node is sufficient
+ * FIXME: need to handle assignment: specially with zero
  */
    pt = NONE;
    ip = pk->sil->inst;
@@ -12859,7 +12907,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
       vd = FindVectorFromScalars(pk->scdef, vlist);
       if (!vd)
       {
-         vlist = CreateVector(vlist, pk, pk->scdef, 0);
+         vlist = CreateVector(vlist, pk->vflag, pk->vlen, pk->scdef, 0);
          vd = FindVectorFromScalars(pk->scdef, vlist); /*avoid extra search!*/
          assert(vd);
       }  
@@ -12894,7 +12942,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
          iv = BitVecCopy(iv, pk->uses);
          FilterOutRegs(iv);
          assert(!BitVecCheckComb(iv, livein, '-'));
-         vlist = CreateVector(vlist, pk, pk->scuse, 1);
+         vlist = CreateVector(vlist, pk->vflag,pk->vlen, pk->scuse, 1);
          vs1 = FindVectorFromScalars(pk->scuse, vlist);
          assert(vs1);
       } 
@@ -12958,9 +13006,9 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
          {
             iv = BitVecCopy(iv, Array2BitVec(sp[0], sp+1, TNREG-1));
             FilterOutRegs(iv);
-            if (BitVecCheckComb(iv, livein, '-')) /* not livein */
+            if (BitVecCheckComb(iv, livein, '-')) /* not livein: all ? any? */
             {
-               vlist = CreateVector(vlist, pk, sp, 0);
+               vlist = CreateVector(vlist, pk->vflag, pk->vlen, sp, 0);
                vd = FindVectorFromScalars(sp, vlist);
                assert(vd);
                if ( NeedBroadcast(sp))
@@ -12982,7 +13030,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
             }
             else
             {
-               vlist = CreateVector(vlist, pk, sp, 1);
+               vlist = CreateVector(vlist, pk->vflag, pk->vlen, sp, 1);
                vd = FindVectorFromScalars(sp, vlist);
                assert(vd);
             }
@@ -13040,7 +13088,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
 }
 
 SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein, 
-                  INT_BVI liveout, SLP_VECTOR *vlist)
+                  INT_BVI liveout, SLP_VECTOR *vlist, int ipk)
 {
    int nosch, isstore;
    INSTQ *ip, *ip0, *ip1;
@@ -13050,6 +13098,11 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
 
    for (ip=nsbp->ainst1; ip; )
    {
+      if (!ACTIVE_INST(ip->inst[0]))
+      {
+         ip = ip->next;
+         continue;
+      }
 /*
  *    got label, add it to sbp and delete from nsbp
  */
@@ -13066,7 +13119,7 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
 /*
  *    find pack from inst
  */
-      pk = FindPackFromInst(ip);
+      pk = FindPackFromInst(ip, ipk);
       if (pk) //&& 1) 
             //( !(pk->pktype & PK_INIT) || pk->pktype & PK_INIT_ACTIVE)) /* found in a pack */
       {
@@ -13742,6 +13795,7 @@ void AddSlpPrologueEpilogue(BBLOCK *vbp, BBLOCK *prebp, BBLOCK *postbp,
 
 /*
  * calculate all variable used in packs
+ * FIXME: need to consider live-in and live-out scalar vars
  */
    BitVecCopy(iv1, livein);
    BitVecCopy(iv2, liveout);
@@ -13846,6 +13900,31 @@ void FinalizeSLPVec(BBLOCK *lbp, BBLOCK *vbp, BBLOCK *preheader,
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
+}
+
+void FinalizeVecBlock(BBLOCK *lbp, BBLOCK *vbp)
+{
+   INSTQ *ip;
+   extern BBLOCK *bbbase;
+/*
+ * replace with vector code
+ */
+   KillAllInst(lbp->inst1);
+   lbp->inst1 = lbp->instN = lbp->ainst1 = lbp->ainstN = NULL;
+   for (ip=vbp->inst1; ip; ip=ip->next)
+      InsNewInst(lbp, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2], 
+            ip->inst[3]);
+#if 0
+/*
+ * update CFG
+ * FIXME: can't update now, optloop structure would be changed then
+ */
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
 }
 
 short *FindPtrFromPack(ILIST **ilam, int nptr)
@@ -13996,23 +14075,264 @@ void SortPackBasedOnPtr(short *pts)
       }
    }
 }
+
+INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
+{
+   int i, k, n;
+   ILIST *il, *iln = NULL;
+   PACK *new;
+   INSTQ *ip, *ipu, *ip0, *ipdup;
+   INT_BVI iv;
+   extern INT_BVI FKO_BVTMP;
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(128);
+   iv = FKO_BVTMP;
+
+   for (i=1, n=vl->svars[0], k=0; i <= n; i++)
+   {
+      SetVecAll(iv, 0); 
+      SetVecBit(iv, vl->svars[i]+TNREG-1, 1);
+      //PrintVars(stderr, "bitvec var:", iv);
+      ipu = InstdefsVar(iv, upackq);
+      if (ipu)
+      {
+         assert(IS_LOAD(ipu->inst[0]));
+         ipdup = ip0 = NULL;
+         do
+         {
+            ipdup = NewInst(NULL, ipdup, NULL, ipu->inst[0], ipu->inst[1], 
+                               ipu->inst[2], ipu->inst[3]);
+            CalcThisUseSet(ipdup);
+            if (ip0)
+               ip0->next = ipdup;
+            ip0 = ipdup;
+            ipu = ipu->next;
+         } while (!IS_STORE(ipdup->inst[0])); 
+         
+         while(ipdup->prev) ipdup = ipdup->prev;
+         iln = NewIlistAtEnd(ipdup, iln);
+         k++;
+#if 0
+         PrintThisInstQ(stderr, ipdup);
+#endif
+      }
+      else
+      {
+         fko_error(__LINE__, "no def found for this var=%s", 
+               STname[vl->svars[i]-1]);
+      }
+   }
+/*
+ * finalize pack
+ */
+   assert(k==vl->vlen);
+   for (il=iln; il; il=il->next)
+   {
+      ip0 = iln->inst;
+      ip = il->inst;
+      while (ip)
+      {
+         if (!IsIsomorphicInst(ip, ip0))
+         {
+            PrintThisInst(stderr, 1, ip);
+            PrintThisInst(stderr, 2, ip0);
+            fko_error(__LINE__, "not isomorphic inst\n");
+         }
+         ip = ip->next;
+         ip0 = ip0->next;
+      }
+   }
+   new = NewPack(iln, k);
+   new->vflag = vl->flag; /* vl->flag == pk->vflag*/
+   new->pktype = PK_INIT;
+#if 0
+   fprintf(stderr, "vl->flag = %d\n", vl->flag);
+#endif
+   upackq = FinalizePack(new, upackq, change); 
+
+
+   return(upackq);
+}
+
+int PreHeadSLP(BBLOCK *blk, SLP_VECTOR *vlist, BBLOCK *prehead)
+/*
+ * NOTE: will be deleted and added as part of recursive of the original SLP later
+ */
+{
+   int i,j, k;
+   int suc, islivein;
+   int inpack;
+   PACK *pk;
+   SLP_VECTOR *vl, *vln;
+   INSTQ *upackq;
+   BBLOCK *nsbp, *sbp, *vbp;
+   BBLOCK *bp, *prebp;
+   INT_BVI livein, liveout;
+   SLP_VECTOR *vlist2 = NULL;
+   INT_BVI iv;
+   LOOPQ *lpq;
+   extern LOOPQ *loopq;
+   extern INT_BVI FKO_BVTMP;
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(128);
+   iv = FKO_BVTMP;
+   
+   if (!blk) return(0);
+
+   inpack = NPACK;
+   upackq = DupInstQ(blk->ainst1);
+#if 0
+   fprintf(stderr, "-----------------------\n");
+   fprintf(stderr, "dup pre-head inst:\n");
+   PrintThisInstQ(stderr, upackq);
+   fprintf(stderr, "-----------------------\n");
+#endif
+   for (vl=vlist; vl; vl=vl->next)
+   {
+      if (vl->islivein)
+      {
+#if 1
+         fprintf(stderr, "%s = ", STname[vl->vec-1]);
+         for (j=1, k=vl->svars[0]; j <= k; j++) 
+            fprintf(stderr, "%s ", STname[vl->svars[j]-1]);
+         fprintf(stderr, "\n"); 
+#endif
+         upackq = FindInitPackFromVlist(upackq, vl, &suc);
+         if (suc) fprintf(stderr, "pack created for %s\n", STname[vl->vec-1]);
+      }
+   }
+#if 1
+   fprintf(stderr, "New Pack created: ");
+   for (i=inpack; i < NPACK; i++)
+   {
+      pk = PACKS[i];
+      if (pk)
+      {
+         fprintf(stderr, "%d, ", pk->pnum);
+      }
+   }
+   fprintf(stderr, "\n");
+#endif
+   upackq = ExtendPack(upackq, inpack);
+#if 1
+   fprintf(stderr, "After extending packs: ");
+   for (i=inpack; i < NPACK; i++)
+   {
+      pk = PACKS[i];
+      if (pk)
+      {
+         fprintf(stderr, "%d, ", pk->pnum);
+      }
+   }
+   fprintf(stderr, "\n");
+#endif
+   PrintThisInstQ(stderr, upackq);
+   
+   nsbp = NewBasicBlock(NULL, NULL);
+   nsbp = DupInstQInBlock(nsbp, blk->ainst1);
+   UpdateDep(nsbp->ainst1, inpack);
+   
+
+
+   sbp = NewBasicBlock(NULL, NULL);
+   vbp = NewBasicBlock(NULL, NULL);   
+   livein = NewBitVec(32);
+   liveout = NewBitVec(32);
+   livein = BitVecCopy(livein, blk->ins);
+   liveout = BitVecCopy(liveout, blk->outs);
+   FilterOutRegs(livein);
+   FilterOutRegs(liveout);
+#if 1
+/*
+ * pre load vlist with lived in vectors 
+ */
+   for (vl=vlist; vl; vl=vl->next)
+   {
+      if (vl->islivein)
+      {
+         iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1));
+/*
+ *       FIXME: assumption: all live-in or no one live-in!!! 
+ */   
+         if (!BitVecCheckComb(iv, livein, '-'))
+            vlist2 = AddVectorInList(vlist2, vl, 1);
+         else
+            vlist2 = AddVectorInList(vlist2, vl, 0);
+      }
+   }
+   PrintVectors(stderr, vlist2);
+#endif
+
+   vlist2 = SchVectorInst(nsbp, sbp, vbp, livein, liveout, vlist2, inpack);
+#if 1
+   PrintVars(stderr, "livein = ", livein);
+   PrintVectors(stderr, vlist2);
+#endif
+   
+#if 1
+   fprintf(stdout, "Schedule Block: \n");
+   fprintf(stdout, "====================\n");
+   PrintThisBlockInst(stdout, sbp);
+#endif
+#if 1
+   fprintf(stdout, "Vetcor Block: \n");
+   fprintf(stdout, "====================\n");
+   PrintThisBlockInst(stdout, vbp);
+#endif
+   
+   FinalizeVecBlock(blk, vbp);
+   
+   islivein = 0;
+   for (vl=vlist2; vl; vl=vl->next)
+   {
+      if (vl->islivein)
+      {
+         islivein = 1;
+         break;
+      }
+   }
+   
+   if (prehead && islivein)
+   {
+      bp = prehead;
+      prebp = NULL;
+      for (lpq=loopq; lpq; lpq=lpq->next)
+      {
+         if (lpq->header == bp)
+         {
+            prebp = lpq->preheader;
+            break;
+         }
+      }
+      PreHeadSLP(bp, vlist2, prebp);
+   }
+
+   return(0);
+}
+
 int BlkSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails)
 {
    int i, j, n;
    int vlen, nptr;
+   int islivein;
    short *pta, *sp;
    ILIST *il;
    ILIST **ilam;
+   BLIST *bl;
    BBLOCK *nsbp, *sbp, *vbp;
-   BBLOCK *bp;
+   BBLOCK *bp, *prebp;
+   BBLOCK *preprehead;
    LOOPQ *lp;
    PACK *seedpk = NULL, *pk;
    INSTQ *ip, *ip0, *ip1, *upackq;
    INSTQ *biq, *sbiq;
    FILE *fout;
    INT_BVI livein, liveout;
-   SLP_VECTOR *vlist = NULL;
-   extern LOOPQ *optloop;
+   INT_BVI iv, iv1;
+   SLP_VECTOR *vl, *vlist = NULL;
+   LOOPQ *lpq;   
+
+   extern LOOPQ *optloop, *loopq;
    extern BBLOCK *bbbase;
    
    //bp = optloop->blocks->blk;
@@ -14096,7 +14416,7 @@ int BlkSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails)
  * step: 3
  * extend pack using def-use chain
  */
-   upackq = ExtendPack(upackq);
+   upackq = ExtendPack(upackq, 0);
 /*
  * step: 4
  * calc dependecies
@@ -14106,7 +14426,7 @@ int BlkSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails)
  */
    nsbp = NewBasicBlock(NULL, NULL);
    nsbp = DupInstQInBlock(nsbp, bp->ainst1);
-   UpdateDep(nsbp->ainst1);
+   UpdateDep(nsbp->ainst1, 0);
    
    sbp = NewBasicBlock(NULL, NULL);
    //sbiq = PrintComment(NULL, NULL, NULL, "re-ordered/scheduled instQ");
@@ -14142,7 +14462,7 @@ int BlkSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails)
    FilterOutRegs(livein);
    FilterOutRegs(liveout);
    
-   vlist = SchVectorInst(nsbp, sbp, vbp, livein, liveout, vlist);
+   vlist = SchVectorInst(nsbp, sbp, vbp, livein, liveout, vlist, 0);
 #if 0
    fprintf(stdout, "Schedule Block: \n");
    fprintf(stdout, "====================\n");
@@ -14160,7 +14480,72 @@ int BlkSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails)
  * Add Prologue & Epilogue and replace blk with vector inst
  *
  */
+#if 0   
    FinalizeSLPVec(bp, vbp, prehead, posttails, vlist);   
+#else
+   FinalizeVecBlock(bp, vbp);
+/*
+ * try to vectorize pre-header if we have live in
+ */
+   islivein = 0;
+   for (vl=vlist; vl; vl=vl->next)
+   {
+      if (vl->islivein)
+      {
+         islivein = 1;
+         break;
+      }
+   }
+
+   if (prehead && islivein)
+   {
+      bp = prehead;
+      prebp = NULL;
+      for (lpq=loopq; lpq; lpq=lpq->next)
+      {
+         if (lpq->header == bp)
+         {
+            prebp = lpq->preheader;
+            break;
+         }
+      }
+      PreHeadSLP(bp, vlist, prebp);
+   }
+/*
+ * now manage posttails.... !!!!!!!!!
+ * NOTE: trying to just generate valid code without vectorizing the posttails
+ */
+#if 0
+      iv = NewBitVec(128);
+      iv1 = NewBitVec(128);
+      SetVecAll(iv1, 0);
+      SetVecAll(iv, 0);
+      
+      for (bl=posttails; bl; bl = bl->next)
+      {
+         BitVecDup(iv1, bl->blk->outs, '=');
+         if (bl->blk->usucc &&
+             !BitVecCheck(lp->blkvec, bl->blk->usucc->bnum-1))
+            BitVecComb(iv1, iv1, bl->blk->usucc->ins, '&');
+         else
+         {
+            assert(bl->blk->csucc &&
+                   !BitVecCheck(lp->blkvec, bl->blk->csucc->bnum-1));
+            BitVecComb(iv1, iv1, bl->blk->csucc->ins, '&');
+         }
+         BitVecComb(iv, iv, iv1, '|');
+      }
+  
+      FilterOutRegs(iv);
+      PrintVars(stderr, "live-outs: ", iv);
+#endif
+
+
+      KillBitVec(iv);
+      KillBitVec(iv1);
+
+#endif
+
 
 #if 0   
 /*
@@ -14218,11 +14603,310 @@ int BlkSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails)
    return(0);
 }
 
+SLP_VECTOR *vlv2s=NULL;
+int LoopBlkSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails, SLP_VECTOR *vl0, 
+      int isFirst)
+{
+   int i, j;
+   int inpack, nnpack, nptr, suc;
+   int haslivein;
+   short *pta;
+   BBLOCK *bp, *sbp, *nsbp, *vbp;
+   BBLOCK *prebp;
+   BLIST *bl, *postbl;
+   INT_BVI iv, livein, liveout, ivuses, ivdefs;
+   ILIST **ilam;
+   INSTQ *upackq;
+   PACK *seedpk, *pk;
+   SLP_VECTOR *vl, *vlist=NULL;
+   LOOPQ *lpq;
+   extern LOOPQ *loopq;
+   extern INT_BVI FKO_BVTMP;
+
+   inpack = NPACK; /* starting index of pack table for this call */
+/*
+ * step: 0 
+ * =========
+ * copy active inst from block, create upackq
+ */
+   upackq = DupInstQ(blk->ainst1);
+/*
+ * step: 1
+ * =========
+ * initialize packs: a) find adjacent memory b) create init packs with mem loads  
+ */
+   if (isFirst)  /* starting blk to start SLP with*/
+   {
+/*
+ *    find adjacent memory load
+ */
+      ilam = FindAdjMem(upackq, &nptr);
+/*
+ *    create initial pack with mem loads  
+ */
+      upackq = InitPack(ilam, nptr, upackq, &pta);
+/*
+ *    delete ilam, it's not valid since upackq is changed
+ */
+      for (i=0; i < nptr; i++)
+         if (ilam[i])
+            KillAllIlist(ilam[i]);
+      free(ilam);
+/*
+ *    sorted init packs based on Pointer 
+ *    NOTE: I hardcoded to sort pA here... will feedback ptr info later and pass
+ *    flag to control this
+ */
+      for (i=1; i <= pta[0]; i++)
+      {
+         if (i > 1 && !strcmp(STname[pta[i]-1], "pA") )
+         {
+            j = pta[1];
+            pta[1] = pta[i];
+            pta[i] = j;
+         }
+      }
+/*
+ *    short pack table based on ptr preference
+ */
+      SortPackBasedOnPtr(pta);
+   }
+   else /* not the first call, should have live-in to start with */
+   {
+      for (vl=vl0; vl; vl=vl->next)
+      {
+         if (vl->islivein)
+         {
+            upackq = FindInitPackFromVlist(upackq, vl, &suc);
+#if 1
+            if (suc) 
+               fprintf(stderr, "pack created for %s\n", STname[vl->vec-1]);
+#endif
+         }
+      }
+   }
+/*
+ * we need at least one init pack to begin with 
+ */
+#if 1
+   for (i=inpack; i < NPACK; i++)
+   {
+      if (PACKS[i])
+      {
+         seedpk = PACKS[i];
+         break;
+      }
+   }
+   if (!seedpk)
+   {
+      fko_error(__LINE__, "no effective seed found!");
+      return(1);
+   }
+#endif
+/*
+ * step: 2
+ * ========
+ * extend pack using def-use chain
+ */
+   upackq = ExtendPack(upackq, inpack);
+/*
+ * step: 3
+ * =======
+ * Calculate dependencies
+ */
+   nsbp = NewBasicBlock(NULL, NULL);
+   nsbp = DupInstQInBlock(nsbp, blk->ainst1);
+   UpdateDep(nsbp->ainst1, 0);
+/*
+ * step: 4
+ * ========
+ * schedule packs and emit vector inst accordingly
+ */
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(128);
+   iv = FKO_BVTMP;
+
+   livein = NewBitVec(128);
+   liveout = NewBitVec(128);
+   
+   livein = BitVecCopy(livein, blk->ins);
+   liveout = BitVecCopy(liveout, blk->outs);
+   FilterOutRegs(livein);
+   FilterOutRegs(liveout);
+  
+   if (vl0) /* not the 1st call, may have live-in */
+   {
+      for (vl=vl0; vl; vl=vl->next)
+      {
+         if (vl->islivein)
+         {
+            iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, 
+                                             TNREG-1) );
+            if (!BitVecCheckComb(iv, livein, '-'))
+               vlist = AddVectorInList(vlist, vl, 1);
+            else
+               vlist = AddVectorInList(vlist, vl, 0);
+         }
+      }
+   }
+
+   sbp = NewBasicBlock(NULL, NULL);
+   vbp = NewBasicBlock(NULL, NULL);
+   vlist = SchVectorInst(nsbp, sbp, vbp, livein, liveout, vlist, inpack);
+
+   //FinalizeVecBlock(bp, vbp);
+  
+   nnpack = NPACK; /* store the npack in this call */
+   haslivein = 0;
+   for (vl=vlist; vl; vl=vl->next)
+   {
+      if (vl->islivein)
+      {
+         haslivein = 1;
+         break;
+      }
+   }
+
+   if (prehead && haslivein)
+   {
+      bp = prehead;
+      prebp = NULL;
+      postbl = NULL;
+      for (lpq=loopq; lpq; lpq=lpq->next)
+      {
+         if (lpq->header == bp)
+         {
+            prebp = lpq->preheader;
+            postbl = lpq->posttails;
+            break;
+         }
+      }
+      LoopBlkSLP(bp, prebp, postbl, vlist, 0);
+   }
+
+   FinalizeVecBlock(blk, vbp);
+/*
+ * scatter in posttails... 
+ * all vectors which is live out... must be scattered at the end of deepmost
+ * loop's posttails
+ */
+   for (lpq=loopq; lpq; lpq=lpq->next)
+      if (lpq->header == blk)
+         break;
+   assert(lpq);
+
+   for (vl=vlist; vl; vl=vl->next)
+   {
+      iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1) );
+      if (!BitVecCheckComb(iv, liveout, '-'))
+      {
+         if (!FindVectorByVec(vl->vec, vlv2s))
+            vlv2s = AddVectorInList(vlv2s, vl, 0);
+      }
+   }
+
+#if 0
+   SetVecAll(iv1, 0);
+   SetVecAll(iv, 0);
+   for (bl=posttails; bl; bl = bl->next)
+   {
+      BitVecDup(iv1, bl->blk->outs, '=');
+      if (bl->blk->usucc &&
+         !BitVecCheck(lpq->blkvec, bl->blk->usucc->bnum-1))
+         BitVecComb(iv1, iv1, bl->blk->usucc->ins, '&');
+      else
+      {
+         assert(bl->blk->csucc &&
+                !BitVecCheck(lpq->blkvec, bl->blk->csucc->bnum-1));
+         BitVecComb(iv1, iv1, bl->blk->csucc->ins, '&');
+      }
+      BitVecComb(iv, iv, iv1, '|');
+   }
+#endif
+/*
+ * Vector to Scalar Reduction:
+ *    1. check postails in each step for the scalars which are in use.  
+ *       -- we need to reduce associated vector 
+ *    2. check defs: whether they also live-in at the beginning of the header.
+ *       if so, we can't apply SLP without vectorizing posttails itself. 
+ *
+ */
+#if 1
+   //if (isFirst)
+   {
+      fprintf(stderr, "liveout vector list: \n");
+      fprintf(stderr, "-------------------------\n");
+      PrintVectors(stderr, vlv2s);
+      fprintf(stderr, "-------------------------\n");
+      PrintVars(stderr, "posttail-livein: ", FilterOutRegs(posttails->blk->ins));
+      PrintVars(stderr, "posttail-uses: ", FilterOutRegs(posttails->blk->uses));
+      PrintVectors(stderr, vlist);
+
+      ivuses = NewBitVec(128);
+      ivdefs = NewBitVec(128);
+      ivuses = BitVecCopy(ivuses, posttails->blk->uses);
+      ivuses = FilterOutRegs(ivuses);
+      ivdefs = BitVecCopy(ivdefs, posttails->blk->defs);
+      ivdefs = FilterOutRegs(ivdefs);
+/*
+ *    check for invalid case 
+ */
+      SetVecAll(livein, 0);
+      for (vl=vlist; vl; vl=vl->next)
+      {
+         if (vl->islivein)
+         {
+            iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1) );
+            livein = BitVecComb(livein, livein, iv, '|');
+         }
+      }   
+      iv = BitVecComb(iv, ivdefs, livein, '&');
+      if (AnyBitsSet(iv))
+      {
+         PrintVars(stderr, "def but live-in=", iv);
+         fko_error(__LINE__, "SLP fails: live-in vars but defs in posttails");
+      }
+/*
+ *    adding scatter in posttails
+ */
+      for (i=inpack; i < nnpack; i++)
+      {
+         pk = PACKS[i];
+         if (pk)
+         {
+            iv = BitVecComb(iv, ivuses, pk->defs, '&');
+            AddSlpEpilogue(posttails->blk, pk, iv, vlist, 0);
+            ivuses = BitVecComb(ivuses, ivuses, pk->defs, '-');
+         }
+      }
+
+      KillBitVec(ivuses);
+      KillBitVec(ivdefs);
+   }
+#endif
+/*
+ * delete temporary storage
+ */
+   KillBitVec(livein);
+   KillBitVec(liveout);
+  
+   KillAllInst(sbp->inst1);
+   free(sbp);
+   KillAllInst(nsbp->inst1);
+   free(nsbp);
+   KillAllInst(vbp->inst1);
+   free(vbp);
+   KillVlist(vlist);
+   
+   return(0);
+}
+
+
 int SLPvectorization()
 {
    BBLOCK *bp;
    extern LOOPQ *optloop;
    extern LOOPQ *loopq;
+   extern BBLOCK *bbbase;
    
    //assert(optloop->blocks && !optloop->blocks->next);
    
@@ -14238,11 +14922,24 @@ int SLPvectorization()
  * create a new preheader
  */
    
-   BlkSLP(optloop->blocks->blk, optloop->preheader, optloop->posttails);
-   
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+   //BlkSLP(optloop->blocks->blk, optloop->preheader, optloop->posttails);
    //BlkSLP(optloop->preheader, NULL, NULL);
    
+   LoopBlkSLP(optloop->blocks->blk, optloop->preheader, optloop->posttails, 
+              NULL, 1);
+   
    //PrintLoop(stderr, loopq);
+   
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
 
 }
 

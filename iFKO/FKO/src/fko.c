@@ -301,7 +301,7 @@ struct optblkq *OptBlockQtoTree(struct optblkq *head)
  * NOTE: deletes sequential queue when done
  */
 {
-#if 0   
+#if 1   
    int i;
    struct optblkq *op;
 #endif
@@ -313,7 +313,13 @@ struct optblkq *OptBlockQtoTree(struct optblkq *head)
    fprintf(stderr, "\n");
 #endif
    root = SproutNode(head, root);
-#if 0
+/*
+ * FIXME: SproutNode function skips the last level of loop if there is no 
+ * optloop. need to scope and fix that
+ * we enable following global opt to fix it temporarily. 
+ */
+
+#if 1
    {
       for (i=1,op=root; op->next; op=op->next, i++)
          ;
@@ -1855,6 +1861,199 @@ void SaveFKOState0()
    WriteState0MiscToFile(ln); /* this function is diff than old one */
 }
 
+int CheckPreheaderPosttails(BLIST *scope)
+{
+   int nerr = 0, pred =0, npred = 0;
+   BBLOCK *bp;
+   BLIST *bl, *blp, *bls;
+   INT_BVI blkvec;
+   extern INT_BVI FKO_BVTMP;
+   extern BBLOCK *bbbase;
+
+   CheckFlow(bbbase, __FILE__, __LINE__);
+
+   //blkvec = NewBitVec(32);
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(32);
+   blkvec = FKO_BVTMP;
+   SetVecAll(blkvec, 0);
+
+   for (bl=scope; bl; bl=bl->next)
+      SetVecBit(blkvec, bl->blk->bnum-1, 1);
+
+   for (bl=scope; bl; bl=bl->next) 
+   {
+      bp = bl->blk;
+/*
+ *    check for single pre-header: no other succ other than this blk 
+ */
+      pred = 0;
+      for (blp=bp->preds; blp; blp=blp->next)
+      {
+         if (!BitVecCheck(blkvec, blp->blk->bnum-1)) /* pred not in scope */
+         {
+            pred = 1;
+            if ( (blp->blk->usucc && blp->blk->usucc != bp) 
+                  || (blp->blk->csucc && blp->blk->csucc != bp) )
+            {
+               nerr++;
+               fprintf(stderr, "preheader blk-%d has successor other tha blk-%d\n", 
+                       blp->blk->bnum, bp->bnum);
+            }
+         }
+      }
+      if (pred)
+         npred++;
+/*
+ *    check for posttails: posttail should not have pred other than bp 
+ */
+      if (bp->usucc && !BitVecCheck(blkvec, bp->usucc->bnum-1))/*not in scope*/
+      {
+         if (bp->usucc->preds->next) // bp->usucc->preds->blk != bp 
+         {
+            nerr++;
+            fprintf(stderr, " posttail blk-%d has pred other than blk-%d\n",
+                   bp->usucc->bnum, bp->bnum);
+         }
+      }
+      
+      if (bp->csucc && !BitVecCheck(blkvec, bp->csucc->bnum-1)) /*not in scope*/
+      {
+         if (bp->csucc->preds->next) // bp->usucc->preds->blk != bp 
+         {
+            nerr++;
+            fprintf(stderr, " posttail blk-%d has pred other than blk-%d\n",
+                   bp->csucc->bnum, bp->bnum);
+         }
+      }
+      
+   }
+   if (npred > 1)
+   {
+      nerr++;
+      fprintf(stderr, "more than one preheader for the scope\n");
+   }
+#if 1
+   if (nerr)
+   {
+      fprintf(stderr, "scope=%s\n", PrintBlockList(scope));
+      extern BBLOCK *bbbase;
+      ShowFlow("cfg-error.dot", bbbase);
+   }
+#endif
+   return nerr;
+}
+
+void AddPredBlk(INT_BVI iv, BBLOCK *blk)
+{
+   //static int id = 0;
+   short lb;
+   INSTQ *ip;
+   BBLOCK *bp, *bnew;
+   char label[64];
+   extern BBLOCK *bbbase;
+   
+   assert(blk->ilab);
+   
+   sprintf(label, "PH_%s", STname[blk->ilab-1]);
+   lb = STlabellookup(label);
+   
+   bnew = NewBasicBlock(blk->up, blk);
+   InsNewInst(bnew, NULL, NULL, LABEL, lb, 0, 0 );
+   
+   blk->up->down = bnew;
+   blk->up = bnew;
+
+/*
+ * update all label from ilab to lb
+ */
+
+   for (bp=bbbase; bp; bp=bp->down)
+   {
+      if (!BitVecCheck(iv, bp->bnum-1))
+      {
+         for (ip=bp->ainst1; ip; ip=ip->next)
+         {
+            if (ip->inst[0] == JMP && ip->inst[2] == blk->ilab)
+               ip->inst[2] = lb;
+            else if (IS_COND_BRANCH(ip->inst[0]) && ip->inst[3] == blk->ilab)
+               ip->inst[3] = lb;
+         }
+      }
+   }
+
+}
+
+void FixPreheaderPosttails(BLIST *scope)
+{
+   int npred = 0;
+   BBLOCK *bp, *bnew;
+   BLIST *bl, *blp, *bls;
+   INT_BVI blkvec;
+   short ilb;
+   char label[64];
+   extern INT_BVI FKO_BVTMP;
+   
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(32);
+   blkvec = FKO_BVTMP;
+   SetVecAll(blkvec, 0);
+
+   for (bl=scope; bl; bl=bl->next)
+      SetVecBit(blkvec, bl->blk->bnum-1, 1);
+
+
+   for (bl=scope; bl; bl=bl->next) 
+   {
+      bp = bl->blk;
+/*
+ *    checking for single preheader
+ */
+      npred = 0;      
+      for (blp=bp->preds; blp; blp=blp->next)
+      {
+         if (!BitVecCheck(blkvec, blp->blk->bnum-1)) /* pred not in scope */
+         {
+            if ( (blp->blk->usucc && blp->blk->usucc != bp) 
+                  || (blp->blk->csucc && blp->blk->csucc != bp) )
+            {
+               npred++;        
+            }
+         }
+      }
+      if (npred)
+      {
+         AddPredBlk(blkvec, bp);
+      }
+/*
+ *    checking for posttails
+ */
+      if (bp->usucc && !BitVecCheck(blkvec, bp->usucc->bnum-1))/*not in scope*/
+      {
+         if (bp->usucc->preds->next) // bp->usucc->preds->blk != bp 
+         {
+            fprintf(stderr, "adding blk after %d before %d\n", bp->bnum, 
+                  bp->usucc->bnum);
+            assert(bp->usucc->ilab);
+            sprintf(label, "PT_%s", STname[bp->usucc->ilab-1]);
+            bnew = NewBasicBlock(bp, bp->usucc);
+            InsNewInst(bnew, NULL, NULL, LABEL, STlabellookup(label), 0, 0);
+            bp->usucc->up = bnew;
+            // bp->usucc ?? bp->uscc->pred??
+            bp->down = bnew;
+         }
+      }
+      
+      if (bp->csucc && !BitVecCheck(blkvec, bp->csucc->bnum-1))/*not in scope*/
+      {
+         if (bp->csucc->preds->next) // bp->usucc->preds->blk != bp 
+         {
+            fko_error(__LINE__, "not imp yet");
+         }
+      }
+
+   }
+}
 
 int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
 /*
@@ -1871,6 +2070,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
    int i, j, k, nchanges=0, nc0;
    static short nlab=0, labs[4];
    /*static int iopt = 0, bv = 0;*/ /* Majedul: for opt logger, bv -> */
+   static int iopt = 0, bv = 0;
    extern LOOPQ *optloop;
    BLIST *bl;
 /*
@@ -1881,7 +2081,10 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
    if (!scstate) /* optloop as scope*/
    {
       if (!optloop)
+      {
+         fprintf(stderr, "no oploop\n");
          return(0);
+      }
 /*
  *    Recalculate optloop info if it has changed due to previous opt
  */
@@ -1914,7 +2117,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
 #else
 /*
  *    remove the 1st block (prologue of function) to calc scope
- *    just for testing ... ... 
+ *    0ust for testing ... ... 
  */
       if (scstate & IOPT_SCOP)
       {
@@ -1969,9 +2172,22 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
          break;
       case RegAsg:
 
+#if 0
+         if (CheckPreheaderPosttails(scope))
+         {
+            FixPreheaderPosttails(scope);
+            InvalidateLoopInfo();
+            bbbase = NewBasicBlocks(bbbase);
+            CheckFlow(bbbase, __FILE__, __LINE__);
+            FindLoops();
+            CheckFlow(bbbase, __FILE__, __LINE__);
+            ShowFlow("cfg_new.dot", bbbase);
+            fko_error(__LINE__, "posttail/preheader error!");
+         }
+#endif
          #if 0
             fprintf(stderr, "IG REG ASG: ");
-            if (scstate)
+            if (scstate & IOPT_GLOB)
                fprintf(stderr, " GLOBAL\n");
             else
                fprintf(stderr, " LOCAL\n");
@@ -1994,6 +2210,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
                   " changes=%d\n", PrintBlockList(scope), nchanges);
          fprintf(stdout, "*****************************************************\n\n");
             PrintInst(stdout, bbbase);
+            exit(0);
          }
          #endif
          break;
@@ -2427,7 +2644,7 @@ void UpdateOptsNewScope(struct optblkq *op)
    }
 #if 0
    fprintf(stderr, "\n updated scoped optblks = \n");
-   PrintOptTree(op);
+   PrintOptTree(stderr, op);
    fprintf(stderr, "\n");
 #endif
 
@@ -2961,7 +3178,8 @@ struct optblkq *DefaultOptBlocks(void)
  * lastUseLoadRemoval ... 
  * op->blocks keeps the scope ... 
  */
-   
+
+#if 1
    op->next = NewOptBlock(id++, 20, 5, 0); /* this is for optloop */
    op = op->next;
    op->opts[0] = RegAsg;
@@ -2969,7 +3187,7 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[2] = ReverseCopyProp;
    op->opts[3] = RemoveOneUseLoads;
    op->opts[4] = LastUseLoadRemoval;
-
+#endif
 #if 0
 /*
  * start adding scopes.. 1st element of the loopq is the optloop, skip that
@@ -3032,6 +3250,18 @@ struct optblkq *DefaultOptBlocks(void)
             op->opts[4] = LastUseLoadRemoval;
          }
       }
+#if 0      
+/*
+ * adding a global one at the end
+ */
+      op->next = NewOptBlock(id++, 10, 5, IOPT_GLOB); /* global scope */
+      op = op->next;
+      op->opts[0] = RegAsg;
+      op->opts[1] = CopyProp;
+      op->opts[2] = ReverseCopyProp;
+      op->opts[3] = RemoveOneUseLoads;
+      op->opts[4] = LastUseLoadRemoval;
+#endif
 /*
  *    now it's safe to delete the list 
  */
@@ -3107,6 +3337,10 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[2] = ReverseCopyProp;
    op->opts[3] = RemoveOneUseLoads;
    op->opts[4] = LastUseLoadRemoval;
+#endif
+
+#if 0
+   PrintOptTree(stderr, base);
 #endif
    return(base);
 }
@@ -3758,6 +3992,11 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
    PrintST(stdout);
    fprintf(stdout, "LIL after Repeatable Opt \n");
    PrintInst(stdout, bbbase);
+   ShowFlow("cfg.dot", bbbase);
+   {
+      extern LOOPQ *loopq;
+      PrintLoop(stderr, loopq);
+   }
    exit(0);
 #endif   
 
@@ -4523,15 +4762,26 @@ int main(int nargs, char **args)
  * Now, it's time to apply repeatable optimizations 
  */
 #if 1 
-         #if 0
-            fprintf(stdout, "LIL Before Repeat Opt \n");
-            PrintInst(stdout, bbbase);
-            PrintST(stdout);
-            exit(0);
-         #else
-            GenerateAssemblyWithCommonOpts(fpout, optblks );
-            KillAllGlobalData(optblks); 
-         #endif
+   #if 1
+/*
+ *    reconstruct CFG for next opt
+ */
+      InvalidateLoopInfo();
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__,__LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
+   #endif
+   
+   #if 0
+      fprintf(stdout, "LIL Before Repeat Opt \n");
+      PrintInst(stdout, bbbase);
+      PrintST(stdout);
+      exit(0);
+   #else
+      GenerateAssemblyWithCommonOpts(fpout, optblks );
+      KillAllGlobalData(optblks); 
+   #endif
 #endif         
 
    return(0);

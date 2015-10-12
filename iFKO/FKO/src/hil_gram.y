@@ -58,6 +58,7 @@
    void HandleVecReduce(short sid, short vid, char op, short ic);
    void HandleVecBroadcast(short vid, short ptrderef);
    void HandlePrefetch(short lvl, short ptrderef, int wpf);
+   short HandleVecElem(short vid, int elem);
 %}
 %union
 {
@@ -106,6 +107,7 @@
 %type <inum> arraydim
 %type <inum> array_access
 %type <inum> unrollfactor
+/*%type <sh> VecElem*/
 
 %%
 
@@ -371,7 +373,10 @@ avar : ID               {$$ = $1;}
      | fconst           {$$ = $1;}
      | dconst           {$$ = $1;}
      | iconst           {$$ = $1;}
+     /*| VecElem          {$$ = $1;}*/
      ;
+/*VecElem : ID '[' icexpr ']' {$$ = HandleVecElem($1, $3);}*/
+        
         /* need to change to if (ID op avar) goto LABEL */
         /* > < NE LE GE * +  / RSHIFT LSHIFT | & ^ */
 IFOP : '>'  {$$ = '>';}
@@ -381,6 +386,7 @@ IFOP : '>'  {$$ = '>';}
      | GE   {$$ = 'g';}
      | '&'    {$$ = '&';}
      | '^'    {$$ = '^';}
+     | EQ {$$ = '=';}
      ;
    
 ifstate : IF '(' ID IFOP avar ')' GOTO NAME         {DoIf($4, $3, $5, $8);} 
@@ -1170,6 +1176,16 @@ void HandleVecBroadcast(short vid, short ptrderef)
    
    DoArrayBroadcast(vid, ptrderef);
 }
+
+#if 0
+short HandleVecElem(short vid, int elem)
+{
+   short st;
+   st = FindSTVecElem(vid, elem+1);
+   assert(st);
+   return(st);
+}
+#endif
 
 void HandlePrefetch(short lvl, short ptrderef, int wpf)
 {

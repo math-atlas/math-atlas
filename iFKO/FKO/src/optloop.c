@@ -5930,7 +5930,10 @@ void PrintLoop(FILE *fpout, LOOPQ *lp)
             STname[lpq->body_label-1]?  STname[lpq->body_label-1]: "NULL");
       fprintf(fpout, "\tHead: %d\n", lpq->header->bnum);
       fprintf(fpout, "\tTails: %s\n", PrintBlockList(lpq->tails));
-      fprintf(fpout, "\tPreHeader: %d\n", lpq->preheader->bnum);
+      if(lpq->preheader)  
+         fprintf(fpout, "\tPreHeader: %d\n", lpq->preheader->bnum);
+      else
+         fprintf(fpout, "\tPreHeader: NULL\n");
       fprintf(fpout, "\tPostTails: %s\n", PrintBlockList(lpq->posttails));
       fprintf(fpout, "\tBLOCKS[%d]: %s\n",ListElemCount(lpq->blocks), 
            PrintBlockList(lpq->blocks));
