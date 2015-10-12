@@ -91,9 +91,15 @@ ILIST *FindAllJumps(BLIST *scope, int COND)
    for (bl=scope; bl; bl = bl->next)
    {
       ip = bl->blk->ainstN;
-      inst = GET_INST(ip->inst[0]);
-      if (inst == JMP || (COND && IS_BRANCH(inst) && inst != RET))
-         ilbase = NewIlist(ip, ilbase);
+/*
+ *    FIXED: block may be empty at this point, other func will delete that
+ */
+      if (ip)
+      {
+         inst = GET_INST(ip->inst[0]);
+         if (inst == JMP || (COND && IS_BRANCH(inst) && inst != RET))
+            ilbase = NewIlist(ip, ilbase);
+      }
    }
    if (freeme)
        KillBlockList(freeme);
@@ -170,7 +176,7 @@ int DoUselessJumpElim(void)
 /*   fprintf(stderr, "Eliminated %d useless jumps!\n", n); */
    KillAllIlist(jumps);
    if (n) 
-      NewBasicBlocks(bbbase);
+      bbbase = NewBasicBlocks(bbbase);
    return(n);
 }
 
@@ -208,6 +214,7 @@ int DeadCodeElim(BBLOCK *base)
 {
    BBLOCK *bp, *bnext;
    int ndel;
+   extern BBLOCK *bbbase;
 
    ndel =0;
    if (!base) return(0);
@@ -250,7 +257,7 @@ int DeadCodeElim(BBLOCK *base)
    /* if (ndel) CFU2D =0; */
    if (ndel)
    {
-      NewBasicBlocks(bbbase);
+      bbbase = NewBasicBlocks(bbbase);
    }
    return(ndel);
 }
@@ -264,8 +271,10 @@ int DoBranchChaining(void)
    ILIST *jl, *jumps;
    ILIST *labs, *ldest;
    short k;
+   extern BBLOCK *bbbase;
+
    if (!CFU2D)
-      NewBasicBlocks(bbbase);
+      bbbase = NewBasicBlocks(bbbase);
    jumps = FindAllJumps(NULL, 1);
    labs = FindAllLabels(NULL);
    if (jumps)
@@ -294,7 +303,7 @@ int DoBranchChaining(void)
  */
    if (n)
    {
-      NewBasicBlocks(bbbase); 
+      bbbase = NewBasicBlocks(bbbase); 
       DeadCodeElim(bbbase);
    }
    KillAllIlist(jumps);
@@ -313,9 +322,10 @@ int DoUselessLabelElim(int nkeep, short *keeps)
    BBLOCK *bp;
    int i, ndel=0;
    short k, lab, nlab;
+   extern BBLOCK *bbbase;
 
    if (!CFU2D)
-      NewBasicBlocks(bbbase);
+      bbbase = NewBasicBlocks(bbbase);
    jumps = FindAllJumps(NULL, 1);
    for (bp=bbbase; bp; bp = bp->down)
    {
@@ -393,7 +403,7 @@ int DoUselessLabelElim(int nkeep, short *keeps)
  * Fix the basic block structure screwed up by deleting labels
  */
    if (ndel) 
-      NewBasicBlocks(bbbase);
+      bbbase = NewBasicBlocks(bbbase);
 /*   fprintf(stderr, "UselessLabelElim deleted %d labels!\n\n", ndel); */
    KillAllIlist(jumps);
    return(ndel);
