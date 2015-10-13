@@ -261,20 +261,29 @@ long long GetLastLongWithRound(char *ln)
 {
    int i;
    long iret=0;
-   for (i=0; ln[i]; i++);
-   if (i > 0) 
+   double d;
+
+   for (i=0; ln[i]; i++);  /* find end of string */
+   if (!i)                 /* empty string */
+     return(0);            /* returns 0 */
+/*
+ * Now skip any non-digit info at end of string (eg., MHz)
+ */
+   for(i--; !isdigit(ln[i]); i--);
+   if (!i)        /* no digits in string */
+      return(0);  /* returns 0 */
+/*
+ * Go backwards until we find a non-digit to possibly end the number
+ */
+   for (i--; i > 0 && isdigit(ln[i]); i--);
+   if (i > 0)  /* may be more to this number */
    {
-      for (i--; i > 0 && !isdigit(ln[i]); i--);
-      if (i > 0 && ln[i] == '.')  /* allow skip of 1 decimal point */
-         for (i--; i > 0 && !isdigit(ln[i]); i--);
+      if (ln[i] == '.')
+         for(i--; i >0 && isdigit(ln[i]); i--);
    }
-   if (i > 0 || (i == 0 && (isdigit(ln[0]) || ln[0] == '.')))
-   {
-      double d;
-      while(isdigit(ln[i]) && i > 0) i--;
-      if (!isdigit(ln[i])) i++;
-      sscanf(ln+i, "%lf", &d);
-      iret = (int)(d+0.5);
-   }
+   else if (ln[0] != '.' && !isdigit(ln[0]))
+      i = 1;
+   sscanf(ln+i, "%lf", &d);
+   iret = (int)(d+0.5);
    return(iret);
 }

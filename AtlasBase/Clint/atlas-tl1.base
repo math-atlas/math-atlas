@@ -20,6 +20,7 @@
 /*
  * Altivec prefetch model not well utilized by SSE-like prefetch, so have
  * special commands for it.
+ * NOTE: modern machines really using VSX, so don't do this.
  */
 #if defined(ATL_AltiVec)
    #include "atlas_altivec.h"
@@ -63,6 +64,12 @@
          __asm__ __volatile__ ("prefetcht1 %0" : : "m" (*((char *)(mem))))
       #define ATL_pfl2WO ATL_pfl2W
       #define ATL_GOT_L2PREFETCH
+      #define ATL_pflXR(mem) \
+         __asm__ __volatile__ ("prefetcht2 %0" : : "m" (*((char *)(mem))))
+      #define ATL_pflXW(mem) \
+         __asm__ __volatile__ ("prefetcht2 %0" : : "m" (*((char *)(mem))))
+      #define ATL_pflXWO ATL_pflXW
+      #define ATL_GOT_LXPREFETCH
    #endif
 #elif defined(ATL_AVXZ)
       #define ATL_pfl1R(mem) \
@@ -78,6 +85,13 @@
          __asm__ __volatile__ ("vprefetche1 %0" : : "m" (*((char *)(mem))))
       #define ATL_pfl2WO ATL_pfl2W
       #define ATL_GOT_L2PREFETCH
+
+      #define ATL_pflXR(mem) \
+         __asm__ __volatile__ ("vprefetch1 %0" : : "m" (*((char *)(mem))))
+      #define ATL_pflXW(mem) \
+         __asm__ __volatile__ ("vprefetche1 %0" : : "m" (*((char *)(mem))))
+      #define ATL_pflXWO ATL_pflXW
+      #define ATL_GOT_LXPREFETCH
 #elif defined(__SUNPRO_C) && defined(__sparc) /* && __SUNPRO_CC > 0x600 */
    #include <sun_prefetch.h>
    #define ATL_pfl1R(mem) sparc_prefetch_read_many((void*)(mem))
@@ -91,12 +105,17 @@
    #define ATL_pfl1R(mem) \
       __asm__ __volatile__ ("PRFM PLDL1KEEP, %0" : : "m" (*((char *)(mem))))
    #define ATL_pfl1W(mem) \
-      __asm__ __volatile__ ("PRFM PSTL1KEEP, %0" : : "m" (*((char *)(mem))))
+      __asm__ __volatile__ ("PRFM PSTL1STRM, %0" : : "m" (*((char *)(mem))))
    #define ATL_GOT_L2PREFETCH
    #define ATL_pfl2R(mem) \
       __asm__ __volatile__ ("PRFM PLDL2KEEP, %0" : : "m" (*((char *)(mem))))
    #define ATL_pfl2W(mem) \
-      __asm__ __volatile__ ("PRFM PSTL2KEEP, %0" : : "m" (*((char *)(mem))))
+      __asm__ __volatile__ ("PRFM PSTL2STRM, %0" : : "m" (*((char *)(mem))))
+   #define ATL_GOT_LXPREFETCH
+   #define ATL_pflXR(mem) \
+      __asm__ __volatile__ ("PRFM PLDL3KEEP, %0" : : "m" (*((char *)(mem))))
+   #define ATL_pflXW(mem) \
+      __asm__ __volatile__ ("PRFM PSTL3STRM, %0" : : "m" (*((char *)(mem))))
 #elif defined(ATL_GAS_ARM)
    #define ATL_pfl1R(mem) \
       __asm__ __volatile__ ("pld %0" : : "m" (*((char *)(mem))))
@@ -214,7 +233,7 @@
  */
 #elif defined(__GNUC__) && !defined(ATL_ARCH_x86x87)
    #define ATL_pfl1R(mem) __builtin_prefetch(mem, 0, 3)
-   #define ATL_pfl1W(mem) __builtin_prefetch(mem, 1, 3)
+   #define ATL_pfl1W(mem) __builtin_prefetch(mem, 1, 1)
    #define ATL_GOT_L1PREFETCH
 #endif
 #if defined(ATL_pfl1W) && !defined(ATL_pfl1WO)
@@ -249,6 +268,12 @@
 #ifndef ATL_GOT_L2PREFETCH  /* dummy calls cpp takes out of code */
    #define ATL_pfl2R(mem)
    #define ATL_pfl2W(mem)
+   #define ATL_pfl2WO(mem)
+#endif
+#ifndef ATL_GOT_LXPREFETCH  /* dummy calls cpp takes out of code */
+   #define ATL_pflXR(mem)
+   #define ATL_pflXW(mem)
+   #define ATL_pflXWO(mem)
 #endif
 
 /*
@@ -260,6 +285,25 @@
 #ifndef ATL_L2LS
    #define ATL_L2LS ATL_L1LS
 #endif
+/*
+ * Defined macro to divide by line size using shifts, just in case compiler
+ * doesn't do strength reduction
+ */
+@whiledef lv 2 1
+#if ATL_L@(lv)LS == 2
+   #define ATL_MulByL@(lv)LS(i_) ((i_)<<1)
+   #define ATL_DivByL@(lv)LS(i_) ((i_)>>1)
+   @iexp i 0 1 +
+   @iexp k 2 2 +
+   @iwhile k < 2048
+#elif ATL_L@(lv)LS == @(k)
+   #define ATL_MulByL@(lv)LS(i_) ((i_)<<@(i))
+   #define ATL_DivByL@(lv)LS(i_) ((i_)>>@(i))
+      @iexp i @(i) 1 +
+      @iexp k @(k) @(k) +
+   @endiwhile
+#endif
+@endwhile
 
 #endif
 @ROUT atlas_altivec.h

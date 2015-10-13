@@ -12,6 +12,7 @@
 #define SI_NOCYGWIN 6
 #define SI_OMP 6
 #define SI_LAREF 7
+#define SI_ADCLOSEP 8
 #define SI_IS_TRUE(bv_, b_) (((bv_)>>(b_))&1)
 #define SI_SET_BIT(bv_, b_) (bv_) |= 1 << (b_)
 #define SI_UNSET_BIT(bv_, b_) (bv_) &= ~(1 << (b_))
@@ -222,8 +223,8 @@ void GetFlags(int nargs,                /* nargs as passed into main */
               int *vec,                 /* Vector ISA extension bitfield */
 @endifdef
 @ifdef -A
-   @define iflag @A@
-   @define ivar  @mach@
+@skip   @define iflag @A@
+@skip   @define ivar  @mach@
               enum MACHTYPE *mach,     /* machine/arch to assume */
 @endifdef
 @ifdef -m
@@ -310,6 +311,9 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @endifdef
 
    *verb = 0;
+@ifdef -A
+   *mach = MACHOther;
+@endifdef
 @ifdef -LAsrc
    *LAsrc = NULL;
 @endifdef
@@ -411,6 +415,21 @@ void GetFlags(int nargs,                /* nargs as passed into main */
    @endifdef
          break;
 @endifdef
+@ifdef -A
+      case 'A':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         if(args[i][0] >= '0' && args[i][0] <= '9') /* giving a # */
+            *mach = atoi(args[i]);
+         else /* giving a architecture name */
+         {
+            for (k=1; k < NMACH; k++)
+               if (!strcmp(args[i], machnam[k]))
+                  break;
+            *mach = (k == NMACH) ? 0 : k;
+         }
+         break;
+@endifdef
 @whiledef iflag
       case '@(iflag)':
          if (++i >= nargs)
@@ -446,7 +465,11 @@ void GetFlags(int nargs,                /* nargs as passed into main */
          if (!strcmp(sp0, "archdef"))
          {
             if (k)
+            {
                SI_SET_BIT(*SIflag, SI_ARCHDEF);
+               if (k == 2)
+                  SI_SET_BIT(*SIflag, SI_ADCLOSEP);
+            }
             else
                SI_UNSET_BIT(*SIflag, SI_ARCHDEF);
          }
@@ -764,7 +787,7 @@ enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS,
  * Corei3: haswell: AVXMAC
  * Corei3EP: v3 Haswell, E5-26XX
  */
-#define NMACH 56
+#define NMACH 59
 static char *machnam[NMACH] = 
    {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
     "POWER6", "POWER7", "POWER8", "POWERe6500", "IBMz9", "IBMz10", "IBMz196",
@@ -775,7 +798,8 @@ static char *machnam[NMACH] =
     "Efficeon", "K7", "HAMMER", "AMD64K10h", "AMDLLANO", "AMDDOZER","AMDDRIVER",
     "UNKNOWNx86", "IA64Itan", "IA64Itan2",
     "USI", "USII", "USIII", "USIV", "UST2", "UnknownUS", 
-    "MIPSR1xK", "MIPSICE9", "ARMv7", "ARM64", "TI_C66_BM", "XeonPHI"};
+    "MIPSR1xK", "MIPSICE9", "ARMa7", "ARMa9", "ARMa15", "ARMa17", 
+    "ARM64xgene1", "TI_C66_BM", "XeonPHI"};
 enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5, 
                IbmPwr6, IbmPwr7, IbmPwr8, Pwre6500,
                IbmZ9, IbmZ10, IbmZ196,  /* s390(x) in Linux */ 
@@ -788,8 +812,12 @@ enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5,
                SunUSI, SunUSII, SunUSIII, SunUSIV, SunUST2, SunUSX, 
                MIPSR1xK, /* includes R10K, R12K, R14K, R16K */
                MIPSICE9,  /* SiCortex ICE9 -- like MIPS5K */
-               ARMv7,     /* includes Cortex A8, A9 */
-               ARM64,     /* includes ARMv8 */
+@skip               ARMv7,     /* includes Cortex A8, A9 */
+               ARM7,      /* odroid-little */
+               ARM9,      /* pandaboard */
+               ARM15,     /* tegra, odroid-big */
+               ARM17,     /* lots of tablets */
+               ARM64xg,     /* includes ARMv8 */
                TI_C66_BM, /* TI accelerator */
                IntPhi     /* build for XEON Phi */
                };
@@ -811,9 +839,9 @@ enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5,
 #define MachIsPPC(mach_) \
    ( (mach_) >= PPCG4 && (mach_) <= PPCG5 )
 #define MachIsARM(mach_) \
-   ( (mach_) == ARMv7 )
+   ( (mach_) >= ARM7 && (mach_) <= ARM17 )
 #define MachIsARM64(mach_) \
-   ( (mach_) == ARM64 )
+   ( (mach_) == ARM64xg )
 #define MachIsS390(mach_) \
    ( (mach_) >= IbmZ9 && (mach_) <= IbmZ196 )
 
@@ -5932,7 +5960,7 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
       *GMINOR = 6;
       *GPATCH = 2;
       break;
-   case ARM64:
+   case ARM64xg:
       *GMINOR = 9;
       *GPATCH = 1;
       break;
@@ -5941,20 +5969,35 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
       *GMINOR = 9;
       *GPATCH = 2;
       break;
+   case IbmPwr7:
    case IbmPwr8:
-       *GMINOR = 8;
+       *GMAJOR = 5;
+       *GMINOR = 1;
+       *GPATCH = 0;
+       break;
+   case ARM7:
+       *GMAJOR = 4;
+       *GMINOR = 9;
        *GPATCH = 2;
+       break;
+   case ARM9:
+       *GMAJOR = 4;
+       *GMINOR = 6;
+       *GPATCH = 3;
+       break;
+   case ARM15:
+       *GMAJOR = 4;
+       *GMINOR = 8;
+       *GPATCH = 4;
        break;
    case x86SSE1:
    case x86SSE2:
    case x86SSE3:
    case x86x87:
-   case IbmPwr7:
    case IntCore2:
    case IntCorei1:
    case IntCorei2:
    case IntCorei3:
-   case ARMv7:
    default:
       *GMINOR = 7;
       *GPATCH = 0;
@@ -7302,28 +7345,28 @@ MACH=P4,PM OS=WinNT,Win64 LVL=0 COMPS=icc,dmc,smc,dkc,skc,xcc
 #
 # ARM defaults
 #
-MACH=ARMv7 OS=ALL LVL=1000 COMPS=xcc
+MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=xcc
    'gcc' '-O2'
-MACH=ARMv7 OS=ALL LVL=1000 COMPS=smc,skc,gcc,icc
+MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=smc,skc,gcc,icc
    'gcc' '-O2 -fselective-scheduling2'
-MACH=ARMv7 OS=ALL LVL=1000 COMPS=dmc,dkc
+MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=dmc,dkc
    'gcc' '-O2 -fno-schedule-insns -fno-schedule-insns2 -fprefetch-loop-arrays'
-MACH=ARMv7 OS=ALL LVL=1000 COMPS=f77
+MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-O2'
 #
 # ARM64 defaults
 #
-MACH=ARM64 OS=ALL LVL=1000 COMPS=xcc
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=xcc
    'gcc' '-O2'
-MACH=ARM64 OS=ALL LVL=1000 COMPS=icc
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=icc
    'gcc' ' -mcpu=xgene1 -mtune=xgene1 -O2'
-MACH=ARM64 OS=ALL LVL=1000 COMPS=skc,gcc,dkc
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=skc,gcc,dkc
    'gcc' ' -mcpu=xgene1 -mtune=xgene1 -O3  -ftree-vect-loop-version -ftree-vectorize -fprefetch-loop-arrays'
-MACH=ARM64 OS=ALL LVL=1000 COMPS=smc
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=smc
    'gcc' '-O2 -mcpu=xgene1 -mtune=xgene1 -fprefetch-loop-arrays'
-MACH=ARM64 OS=ALL LVL=1000 COMPS=dmc
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=dmc
    'gcc' '-O1 -mcpu=xgene1 -mtune=xgene1 -fexpensive-optimizations -fprefetch-loop-arrays'
-MACH=ARM64 OS=ALL LVL=1000 COMPS=f77
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-O2'
 #
 # Untuned flags for XeonPHI
@@ -8169,13 +8212,13 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
  * Calls xspew with correct arguments to build required Make.inc
  */
 {
-   char *frm = "./xspew -v %d -O %d -A %d -m %d -s %d -V %d -b %d -f %d -d s '%s' -d b '%s' -D c '%s' -D f '%s' %s -Si archdef %d -Si ieee %d -Si bozol1 %d -Si latune %d -Si nof77 %d -o Make.inc";
+   char *frm = "./xspew -v %d -O %d -A %d -m %d -s %d -V %d -b %d -f %d -d s '%s' -d b '%s' -D c '%s' -D f '%s' %s -Si archdef %d -Si ieee %d -Si bozol1 %d -Si latune %d -Si nof77 %d -Si fko %d -o Make.inc";
    char *ln, *compsflags, archflags[1024];
    int i;
 
    assert(!system("make xspew"));
    compsflags = Comps2Flags(comps);  /* Xlate comp/flag array to xspew flags */
-   i = strlen(frm) + 11*13 + strlen(srcdir) + strlen(bindir);
+   i = strlen(frm) + 11*14 + strlen(srcdir) + strlen(bindir);
    if (cdefs)
       i += strlen(cdefs);
    if (nreg)
@@ -8195,7 +8238,8 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
                srcdir, bindir, cdefs ? cdefs:"", f2cdefs? f2cdefs : "", 
                compsflags, SI_IS_TRUE(SIflag,SI_ARCHDEF), 
                SI_IS_TRUE(SIflag,SI_IEEE), SI_IS_TRUE(SIflag,SI_BOZOL1), 
-               SI_IS_TRUE(SIflag,SI_LATUNE), SI_IS_TRUE(SIflag,SI_NOF77));
+               SI_IS_TRUE(SIflag,SI_LATUNE), SI_IS_TRUE(SIflag,SI_NOF77),
+               SI_IS_TRUE(SIflag,SI_FKO));
    free(compsflags);
    if (tids)
    {
@@ -8415,6 +8459,8 @@ flapacktar=ATL_NoOverride
 f77=1
 fulllapack=0
 usefko=0
+usetids=0
+tidlist=
 #
 # path is configure path without trailing configure :)
 #
@@ -8514,14 +8560,20 @@ do
 @skip      echo "     Provide full paths to both compilers"
       echo "Attempting to build xconfig to get probe flags:"
       rm -f Makefile > /dev/null 2>&1
-      echo BLDdir="$blddir" > Makefile
+      echo BLDdir="$blddir" >> Makefile
       echo TOPdir="$topdir" >> Makefile
-      echo CC="$cc" >> Makefile
+      echo "SRCdir = \$(TOPdir)/CONFIG/src" >> Makefile
+      echo "INCdir = \$(TOPdir)/CONFIG/include" >> Makefile
+      echo "mydir = \$(BLDdir)" >> Makefile
+      echo XCC="$cc" >> Makefile
       echo CFLAGS="$cflags" >> Makefile
+      echo "INCFLAGS = -I\$(INCdir)" >> Makefile
+      echo "MYFLAGS =" >> Makefile
+      echo "XCFLAGS = \$(INCFLAGS) \$(MYFLAGS) \$(CFLAGS)" >> Makefile
       cat "$path"/CONFIG/src/Makefile >> Makefile
-      make xconfig > /dev/null 2>&1
+      make xconfig # > /dev/null 2>&1
       ./xconfig --help
-      rm -f Makefile xconfig atlconf_misc.o > /dev/null 2>&1
+@skip      rm -f Makefile xconfig atlconf_misc.o > /dev/null 2>&1
       exit 1
    fi
 #
@@ -8579,18 +8631,20 @@ do
    then
       if test "$flag" -eq "1"
       then
-         pass="$pass -A 50 -D c -DATL_NOPREFETCH=1"
+         pass="$pass -A 54 -D c -DATL_NOPREFETCH=1"
          accel=1
       elif test "$flag" -eq "2"
       then
          accel=2
-         pass="$pass -A 51"
+         pass="$pass -A 55"
       fi
       handled=1
    fi
    flag=`echo "$arg" | sed -e "s/--force-tids=//"`
    if test "$flag" != "$arg"
    then
+      usetids=1
+      tidlist=$flag
       pass="$pass -tl $flag"
       handled=1
    fi
@@ -8761,6 +8815,14 @@ then
    echo "exe=\$1" >> ATLrun.sh
    echo "shift"  >> ATLrun.sh
    echo "ssh \$rtarg \"cd \$atldir ; ./\$exe \$*\"" >> ATLrun.sh
+   chmod u+x ATLrun.sh
+elif test $usetids -eq 1
+then
+   echo "#!/bin/sh" > ATLrun.sh
+   echo "atldir=\$1" >> ATLrun.sh
+   echo "shift" >> ATLrun.sh
+   flag=`echo "$tidlist" | sed -e "s/[0-9]* // ; s/\([0-9]\) /\1,/g ; s/, *$//"`
+   echo "taskset -c $flag \$atldir/\$*" >> ATLrun.sh
    chmod u+x ATLrun.sh
 else
    cp "$path"/CONFIG/src/ATLrun.sh ATLrun.sh
@@ -8993,6 +9055,17 @@ echo DESTDIR="$prefix" >> lib/Makefile
 echo INCINSTdir="$incinstdir" >> lib/Makefile
 echo LIBINSTdir="$libinstdir" >> lib/Makefile
 #
+# Create initial version of MaxMalloc based on 32/64 bit address space
+#
+echo "#ifndef ATL_MaxMalloc" > include/atlas_maxmalloc.h
+if test $bitwidth -eq 32
+then
+   echo "   #define ATL_MaxMalloc 268435456UL" >> include/atlas_maxmalloc.h
+else
+   echo "   #define ATL_MaxMalloc 1073741824UL" >> include/atlas_maxmalloc.h
+fi 
+echo "#endif" >> include/atlas_maxmalloc.h
+#
 # Create standard target for making dynamic/shared according to flags
 #
 if test $dylib -eq 1
@@ -9058,6 +9131,9 @@ then
       cd $blddir
    fi
    $topdir/iFKO/fko_atlconf
+   cd $blddir/iFKO
+   make fkoc
+   cd $blddir
 fi
 echo "DONE configure"
 #
@@ -9067,6 +9143,84 @@ echo "DONE configure"
 @extract -b @(basd)/atlconf.base rout=GetFlags -punymac -def allflags ""
 @extract -b @(basd)/atlconf.base rout=getptrbits -punymac
 
+char *GetArch(enum MACHTYPE mach, int ISAX, int SIflag, int ptrbits)
+{
+   char *ap;
+   int i, k;
+
+   i = strlen(machnam[mach]);
+   #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
+      i += 2; /* LE */
+   #endif
+   i += 2;   /* 64/32 */
+   if (ISAX)
+      i += strlen(ISAXNAM[ISAX]);
+   if (!SI_IS_TRUE(SIflag,SI_IEEE))
+      i += 7;  /* NONIEEE */
+   ap = malloc(i+1);
+   assert(ap);
+   k = sprintf(ap, "%s", machnam[mach]);
+   #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
+      k += sprintf(ap+k, "%dLE", ptrbits);
+   #else
+      k += sprintf(ap+k, "%d", ptrbits);
+   #endif
+   if (ISAX)
+      k += sprintf(ap+k, "%s", ISAXNAM[ISAX]);
+   if (!SI_IS_TRUE(SIflag,SI_IEEE))
+      sprintf(ap+k, "NONIEEE");
+   assert (k <= i);
+   return(ap);
+}
+/*
+ * RETURNS: string with path to archdef to use.  If np was exact match,
+ *   *BAD is zeroed, else set non-zero.
+ */
+char *GetArchDef(char *srcd, char *mach, int np, int *BAD)
+{
+   char *ap=NULL;
+   int k, i, l;
+   *BAD = 0;
+   k = l = strlen(srcd);
+   l += 1 + strlen(mach);
+   l += 4 + 8;        /* 4 digits np, 8 for .tar.bz2 */
+   ap = malloc(l+1);
+   assert(ap);
+   assert(np < 10000);
+   if (srcd[k-1] == '/')
+      i = sprintf(ap, "%s%sp%d.tar.bz2", srcd, mach, np);
+   else
+      i = sprintf(ap, "%s/%sp%d.tar.bz2", srcd, mach, np);
+   assert(i < l);
+   if (!FileIsThere(ap))
+   {
+      int d;
+      for (d=1; d < 64; d++)
+      {
+         int p;
+         *BAD = 1;
+         p = np + d;
+         if (p < 10000)
+         {
+            i = sprintf(ap, "%s/%sp%d.tar.bz2", srcd, mach, p);
+            assert(i < l);
+            if (FileIsThere(ap))
+               return(ap);
+         }
+         p = np - d;
+         if (p > 0)
+         {
+            i = sprintf(ap, "%s/%sp%d.tar.bz2", srcd, mach, p);
+            assert(i < l);
+            if (FileIsThere(ap))
+               return(ap);
+         }
+      }
+      free(ap);
+      ap = NULL;
+   }
+   return(ap);
+}
 int main(int nargs, char **args)
 {
    enum OSTYPE OS;
@@ -9078,14 +9232,15 @@ int main(int nargs, char **args)
    int THREADS=0;
    int nreg=0;
    int Use3DNow=0;  /* this needs to come from getflags */
-   int ncpu, omp, AntThr=0, lapackref;
-   int SIflag, USEDEFL1, USEMINGW;
+   int ncpu, omp=0, AntThr=0, lapackref;
+   int SIflag, USEDEFL1, USEMINGW, FKO, NOMATCH;
    int *tids;
    #define NPREC 4
    char pres[NPREC] = {'s', 'd', 'c', 'z'};
    char *targ, *sp, *pmake, *flapack, *ADd;
    char *comps[3*NCOMP], *comp, *flags, *srcdir, *blddir, *f2cdefs, *cdefs;
    char *outfile, *smaflags, *dmaflags, *f77lib, *gccflags, *goodgcc;
+   char *arch, *archdef;
    char targarg[256], ln[1024];
    FILE *fpout;
    char *adnames[NARDEF] = {"sKERNDEF", "dKERNDEF", "sMMDEF", "dMMDEF"};
@@ -9097,6 +9252,7 @@ int main(int nargs, char **args)
    USEDEFL1 = SI_IS_TRUE(SIflag,SI_BOZOL1);
    nof77 = SI_IS_TRUE(SIflag,SI_NOF77);
    lapackref = SI_IS_TRUE(SIflag,SI_LAREF);
+   FKO = SI_IS_TRUE(SIflag,SI_FKO);
    if (ncpu > 1) THREADS = 1;
    if (!outfile)
       fpout = stdout;
@@ -9104,6 +9260,20 @@ int main(int nargs, char **args)
       fpout = fopen(outfile, "w");
    assert(fpout);
    assert(srcdir && blddir);
+/*
+ * If archdef directory not given, default to srcdir/CONFIG/ARCHS
+ */
+   if (!ADd)
+   {
+      int l;
+      l = strlen(srcdir);
+      if (srcdir[l-1] == '/')
+         l--;
+      ADd = malloc(l+16);
+      assert(ADd);
+      strncpy(ADd, srcdir, l);
+      strcpy(ADd+l, "/CONFIG/ARCHS");
+   }
 /*
  * Update l2size, and set f2cdefs/cdefs if they are null 
  */
@@ -9190,6 +9360,10 @@ int main(int nargs, char **args)
    fprintf(fpout, "#  -------------------------------------------------\n");
    fprintf(fpout, "#  Name indicating the platform to configure BLAS to\n");
    fprintf(fpout, "#  -------------------------------------------------\n");
+   arch = GetArch(mach, ISAX, SIflag, ptrbits);
+   archdef = GetArchDef(ADd, arch, ncpu, &NOMATCH);
+   fprintf(fpout, "   ARCH = %s\n\n", arch);
+@beginskip
    fprintf(fpout, "   ARCH = %s", machnam[mach]);
    fprintf(fpout, "%d", ptrbits);
    #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
@@ -9200,6 +9374,7 @@ int main(int nargs, char **args)
    if (!SI_IS_TRUE(SIflag,SI_IEEE))
       fprintf(fpout, "NONIEEE");
    fprintf(fpout, "\n\n");
+@endskip
 
    fprintf(fpout, "#  ----------------------------\n");
    fprintf(fpout, "#  Paths to various directories\n");
@@ -9228,10 +9403,16 @@ int main(int nargs, char **args)
    fprintf(fpout, "   L1Tdir = $(BLDdir)/tune/blas/level1\n");
    fprintf(fpout, "   L3Tdir = $(BLDdir)/tune/blas/level3\n");
    fprintf(fpout, "   FLAdir = $(BLDdir)/src/lapack/reference\n");
-   if (ADd)
-      fprintf(fpout, "   ADdir  = %s\n", ADd);
-   else
-      fprintf(fpout, "   ADdir  = $(SRCdir)/CONFIG/ARCHS\n");
+@skip   if (ADd)
+   fprintf(fpout, "   ADdir  = %s\n", ADd);
+@skip   else
+@skip      fprintf(fpout, "   ADdir  = $(SRCdir)/CONFIG/ARCHS\n");
+   free(ADd);
+   if (FKO)
+   {
+      fprintf(fpout, "   FKOSRCdir = $(SRCdir)/iFKO\n");
+      fprintf(fpout, "   FKOBLDdir = $(BLDdir)/iFKO\n");
+   }
    fprintf(fpout, "\n");
 
    fprintf(fpout,
@@ -9290,6 +9471,10 @@ int main(int nargs, char **args)
    fprintf(fpout, "#  Architecture identifying flags\n");
    fprintf(fpout, "#  ------------------------------\n");
    fprintf(fpout, "   ARCHDEFS =");
+   if (ptrbits == 32)
+      fprintf(fpout, " -DATL_PTR32");
+   else
+      fprintf(fpout, " -DATL_PTR64");
    if (OS != OSOther) 
       fprintf(fpout, " -DATL_OS_%s", osnam[OS]);
    if (mach != MACHOther) 
@@ -9440,6 +9625,11 @@ int main(int nargs, char **args)
          fprintf(fpout, " -fPIC");
    #endif
    fprintf(fpout, "\n");
+   if (FKO)
+   {
+      fprintf(fpout, "   FKO = $(FKOBLDdir)/fko\n");
+      fprintf(fpout, "   FKOC = $(FKOBLDdir)/fkoc\n");
+   }
    fprintf(fpout, "   KC = $(DKC)\n   KCFLAGS = $(CDEFS) $(DKCFLAGS)\n");
 
    fprintf(fpout, "   LDFLAGS =");
@@ -9527,11 +9717,11 @@ int main(int nargs, char **args)
 @skip   if (!OSIsWin(OS))
 
    fprintf(fpout, 
-   "#  --------------------------------------------------------------------\n");
+   "#  ----------------------------------------------------------\n");
    fprintf(fpout, 
-   "#  Compiler names for architectural defaults and flags to atlas_install\n");
+   "#  Info for architectural defaults and flags to atlas_install\n");
    fprintf(fpout, 
-   "#  --------------------------------------------------------------------\n");
+   "#  ----------------------------------------------------------\n");
    for (i=0; i < NCOMP; i++)
    {
       sp = NewStringCopy(COMPNAME[i]);
@@ -9564,6 +9754,34 @@ int main(int nargs, char **args)
       fprintf(fpout, "%s\n", sp);
       free(sp);
    }
+   fprintf(fpout, "   ADnew = %sp%d\n", arch, ncpu);
+   free(arch);
+   if (archdef)
+   {
+      fprintf(fpout, "   ADtar = %s\n", archdef);
+      i = strlen(archdef) - 8;
+      archdef[i] = '\0';
+      for (i--; i > 0 && archdef[i] != '/'; i--);
+      if (i)
+         i++;
+      fprintf(fpout, "   ADuse = $(BLDdir)/ARCHS/%s\n", archdef+i);
+   }
+   else
+   {
+      fprintf(fpout, "   ADtar = \n");
+      fprintf(fpout, "   ADuse = \n");
+   }
+   if (!SI_IS_TRUE(SIflag,SI_ARCHDEF) || !archdef)
+   {
+      if (USEDEFL1)
+         fprintf(fpout, "   ADtarg = do_bozoL1\n");
+      else
+         fprintf(fpout, "   ADtarg = do_nothing\n");
+   }
+   else if (NOMATCH && !SI_IS_TRUE(SIflag,SI_ADCLOSEP))
+      fprintf(fpout, "   ADtarg = do_basic\n");
+   else
+      fprintf(fpout, "   ADtarg = do_full\n");
    if (!nreg)
       fprintf(fpout, "   INSTFLAGS = -1 %d -a %d -l %d\n\n", 
               USEDEFL1, SI_IS_TRUE(SIflag,SI_ARCHDEF), 
@@ -10947,7 +11165,7 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
    return(ln);
 }
 #endif
-@ROUT gnuccw gnuf90w gcc3p
+@ROUT gnuccw gnuf90w gcc3p fkoc
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -10957,6 +11175,38 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
 #ifdef DEBUG
    FILE *fplog=NULL;
 #endif
+@ROUT fkoc
+#ifndef MYPP 
+   #define MYPP "xextract"
+#endif
+#ifndef MYFKO
+   #define MYFKO "fko"
+#endif
+#ifndef MYASM 
+   #define MYASM "gcc"
+#endif
+/*
+ * This is a helper wrapper for fko (floating point kernel optimizer) to make
+ * it act more like a compiler, with an option to apply a preprocessor.
+ * fko takes only one source file, and output assembly, whereas most
+ * build processes assume that multiple files can be passed, with the
+ * output being an object file.  This wrapper does *not* support linking.
+ * This wrapper does:
+ * (1) For files ending in .B, run MYPP (extract) as preprocessor to create
+ *     an FKO HIL file (ending in .b) for compiling by fko
+ * (2) Run MYFKO fko on all .b files to produce assembly (.s)
+ * (3) Run MYASM on all .s files to produce an object file (.o)
+ * The script itself takes flags of (ones w/o -- are standard unix flags):
+ * --<flag> : as shown in PrintUsage
+ * -Dhand=def -D hand=def -> only used for .B files, passed as -def to extract
+ * -o file.[o,obj] -> output object file name (must not contain ., or end 
+ *    in .o or .obj)
+ * -@[extract flag] : eg. -@type=sreal -@-langC -@'-def type double'
+ *                    embedded spaces muse be surrounded by '' (not "")
+ * -s : produce assembly rather than object file
+ * NOTE: any arg not beginning with - and ending in ".b" or ".B" is assumed to
+ *       be a file to be compiled.
+ */
 @ROUT gcc3p
 #ifndef MYGCC
    #define MYGCC "gcc"
@@ -11003,7 +11253,7 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
  *
  * Compiles with "-c" as a flag do only steps 1-2.
  */
-
+@ROUT gnuccw gnuf90w gcc3p fkoc
 char *CatStrs(char *s1, char *s2)
 {
    int i1, i2, i;
@@ -11188,6 +11438,7 @@ int PrintArgToStr(ATL_arg_t *ap, char *str)
 int PrintAllArgsToStr(ATL_arg_t *ab, char *str)
 /*
  * Prints all arguments in ab to str, RETURNS: # of characters printed
+ * Args with embedded spaces are placed in quotes (kept as 1 arg)
  */
 {
    int i=0;
@@ -11203,7 +11454,507 @@ int PrintAllArgsToStr(ATL_arg_t *ab, char *str)
    return(i);
 }
 
+int PrintAllArgsToStrNoQuote(ATL_arg_t *ab, char *str)
+/*
+ * Prints all arguments in ab to str, RETURNS: # of characters printed
+ * Args with embedded spaces not quoted (allowed to be mult commandline args)
+ */
+{
+   int i=0;
 
+   while (ab)
+   {
+      i += sprintf(str+i, "%s ", ab->arg);
+      ab = ab->next;
+   }
+   return(i);
+}
+
+char *ArgsToStrNQ(ATL_arg_t *ab, ATL_arg_t *ab1)
+{
+   char *sp;
+   int i0, i1, i;
+
+   i0 = FindTotLen(ab);
+   i1 = FindTotLen(ab1);
+   sp = malloc(i0+i1+1);
+   assert(sp);
+   i = PrintAllArgsToStrNoQuote(ab, sp);
+   assert(i <= i0);
+   i += PrintAllArgsToStrNoQuote(ab1, sp+i);
+   assert(i <= i0+i1);
+   return(sp);
+}
+@ROUT fkoc
+#define FKO_DOCMP 0
+#define FKO_DOASM 1
+#define FKO_SVTMP 2
+char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
+                     ATL_arg_t **PP, ATL_arg_t **CMP, ATL_arg_t **ASM)
+{
+   int i, nfiles=0, DOCMP=1, DOASM=1, SVTMP=0, flg, k;
+   ATL_arg_t *ppb, *pp, *cmpb, *cp, *asmb, *ap, *filb;
+   char *sp, *ks;
+   char *outnm=NULL;
+/*
+ * Go through compiler flags and separate them into flags affecting
+ * preprocessing, compilation, and assembling
+ */
+   ppb = pp = NewArg(MYPP);
+   cmpb = cp = NewArg(MYFKO);
+   asmb = ap = NewArg(MYASM);
+   filb = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      ATL_arg_t *at;
+      at = NewArg(args[i]);
+      if (at->arg[0] != '-')  /* file name or arg to flag */
+      {
+         flg = 1;  /* by default assume flag */
+         if (at->len > 2 && at->arg[at->len-2] == '.') /* poss filename */
+         {
+            char ch = at->arg[at->len-1];
+            if (ch == 's' || ch == 'B' || ch == 'b')
+            {
+               flg = 0;
+               at->next = filb;
+               filb = at;
+            }
+         }
+         if (flg)
+         {
+            cp->next = at;
+            cp = cp->next;
+         }
+      }
+      else if (at->len == 4 && at->arg[0] == '-' && at->arg[1] == 'm' &&
+               ((at->arg[2] == '6' && at->arg[3] == '4') || 
+                (at->arg[2] == '3' && at->arg[3] == '2')))
+      {  /* -m32/-m64 is passed to assembler, but not fko */
+         ap->next = at;
+         ap = ap->next;
+      }
+      else /* if (at->arg[0] == '-')  */ 
+      {
+         switch (at->arg[1])
+         {
+/*
+ *       FKO has -I that means start from intermediate files, but fkoc can't
+ *       use this option.  Instead, this is assumed to be cpp include 
+ *       directories, and thus ignored by fkoc
+ */
+         case 'I' : 
+            if (at->len == 2) /* path in next arg */
+               assert(++i < nargs);
+            KillArg(at);
+            break;
+         case 'o' :  /* -o : found name of output file */
+            if (outnm)
+               free(outnm);
+/*
+ *          If this is just -o, then actual name is given in the next arg
+ */
+            if (at->len == 2)
+            {
+               assert(++i < nargs);
+               sp = args[i];
+            }
+            else
+            {
+               sp = at->arg + 2;
+               while (*sp && isspace(*sp)) 
+                  sp++;
+            }
+            flg = strlen(sp);
+            outnm = malloc(flg+1);
+            assert(outnm);
+            strcpy(outnm, sp);
+            KillArg(at);
+            break;
+         case 's' : /* possible -save-temps */
+            if (at->len == 11 && !strcmp(at->arg, "-save-temps"))
+            {
+               SVTMP = 1;
+               KillArg(at);
+            }
+            else /* fko flag */
+            {
+               cp->next = at;
+               cp = cp->next;
+            }
+            break;
+         case 'D' :  /* -Dhan=def or -D han=def are extract arg */
+            if (at->len == 2)  /* next arg has definition */
+            {
+               assert(++i < nargs);
+               sp = args[i];
+            }
+            else  /* is -Dhan=def */
+               sp = at->arg + 2;
+            for (k=0; sp[k] && sp[k] != '='; k++);  /* find = */
+            pp->next = NewArg("-def");
+            pp = pp->next;
+            pp->next = NewArg(sp);
+            pp = pp->next;
+            if (sp[k] == '\0') /* if no = in def, define it to 1 */
+            {
+               pp->next = NewArg("1");
+               pp = pp->next;
+            }
+            else
+               pp->arg[k] = ' ';  /* change = to space */
+            KillArg(at);
+            break;
+         case '@' : /* -@ args go only to preprocessor (extract)  */
+            if (at->len == 2) /* next arg has extract command */
+            {
+               assert(++i < nargs);
+               sp = args[i];
+            }
+            else  /* rest of line has extract command */
+               sp = at->arg+2;
+/*
+ *          If extract command surrounded by '' or "", remove quotes
+ */
+            if (*sp == '\"' || *sp == '\'')
+            {
+               char q=*sp;
+               int k;
+               k = strlen(sp+1);
+               assert(q == sp[k]);
+               ks = malloc(k+1);
+               assert(ks);
+               strcpy(ks, sp+1);
+               ks[k-1] = '\0';
+               sp = ks;
+            }
+            else
+               ks = NULL;
+            pp->next = NewArg(sp);
+            pp = pp->next;
+            KillArg(at);
+            if (ks)
+               free(ks);
+            break;
+         case 'S' :  /* I only use -x asg-with-cpp, so pass to comp only */
+            if (at->len == 2) /* -S alone means emit assembly, not object */
+            {
+               DOASM = 0;
+               KillArg(at);
+            }
+            else  /* otherwise, must be an fko flag */
+            {
+               cp->next = at;
+               cp = cp->next;
+            }
+            break;
+         case 'E' :  /* I only use -x asg-with-cpp, so pass to comp only */
+            if (at->len == 2) /* -E alone means emit assembly, not object */
+            {
+               DOCMP = 0;
+               KillArg(at);
+            }
+            else  /* otherwise, must be an fko flag */
+            {
+               cp->next = at;
+               cp = cp->next;
+            }
+            break;
+         case 'c' :      /* -c is flag meaning same thing as default */
+            KillArg(at); /* so don't remember seeing it, and continue */
+            break;   
+         default:  /* fko flag */
+@beginskip
+            flg = 1;  /* by default, say it's a flag */
+            if (at->arg[0] != '-' && at->len > 2 &&
+                at->arg[at->len-2] == '.')           /* possible filename */
+            {
+               char ch = at->arg[at->len-1];
+               if (ch == 's' || ch == 'B' || ch == 'b')
+               {
+                  flg = 0;
+                  at->next = filb;
+                  filb = at;
+               }
+            }
+            if (flg)
+            {
+@endskip
+            cp->next = at;
+            cp = cp->next;
+@skip            }
+         }
+      }
+   }
+   if (!filb)
+   {
+      fprintf(stderr, "%s: no files specified!\n\n", args[0]);
+      exit(1);
+   }
+   *FLAG = (DOASM<<FKO_DOASM) | (DOCMP<<FKO_DOCMP) | (SVTMP<<FKO_SVTMP);
+   *files = filb;
+   *CMP = cmpb;
+   *ASM = asmb;
+   *PP = ppb;
+   if (outnm && filb->next)  /* must use particular output name */
+   {                         /* can only have one file when renaming! */
+      fprintf(stderr, "%s: can't use -o for multiple source files!\n", 
+              args[0]);
+      exit(2);
+   }
+   return(outnm);
+}
+
+char GetNextFileExt(ATL_arg_t *ap)
+{
+   int i = ap->len - 1;
+   char ch = ap->arg[i];
+   assert(ap->arg[i-1] == '.');
+   if (ch == 'B')
+      return('b');
+   else if (ch == 'b')
+      return('s');
+   else if (ch == 's')
+      return('o');
+   return(0);
+}
+
+char *FindNameInPath(char *ptnm)
+/*
+ * RETURNS: ptr in ptnm one past last '/'
+ */
+{
+   int i, isl=0;
+   for (i=0; ptnm[i]; i++)
+      if (ptnm[i] == '/')
+         isl = i+1;
+   return(ptnm+isl);
+}
+
+@beginskip
+char *NewNameWithPath(char *ptnm, char *nam)
+/*
+ * RETURNS: new string with nam substuted for filename at end of path
+ *          of ptnm.  ptnm is untouched.
+ */
+{
+   int l0, l1;
+   char *new;
+
+   assert(nam && ptnm);
+   l0 = strlen(ptnm);
+   l1 =  strlen(nam);
+   assert(l0);
+   for (l0--, l0 && ptnm[l0] != '/'; l0--); /* find end of path */
+   new = malloc(l0+l1+1);
+   assert(new);
+   strncpy(new, ptnm, l0);
+   strcpy(new+l0, nam);
+   return(new);
+}
+@endskip
+char *GetOutFileName(ATL_arg_t *ap, char extc)
+{
+   char *sp, *fn;
+   int i;
+
+   sp = FindNameInPath(ap->arg);  /* ignore path of input file */
+   i = strlen(sp);
+   assert(i > 2);         /* must end in .[B,b,S] */
+   fn = malloc(i+1);
+   assert(fn);
+   i -= 2;               /* get past [.B,b,S] */
+   assert(sp[i] == '.'); /* must be '.' for proper fkoc file extension */
+   strncpy(fn, sp, i+1);   /* copy everything except extension */
+   fn[i+1] = extc;
+   fn[i+2] = '\0';
+   return(fn);
+}
+/*
+ * ap->arg should be a file name that ends in ".[B,b,s]".  We will create
+ * a temporary file that has the same name plus a random integer (in hex),
+ * with file extension ".<extc>", and open the new file, returning the
+ * stream in *FPOUT.
+ * NOTE: like tmpnam, not completely safe!  In particular, imagine two
+ *       instances of fkoc running at same time, with same input file
+ *       name.  Both could use same integer, and get same proposed filename.
+ *       then both processes check that no such file exists, see that it
+ *       does not, and then both do an fopen, which only one of them "wins".
+ *       To minimize likelihood of this happening, we to fopen immediately
+ *       after checking, and use a random integer rather than a count.
+ */
+char *GetTempFile(ATL_arg_t *ap, FILE **FPOUT, char extc)
+{
+   FILE *fp;
+   char *fn, *sp;
+   int i, cnt;
+   char ch;
+
+   sp = FindNameInPath(ap->arg);  /* ignore path of input file */
+   i = strlen(sp);
+   assert(i > 2);         /* must end in .[B,b,S] */
+   fn = malloc(i+9);
+   assert(fn);
+   i -= 2;               /* get past [.B,b,S] */
+   assert(sp[i] == '.'); /* must be '.' for proper fkoc file extension */
+   strncpy(fn, sp, i);   /* copy everything except .[B,b,s] */
+   ch = sp[i+1];
+   if (ch != 'B' && ch != 'b' && ch != 's')
+   {
+      printf("UNKNOWN FILE EXTENSION: '%c' (FILE='%s')\n", ch, ap->arg);
+      exit(10);
+   }
+   sp = fn+i;
+   cnt = 0;
+   do
+   {
+      int k;
+      k = rand();
+      cnt++;
+      sprintf(sp, "%8.8x.%c", k, extc);
+      fp = fopen(fn, "r");
+      if (fp)            /* if file already exists */
+      {
+         fclose(fp);
+         fp = NULL;      /* try again with different integer */
+      }
+      else
+         fp = fopen(fn, "w");
+   }
+   while(!fp && cnt < 10000);
+   assert(fp);
+   *FPOUT = fp;
+   return(fn);
+}
+
+int main(int narg, char **args)
+{
+   int flag, DOCOMP, DOASM, SVTMP;
+   ATL_arg_t *fileb, *ppb, *cmpb, *asmb, *fp, *inf;
+   char *outnm;
+
+   outnm = ParseCompFlags(narg, args, &flag, &fileb, &ppb, &cmpb, &asmb);
+   printf("flag=%x\n", flag);
+   DOCOMP = flag & (1<<FKO_DOCMP);
+   DOASM = flag & (1<<FKO_DOASM);
+   SVTMP = flag & (1<<FKO_SVTMP);
+   for (fp=fileb; fp; fp = fp->next)
+   {
+      char extc, *bf=NULL, *sf=NULL, *of=NULL, *pf=NULL;
+      FILE *fpout;
+      extc = GetNextFileExt(fp);
+      pf = fp->arg;
+      if (extc == 'b')
+      {
+         char *sp;
+         ATL_arg_t *at;
+
+         at = NewArg("-b");
+         at->next = NewArg(fp->arg);
+         at->next->next = NewArg("-o");
+         pf = bf = GetTempFile(fp, &fpout, extc);
+         at->next->next->next = NewArg(bf);
+         sp = ArgsToStrNQ(ppb, at);
+         printf("BPP='%s'\n", sp);
+         assert(!system(sp));
+         free(sp);
+         KillAllArgs(at);
+         fclose(fpout);
+         if (!DOCOMP)  /* if this is final stage */
+         {
+            if (outnm)
+            {
+               if (rename(bf, outnm))
+               {
+                  fprintf(stderr, "Can't rename '%s' to '%s'!\n", 
+                          bf, outnm);
+                  exit(-1);
+               }
+               free(outnm);
+            }
+            else  /* final stage w/o renaming gets orig filename .b */
+            {
+               sp = GetOutFileName(fp, 'b');
+               assert(!rename(bf, sp));
+               free(sp);
+            }
+            free(bf);
+            continue;
+         }
+         else
+            extc = 's';
+      }
+      if (extc == 's')
+      {
+         char *sp;
+         ATL_arg_t *at;
+
+         at = NewArg(pf);
+         at->next = NewArg("-o");
+         if (!DOASM)  /* this is final stage */
+         {
+            if (outnm)
+               sp = outnm;
+            else 
+               sp = GetOutFileName(fp, 's');
+            fpout = fopen(sp, "w");
+            at->next->next = NewArg(sp);
+            free(sp);
+         }
+         else
+         {
+            pf = sf = GetTempFile(fp, &fpout, extc);
+            at->next->next = NewArg(sf);
+         }
+         sp = ArgsToStrNQ(cmpb, at);
+         printf("FKO='%s'\n", sp);
+         assert(!system(sp));
+         free(sp);
+         KillAllArgs(at);
+         fclose(fpout);
+         if (bf)
+         {
+            if (!SVTMP)
+               assert(!remove(bf));  /* delete temporary file */
+            free(bf);
+         }
+         if (!DOASM)  /* if this is final stage */
+            continue;
+         extc = 'o';
+      }
+      if (extc == 'o')
+      {
+         char *sp;
+         ATL_arg_t *at;
+
+         at = NewArg(pf);
+         if (outnm)
+            sp = outnm;
+         else 
+            sp = GetOutFileName(fp, 'o');
+         at->next = NewArg("-c -o");
+         at->next->next = NewArg(sp);
+         free(sp);
+         sp = ArgsToStrNQ(asmb, at);
+         KillAllArgs(at);
+         printf("ASM='%s'\n", sp);
+         assert(!system(sp));
+         free(sp);
+         if (pf != fp->arg)
+         {
+            assert(!remove(pf));
+            free(pf);
+         }
+      }
+   }
+   KillAllArgs(ppb);
+   KillAllArgs(cmpb);
+   KillAllArgs(asmb);
+   KillAllArgs(fileb);
+   return(0);
+}
+
+@ROUT gnuccw gnuf90w gcc3p
 char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
                      ATL_arg_t **CMP, ATL_arg_t **ASM, ATL_arg_t **LNK,
                      int *CPPONLY)
@@ -11723,4 +12474,32 @@ int main(int nargs, char **args)
       fclose(fplog);
    #endif
    return(0);
+}
+@ROUT GetArchDefs
+void PrintUsage(char *name, int iarg, char *arg)
+{
+   fprintf(stderr, "\nERROR around arg %d (%s).\n", iarg,
+           arg ? arg : "unknown");
+   fprintf(stderr, 
+      "USAGE: %s [flags] where flags are ($ vars from Make.inc):\n", name);
+   fprintf("   -A $ARCH \n");
+   fprintf("   -A $ARCH \n");
+
+}
+int GetFlags(int nargs, char **args, char *ASRCD, char *ADSTD, char *MACH, 
+             int FLAG)
+{
+   char *srcd=NULL, *dstd=NULL, *mach=NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+   }
+}
+
+int main(int nargs, char **args)
+{
+   int np, flag;
+   char *asrcd, *adstd, *mach;
+   np = GetFlags(nargs, args, &asrcd, &adstd, &mach, &flag);
 }

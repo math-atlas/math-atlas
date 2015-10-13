@@ -41,42 +41,27 @@
 #include "atlas_genparse.h"
 #include "atlas_enum.h"
 
-#define MMF_LDCTOP      0  /* 1: load C before K-loop, 0: ld after */
-#define MMF_X87         1  /* 1: requires the Intel x87 unit */
-#define MMF_MRUNTIME    2  /* 1: M dim is run-time variable */
-#define MMF_NRUNTIME    3  /* 1: M dim is run-time variable */
-#define MMF_KRUNTIME    4  /* 1: M dim is run-time variable */
-#define MMF_KUISKB      5  /* 1: KU == KB */
-#define MMF_LDISKB      6  /* 1: lda=ldb=KB */
-#define MMF_BETAN1      7  /* 1: kernel has special support for BETA = -1 */
-#define MMF_LDAB        8  /* 1: lda = ldb */
-#define MMF_AOUTER      9  /* 1: MNK loop order, 0: NMK loop order */
-#define MMF_LDFLOAT    10  /* 1: use single prec load for double */
-#define MMF_STFLOAT    11  /* 1: use single prec load for double */
-#define MMF_PFACOLS    12  /* 1: prefetch next mu cols of A */
-#define MMF_PFABLK     13  /* 1: prefetch next KBxNB block of A */
-#define MMF_PFBCOLS    14  /* 1: prefetch next nu cols of B */
-#define MMF_PFCELTS    15  /* 1: pf elts of C at top of loop, load at bottom */
-#define MMF_SINGLE     16  /* 1: single precision, else double */
-#define MMF_COMPLEX    17  /* 1: complex type, else real */
-#define MMF_L14NB      18  /* 1: need to fit all 3 matrices+nextA in L1 */
-#define MMF_JKMABC     19  /* 1: Jam-K major all arrays (access major) */
-#define MMF_JKMAB      20  /* 1: Jam-K major A/B, column-major C */
-#define MMF_BMAB       21  /* 1: block major A/B, col-maj C */
-#define MMF_BMABC      22  /* 1: block major A/B/C */
-#define MMF_MVA        23  /* 1: A expected to change between calls */
-#define MMF_MVB        24  /* 1: B expected to change between calls */
-#define MMF_MVC        25  /* 1: C expected to change between calls */
-@skip #define MMF_KVECAM     23  /* 1: A/B are k-vlen-access-major, C access major */
+#define MMF_SINGLE      0  /* 1: single precision, else double */
+#define MMF_COMPLEX     1  /* 1: complex type, else real */
+#define MMF_LDCTOP      2  /* 1: load C before K-loop, 0: ld after */
+#define MMF_KRUNTIME    3  /* 1: M dim is run-time variable */
+#define MMF_X87         4  /* 1: requires the Intel x87 unit */
+#define MMF_AOUTER      5  /* 1: MNK loop order, 0: NMK loop order */
+#define MMF_PFACOLS     6  /* 1: prefetch next mu cols of A */
+#define MMF_PFABLK      7  /* 1: prefetch next KBxNB block of A */
+#define MMF_PFBCOLS     8  /* 1: prefetch next nu cols of B */
+#define MMF_PFCELTS     9  /* 1: pf elts of C at top of loop, load at bottom */
+#define MMF_L14NB      10  /* 1: need to fit all 3 matrices+nextA in L1 */
+#define MMF_MVA        11  /* 1: A expected to change between calls */
+#define MMF_MVB        12  /* 1: B expected to change between calls */
+#define MMF_MVC        13  /* 1: C expected to change between calls */
+#define MMF_KVEC       14  /* 1: vectorize on K-dim. 0: do not vec on K dim */
+#define MMF_KUISKB     15  /* 1: only works for fully unrolled, constant K */
+#define MMF_NOBCAST    16  /* 1: use ld/splat to get B, rather than bcast */
 
 #define MMF_MVSET  ( (1<<MMF_MVA) | (1<<MMF_MVB) | (1<<MMF_MVC) )
 #define MMF_MVDEF  ( (1<<MMF_MVA) | (1<<MMF_MVB) )
-#ifdef ATL_JKMDEF
-   #define MMF_DEFAULT ( (1<<MMF_LDCTOP) | (1<<MMF_JKMABC) | (1<<MMF_AOUTER) | \
-                         (1<<MMF_NRUNTIME) | (1<<MMF_MRUNTIME) | MMF_MVDEF )
-#else
-   #define MMF_DEFAULT ( (1<<MMF_LDISKB) | (1<<MMF_LDAB) | MMF_MVDEF )
-#endif
+#define MMF_DEFAULT ( (1<<MMF_LDCTOP) | (1<<MMF_AOUTER) | MMF_MVDEF )
 #ifndef  FLAG_IS_SET
    #define FLAG_IS_SET(field_, bit_) ( ((field_) & (1<<(bit_))) != 0 )
 #endif
@@ -91,10 +76,12 @@ struct MMNode
    int ID, mu, nu, ku;  /* ID, and unrolling on each loop */
    int kbmin, kbmax;    /* min/max KB this kernel can handle */
    int SSE;             /* 0: no SSE, 1: SSE1 req, 2: SSE2 req, etc */
-   int lat, muladd, pref, clean, fftch, iftch, nftch; /* used for gened codes */
    int vlen;            /* vector length, 0 or 1 if scalar code */
-   int kmaj;            /* k-major access storage? */
-   int mbB, nbB, kbB;  /* best blocking dims found by search */
+@skip   int kmaj;            /* k-major access storage? */
+   int pref;            /* pref strategy used */
+   int pfLS;            /* pref line size */
+   int ivar;            /* int param used for various purposes */
+   int mbB, nbB, kbB;   /* best blocking dims found by search */
    enum ATLAS_TRANS TA, TB;
    int asmbits;   /* bitfield indicating which assembly(ies) is required */
    char *rout, *auth, *comp, *cflags;
@@ -776,6 +763,58 @@ static int *GF_IntRange2IntList(int N0, int NN, int incN)
       iarr[n] = i;
    return(iarr);
 }
+/* procedure @(ip) */
+static int GetNativeVLEN(char pre)
+{
+#if defined(ATL_AVX) || defined(ATL_AVXMAC)
+   if (pre == 's' || pre == 'c' || pre == 'S' || pre == 'C')
+      return(8);
+   return(4);
+#elif defined(ATL_GAS_ARM64)
+      if (pre == 's' || pre == 'c' || pre == 'S' || pre == 'C')
+         return(4);
+      return(2);
+#elif defined(ATL_GAS_ARM)
+   #ifndef ATL_NONIEEE
+      return(1);
+   #else
+      if (pre == 's' || pre == 'c' || pre == 'S' || pre == 'C')
+         return(4);
+      return(1);
+   #endif
+#elif defined(ATL_SSE2) || defined(ATL_VECARM1) || defined(ATL_VSX)
+   if (pre == 's' || pre == 'c' || pre == 'S' || pre == 'C')
+      return(4);
+   return(2);
+#elif defined(ATL_SSE1)
+   if (pre == 's' || pre == 'c' || pre == 'S' || pre == 'C')
+      return(4);
+   return(1);
+#else
+   return(0);   /* 0 means: I don't know */
+#endif
+}
+/* procedure @(ip) */
+static int GetNumVecRegs(char pre)
+{
+#ifdef ATL_SSE1
+   #ifdef ATL_USE64BITS
+      return(16);
+   #else
+      return(8);
+   #endif
+#elif defined(ATL_VECARM1) || defined(ATL_FPV3D32MAC)
+   return(32);
+#elif defined(ATL_FPV3D16MAC)
+   if (pre == 's' || pre == 'c' || pre == 'S' || pre == 'C')
+      return(32);
+    return(16);
+#elif defined(ATL_VSX)
+   return(64);
+#else
+   return(0);   /* 0 means: I don't know */
+#endif
+}
 #endif /* end atlas_genparse.h guard */
 @ROUT mmread
 #ifndef ATL_DEF_MMFLAG
@@ -961,6 +1000,36 @@ static ATL_@(rt)node_t *Kill@up@(rt)NodeFromQ
    Q = Remove@up@(rt)NodeFromQ(Q, nukeme);
    Kill@up@(rt)Node(nukeme);
    return(Q);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip): frees all ->rout entries in queue b */
+static void KillAll@up@(rt)Routs(ATL_@(rt)node_t *b)
+{
+   while (b)
+   {
+      if (b->rout)
+      {
+         free(b->rout);
+         b->rout = NULL;
+      }
+      b = b->next;
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip): frees all ->genstr entries in queue b */
+static void KillAll@up@(rt)Genstr(ATL_@(rt)node_t *b)
+{
+   while (b)
+   {
+      if (b->genstr)
+      {
+         free(b->genstr);
+         b->genstr = NULL;
+      }
+      b = b->next;
+   }
 }
 
 @iexp ip @(ip) 1 +
@@ -1332,7 +1401,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @endwhile
 @ROUT mmread 
-@whiledef jj mu nu ku kbmin kbmax fftch iftch nftch lat pref muladd vlen kmaj
+@whiledef jj mu nu ku kbmin kbmax pref vlen ivar
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
       p->@(jj) = atoi(sp+@len@(jj)+1);
@@ -1367,8 +1436,8 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
       ATL_MMF_MVPUT(p->flag, imv);
    }
 @multidef fl 
-   X87 LDCTOP MRUNTIME NRUNTIME KRUNTIME KUISKB LDISKB BETAN1 LDAB AOUTER
-   LDFLOAT STFLOAT PFACOLS PFABLK PFBCOLS PFCELTS L14NB JKMABC JKMAB BMAB BMABC
+   X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
+   KUISKB NOBCAST
 @endmultidef
 
 @ROUT mvread
@@ -1483,15 +1552,22 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @ROUT mmread 
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "OPMV=%d ", ATL_MMF_MVGET(np->flag));
-@whiledef kw mu nu ku kbmin kbmax fftch iftch nftch lat pref muladd vlen kmaj
+@whiledef kw ivar kbmin kbmax pref vlen
+   if (np->@(kw))
+   {
+      if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
+      i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
+   }
+@endwhile
+@whiledef kw mu nu ku
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
 @endwhile
 
    @define kwd @@
    @multidef kw
-      X87 LDCTOP MRUNTIME NRUNTIME KRUNTIME KUISKB LDISKB BETAN1 LDAB AOUTER
-      LDFLOAT STFLOAT PFACOLS PFABLK PFBCOLS L14NB JKMABC JKMAB BMAB BMABC
+      X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
+      KUISKB NOBCAST
    @endmultidef
 @ROUT r1read 
    @define kwd @X87 INCYISONE FNU ADDCFLAGS ALIGNX2A PFTUNABLE@
@@ -1505,7 +1581,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @endwhile
 @ROUT mvread r1read mmread
 @whiledef kw @(kwd)
-   if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
+   if (i+@len@(kw) > 72) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@(kw)=%d ", FLAG_IS_SET(np->flag, @up@(rt)F_@(kw)));
 @endwhile
 
@@ -2097,12 +2173,12 @@ static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 {
 /*
  * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
- * NOTE: if we make generator handle muladd, etc, MUST UPDATE HERE!!!
+ * NOTE: pref & pfLS do not affect output, and so are not checked!
+ * NOTE: any extension of generator functionality should extend this check!
  */
    if (p0->ID == 0 && p1->ID == 0)
       return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
-             p0->vlen == p1->vlen && p0->flag == p1->flag &&
-             p0->kmaj == p1->kmaj);
+             p0->vlen == p1->vlen && p0->flag == p1->flag);
 /*
  * If both are user kernels, then they may be repeats.  For user kernels,
  * they are the same if both ID and flag match, else they are not.
@@ -2110,6 +2186,19 @@ static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
    else if (p0->ID > 0 && p1->ID > 0)
       return(p0->ID == p1->ID && p0->flag == p1->flag);
    return(0);  /* Can't be the same if above criteria fails */
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMKernsPerfSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * ignoring blocking params, are kernels the same?  This version does not
+ * ignore setting that effect only performance (eg, prefetch settings).
+ */
+{
+   if (p0->ID == 0 && p1->ID == 0 && 
+       (p0->pref != p1->pref || p0->pfLS != p1->pfLS))
+      return(0);
+   return(MMKernsSame(p0, p1));
 }
 
 @iexp ip @(ip) 1 +
@@ -2857,6 +2946,231 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 @ROUT atlas_mmtesttime.h
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
+{
+   char *rout;
+   rout = malloc(48);
+   assert(rout);
+   /* ATL_<pre>amm<kb>_<vlen>[k,m]_<mu>x<nu>x<ku>_pf<pf>x<pfLS>_<flag>.c */
+   sprintf(rout, "ATL_%camm%d_%d%c_%dx%dx%d_pf%xx%d_%x.c", pre, kb, mp->vlen, 
+           FLAG_IS_SET(mp->flag,MMF_KVEC)?'k':'m', mp->mu, mp->nu, mp->ku,
+           mp->pref, mp->pfLS, mp->flag);
+   return(rout);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+char *MMGetGenString
+(
+   char pre,                    /* precision/type prefix */
+   ATL_mmnode_t *mp             /* mmkern ptr */
+)
+{
+   char *frm="make gen_amm pre=%c rt=%s vec=%s vlen=%d mu=%d nu=%d ku=%d KB=%d"
+             " bcast=%d pf=%d pfLS=%d";
+   char *vec="mdim";
+   char *gs;
+   int len;
+   len = strlen(frm) + strlen(mp->rout) + 4;
+   gs = malloc(len);
+   assert(gs);
+   if (mp->vlen < 2)
+      vec = "no";
+   else if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   {
+      vec = "kdim";
+      assert(mp->ku % mp->vlen == 0);
+   }
+   else 
+      assert(mp->mu % mp->vlen == 0);
+   sprintf(gs, frm, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, mp->ku,
+           FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0:mp->kbB, 
+           !FLAG_IS_SET(mp->flag, MMF_NOBCAST), mp->pref, mp->pfLS);
+   return(gs);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void MMFillInGenStrings(char pre, ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mp;
+
+   if (pre == 'z')
+      pre = 'd';
+   else if (pre == 'c')
+      pre = 's';
+
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (mp->ID == 0 && !mp->genstr)
+         mp->genstr = MMGetGenString(pre, mp);
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) : assumed kbB for routname */
+void MMFillInGenNames(char pre, ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mp;
+   if (pre == 'z')
+      pre = 'd';
+   else if (pre == 'c')
+      pre = 's';
+
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (mp->ID == 0 && !mp->rout)
+         mp->rout = MMGetGenName(pre, mp->kbB, mp);
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmnode_t *MMGetNodeGEN(char pre, int flag, int kb, int mu, int nu, int ku, 
+                           int vlen, int KVEC, char *rt)
+{
+   ATL_mmnode_t *mp;
+
+   mp = GetMMNode();
+   mp->mu = mu;
+   mp->nu = nu;
+   mp->ku = ku;
+   mp->vlen = vlen;
+   if (flag&1)
+      mp->flag |= (1<<MMF_NOBCAST);
+@beginskip
+// These guys presently unused, and setting them here causes flags not to 
+// match when nodes are read in from file (type info not presently saved!)
+   if (pre == 's' || pre == 'c' || pre == 'S' || pre == 'C')
+      mp->flag |= (1<<MMF_SINGLE);
+   if (pre == 'c' || pre == 'C' || pre == 'z' || pre == 'Z')
+      mp->flag |= (1<<MMF_COMPLEX);
+@endskip
+   if (!kb)
+      mp->flag |= (1<<MMF_KRUNTIME);
+   else
+      mp->kbB = kb;
+   mp->vlen = vlen;
+   if (KVEC && vlen > 1)
+      mp->flag |= (1<<MMF_KVEC);
+   else if (vlen < 2)
+      KVEC=1;
+   if (!rt)
+      rt = MMGetGenName(pre, kb, mp);
+   mp->rout = rt;
+   mp->genstr = MMGetGenString(pre, mp);
+   return(mp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int MMDoGenString(int verb, char *genstr)
+{
+   int err=0;
+   if (!genstr)
+      err=1;
+   else if (verb < 3) /* want to redirect output */
+   {
+      char *ln;
+      ln = NewMergedString(genstr, " > /dev/null 2>&1");
+      err = system(ln);
+      free(ln);
+   }
+   else
+      err = system(genstr);
+   if (err)
+      fprintf(stderr, "UNABLE TO GENERATE WITH COMMAND: '%s'\n", 
+              genstr ? genstr : "NULL");
+   return(err);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+char *MMGetTestString
+(
+   char pre,                    /* precision/type prefix */
+   int mb, int nb, int kb,      /* dimensions to test */
+   int beta,                    /* beta case to test */
+   ATL_mmnode_t *umm            /* mmkern ptr */
+)
+{
+   int i, k, lnlen, Dd, Ud, Vd;
+   int len0, len1, len2, len3, len4, len5;
+   char *ln;
+/*
+ * Horrific code so we don't have to rely on snprintf, which some ancient
+ * compiler may lack
+ */
+   Ud = NumDecDigits(umm->mu);
+   i = NumDecDigits(umm->nu);
+   Ud = Mmax(Ud,i);
+   i = NumDecDigits(umm->ku);
+   Ud = Mmax(Ud,i);
+   Dd = NumDecDigits(mb);
+   i = NumDecDigits(mb);
+   Dd = Mmax(Dd,i);
+   i = NumDecDigits(kb);
+   Dd = Mmax(Dd,i);
+   Vd = NumDecDigits(umm->vlen);
+   len0 = 64+strlen(umm->rout) + 3*Dd; /* guess for first print */
+   len1 = 8 + Vd;  /* kmaj */
+   len2 = 22;      /* beta */
+   if (umm->comp)
+      len3 = 24 + strlen(umm->comp) + strlen(umm->cflags);
+   else 
+      len3 = 0;
+   len4 = 40 + 3*(Dd+Ud);  /* dim/unroll print */
+   len5 = 20; /* redirect */
+   lnlen = len0 + len1 + len2 + len3 + len4 + len5;
+   ln = malloc(lnlen);
+   assert(ln);
+
+   if (umm->ID > 0)
+      i = sprintf(ln, "make %cammmtst mmrout=AMMCASES/%s mu=%d nu=%d ku=%d ",
+                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
+   else
+      i = sprintf(ln, "make %cammmtst mmrout=%s mu=%d nu=%d ku=%d ",
+                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
+   assert(i < len0);
+   if (FLAG_IS_SET(umm->flag, MMF_KVEC))
+   {
+      k = sprintf(ln+i, "kmaj=%d ", umm->vlen);
+      i += k;
+      assert(k < len1);
+   }
+   if (beta != 1)
+   {
+      if (beta == -1)
+         k = sprintf(ln+i, "beta=-1 betan=\"N1\" ");
+      else if (beta == 0)
+         k = sprintf(ln+i, "beta=%d ", beta);
+      else
+         assert(0);
+      assert(k < len2);
+      i += k;
+   }
+   if (umm->comp)
+   {
+      char ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+      k = sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
+                  ch, umm->comp, ch, umm->cflags);
+      assert(k < len3);
+      i += k;
+   }
+   k = sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
+               pre, mb, nb, kb, 0, 0,
+               FLAG_IS_SET(umm->flag, MMF_KRUNTIME) ? 0 : kb);
+   assert(k < len4);
+   i += k;
+   k = sprintf(ln+i, " > /dev/null 2>&1\n");
+   assert(k < len5);
+   i += k;
+   assert(i < lnlen);
+   return(ln);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 int MMKernelFailsTest
 (
    char pre,                    /* precision/type prefix */
@@ -2868,78 +3182,18 @@ int MMKernelFailsTest
  * RETURNS: 0 on success, non-zero on failure
  */
 {
-   char ln[4096];
-   int i, lda, ldb, ldc;
+   char *ln;
+   int i;
    char ch;
 
 /*
  * If the file is generated, call generator to create it
  */
+   if (umm->ID == 0 && !umm->genstr)
+      umm->genstr = MMGetGenString(pre, umm);
    if (umm->genstr)
-   {
-      assert(strlen(umm->genstr) < 4032);
-      sprintf(ln, "%s > /dev/null 2>&1", umm->genstr);
-      if (system(ln))
-      {
-         fprintf(stderr, "ERROR, LINE %d of %s\n", __LINE__, __FILE__);
-         fprintf(stderr, "UNABLE TO GENERATE WITH COMMAND: %s\n", umm->genstr);
-         exit(-1);
-      }
-   }
-   ldc = mb*2+4;
-   if (FLAG_IS_SET(umm->flag, MMF_LDISKB))
-      lda = ldb = kb;
-   else if (FLAG_IS_SET(umm->flag, MMF_LDAB))
-      lda = ldb = kb+8;
-   else
-   {
-      lda = kb+8;
-      ldb = kb+16;
-   }
-   if (FLAG_IS_SET(umm->flag, MMF_JKMABC))
-   {
-      if (umm->ID > 0)
-         i = sprintf(ln, "make %cammmtst mmrout=AMMCASES/%s mu=%d nu=%d ku=%d ",
-                     pre, umm->rout, umm->mu, umm->nu, umm->ku);
-      else
-         i = sprintf(ln, "make %cammmtst mmrout=%s mu=%d nu=%d ku=%d ",
-                     pre, umm->rout, umm->mu, umm->nu, umm->ku);
-      if (umm->kmaj > 1)
-         i += sprintf(ln+i, "kmaj=%d ", umm->kmaj);
-   }
-   else if (pre == 'c' || pre == 'z')
-      i = sprintf(ln, "make cmmutstcase mmrout=%s csC=2 ", umm->rout);
-   else
-      i = sprintf(ln, "make mmutstcase mmrout=%s ", umm->rout);
-   if (beta != 1)
-   {
-      if (beta == -1)
-      {
-         if ((FLAG_IS_SET(umm->flag, MMF_JKMABC)))
-            i += sprintf(ln+i, "beta=-1 betan=\"N1\" ");
-         else
-            i += sprintf(ln+i, "beta=2 betan=\"X\" ");
-      }
-      else if (beta == 0)
-         i += sprintf(ln+i, "beta=%d ", beta);
-      else
-         i += sprintf(ln+i, "beta=%d betan=\"X\" ", beta);
-   }
-   if (umm->kmaj > 1)
-         i += sprintf(ln+i, "kmaj=%d ", umm->kmaj);
-   if (umm->comp)
-   {
-      ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
-      i += sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
-                   ch, umm->comp, ch, umm->cflags);
-   }
-   i += sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
-                pre, mb, nb, kb, 
-                FLAG_IS_SET(umm->flag, MMF_MRUNTIME) ? 0 : mb, 
-                FLAG_IS_SET(umm->flag, MMF_NRUNTIME) ? 0 : nb, 
-                FLAG_IS_SET(umm->flag, MMF_KRUNTIME) ? 0 : kb);
-   i += sprintf(ln+i, "lda=%d ldb=%d ldc=%d", lda, ldb, ldc);
-   i += sprintf(ln+i, " > /dev/null 2>&1\n");
+      assert(!MMDoGenString(0, umm->genstr));
+   ln = MMGetTestString(pre, mb, nb, kb, beta, umm);
    i = system(ln);
    if (i)
    {
@@ -2947,7 +3201,28 @@ int MMKernelFailsTest
       if (umm->genstr)
          fprintf(stderr, "   genstr was = '%s'\n", umm->genstr);
    }
+   free(ln);
    return(i);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int MMKernelFailsAnyBeta
+(
+   char pre,                    /* precision/type prefix */
+   int mb, int nb, int kb,      /* dimensions to test */
+   ATL_mmnode_t *umm            /* mmkern ptr */
+)
+/*
+ * RETURNS: 0 on success, non-zero on failure
+ */
+{
+   int i;
+
+   for (i=-1; i < 2; i++)
+      if (MMKernelFailsTest(pre, mb, nb, kb, i, umm))
+        return(1);
+   return(0);
 }
 
 @iexp ip @(ip) 1 +
@@ -2990,6 +3265,7 @@ static ATL_mmnode_t *DelBadMMKernels(char pre, int verb, ATL_mmnode_t *bp)
    return(bp);
 }
 
+@beginskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 char *GetGmmGenString
@@ -3079,9 +3355,6 @@ void FillInGMMNode(int verb, ATL_mmnode_t *mmp, char pre, int MACC, int lat,
                                  fftch, iftch, nftch, LDTOP, pf);
    mmp->auth = DupString("Whaley/emit_mm");
    i = 0;
-   SET_FLAG(i, MMF_KUISKB, (ku == nb));
-   SET_FLAG(i, MMF_LDISKB, 1);
-   SET_FLAG(i, MMF_LDAB, 1);
    if (pre == 's' || pre == 'c')
       SET_FLAG(i, MMF_SINGLE, 1);
    if (pre == 'c' || pre == 'z')
@@ -3168,95 +3441,106 @@ double TimeGMMKernel            /* times kernels generated by emit_mm */
    assert(dp);
    return(*dp);
 }
+@endskip
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 double TimeMMKernel
 (
    int verb,                    /* 0: no output, 1 min output, 2: full output */
-   int FORCETIME,               /* 1: ignore any prior output file */
+   int flag,                   /* 1: ignore any prior output file */
    ATL_mmnode_t *mmp,           /* ptr to mmkern struct */
    char pre,                    /* type/prec prefix: z,c,d,s */
    int mb, int nb, int kb,      /* dimensions to time */
-   int lda,                     /* >0: lda to use, else kb */
-   int ldb,                     /* >0: ldb to use, else kb */
-   int ldc,                     /* >0: ldc to use, else mb+8 */
    int beta,                    /* beta to time */
    int mflop,                   /* >0: force mflop MFLOPs in each time interv */
    int cflush                   /* >=0: size of cache flush, else ignored */
 )
+/*
+ * flag - take actions the following actions if bit location is set:
+ *    0 : ignore any prior output file on output
+ *    1 : time in serial rather than parallel
+ */
 {
-   char fnam[128], ln[2048];
+   char fnam[128], ln[4096];  /* security from 1991 */
    const char *LO = FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "IJK": "JIK";
-   const int JKMAJOR = FLAG_IS_SET(mmp->flag, MMF_JKMABC), ku=mmp->ku;
-   const int KB = (mmp->kmaj < 2) ? kb : ((kb+ku-1)/ku)*ku;
+   const int vl=mmp->vlen;
+   const int ku=mmp->ku;
+   const int KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+vl-1)/vl)*vl;
+   const int FORCETIME = flag&1, SERIAL=flag&2;
+   int KU=mmp->ku;
    int DOTIME=1;
    int MV=3;  /* bit pattern on move CBA (C=4, B=2, A=1) */
-   char *be;
+   char *be, *gs0=mmp->genstr;
    int i, j;
    char ch;
    double *dp;
    MV = ((mmp->flag) >> MMF_MVA)&7;
 /*
- * If it's a emit_mm generated file w/o the genstring, create the genstring
- * assuming it is a mmK
+ * If it's a emit_mm generated file with a missing or bad genstring, make it
  */
-   if (mmp->ID == 0 && !mmp->genstr && mmp->iftch > 0)
-      mmp->genstr = GetGmmGenString(verb, pre, mmp->muladd, mmp->lat, beta, nb,
-                                    mmp->mu, mmp->nu, mmp->ku,
-                                    mmp->fftch, mmp->iftch, mmp->nftch, 
-                                    FLAG_IS_SET(mmp->flag, MMF_LDCTOP), 
-                                    mmp->pref);
+   
+   if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
+      KU = KB;
+   else if (ku > KB)
+      KU = KB;
+   if (mmp->ID == 0 && (KB != mmp->kbB || KU != mmp->ku || !mmp->genstr))
+   {
+      int kb0=mmp->kbB, ku0=mmp->ku;
+      mmp->kbB = KB;
+      mmp->ku = KU;
+      mmp->genstr = MMGetGenString(pre, mmp);
+      mmp->kbB = kb0;
+      mmp->ku = ku0;
+   }
 /*
  * If the file is generated, call generator to create it
  */
    if (mmp->genstr)
+      assert(!MMDoGenString(verb, mmp->genstr));
+   else if (verb > 2)
+      printf("NO genstr\n");
+/*
+ * Figure out the name of the output file
+ */
+   if (FORCETIME)
+      strcpy(fnam, "res/tmpout.ktim");
+/*
+ * PREammID_MBxNBxKB_MUxNUxKU_FLAG_v[M,K]VLENbBETA_CFLUSH
+ */
+   else
    {
-      i = sprintf(ln, "%s", mmp->genstr);
-      if (verb < 3)
-         i += sprintf(ln+i, " > /dev/null 2>&1\n");
-      if (system(ln))
-      {
-         fprintf(stderr, "ERROR, LINE %d of %s\n", __LINE__, __FILE__);
-         fprintf(stderr, "UNABLE TO GENERATE WITH COMMAND: %s\n", mmp->genstr);
-         exit(-1);
-      }
+      if (mmp->vlen < 2)
+         ch = 'S';
+      else
+         ch = (FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? 'K' : 'M';
+
+      sprintf(fnam, 
+      "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
+              pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, KU, 
+              mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
    }
+/* 
+ * If we actually need to do timing, must also construct timer call
+ */
+   if (!FORCETIME)
+      DOTIME = !FileExists(fnam);
+/* 
+ * Normal timing uses parallel timer 
+ */
    #ifndef ATL_SERIAL_INSTALL
       #define RESACT 2   /* want average frm ReadResultsFile for parallel */
-/*
- *    Figure out the name of the output file
- */
-      if (FORCETIME)
-         strcpy(fnam, "res/tmpout.ktim");
-/*
- *    PREammID_MBxNBxKB_MUxNUxKU_FLAG_v[M,K]VLENbBETA_CFLUSH
- */
-      else
-      {
-         if (mmp->vlen < 2)
-            ch = 'S';
-         else
-            ch = (mmp->kmaj > 1) ? 'K' : 'M';
-
-         sprintf(fnam, "res/%cammm%d_%dx%dx%d_%dx%dx%d_%d_v%c%db%d_%d.ktim",
-                 pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, mmp->ku, mmp->flag,
-                 ch, mmp->vlen, beta, cflush);
-      }
-/* 
- *    If we actually need to do timing, must also construct timer call
- */
-      if (!FORCETIME)
-         DOTIME = !FileExists(fnam);
       if (DOTIME)
       {
          i = sprintf(ln, "make x%cammtime_pt mb=%d nb=%d kb=%d",
                      pre, mb, nb, KB);
+         if (SERIAL)
+            i += sprintf(ln+i, " NPROC=1");
          if (mmp->genstr)
             i += sprintf(ln+i, " mmrout=%s", mmp->rout);
          else
             i += sprintf(ln+i, " mmrout=AMMCASES/%s", mmp->rout);
-         i += sprintf(ln+i, " mu=%d nu=%d ku=%d", mmp->mu, mmp->nu, mmp->ku);
+         i += sprintf(ln+i, " mu=%d nu=%d ku=%d", mmp->mu, mmp->nu, KU);
          i += sprintf(ln+i, " mvA=%d mvB=%d mvC=%d", ((mmp->flag >> MMF_MVA)&1), 
                       ((mmp->flag >> MMF_MVB)&1), ((mmp->flag >> MMF_MVC)&1));
          i += sprintf(ln+i, " kmoves=\"");
@@ -3267,6 +3551,13 @@ double TimeMMKernel
          if (FLAG_IS_SET(mmp->flag, MMF_MVC))
             i += sprintf(ln+i, " -DATL_MOVEC");
          i += sprintf(ln+i, "\"");
+         if (mmp->pref)
+         {
+            if (mmp->pfLS)
+               i += sprintf(ln+i, " pf=%d pfLS=%d", mmp->pref, mmp->pfLS);
+            else
+               i += sprintf(ln+i, " pf=%d", mmp->pref);
+         }
          if (beta == 1 || beta == 0)
             i += sprintf(ln+i, " beta=%d", beta);
          else
@@ -3280,49 +3571,6 @@ double TimeMMKernel
       }
    #else
       #define RESACT 0   /* ReadResultsFile uses ACTION=0 */
-      if (FLAG_IS_SET(mmp->flag, MMF_LDISKB))
-         lda = ldb = kb;
-      else
-      {
-         if (lda < 1)
-            lda = kb;
-         if (ldb < 1)
-            ldb = kb;
-         if (ldc < 1)
-            ldc = mb + 8;
-      }
-      if (FLAG_IS_SET(mmp->flag, MMF_LDAB))
-         ldb = lda;
-   
-      if (beta == 0)
-         be = "b0";
-      else if (beta == 1)
-         be = "b1";
-      else if (beta == -1)
-         be = "bn1";
-      else 
-         be = "bX";
-      if (FORCETIME)
-         sprintf(fnam, "res/tmpout");
-      else if (JKMAJOR) 
-      /*   dmmMNK%d_JMMBxNBxKB_muxnuk#xku_rtK_LDTOP_vlen_pf_a1_bX_MV_flushKB */
-         sprintf(fnam, 
-         "res/%cmm%s%d_%dx%dd%dx%d_%dx%dx%d_rtK%d__v%d_%d_%d_a1_%s_%d_%d.ktim",
-                 pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
-                 mmp->ID, mb, nb, mmp->kmaj, kb, mmp->mu, mmp->nu, mmp->ku, 
-                 FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
-                 FLAG_IS_SET(mmp->flag, MMF_LDCTOP), 
-                 mmp->vlen, mmp->pref, be, MV, cflush);
-   
-      else /*dmm%d_TNMBxNBxKB_muxnuxku_ldc_rtMxrtNxrtK_LDTOP_pf_a1_bX_MV_flushKB */
-         sprintf(fnam, 
-        "res/%cmm%s%d_%c%c%dx%dx%d_%dx%dx%d_%d_%dx%dx%d_%d_%d_a1_%s_%d_%d.ktim",
-                 pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
-                 mmp->ID, 'T', 'N', mb, nb, kb, mmp->mu, mmp->nu, mmp->ku, ldc, 
-                 FLAG_IS_SET(mmp->flag, MMF_MRUNTIME), 
-                 FLAG_IS_SET(mmp->flag, MMF_NRUNTIME), 
-                 FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
-                 FLAG_IS_SET(mmp->flag, MMF_LDCTOP), mmp->pref, be, MV, cflush);
    
       if (!FORCETIME)
          DOTIME = !FileExists(fnam);
@@ -3330,17 +3578,15 @@ double TimeMMKernel
       {
          if (pre == 'c' || pre == 'z')
             i = sprintf(ln, "make cmmucase mmrout=%s csC=2 ", mmp->rout);
-         else if (JKMAJOR) 
+         else
          {
             if (mmp->ID > 0)
                i = sprintf(ln, "make mmucaseN mmrout=AMMCASES/%s ", mmp->rout);
             else
                i = sprintf(ln, "make mmucaseN mmrout=%s ", mmp->rout);
-            if (mmp->kmaj > 1)
-               i += sprintf(ln+i, "kmaj=%d ", mmp->kmaj);
+            if (FLAG_IS_SET(mmp->flag,MMF_KVEC))
+               i += sprintf(ln+i, "kmaj=%d ", mmp->vlen);
          }
-         else
-            i = sprintf(ln, "make mmucase mmrout=%s ", mmp->rout);
          if (mmp->cflags)
          {
             ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
@@ -3362,12 +3608,10 @@ double TimeMMKernel
    @skip      i += sprintf(ln+i, "moves=\"-DMoveA -DMoveC\" ");
          i += sprintf(ln+i, "casnam=%s ", fnam);
          i += sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
-                      pre, mb, nb, KB, 
-                      FLAG_IS_SET(mmp->flag, MMF_MRUNTIME) ? 0:mb,
-                      FLAG_IS_SET(mmp->flag, MMF_NRUNTIME) ? 0:nb,
+                      pre, mb, nb, KB, 0, 0,
                       FLAG_IS_SET(mmp->flag, MMF_KRUNTIME) ? 0:KB);
-         i += sprintf(ln+i, "mu=%d nu=%d ku=%d lda=%d ldb=%d ldc=%d beta=%d",
-                      mmp->mu, mmp->nu, mmp->ku, lda, ldb, ldc, beta);
+         i += sprintf(ln+i, "mu=%d nu=%d ku=%d beta=%d",
+                      mmp->mu, mmp->nu, KU, beta);
       }
    }
    #endif
@@ -3390,6 +3634,11 @@ double TimeMMKernel
          exit(-1);
       }
    }
+   if (mmp->genstr != gs0)  /* put genstr back to original value */
+   {
+      free(mmp->genstr);
+      mmp->genstr = gs0;
+   }
    dp = ReadResultsFile(RESACT, 0, fnam);
    if (!dp)
    {
@@ -3411,9 +3660,142 @@ double TimeMMKernel
       mf = (mf / KB)*kb;
       return(mf);
    }
-
    return(*((double*)ReadResultsFile(RESACT, 0, fnam)));
    #undef RESACT
+}  /* end TimeMMKernel */
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int MMKernCanHandleCase(ATL_mmnode_t *mp, int mb, int nb, int kb)
+/* 
+ * RETURNS: 0 if mp cannot handle GEMM of size mbxnbxkb
+ *          1 if it can handle w/o extra computation
+ *          2 if handling it requires extra comptutation (KVEC only: on kb)
+ */
+{
+   if (mb%mp->mu == 0 && nb%mp->nu == 0)
+   {
+      const int KRUN=FLAG_IS_SET(mp->flag, MMF_KRUNTIME), ku=mp->ku;
+      if (mp->kbB == kb)
+         return(1);
+      if (KRUN && kb%ku == 0)
+         return(1);
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      {
+         const int vl = mp->vlen, kbB=mp->kbB;
+         if (KRUN && kb%ku < vl)
+            return(2);
+         if (kbB > kb && (kbB-kb < vl))
+            return(2);
+         if (kbB < kb && (kb-kbB < vl))
+            return(2);
+      }
+   }
+   return(0);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmnode_t *MMTimeKernWithAlt
+(
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int imf,                     /* which mflop entry to store res in */
+   int flag,                    /* 1: ignore any prior output file */
+   ATL_mmnode_t *mp0,           /* ptr to mmkern struct */
+   ATL_mmnode_t *mp1,           /* ptr to mmkern struct */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int mb, int nb, int kb,      /* dimensions to time */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >=0: size of cache flush, else ignored */
+)
+{
+   int i;
+   double mf0=0.0, mf1=0.0;
+   i = MMKernCanHandleCase(mp0, mb, nb, kb);
+   if (i)
+   {
+      mf0 = TimeMMKernel(verb, flag, mp0, pre, mb, nb, kb, beta, mflop, cflush);
+      if (i == 2)
+      {
+         int k = mp0->vlen;
+         k = ((kb+k-1)/k)*k;
+         mf0 *= kb;
+         mf0 /= k;
+      }
+      mp0->mflop[imf] = mf0;
+   }
+/*
+ * If we couldn't use first kernel, or if first kernel needed extra flops
+ */
+   if (!i || i == 2)
+   {
+      int j;
+      j = MMKernCanHandleCase(mp1, mb, nb, kb);
+      if (j)
+      {
+         mf1 = TimeMMKernel(verb, flag, mp1, pre, mb, nb, kb,beta,mflop,cflush);
+         if (j == 2)
+         {
+            int k = mp1->vlen;
+            k = ((kb+k-1)/k)*k;
+            mf1 *= kb;
+            mf1 /= k;
+         }
+         mp1->mflop[imf] = mf1;
+      }
+      else if (!i)
+         return(NULL);
+   }
+   if (mf1 > mf0)
+      return(mp1);
+   return(mp0);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmnode_t *MMTimeAllKernsWithAlt
+(
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int imf,
+   int flag,                   /* 1: ignore any prior output file */
+   ATL_mmnode_t *mmb,           /* ptr to mmkern struct */
+   ATL_mmnode_t *mmA,           /* ptr to mmkern struct */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int mb, int nb, int kb,      /* dimensions to time */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >=0: size of cache flush, else ignored */
+)
+/*
+ * For given problem size, times all kernels in mmb.  If any entry in mmb
+ * cannot handle this exact problem (eg., unrolling mismatch), or requires
+ * extra flops to handle the problem, the corresponding
+ * entry in the alternate list mmA will be tried.
+ * RETURNS: ptr to fastest timed kernel, or NULL if none worked.
+ * NOTE: neither list is changed by this function (mflop is overwritten!), 
+ *       but ptr into original listis returned.
+ */
+{
+   ATL_mmnode_t *mpB=NULL, *mp0, *mp1;
+   double mfB=0.0;
+   for (mp0=mmb, mp1=mmA; mp0; mp0 = mp0->next, mp1 = mp1->next)
+   {
+      ATL_mmnode_t *mp;
+      mp = MMTimeKernWithAlt(verb, imf, flag, mp0, mp1, pre, mb, nb, kb, 
+                             beta, mflop, cflush);
+      if (mp)
+      {
+         double mf;
+         mf = mp->mflop[imf];
+         if (mf > mfB)
+         {
+            mfB = mf;
+            mpB = mp;
+         }
+      }
+   }
+   return(mpB);
 }
 
 @iexp ip @(ip) 1 +
@@ -3437,18 +3819,18 @@ int TimeNegMMKernels            /* RET: 0 if no retiming required */
       if (mp->mflop[imf] <= 0.0)
       {
          RETIME++;
-         mp->mflop[imf] = TimeMMKernel(verb, FORCETIME, mp, pre, 
+         mp->mflop[imf] = TimeMMKernel(verb, FORCETIME ? 1:0, mp, pre, 
                                        mp->mbB, mp->nbB, mp->kbB,
-                                       mp->kbB, mp->kbB, mp->mbB, 
                                        beta, mflop, cflush);
       }
    }
    return(RETIME);
 }
 
+@beginskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static char *GetVecStrMM(pre, vlen)
+static char *GetVecStrMM(char pre, int vlen)
 {
    if (vlen == 1)
       return("scalar");
@@ -3480,46 +3862,7 @@ static char *GetVecStrMM(pre, vlen)
  */
    return("gvec");
 }
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static void FillInMMGenStrings
-(
-   char pre,
-   ATL_mmnode_t *mmb,  /* queue to look through */
-   char *dir           /* output directory to generate into */
-)
-/*
- * Creates GenString for any ID=0 in mmb
- */
-{
-   ATL_mmnode_t *mp;
-   char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s/%s kmaj=%d";
-   int frml;
-
-   frml = strlen(frm);
-   for (mp=mmb; mp; mp = mp->next)
-   {
-      if (mp->ID == 0)  /* is generated file */
-      {
-         int ll;
-         char *sp, *vec;
-         int vlen = mp->vlen;
-
-         assert(mp->rout);  /* should have been filled in by search */
-         ll = frml + strlen(dir) + strlen(mp->rout) + 8;
-         sp = malloc(ll*sizeof(char));
-         assert(sp);
-
-         vec = GetVecStrMM(pre, mp->vlen);
-
-         sprintf(sp, frm, vec, mp->lat, mp->mu, mp->nu,
-                 mp->ku, FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0 : mp->kbB,
-                 vlen, dir, mp->rout, mp->kmaj);
-         mp->genstr = sp;
-      }
-   }
-}
+@endskip
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -3528,17 +3871,19 @@ static ATL_mmnode_t *TimeMMFileWithPath
    char pre, 
    char *path, 
    char *file, 
-   int imf,                     /* index of mflop array to check/set */
-   int verb,                    /* 0: no output, 1 min output, 2: full output */
-   int FORCETIME,               /* 1: ignore any prior output file */
-   int beta,                    /* beta to time */
-   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
-   int cflush                   /* >0: size of cache flush, else ignored */
+   int imf,                    /* index of mflop array to check/set */
+   int verb,                   /* 0: no output, 1 min output, 2: full output */
+   int FORCETIME,              /* 1: ignore any prior output file */
+   int beta,                   /* beta to time */
+   int mflop,                  /* >0: force mflop MFLOPs in each time interv */
+   int cflush                  /* >0: size of cache flush, else ignored */
 )
 {
    ATL_mmnode_t *mmb;
    mmb = ReadMMFileWithPath(pre, path, file);
-   FillInMMGenStrings(pre, mmb, "");
+   if (!mmb)
+      return(NULL);
+   MMFillInGenStrings(pre, mmb);
    if (TimeNegMMKernels(imf, verb, FORCETIME, mmb, pre, beta, mflop, cflush))
       WriteMMFileWithPath(pre, path, file, mmb);
    return(mmb);
@@ -3553,9 +3898,6 @@ void TimeAllMMKernels
    int FORCETIME,               /* 1: ignore any prior output file */
    ATL_mmnode_t *mmb,           /* ptr to mmkern struct queue */
    char pre,                    /* type/prec prefix: z,c,d,s */
-   int lda,                     /* >0: lda to use, else kb */
-   int ldb,                     /* >0: ldb to use, else kb */
-   int ldc,                     /* >0: ldc to use, else mb+8 */
    int beta,                    /* beta to time */
    int mflop,                   /* >0: force mflop MFLOPs in each time interv */
    int cflush                   /* >0: size of cache flush, else ignored */
@@ -3563,11 +3905,8 @@ void TimeAllMMKernels
 {
    ATL_mmnode_t *mmp;
    for (mmp=mmb; mmp; mmp = mmp->next)
-      mmp->mflop[itime] = TimeMMKernel(verb, FORCETIME, mmp, pre, 
+      mmp->mflop[itime] = TimeMMKernel(verb, FORCETIME?1:0, mmp, pre, 
                                        mmp->mbB, mmp->nbB, mmp->kbB,
-                                       (lda >= 0) ? lda : mmp->kbB, 
-                                       (ldb >= 0) ? ldb : mmp->kbB, 
-                                       (ldc >= 0) ? ldc : mmp->mbB+8, 
                                        beta, mflop, cflush);
 }
 

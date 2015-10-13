@@ -121,23 +121,10 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
    #endif
 #endif
 #ifndef ATL_PTMAXMALLOC
-   #ifndef ATL_PTMAXMALLOC_MB
-      #if defined(ATL_ARCH_XeonPHI)
-         #define ATL_PTMAXMALLOC_MB 32UL
-      #else
-         #define ATL_PTMAXMALLOC_MB 128UL
-      #endif
+   #ifndef ATL_MaxMalloc
+      #include "atlas_maxmalloc.h"
    #endif
-   #define ATL_PTMAXMALLOC (((ATL_PTMAXMALLOC_MB)<<20)<<ATL_NTHRPOW2)
-   #ifdef ATL_MaxMalloc
-      #if ATL_MaxMalloc*ATL_NTHREADS < ATL_PTMAXMALLOC
-         #undef ATL_PTMAXMALLOC
-         #define ATL_PTMAXMALLOC (ATL_MaxMalloc*ATL_NTHREADS)
-      #elif ATL_MaxMalloc > ATL_PTMAXMALLOC
-         #undef ATL_PTMAXMALLOC
-         #define ATL_PTMAXMALLOC ATL_MaxMalloc
-      #endif
-   #endif
+   #define ATL_PTMAXMALLOC ATL_MaxMalloc
 #endif
 /*
  * If we don't have thread affinity, then the thread I'm waiting on may share
@@ -8286,7 +8273,7 @@ int Mjoin(PATL,tgetf2CR)
           ATL_laswp(nrp, Ac+nrprev, lda, 0, Nleft, ipiv, 1);
        An = Ac + (Nleft SHIFT);
        ATL_barrier();
-       ATL_membarrier;   /* core must 'see' all changes made above! */
+       ATL_membar;   /* core must 'see' all changes made above! */
 /*
  *     If local NRHS < 4, reduce parellism to avoid L1BLAS perf with contention
  */
@@ -8320,7 +8307,7 @@ int Mjoin(PATL,tgetf2CR)
        MM = M - Nleft;
        Mp = MM / P;
        ATL_barrier();
-       ATL_membarrier;   /* core must 'see' all changes made above! */
+       ATL_membar;   /* core must 'see' all changes made above! */
        if (Mp >= 4)
        {
           ATL_CUINT mr = M-Mp*P, m = (rank < mr) ? Mp+1: Mp;
@@ -8336,7 +8323,7 @@ int Mjoin(PATL,tgetf2CR)
  *     Await completion of GEMM and then factor the right
  */
        ATL_barrier();
-       ATL_membarrier;   /* core must 'see' all changes made above! */
+       ATL_membar;   /* core must 'see' all changes made above! */
        i = Mjoin(PATL,tgetf2CR)(P, rank, vchk, MM, Nright, An, lda, ipiv+Nleft);
 /*
  *     Must use a special laswp rout that adds 1st arg to all piv entries.
@@ -8356,7 +8343,7 @@ int Mjoin(PATL,tgetf2CR)
  * Not safe to use data until everybody sees changes, so don't ret until done!
  */
    ATL_barrier();
-   ATL_membarrier;   /* core must 'see' all changes before returning */
+   ATL_membar;   /* core must 'see' all changes before returning */
    return(ierr);
 }
 #ifdef one
@@ -8451,7 +8438,7 @@ void Mjoin(PATL,DoWorkGETF2_nowrk)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 //         printf("globpiv=%d\n", globpiv);
          if (globpiv != j)
             cblas_swap(N, A+(j SHIFT), lda, A+(globpiv SHIFT), lda);
-         ATL_membarrier;
+         ATL_membar;
          stage[0] = j;
          m--;                                           /* just finished */
          #ifdef TCPLX
@@ -8614,7 +8601,7 @@ void Mjoin(PATL,DoWorkGETF2)(ATL_LAUNCHSTRUCT_t *lp, void *vp0)
             if (globpiv != j)
                cblas_swap(N, W+(j SHIFT), ldw, W+(globpiv SHIFT), ldw);
          }
-         ATL_membarrier;
+         ATL_membar;
          stage[0] = j;
          m--;                                           /* just finished */
          #ifdef TCPLX
@@ -16448,71 +16435,6 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
  * is defined in ATL_goparallel.c, so it can use  ATL_setmyaffinity
  */
 @beginskip
-@ROUT atlas_cbc.h
-#ifndef ATLAS_CBC_H
-#define ATLAS_CBC_H
-
-/*
- * All known x86 use strongly-ordered caches, so CBC is safe.  
- * There are some instructions on the PHI that seem to violate strong ordering,
- * but ATLAS does not presently use them.  If these inst become important,
- * we may need to define a barrier
- */
-#if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
-   #define ATL_CBC_HANDLED 1
-   #define ATL_USE_CBC 1
-   #define ATL_membarrier
-/*
- * ARM64 has weakly-ordered cache, so CBC must use explicit membarrier to work.
- * This memory barrier code provided by David Nuechterlein, who has gotten
- * CBC-based codes to work based on it.
- */
-#elif defined ATL_ARCH_ARM64
-   #if __GNUC__
-      #define ATL_CBC_HANDLED 1
-      #define ATL_USE_CBC 1
-      #define ATL_membarrier __asm__ __volatile__ ("dmb sy" : : : "memory")
-   #endif
-/*
- * CBC came about after Itanium was essentially dead, so it has never been
- * tested there, so don't enable it.  We have this code here in case Itanium
- * becomes important enough to test.
- */
-#elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan2)
-   #ifdef __GNUC__
-      #define ATL_membarrier __asm__ __volatile__ ("mf")
-   #endif
-/*
- * On PowerPC and POWER I've never succeeded in getting any memory barrier
- * to work correctly.  IBM docs I've seen essentially say "here's how it should
- * work, but it doesn't, and we aren't going to tell you how it does work".
- * So, this code is just as a starting point if we find some docs or want
- * to do some experimentation later.
- */
-#elif defined(ATL_ARCH_PPCG4) || defined(ATL_ARCH_PPCG5)
-   #ifdef __GNUC__
-      #define ATL_membarrier __asm__ __volatile__ ("sync")
-   #endif
-#elif defined(ATL_ARCH_POWER3) || defined(ATL_ARCH_POWER4) || \
-      defined(ATL_ARCH_POWER5) || defined(ATL_ARCH_POWER6) || \
-      defined(ATL_ARCH_POWER7)
-   #ifdef __GNUC__
-      #define ATL_membarrier __asm__ __volatile__ ("dcs")
-   #endif
-#endif
-#ifdef ATL_CBC_HANDLED
-   #undef ATL_CBC_HANDLED
-#else
-   #ifdef ATL_USE_CBC
-      #undef ATL_USE_CBC
-   #endif
-   #ifdef ATL_membarrier
-      #undef ATL_membarrier
-   #endif
-   #define ATL_membarrier
-#endif
-
-#endif /* end ifndef ATL_CBC_H */
 @ROUT ATL_barrier
 #include "atlas_threads.h"
 #include "atlas_misc.h"

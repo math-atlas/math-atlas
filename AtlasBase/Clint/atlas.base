@@ -21,7 +21,7 @@
 #else
    #define time00 ATL_walltime
 #endif
-double time00();
+double time00(void);
 double macase(int nrep, volatile TYPE *dum);
 
 void PrintUsage(char *xnam)
@@ -551,7 +551,7 @@ void emit_muladd(char *type, char pre, int MULADD, int lat,
    fprintf(fpout, "#if defined(PentiumCPS) || defined(WALL)\n");
    fprintf(fpout, "   #define time00 ATL_walltime\n");
    fprintf(fpout, "#else\n   #define time00 ATL_cputime\n#endif\n");
-   fprintf(fpout, "double time00();\n");
+   fprintf(fpout, "double time00(void);\n");
 /*
  * function macase()
  */
@@ -6862,7 +6862,7 @@ double tlbaccesstime(int n, size_t pglen, int refs)
    int *m, *mem, *p, *stp, reps;
    size_t len = pglen * n, ilen = pglen / sizeof(int);
    double tim;
-   double time00();
+   double time00(void);
 
    m = mem = tlbinitmem(n, pglen);
    reps = refs / n;
@@ -6967,7 +6967,7 @@ int main(int nargs, char *args)
 #ifndef time00
    #define time00 ATL_walltime
 #endif
-double time00();
+double time00(void);
 
 @beginskip
 int L1CacheSize_write(int MAXL1CACHE)
@@ -20738,7 +20738,7 @@ void ATL_@(pre)her2k(const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
 
 #endif
 @ROUT second
-double time00();
+double time00(void);
 float second(void) { return((float)time00()); }
 float second_(void) { return((float)time00()); }
 float SECOND(void) { return((float)time00()); }
@@ -20746,49 +20746,66 @@ float SECOND(void) { return((float)time00()); }
 #include "ATL_walltime.c"
 #include "ATL_cputime.c"
 @ROUT ATL_walltime
-@extract -b @(topd)/gen.inc what=cw
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def cwdate 1997
 
-#ifdef PentiumCPS  /* this code supplied by Phil Mucci */
-@skip   #include <sys/time.h>
-@skip   #include <sys/types.h>
-   #include <stdlib.h>
-   #include <stdio.h>
+/*
+ * Cycle-accurate timers not quite thread safe, but all cores should
+ * almost always be the same in upper 11 bits, which we need to mask
+ * of to avoid losing precision going from long long -> double
+ */
+#ifdef PentiumCPS
+   #include <assert.h>
+   #ifdef __LP64__
+      #define ATL_GetCycleCount(ll_) __asm__ __volatile__ \
+      ("xorq %%rax, %%rax ; .byte 0x0f ; .byte 0x31 ; " \
+       "shlq $32, %%rdx ; orq %%rdx, %%rax " \
+       : "=a"(ll_)      /* output */ \
+       :                /* no input params */ \
+       : "%rdx"  /* clobber list */ \
+      );
+      #define MASK11 (((long long)0xFFE0)<<48)
+      double ATL_walltime(void)
+      {
+         const static double mul=1.0e-6 / ((double)PentiumCPS);
+         static long long top11bits=1, t11;
+         long long cycnt;
 
-   static const double CPS = 1.0 / (PentiumCPS*1.0E6);
-   static unsigned usec, sec;
-   static unsigned tusec, tsec;
-   static unsigned start=0, startu;
-   static long long foo;
-   
-   static inline void microtime(unsigned *lo, unsigned *hi)
-   {
-@beginskip
-     __asm __volatile (
-           ".byte 0x0f; .byte 0x31   # RDTSC instruction "
-           movl    %%edx,%0          # High order 32 bits
-           movl    %%eax,%1          # Low order 32 bits
-                   : "=g" (*hi), "=g" (*lo) :: "eax", "edx");
-@endskip
-     __asm __volatile (
-           ".byte 0x0f; .byte 0x31; movl    %%edx,%0; movl    %%eax,%1"
-                   : "=g" (*hi), "=g" (*lo) :: "eax", "edx");
-   }
-   
-   double ATL_walltime(void)
-   {
-     if (!start)
-     {
-        microtime(&startu, &start);
-        return(0.0);
-     }
-     microtime(&usec, &sec);
-
-     foo = sec;
-     foo -= start;
-     foo = (foo << 32) + usec;
-     foo -= startu;
-     return(((double)foo)*CPS);
-   }
+         ATL_GetCycleCount(cycnt)
+         t11 = cycnt & MASK11;
+         if (top11bits != t11)
+         {
+            assert(top11bits == 1);
+            top11bits = t11;
+         }
+         cycnt &= ~MASK11;
+         return(mul*cycnt);
+      }
+   #else
+      #define ATL_GetCycleCount(hi_, lo_) __asm__ __volatile__ \
+      (".byte 0x0f ; .byte 0x31 ; " \
+       : "=a"(lo_), "=d"(hi_)     /* output */ \
+       :                          /* no input params */ \
+       :                          /* clobber list */ \
+      );
+      #define MASK11 (0xFFE0<<16)
+      double ATL_walltime(void)
+      {
+         const static double mul=1.0e-6 / ((double)PentiumCPS);
+         static unsigned int top11bits=1, t11;
+         unsigned long long cyc;
+         unsigned int hi, lo;
+         ATL_GetCycleCount(hi, lo);
+         t11 = hi & MASK11;
+         if (t11 != top11bits)
+         {
+            assert(top11bits == 1);
+            top11bits = t11;
+         }
+         cyc = hi & (~MASK11);
+         cyc = (cyc << 32) | lo;
+         return(mul*cyc);
+      }
+   #endif
 #elif defined(ATL_OS_WinNT) /* special code for windows */
    #include <windows.h>
    double ATL_walltime(void)
@@ -20796,6 +20813,10 @@ float SECOND(void) { return((float)time00()); }
       static double freqRecip = 0.0;
       LARGE_INTEGER msout;
       unsigned long long myout;
+/*
+ *    Not thread-safe, but shouldn't cause problems, since all cores
+ *    should hopefully get the same answer
+ */
       if (freqRecip == 0.0)
       {
          QueryPerformanceFrequency(&msout);
@@ -20831,20 +20852,11 @@ float SECOND(void) { return((float)time00()); }
    double ATL_walltime(void)
    {
       struct timespec ts;
-      static double t0;
       double res;
-      static int INIT = 0;
 
-      if (INIT)
-      {
-         clock_gettime(CLOCK_REALTIME, &ts);
-         res = ts.tv_sec + 1.0e-9 * ts.tv_nsec;
-         return(res - t0);
-      }
       clock_gettime(CLOCK_REALTIME, &ts);
-      t0 = ts.tv_sec + 1.0e-9 * ts.tv_nsec;
-      INIT = 1;
-      return(0.0);
+      res = ts.tv_sec + 1.0e-9 * ts.tv_nsec;
+      return(res);
    }
 /*
  * Without gcc, I know no standard Windows wall-timer, so use cputime
@@ -20854,21 +20866,9 @@ float SECOND(void) { return((float)time00()); }
    #include <time.h>
    double ATL_walltime(void)
    {
-      clock_t t1;
-      static int INIT=0;
-      static clock_t t0;
       static const double CPS = 1.0 / (1.0*CLOCKS_PER_SEC);
-      double d;
    
-      if (INIT)
-      {
-         t1 = clock() - t0;
-         d = t1 * CPS;
-         return(d);
-      }
-      INIT = 1;
-      t0 = clock();
-      return(0.0);
+      return(clock() * CPS);
    }
 #else
    #include <stdlib.h>
@@ -20877,16 +20877,8 @@ float SECOND(void) { return((float)time00()); }
    double ATL_walltime(void)
    {
       struct timeval tp;
-      static long start=0, startu;
-      if (!start)
-      {
-         gettimeofday(&tp, NULL);
-         start = tp.tv_sec;
-         startu = tp.tv_usec;
-         return(0.0);
-      }
       gettimeofday(&tp, NULL);
-      return( ((double) (tp.tv_sec - start)) + (tp.tv_usec-startu)/1000000.0 );
+      return( ((double) tp.tv_sec) + (tp.tv_usec*1.0e-6) );
    }
 #endif
 
@@ -21197,7 +21189,7 @@ int Mjoin(PATL,gemm_rK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #ifdef ATL_DeclareSlens
 F77_INTEGER ATL_Slen1, ATL_Slen2;
 #endif
-double time00();
+double time00(void);
 
 void printmat(char *mat, int M, int N, TYPE *A, int lda)
 {
@@ -24587,7 +24579,7 @@ int main(int nargs, char *args[])
    TYPE *A, *a, *x, *y, *Y, *X, *st;
    FILE *fpout;
    double t0, t1, mvflops, mf;
-   double time00();
+   double time00(void);
 
    GetFlags(nargs, args, &M, &N, &mflops, &fpout);
    mvflops = 2.0 * M * N + M + N;
@@ -25865,7 +25857,7 @@ int mmtst(void)
    const TYPE rone=1.0, rnone=(-1.0);
 @ROUT fc
    FILE *fpout;
-   double time00();
+   double time00(void);
    #ifdef ATL_NEWTIME
       const size_t nmu=(MB/MU), nnu=(NB/NU);
    #endif
@@ -26242,7 +26234,7 @@ int main()
 
 #include "atlas_misc.h"
 #include <assert.h>
-double time00();
+double time00(void);
 #ifndef L2SIZE
 #define L2SIZE 262144
 #endif
@@ -27259,7 +27251,7 @@ int main(int nargs, char *args[])
 
 void MAIN_(){}
 void MAIN__(){}
-double time00();
+double time00(void);
 void Mjoin(PATL,scal0)(const int, const SCALAR, TYPE*, const int);
 #define trusted_scal(N_, alp_, x_, incX_) \
     Mjoin(PRE,scal_)(&(N_), &(alp_), (x_), &(incX_));
@@ -27649,7 +27641,7 @@ void Cscal(const int N, const SCALAR alpha, TYPE *X, const int incX)
 #endif
 #define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
 
-double time00();
+double time00(void);
 
 #ifndef DENMAT
    #define DENMAT 200
@@ -27918,7 +27910,7 @@ int main(int nargs, char *args[])
 
 
 int FoundNKB;
-double time00();
+double time00(void);
 void Mjoin(PATL,FindNKB_mm)(enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
                             const int M, const int N, const int K, 
                             const SCALAR alpha, const TYPE *A, const int lda, 
@@ -28380,7 +28372,7 @@ int main(int nargs, char *args[])
 
 int FoundCE;
 int CompCE=0;
-double time00();
+double time00(void);
 void Mjoin(PATL,FindCE_mm)(enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
                            const int M, const int N, const int K, 
                            const SCALAR alpha, const TYPE *A, const int lda, 
@@ -28887,7 +28879,7 @@ int __main(){return(-1);}    /* when you link with certain */
 int MAIN__(){return(-1);}    /* fortran compilers */
 int _MAIN_(){return(-1);}
 
-double time00();
+double time00(void);
 @ROUT tfc
 #define nshape 5
 enum ATLAS_MATSHAPE {AtlasM_NB=0, AtlasN_NB=1, AtlasMN_NB=2, AtlasK_NB=3, 
@@ -31019,6 +31011,7 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
 
    ATL_Cassert(tmpnam(tnam), "GETTING TEMPFILE", NULL);
 
+@beginskip
    if (L1DEF)
    {
       ATL_Cassert(system("make IBozoL1.grd\n")==0, 
@@ -31026,6 +31019,8 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
    }
    if (ARCHDEF)
       DefInstall = !system("make IArchDef.grd\n");
+@endskip
+   DefInstall = !system("make IArchDef.grd\n");
  
    PrintStartStop(stdout, fpsum, 0, 1, 1, 0, 0, "SYSTEM PROBE/AUX COMPILE");
 
@@ -31209,30 +31204,29 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
  */
       @iexp ssn @(ssn) 1 +
       PrintStartStop(stdout, fpsum, 3, 1, 2, ip+1, @(ssn), "GEMM TUNE");
-      if (pre == 'd' || pre == 's')
-      {
-         sprintf(ln2, "INSTALL_LOG/%cAMMTUNE.LOG", pre);
+      sprintf(ln2, "INSTALL_LOG/%cAMMTUNE.LOG", pre);
+      if (pre == 'd' || pre == 's' || pre == 'q')
          sprintf(ln, "%s AMMinstall pre=%c %s %s\n", fmake, pre, redir, ln2);
-         fprintf(stdout, "%s", ln);
-         ATL_Cassert(system(ln)==0, "GEMM TUNE", ln2);
-         mmb = ReadMMFileWithPath(pre, "INSTALL_LOG", "geAMMRES.sum");
-         ATL_Cassert(mmb, "ACCESS-MAJOR MATMUL TUNE", ln2);
-         for (mmp=mmb; mmp->next; mmp = mmp->next);
-         ATL_mprintf(2, fpsum, stdout, 
-    "\n      The best access-major matmul kernel was %s, MB=%d, NB=%d, KB=%d\n",
+      else /* complex */
+         sprintf(ln, "%s cAMMinstall pre=%c %s %s\n", fmake, pre, redir, ln2);
+      fprintf(stdout, "%s", ln);
+      ATL_Cassert(system(ln)==0, "GEMM TUNE", ln2);
+      mmb = ReadMMFileWithPath(pre, "INSTALL_LOG", "geAMMRES.sum");
+      ATL_Cassert(mmb, "ACCESS-MAJOR MATMUL TUNE", ln2);
+      for (mmp=mmb; mmp->next; mmp = mmp->next);
+      ATL_mprintf(2, fpsum, stdout, 
+         "\n      The best matmul kernel was %s, MB=%d, NB=%d, KB=%d\n",
                      mmp->rout, mmp->mbB, mmp->nbB, mmp->kbB);
-         ATL_mprintf(2, fpsum, stdout, "      written %s\n",
-                     mmp->auth ? mmp->auth : "R. Clint Whaley");
-         mf = mmp->mflop[0];
-         ATL_mprintf(2, fpsum, stdout,
-                     "      Performance: %.2fMFLOPS (%.2f of %s)\n",
-                     mf, (mf / mfp)*100.0, peakstr2);
-         fprintf(fpabr, "%7.1f %10.1f  %s\n", (mf/mfp)*100.0, mf, "kgemm");
-@skip         sprintf(ln, "%s AMM_use pre=%c", fmake, pre);
-@skip         ATL_Cassert(system(ln)==0, "BUILDING BLOCK AMM TUNE", ln2);
-         KillAllMMNodes(mmb);
-      }
-      else  /* complex types use real kernels, but must retune NBs */
+      ATL_mprintf(2, fpsum, stdout, "      written %s\n",
+                  mmp->auth ? mmp->auth : "G: R. Clint Whaley");
+      mf = mmp->mflop[0];
+      ATL_mprintf(2, fpsum, stdout,
+                  "      Performance: %.2fMFLOPS (%.2f of %s)\n",
+                  mf, (mf / mfp)*100.0, peakstr2);
+      fprintf(fpabr, "%7.1f %10.1f  %s\n", (mf/mfp)*100.0, mf, "kgemm");
+      KillAllMMNodes(mmb);
+@beginskip
+      else  /* complex types should already be installed during real install */
       {
          sprintf(ln2, "INSTALL_LOG/atlas_%camm_sum.h", pre);
          if (!FileExists(ln2))
@@ -31259,6 +31253,7 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
          }
          fprintf(fpabr, "%7.1f %10.1f  %s\n", (mf/mfp)*100.0, mf, "cgemm");
       }
+@endskip
       fclose(fpabr);
 
       fprintf(fpsum, "\n");
@@ -34933,7 +34928,7 @@ c
 *
       END
 @ROUT ftime00
-double time00();
+double time00(void);
 double ftime00(void) { return(time00()); }
 double ftime00_(void) { return(time00()); }
 double FTIME00(void) { return(time00()); }
@@ -35476,11 +35471,43 @@ gemm(...)
 #else
    #define dumb_prand(is_) ( 0.5 - ((double)rand())/((double)RAND_MAX) )
 #endif
-#include "atlas_misc.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 
 
+#ifdef TIME_TRMVK
+   #include "atlas_misc.h"
+#else
+   double ATL_walltime(void);
+   #define ATL_CSZT const size_t
+   #if defined(SREAL) || defined(SCPLX)
+      #define TYPE float
+   #elif defined(DREAL) || defined(DCPLX)
+      #define TYPE double
+   #endif
+   #ifdef SREAL
+      #define ATL_MulBySize(i_) ((i_)<<2)
+      #define ATL_DivBySize(i_) ((i_)>>2)
+   #elif defined(DREAL) || defined(SCPLX)
+      #define ATL_MulBySize(i_) ((i_)<<3)
+      #define ATL_DivBySize(i_) ((i_)>>3)
+   #else
+      #define ATL_MulBySize(i_) ((i_)<<4)
+      #define ATL_DivBySize(i_) ((i_)>>4)
+   #endif
+   #if defined(SCPLX) || defined(DCPLX)
+      #define SHIFT << 1
+      #define TCPLX 1
+   #else
+      #define TREAL 1
+      #define SHIFT
+   #endif
+   #define ATL_Cachelen 128
+   #define ATL_AlignPtr(vp) \
+      (void*) ( ATL_Cachelen + ((((size_t) (vp))>>7)<<7) ) 
+#endif
 #define CINT const int
 
 #ifdef TIME_TRMVK
@@ -35623,7 +35650,7 @@ double GetKmmMflop
    {
       setsz = (mb * nb + kb*(mb+nb));
       vp = malloc(2*ATL_Cachelen + ATL_MulBySize(setsz+EXTRA));
-      ATL_assert(vp);
+      assert(vp);
       A = ATL_AlignPtr(vp);
       B = A + (mb*kb SHIFT);
       C = B + (kb*nb SHIFT);
@@ -35643,7 +35670,7 @@ double GetKmmMflop
          FLSIZE = nset*(setsz+ATL_Cachelen);
          setsz = mb*nb + kb*(mb+nb) + ATL_DivBySize(ATL_Cachelen);
          vp = malloc(ATL_Cachelen + ATL_MulBySize(nset*setsz+EXTRA));
-         ATL_assert(vp);
+         assert(vp);
          setsz = setsz SHIFT;
          A = ATL_AlignPtr(vp);
          B = A + (kb*mb*nset SHIFT);
@@ -35709,7 +35736,7 @@ double GetKmmMflop
          nset = (FLSIZE+i-1)/i;
          FLSIZE = nset * i;
          vp = malloc(6*ATL_Cachelen + ATL_MulBySize(extra+EXTRA) + FLSIZE);
-         ATL_assert(vp);
+         assert(vp);
          ep = ATL_AlignPtr(vp);
          dp = (TYPE*)(((char*)ep) + 2*ATL_Cachelen + ATL_MulBySize(extra));
          if (movA)
@@ -35851,7 +35878,7 @@ double *TimeOnCores(struct kmm_struct *kb)
    attr = malloc(sizeof(pthread_attr_t)*p);
    mflops = malloc(sizeof(double)*p);
    chkin = malloc(sizeof(char)*p);
-   ATL_assert(kp && threads && attr && mflops && chkin);
+   assert(kp && threads && attr && mflops && chkin);
    for (i=0; i < p; i++)   /* init chkin to 0 before starting any threads */
       chkin[i] = 0;        /* when all entries non-zero, all thrds started */
    for (i=0; i < p; i++)
@@ -35903,7 +35930,7 @@ void PrintUsage(char *name, int iarg, char *arg)
    fprintf(stderr, "\nERROR around arg %d (%s).\n", iarg, arg ? arg:"unknown");
    fprintf(stderr, "USAGE: %s [flags], where flags are:\n", name);
    fprintf(stderr, "   -p <#> : use # threads (with affinity)\n");
-   fprintf(stderr, "   -P <#> id1 ... id# : spawn # threads to given IDs\n");
+   fprintf(stderr, "   -tl <#> id1 ... id# : spawn # threads to given IDs\n");
    fprintf(stderr, "   -B <#> : mb = nb = kb = #\n");
    fprintf(stderr, "   -m <#> : mb = #\n");
    fprintf(stderr, "   -n <#> : nb = #\n");
@@ -35925,7 +35952,7 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    
    *fpout = NULL;
    kp = malloc(sizeof(struct kmm_struct));
-   ATL_assert(kp);
+   assert(kp);
    kp->pids = NULL;
    kp->p = 1;
    kp->mb = kp->nb = kp->kb = 40;
@@ -35977,7 +36004,7 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
             PrintUsage(args[0], i, "out of arguments");
          kp->reps = atoi(args[i]);
          break;
-      case 'P':
+      case 't':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
          kp->p = atoi(args[i]);
@@ -38150,7 +38177,7 @@ int main(int nargs, char **args)
 #else
    #define time00 ATL_walltime
 #endif
-double time00();
+double time00(void);
 
 void InitSpace(size_t N, double *dp)
 {

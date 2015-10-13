@@ -1,6 +1,6 @@
 /************************************************************************/
 /*                        Extract v4.0.0                                */
-/*  (C) Copyright 1994 R. Clint Whaley (rwhaley@cs.utk.edu).            */
+/*  (C) Copyright 1994,2015 R. Clint Whaley (rwhaley@cs.utk.edu).       */
 /*  This program is distributed under the terms of the Gnu              */
 /*  General Public License (GPL), with the following two exceptions:    */
 /*  (1) Clause (9), dealing with updating the GPL automatically, is     */
@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  10/04/10.                           */
+/*  Last modified by the author on  07/31/15.                           */
 /************************************************************************/
 
 #include <stdio.h>
@@ -22,9 +22,9 @@
 #include <stdarg.h>
 
 #define NAMLEN 1024
-#define LNLEN  2048
+#define LNLEN  8192
 #define HANLEN 1024
-#define SUBLEN 1024
+#define SUBLEN 8192
 
 #define F_nFlags     16
 #define F_Case        0
@@ -233,7 +233,7 @@ int WstrcmpN(char *p1, char *p2, int N)
 /*  RETURNS: nonzero if they are equal, else 0                               */
 /*****************************************************************************/
 {
-   while( (*p1++ == *p2++) && (N) ) N--;
+   while( N && (*p1++ == *p2++) ) N--;
    return(!N);
 }
 
@@ -2019,7 +2019,7 @@ void HandleKeyLn(EXTENV *EE, char *line, KEYS *Key)
 void FindKeyMatch(EXTENV *EE, KEYS *Key)
 {
    int j, k, argmatch=0;
-   char line[LNLEN], tline[LNLEN];
+   static char line[LNLEN], tline[LNLEN];
 
    j = Key->HanLen + 1;
    k = EE->Joining;
@@ -2040,13 +2040,13 @@ void FindKeyMatch(EXTENV *EE, KEYS *Key)
 
 
 /*===========================================================================*/
-/* Rest of file is misc catagory :-)                                         */
+/* Rest of file is misc category :-)                                         */
 /*===========================================================================*/
 
 int icalc(EXTENV *EE, char line[])
 {
    int i, k=0;
-   int istack[100];
+   int istack[128];
 
    if ( Mcisnum(line[0]) || (line[0] == '-' && Mcisnum(line[1])) )
       i = Wstr2int(line, &istack[k]);
@@ -2079,6 +2079,53 @@ int icalc(EXTENV *EE, char line[])
             break;
          case '%':
             istack[k-1] = istack[k] % istack[k-1];
+            k--;
+            break;
+         case '=': /* boolean comparison */
+            istack[k-1] = (istack[k] == istack[k-1]);
+            k--;
+            break;
+         case '!': /* boolean comparison */
+            istack[k-1] = (istack[k] != istack[k-1]);
+            k--;
+            break;
+         case '<': /* less than boolean comparison */
+            istack[k-1] = (istack[k] < istack[k-1]);
+            k--;
+            break;
+         case '>': /* greater than boolean comparison */
+            istack[k-1] = (istack[k] > istack[k-1]);
+            k--;
+            break;
+         case '{': /* less than or equal boolean comparison */
+            istack[k-1] = (istack[k] >= istack[k-1]);
+            k--;
+            break;
+         case '}': /* greater than or equal boolean comparison */
+            istack[k-1] = (istack[k] >= istack[k-1]);
+            k--;
+            break;
+         case '&': /* bitwise and */
+            istack[k-1] = (istack[k] & istack[k-1]);
+            k--;
+            break;
+         case '|': /* bitwise or */
+            istack[k-1] = (istack[k] | istack[k-1]);
+            k--;
+            break;
+         case '^': /* bitwise exclusive or */
+            istack[k-1] = (istack[k] ^ istack[k-1]);
+            k--;
+            break;
+         case '~':  /* bitwise complement */
+            istack[k] = ~(istack[k]);
+            break;
+         case 'l': /* bitwise left shift */
+            istack[k-1] = (istack[k] << istack[k-1]);
+            k--;
+            break;
+         case 'r': /* bitwise right shift */
+            istack[k-1] = (istack[k] >> istack[k-1]);
             k--;
             break;
          case 'a':  /* absolute value */
@@ -2542,6 +2589,8 @@ char GetIntComp(EXTENV *EE, char *ln, int *A1CONST, int *A2CONST,
    if (wp->next->word[0] == '>') { wp1 = wp; wp0 = wp->next->next; }
    else if (wp->next->word[0] == '=') comp = '=';
    else if (wp->next->word[0] == '!') comp = '!';
+   else if (wp->next->word[0] == 'e') comp = 'e';
+   else if (wp->next->word[0] == 'E') comp = 'E';
    else if (wp->next->word[0] != '<')
       ExtErr(EE, "Invalid integer condition: '%s'\n", ln);
 
@@ -2651,7 +2700,7 @@ void HandleMIf(EXTENV *EE, char *ln)
 
 void HandleIIf(EXTENV *EE, char *ln)
 /*
- * Expects ln of @iif int1 [<,>,=,!] int2
+ * Expects ln of @iif int1 [<,>,},{,=,] int2
  */
 {
    char ch;
@@ -2660,6 +2709,8 @@ void HandleIIf(EXTENV *EE, char *ln)
    if (ch == '=') i = (ia1 == ia2);
    else if (ch == '!') i = (ia1 != ia2);
    else if (ch == '<') i = (ia1 < ia2);
+   else if (ch == '{') i = (ia1 <= ia2);
+   else if (ch == '}') i = (ia1 >= ia2);
    if (!i) /* skip */
       DumpSkip(EE, NULL, "@iif ", "@endiif ");
    else
@@ -3193,7 +3244,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Store where my macros begin
  */
-   sprintf(line, "@__MyMacBeg__%d", &EE);
+   sprintf(line, "@__MyMacBeg__%d", (int) &EE);
    PushMacro2(&EE, 0, line, "");
    EE.MyMacBeg = MacroBase;
 
@@ -3249,7 +3300,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Pop MyMacBeg
  */
-   sprintf(line, "__MyMagBeg__%d", &EE);
+   sprintf(line, "__MyMagBeg__%d", (int)&EE);
    PopMacro2(&EE, line);
 
 /*

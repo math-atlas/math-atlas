@@ -391,8 +391,6 @@ struct iglist
 #endif
 /*
  * NOTE: Following definitions are for applying repeatable optimizations.
- * shifted below, because : now we are using BLIST... need to declare after 
- * the declaration of BLIST
  */
 #ifdef IFKO_DECLARE
    char *optmnem[] = {"Do Nothing", "IG Reg Asg", "Copy Prop", "LP Reg Asg",
@@ -421,9 +419,7 @@ struct optblkq
    ushort maxN;          /* if zero, do not do while(change)                 *
                           * if nonzero, do at most that many applications    */
    ushort bnum;          /* number of this block                             */
-   ushort flag;
-   BLIST *blocks;        /* added this to specify the scope, an optimization 
-                            is applied.. only used when flag is 0            */
+   ushort flag;          /* IOPT_GLOB, IOPT_SCOP */
    int *nspill;   /* number of spilling in each type after this optblk 
                              is done, more precisely, number of live-range 
                              which don't get register calculated in RegAsg; 

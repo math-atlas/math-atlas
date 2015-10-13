@@ -1,5 +1,5 @@
 @ifdef ! vers
-   @define vers @3.11.35@
+   @define vers @3.11.39@
 @endifdef
 @ROUT ! atltar.sh
 @beginproc dirdef
@@ -366,11 +366,12 @@ tar cvf atlas.tar \
      ATLAS/tune/blas/gemm/mmksearch_sse.c ATLAS/tune/blas/gemm/mmgen_sse.c \
      ATLAS/tune/blas/gemm/mmsearch.c ATLAS/tune/blas/gemm/tfc.c \
      ATLAS/tune/blas/gemm/ummsearch.c ATLAS/tune/blas/gemm/user*.c \
-     ATLAS/tune/blas/gemm/gmmsearch.c ATLAS/tune/blas/gemm/mmcuncpsearch.c \
+     ATLAS/tune/blas/gemm/mmcuncpsearch.c \
      ATLAS/tune/blas/gemm/mmflagsearch.c \
-     ATLAS/tune/blas/gemm/mmtime_pt.c ATLAS/tune/blas/gemm/atlas-mmg.base \
+     ATLAS/tune/blas/gemm/mmtime_pt.c ATLAS/tune/blas/gemm/*.base \
      ATLAS/tune/blas/gemm/emit_amm.c ATLAS/tune/blas/gemm/emit_uamm.c \
      ATLAS/tune/blas/gemm/ammsearch.c ATLAS/tune/blas/gemm/uammsearch.c \
+     ATLAS/tune/blas/gemm/gmmsearch.c \
      ATLAS/tune/blas/gemm/peaktim.c ATLAS/tune/blas/gemm/cnbtune.c \
      ATLAS/tune/blas/gemm/AMMCASES/*.idx \
      ATLAS/tune/blas/gemm/AMMCASES/ATL_*.[c,S] \
@@ -901,7 +902,7 @@ libgemm-20000228.tar.bz2 : $(tarf)
 @ROUT ATLAS/tune/blas/level1/AXPY
    @define l1rt @axpy@
    @multidef rt
-      axpy_simd_x1y1.c
+      axpy_simd_x1y1.c caxpy_simd_x1y1.c
       caxpy1_x0y0.c caxpy1_x1y1.c caxpy8p1_x1y1.c caxpy8p4m0_x1y1.c
       caxpy1_a0x0y0.c caxpy2p32_x1y1.c
       axpy32_x1y1.c axpy16p4x16_x1y1.c axpy16p4m0_x1y1.c
@@ -924,7 +925,8 @@ libgemm-20000228.tar.bz2 : $(tarf)
    @define l1rt @dot@
    @multidef rt
       dot_stub.c dot1_x0y0.c dot1_x1y1.c dot8p8_x1y1.c dot4p80_x1y1.c
-      cdot1_x0y0.c cdot2p24_x1y1.c zdot1_x1y1_sse2.c dot_simd_x1y1.c
+      cdot1_x0y0.c cdot2p24_x1y1.c zdot1_x1y1_sse2.c dot_simd_x1y1.c 
+      cdot_simd_x1y1.c
    @endmultidef
 @ROUT ATLAS/tune/blas/level1/IAMAX
    @define l1rt @iamax@
@@ -1327,6 +1329,7 @@ basfn = $(basrwd)/clint_am.base
    ATL_samm16x4x1_av.c
    ATL_amm6x1x1_x87.S
    ATL_samm4x6x2b_aarch64.S ATL_damm5x5x2_aarch64.S ATL_dammm4x3x6_arm64.S
+   ATL_damm12x4x6_aarch64-A57.S ATL_damm12x4x1_aarch64-A53.S
    ATL_damm4x4x2rp_arm.S
    ATL_damm5x5x2_arm.S ATL_damm5x5x2_armpf.S ATL_damm5x5x1_armpf.S
    ATL_damm3x4x1_armpf.S ATL_samm4x6x2_arm.S ATL_samm4x6x1_arm.S 
@@ -1346,9 +1349,11 @@ basfn = $(basrwd)/clint_am.base
    ATL_damm32x6x1_avxz.S ATL_damm16x8x4_avxz.S 
    ATL_damm24x8x2_avxz.S
    ATL_amm8x8x8_avxz.S
+   ATL_dammm12x6x2_vsx.S
 @endmultidef
 @declare "files = " y y
    damcases.idx samcases.idx
+   ATL_dmm8x4x2_vsx.c 
    @whiledef han rcw_am
       @whiledef @(han)
          @(@(han))
@@ -1366,6 +1371,10 @@ all : $(files)
 @whiledef rcw_am1
 @(rcw_am1) : $(basrwd)/clint_am.base $(incf)
 	$(extC) -b $(basrwd)/clint_am.base -o $@ rout=$@
+@endwhile
+@whiledef rt ATL_dmm8x4x2_vsx.c 
+@(rt) : $(basrwd)/@(rt)
+	cp $(basrwd)/@(rt) .
 @endwhile
 
 Make.ext : $(topd)/make.base
@@ -1550,7 +1559,7 @@ all : $(files)
       ATLAS/tune/threads
 
 @declare "files = " y y
-@ROUT ATLAS/tune/blas/gemm `   atlas-mmg.base`
+@ROUT ATLAS/tune/blas/gemm `   atlas-mmg.base atlas-mmkg.base ammm_fko.B`
 @ROUT ATLaS/tune/threads `DoFlops_amd64.S`
    @whiledef rt
       @(rt).c
@@ -1560,7 +1569,7 @@ all : $(files)
 @skip @ROUT ATLAS/tune/blas/gemv `emit_head.c emit_rmvT.c mvgen_sse.c atlas-l2g.base`
 @ROUT ATLAS/tune/blas/gemv `atlas-l2g.base`
 @skip @ROUT ATLAS/tune/blas/gemm `emit_mm.c vnbmmsearch.c emit_vKB.c mm_old2new.c vmmf_gccsub.c`
-@ROUT ATLAS/tune/blas/gemm `emit_mm.c mmgen_sse.c mmksearch_sse.c mmflagsearch.c gmmsearch.c mmsearch.c mmcuncpsearch.c uammsearch.c ammsearch.c emit_uamm.c emit_amm.c cm2amtst.c peaktim.c cnbtune.c`
+@ROUT ATLAS/tune/blas/gemm `emit_mm.c mmgen_sse.c mmksearch_sse.c mmflagsearch.c gmmsearch.c mmsearch.c mmcuncpsearch.c uammsearch.c gmmsearch.c ammsearch.c emit_uamm.c emit_amm.c cm2amtst.c peaktim.c cnbtune.c`
 @ROUT ATLAS/tune/sysinfo `emit_typ.c emit_lamch.c cacheSweep.c`
 @enddeclare
 
@@ -1597,6 +1606,10 @@ r1sum2csv.c : $(basdRCW)/script.base
 @endwhile
    @multidef rt r1gen_sse
 @ROUT ATLAS/tune/blas/gemm
+ammm_fko.B : $(basd)/ammm_fko.B
+	cp $(basd)/ammm_fko.B .
+atlas-mmkg.base : $(basd)/atlas-mmkg.base
+	cp $(basd)/atlas-mmkg.base .
 atlas-mmg.base : $(basd)/atlas-mmg.base
 	cp $(basd)/atlas-mmg.base .
 @whiledef rt emit_vKB vnbmmsearch mm_old2new
@@ -1614,12 +1627,13 @@ atlas-mmg.base : $(basd)/atlas-mmg.base
 
 mmflagsearch.c : $(basfn) $(incf)
 	$(extC) -b $(basfn) -o $@ rout=$*
+@multidef rt gmmsearch
 @whiledef rt uammsearch ammsearch emit_amm emit_uamm cm2amtst peaktim cnbtune
 @(rt).c : $(basdRCW)/atlas-ammm.base $(incf)
 	$(extC) -b $(basdRCW)/atlas-ammm.base -o $@ rout=$*
 @endwhile
-gmmsearch.c : $(basfn) $(incf)
-	$(extC) -b $(basfn) -o $@ rout=$*
+@skip gmmsearch.c : $(basfn) $(incf)
+@skip	$(extC) -b $(basfn) -o $@ rout=$*
 mmsearch.c : $(basfn) $(incf)
 	$(extC) -b $(basfn) -o $@ rout=mmsearchN
 mmcuncpsearch.c : $(basfn) $(incf)
@@ -2541,7 +2555,14 @@ CompMake.txt : $(basf)
 @ROUT ATLAS/CONFIG/ARCHS
 @skip @define arf @BOZOL1@
 @multidef arf 
-   BOZOL1 x86x8732 x86SSE132SSE1 x86SSE232SSE2
+   BOZOL1 Corei364AVXMACp4 Corei3EP64AVXMACp24
+   Corei264AVXp4 Corei264AVXp12
+   Corei232AVXp4
+   ARMa1532FPV3D32MACp4 ARMa1532FPV3D32MACNONIEEEp4 ARMa732FPV3D32MACp4
+   ARMa932FPV3D16MACp2 ARMa932FPV3D32MACp4
+   ARM64xgene164p8 POWER864LEVSXp4 
+@beginskip
+   x86x8732 x86SSE132SSE1 x86SSE232SSE2
    PPRO32 P4E32SSE3 P4E64SSE3 CoreDuo32SSE3 Core264SSE3 Core232SSE3 
    Corei164SSE3 Corei264AVX Corei264SSE3 Corei364AVXMAC Corei3EP64AVXMAC
    Corei132SSE3 Corei232AVX XeonPHI64AVXZ
@@ -2557,8 +2578,9 @@ CompMake.txt : $(basf)
    USIV32 USIV64 USIII32 USIII64 UST264 UST232
    IA64Itan264 MIPSR1xK64 MIPSICE964 MIPSICE932
    PPCG564AltiVec PPCG532AltiVec PPCG432AltiVec
-   POWER564 POWER464 POWER432 POWER764VSX
+   POWER564 POWER464 POWER432 POWER764VSX POWER864LEVSX
    IBMz1032 IBMz1064 IBMz19664 IBMz19632
+@endskip
 @endmultidef
 basdr = $(basdRCW)/misc/ARCHDEF
 
@@ -2576,7 +2598,16 @@ basdr = $(basdRCW)/misc/ARCHDEF
 all : $(files) 
 
 force_build:
-$(topd)/../iFKO/ifko.tar.bz2 : force_build
+$(topd)/../iFKO/src/extract.c : $(topd)/../extract.c
+	cp -f $(topd)/../extract.c $(topd)/../iFKO/src/.
+../../iFKO/base/hmake.base : $(topd)/../iFKO/base/hmake.base
+	cp $(topd)/../iFKO/base/hmake.base ../../iFKO/base/.
+do_fkoc : $(topd)/../iFKO/src/fkoc.c ../../iFKO/base/hmake.base
+$(topd)/../iFKO/src/fkoc.c : $(basdRCW)/atlconf.base
+	$(extC) -b $(basdRCW)/atlconf.base -o $(topd)/../iFKO/src/fkoc.c \
+                rout=fkoc
+$(topd)/../iFKO/ifko.tar.bz2 : force_build $(topd)/../iFKO/src/extract.c \
+   $(topd)/../iFKO/src/fkoc.c
 	cd $(topd)/../iFKO ; ./fkotar.sh
 ifko.tar.bz2 : $(topd)/../iFKO/ifko.tar.bz2
 	cp $(topd)/../iFKO/ifko.tar.bz2 .
@@ -2947,7 +2978,7 @@ $(topd)/TexDoc/@(rt).pdf : $(topd)/TexDoc/@(rt).tex
    atlas_cblaszalias.h atlas_cblastypealias.h clapack.h 
    atlas_lapack.h atlas_kernel3.h atlas_kern3.h atlas_f77blas.h 
    f77wrap_lapack.h atlas_r2.h atlas_qrrmeth.h atlas_pca.h
-   atlas_gnuvec.h atlas_amm.h atlas_simd.h atlas_bcamm.h
+   atlas_gnuvec.h atlas_amm.h atlas_simd.h atlas_bcamm.h atlas_cplxsimd.h
    atlas_bitvec.h atlas_cbc2d.h atlas_cbc.h
 @skip   atlas_vnbcase.h
 
@@ -2982,6 +3013,8 @@ atlas_@(pr)parse.h : $(basdRCW)/atlas-parse.base
 atlas_qrrmeth.h : @(basdSTU)/qr.base
 	$(extC) -b @(basdSTU)/qr.base -o $@ rout=$@
 atlas_amm.h : $(basdRCW)/atlas-ammm.base
+	$(extC) -b $(basdRCW)/atlas-ammm.base -o $@ rout=$@
+atlas_cplxsimd.h : $(basdRCW)/atlas-ammm.base
 	$(extC) -b $(basdRCW)/atlas-ammm.base -o $@ rout=$@
 atlas_simd.h : $(basdRCW)/atlas-ammm.base
 	$(extC) -b $(basdRCW)/atlas-ammm.base -o $@ rout=$@

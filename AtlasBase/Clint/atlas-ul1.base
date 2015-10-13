@@ -18,27 +18,31 @@ gcc
 -x assembler-with-cpp
 10 2 1 1 axpy_simd_x1y1.c   "R. Clint Whaley"
 @ROUT zcases.axpy
+9
+@ROUT ccases.axpy
 8
-@ROUT ccases.axpy
-7
 @ROUT ccases.axpy zcases.axpy
-1 2 0 0 caxpy1_x0y0.c       "R. Clint Whaley"
-2 2 1 1 caxpy1_x1y1.c       "R. Clint Whaley"
-3 2 1 1 caxpy8p1_x1y1.c     "R. Clint Whaley"
-4 2 1 1 caxpy8p4m0_x1y1.c   "R. Clint Whaley"
-5 0 1 1 caxpy1_a0x0y0.c     "R. Clint Whaley"
-6 2 1 1 caxpy2p32_x1y1.c    "R. Clint Whaley"
+1 2 0 0 caxpy1_x0y0.c         "R. Clint Whaley"
+2 2 1 1 caxpy1_x1y1.c         "R. Clint Whaley"
+3 2 1 1 caxpy8p1_x1y1.c       "R. Clint Whaley"
+4 2 1 1 caxpy8p4m0_x1y1.c     "R. Clint Whaley"
+5 0 1 1 caxpy1_a0x0y0.c       "R. Clint Whaley"
+6 2 1 1 caxpy2p32_x1y1.c      "R. Clint Whaley"
 @ROUT zcases.axpy
-7 2 1 1 zaxpy_sse3.c        "R. Clint Whaley" \
+7 2 1 1 zaxpy_sse3.c          "R. Clint Whaley" \
 @ROUT ccases.axpy
-7 2 1 1 caxpy_sse3.c        "R. Clint Whaley" \
+7 2 1 1 caxpy_sse3.c          "R. Clint Whaley" \
 @ROUT ccases.axpy zcases.axpy
 gcc
 -x assembler-with-cpp
+@iexp id 7 1 +
 @ROUT zcases.axpy
-8 2 1 1 zaxpy_avx.c        "R. Clint Whaley" \
+@(id) 2 1 1 zaxpy_avx.c       "R. Clint Whaley" \
 gcc
 -x assembler-with-cpp
+@iexp id @(id) 1 +
+@ROUT ccases.axpy zcases.axpy
+@(id) 2 1 1 caxpy_simd_x1y1.c "R. Clint Whaley"
 @ROUT ccases.axpy zcases.axpy scases.axpy dcases.axpy
 
 <ID> <alpha> <incX> <incY> <rout> <author> [\
@@ -2810,6 +2814,7 @@ TYPE ATL_UDOT(const int N, const TYPE *X, const int incX,
    if (nv)
    {
       ATL_VTYPE vd0, vd1, vd2, vd3;
+      TYPE sd;
       int k;
 
       ATL_vzero(vd0);
@@ -2863,9 +2868,14 @@ TYPE ATL_UDOT(const int N, const TYPE *X, const int incX,
       ATL_vadd(vd0, vd0, vd1);
       ATL_vadd(vd2, vd2, vd3);
       ATL_vadd(vd0, vd0, vd2);
-      ATL_vust(sum, vd0);
-      for (k=0; k < ATL_VLEN; k++)
-         dot += sum[k];
+      #if 1
+         ATL_vrsum1(sd, vd0);
+         dot += sd;
+      #else
+         ATL_vust(sum, vd0);
+         for (k=0; k < ATL_VLEN; k++)
+            dot += sum[k];
+      #endif
    }
    for (; i < N; i++) 
       dot += *X++ * *Y++;
@@ -3200,9 +3210,10 @@ void ATL_UDOT(const int N, const TYPE *X, const int incx,
 4 1 1 dot4p80_x1y1.c     "R. Clint Whaley"
 5 1 1 dot_simd_x1y1.c    "R. Clint Whaley"
 @ROUT ccases.dot zcases.dot ccasesc.dot zcasesc.dot
-2
+3
 1 0 0 cdot1_x0y0.c       "R. Clint Whaley"
 2 1 1 cdot2p24_x1y1.c    "R. Clint Whaley"
+3 1 1 cdot_simd_x1y1.c   "R. Clint Whaley"
 @ROUT scases.dot dcases.dot ccases.dot zcases.dot ccasesc.dot zcasesc.dot
 <ID> <incX> <incY> <rout> <auth>
 @ROUT asum_fabs1_x0 asum_fabs1_x1 casum_fabs1_x0
@@ -7627,4 +7638,289 @@ void ATL_UROT(const int N, TYPE *X, const int incx, TYPE *Y, const int incy,
 @ROUT ccases.rot zcases.rot scases.rot dcases.rot
 
 <ID> <C> <S> <incX> <incY> <rout> "<author>"
+@ROUT cdot_simd_x1y1
+#include "atlas_misc.h"
+#include "atlas_cplxsimd.h"
+
+void ATL_UDOT(const int N, const TYPE *X, const int incx,
+              const TYPE *Y, const int incy, SCALAR dot)
+{
+   ATL_VTYPE vdotR, vdotI, vX, vXr, vY;
+   int NV=N, nr, i;
+
+   ATL_vzero(vdotR);
+   ATL_vzero(vdotI);
+   if (N < ATL_CXVLEN)
+   {
+      i = N;
+      ATL_vcxlduXuYR(vX, X, vY, Y, i);
+      goto ONEANDDONE;
+   }
+/*
+ * If neither ptr is alignable, to to unaligned code.  Otherwise, make X
+ * be the alignable array, and peel to force X alignment
+ */
+   if ( ((size_t)X) & (ATL_sizeof-1) )
+   {
+      const TYPE *p;
+      if ( ((size_t)Y) & (ATL_sizeof-1) )
+         goto NOALIGN;
+      p = X;  /* Y can be aligned, and X cannot */
+      X = Y;  /* so set X ptr to alignable array */
+      Y = p;  /* Y is unalignable in this case */
+   }
+/*
+ * See if either array is already aligned, and let that one be X if so
+ */
+   i = (int)(((size_t)X) & (ATL_VLENb-1));
+   if (i)
+   {
+      int j;
+      j = (int)(((size_t)Y) & (ATL_VLENb-1));
+      if (!j)
+      {
+         const TYPE *p=X;
+         X = Y;
+         Y = p;
+         i = 0;
+      }
+   }
+/*
+ * If X is not aligned, but is alignable, peel to force alignment, or if
+ * we don't have a full vect it, peel to fully handle the operation
+ */
+   if (i)
+   {
+      i = ATL_DivBySize(i);
+      ATL_vcxlduXuYR(vX, X, vY, Y, i);
+      X += i+i;
+      Y += i+i;
+   }
+   else  /* otherwise, peel full vec iteration to zero dot */
+   {
+      i = ATL_VLEN>>1;
+      ATL_vld(vX, X);
+      ATL_vuld(vY, Y);  /* unknown alignment at this point! */
+      X += ATL_VLEN;
+      Y += ATL_VLEN;
+   }
+ONEANDDONE:
+   ATL_vcxswapRI(vXr, vX);
+   ATL_vmul(vdotR, vX, vY);
+   ATL_vmul(vdotI, vXr, vY);
+   NV = N - i;
+   if (!NV)
+      goto VEC_REDUCE;
+   nr = NV;
+   NV >>= ATL_CXVLSH;
+   nr -= NV<<ATL_CXVLSH;
+   if (NV)  /* have some vector its left */
+   {
+      if ( ((size_t)Y) & (ATL_VLENb-1) )  /* if Y not aligned */
+          goto NOALIGNY;
+      do
+      {
+         ATL_vld(vX, X);
+         ATL_vcxswapRI(vXr, vX);
+         ATL_vld(vY, Y);
+         ATL_vmac(vdotR, vX, vY);
+         ATL_vmac(vdotI, vXr, vY);
+         X += ATL_VLEN; 
+         Y += ATL_VLEN;
+      }
+      while (--NV);
+   }
+   if (nr)  /* have a remainder */
+   {
+      ATL_vcxldXuYR(vY, Y, vX, X, nr);
+      ATL_vcxswapRI(vXr, vX);
+      ATL_vmac(vdotR, vX, vY);
+      ATL_vmac(vdotI, vXr, vY);
+   }
+VEC_REDUCE:
+   ATL_vcxdotcomb(vdotR, vdotI);
+   ATL_vcxust1(dot, vdotR);
+   return;
+NOALIGNY:
+   do
+   {
+      ATL_vld(vX, X);
+      ATL_vcxswapRI(vXr, vX);
+      ATL_vuld(vY, Y);
+      ATL_vmac(vdotR, vX, vY);
+      ATL_vmac(vdotI, vXr, vY);
+      X += ATL_VLEN; 
+      Y += ATL_VLEN;
+   }
+   while (--NV);
+   goto CLEANUP;
+/*
+ * Code where both pointers unalignable
+ */
+NOALIGN:
+   nr = NV & ((ATL_VLEN>>1)-1);
+   NV -= nr;
+   for (i=0; i < NV; i += (ATL_VLEN>>1))
+   {
+      ATL_vuld(vX, X);
+      ATL_vcxswapRI(vXr, vX);
+      ATL_vuld(vY, Y);
+      ATL_vmac(vdotR, vX, vY);
+      ATL_vmac(vdotI, vXr, vY);
+      X += ATL_VLEN; 
+      Y += ATL_VLEN;
+   }
+CLEANUP:
+   if (nr)
+   {
+      ATL_vcxlduXuYR(vY, Y, vX, X, nr);
+      ATL_vcxswapRI(vXr, vX);
+      ATL_vmac(vdotR, vX, vY);
+      ATL_vmac(vdotI, vXr, vY);
+   }
+   goto VEC_REDUCE;
+}
+@ROUT caxpy_simd_x1y1
+#include "atlas_misc.h"
+#include "atlas_prefetch.h"
+#include "atlas_cplxsimd.h"
+#ifdef SCPLX
+   #define MY_SIZEOF_REAL ATL_SSIZE
+   #define MY_SIZEOF ATL_CSIZE
+#else
+   #define MY_SIZEOF_REAL ATL_DSIZE
+   #define MY_SIZEOF ATL_ZSIZE
+#endif
+#define YDIST 96
+
+void ATL_UAXPY(const int N, const TYPE *alpha, const TYPE *pX, const int incX,
+               TYPE *pY, const int incY)
+{
+   int NV = N;
+   int i, nr;
+   ATL_VTYPE rALn, rALs;       /* natural order alpha, scaled/perm alpha */
+   ATL_VTYPE rXr, rXi, rYn;
+
+   ATL_vcxld1(rALn, alpha);
+   ATL_vcxPrepAlpha(rALn, rALs);        /* rALs = {ral, -ial}*(VLEN/2) */
+                                        /* rALn = {ial,  ral}*(VLEN/2 */
+/*
+ * If pY has lower alignment than complex length, no peeling can fix Y align
+ */
+   if ( ((size_t)pY) & (ATL_sizeof-1) )
+      goto YBADALIGN;
+/*
+ * i will be # of bytes past required alignment, peel to align Y
+ */
+   i = (int)(((size_t)pY) & (ATL_VLENb-1)); 
+   i = ATL_DivBySize(i);  /* make it number of elements */
+   i = (i) ? ATL_CXVLEN - i : 0;
+   i = (i <= NV) ? i : NV;
+/*
+ * If Y is not aligned, peel i elts to make it aligned 
+ */
+   if (i)
+   {
+      ATL_vcxlduXuYR(rYn, pY, rXi, pX, i);
+      ATL_vcxsplitRI(rXr, rXi);
+      ATL_vmac(rYn, rXi, rALs);
+      ATL_vmac(rYn, rXr, rALn);
+      ATL_vcxustR(pY, rYn, i);
+      NV -= i;
+      if (!NV)
+         return;
+      i += i;
+      pX += i;
+      pY += i;
+   }
+   nr = NV;
+   NV >>= ATL_CXVLSH;  /* see how many rolled vec iterations we've got */
+   nr -= NV<<ATL_CXVLSH;
+   if (!NV)
+      goto CLEANUP;
+/*
+ * If after peeling for Y alignment, X is mutually misaligned, go special loop
+ */
+   i = NV;
+   #if ATL_CXSPLDb > MY_SIZEOF_REAL
+      if ( ((size_t)pX) & (ATL_CXSPLDb-1) )
+         goto XBADALIGN;
+   #endif
+/*
+ * If we reach here, X&Y aligned, and there is at least 1 iter to do
+ */
+   do
+   {
+      ATL_vcxsplitRIld(rXr, rXi, pX);      /* rXr={rX,rX..}, rXi={iX,iX...} */
+      ATL_vld(rYn, pY);                    /* rYn  = {iY,  rY  } */
+      ATL_vmac(rYn, rXi, rALs);            /* rYn += {ral*iX, -ial*iX} */
+      ATL_vmac(rYn, rXr, rALn);            /* rYn += {ial*rX, ral*rX} */
+      ATL_vst(pY, rYn);
+      pY += ATL_VLEN;
+      pX += ATL_VLEN;
+   }
+   while(--i);
+/*
+ * Cleanup is written to do all ld/st unaligned so all vec loops can share
+ * same cleanup.  ldXYR can cause code bloat if called a bunch of different
+ * times, and this is an O(1) cost, so not worth it
+ */
+CLEANUP:
+   if (nr)
+   {
+      #if ATL_CXSPLDb <= MY_SIZEOF_REAL
+         ATL_vcxldXuYR(rXi, pX, rYn, pY, nr);
+      #else
+         ATL_vcxlduXuYR(rXi, pX, rYn, pY, nr);
+      #endif
+      ATL_vcxsplitRI(rXr, rXi);
+      ATL_vmac(rYn, rXi, rALs);
+      ATL_vmac(rYn, rXr, rALn);
+      ATL_vcxustR(pY, rYn, nr);
+   }
+   return;
+#if ATL_CXSPLDb > MY_SIZEOF_REAL
+XBADALIGN:  /* Y is aligned, but X is not */
+   do
+   {
+      ATL_vuld(rXi, pX);
+      ATL_vcxsplitRI(rXr, rXi);            /* rXr={rX,rX..}, rXi={iX,iX...} */
+      ATL_vld(rYn, pY);                    /* rYn  = {iY,  rY  } */
+      ATL_vmac(rYn, rXi, rALs);            /* rYn += {ral*iX, -ial*iX} */
+      ATL_vmac(rYn, rXr, rALn);            /* rYn += {ial*rX, ral*rX} */
+      ATL_vst(pY, rYn);
+      pY += ATL_VLEN;
+      pX += ATL_VLEN;
+   }
+   while(--i);
+   goto CLEANUP; /* use goto to avoid code bloat */
+#endif
+
+/*
+ * Could attempt peel for X alignment, but makes code too nasty
+ */
+YBADALIGN:
+   nr = NV;
+   NV >>= ATL_CXVLSH;  /* see how many rolled vec iterations we've got */
+   nr -= NV<<ATL_CXVLSH;
+   for (i=NV; i; i--)
+   {
+      ATL_vuld(rYn, pY);                   /* rYn  = {iY,  rY  } */
+      #if ATL_CXSPLDb <= MY_SIZEOF_REAL
+         ATL_vcxsplitRIld(rXr, rXi, pX);   /* rXr={rX,rX..}, rXi={iX,iX...} */
+      #else
+         ATL_vuld(rXi, pX);
+         ATL_vcxsplitRI(rXr, rXi);         /* rXr={rX,rX..}, rXi={iX,iX...} */
+      #endif
+                                           /* rALs = {ral, -ial} */
+      ATL_vmac(rYn, rXi, rALs);            /* rYn += {ral*iX, -ial*iX} */
+
+                                           /* rALn = {ial,  ral} */
+      ATL_vmac(rYn, rXr, rALn);            /* rYn += {ial*rX, ral*rX} */
+      ATL_vust(pY, rYn);
+      pY += ATL_VLEN;
+      pX += ATL_VLEN;
+   }
+   goto CLEANUP;
+}
 @ROUT !
