@@ -11818,7 +11818,6 @@ int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
          nu = VL*2;
          mu = 2;
       }
-      MU = mu*VL;
 
       if (i <= 2)  /* 1-D case */
       {
@@ -11827,6 +11826,8 @@ int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
       }
       else if (mu*nu+Mmin(mu,nu)+1 > nreg)
          continue;
+
+      MU = mu*VL;
 
       for (pfLS=16; pfLS < 128; pfLS += pfLS)
       {
@@ -12080,13 +12081,31 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
  *    Now let's try K-loop prefetch, both in addition to prior setting and
  *    w/o other prefetch
  */
-@beginskip
       for (i=0; i < npf; i++)
       {
-         const int kpf = mp->ipf;
-         TryPref(pre, verb, mp, 1, 0, ipf|ipfs[i], 64);
+         const int kpf = mp->pref;
+         int pf;
+/*
+ *       Try fetching next B working set to L1, L2, & L3
+ */
+         TryPref(pre, verb, mp, 1, 0, ipf|16|4096, 64);
+         TryPref(pre, verb, mp, 1, 0, ipf|16, 64);
+         TryPref(pre, verb, mp, 1, 0, ipf|16|16384, 64);
+         pf = mp->pref;
+/*
+ *       Using B setting, try A working set prefetch.  Not as likely to help,
+ *       since we prefetch same set MB/mu times for 1 use.
+ */
+         TryPref(pre, verb, mp, 1, 0, pf|16|4096, 64);
+         TryPref(pre, verb, mp, 1, 0, pf|16, 64);
+         TryPref(pre, verb, mp, 1, 0, pf|16|16384, 64);
+/*
+ *       Now try combining best-found with above
+ */
+         pf = mp->pref;
+         if (pf != kpf)
+            TryPref(pre, verb, mp, 1, 0, pf|kpf, 64);
       }
-@endskip
       printf("   A/B PREFETCH FOR %s SPEEDUP=%.3f\n", ctxt[k],mp->mflop[0]/mf0);
    }
    printf("\n");
