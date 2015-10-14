@@ -67,15 +67,15 @@ During tuning, think about several regions for prefetch:
 @endiif
 @iexp pfLS @(sz) @(pfLS) /
 @iexp kk @(pf) 32 &
-@iif kk = 0
-   @define pfC @ATL_pfl2W@
+@iif kk ! 0
+   @define pfC @ATL_pfl1W@
 @endiif
 @iexp kk @(pf) 256 &
-@iif kk = 0
+@iif kk ! 0
    @define pfC @ATL_pflXW@
 @endiif
 @ifdef ! pfC
-   @define pfC @ATL_pfl1W@
+   @define pfC @ATL_pfl2W@
 @endifdef
 @iexp kk @(pf) 64 &
 @iif kk ! 0
@@ -127,18 +127,9 @@ During tuning, think about several regions for prefetch:
       @define pfBk @ATL_pflXR@
    @endiif
 @endiif
-@iexp kk @(mu) @(nu) 1 @(pf) & * *
-@iif kk > pfLS
-   @iexp npfC @(pfLS) @(kk) /
-@endiif
-@ifdef ! npfC
-   @iif kk = 0
-      @iexp npfC 0 0 +
-   @endiif
-   @iif kk ! 0
-      @iexp npfC 1 0 +
-   @endiif
-@endifdef
+@SKIP npfC = (pf&1) * ((mu*nu + pfLS -1) / pfLS)
+@iexp npfC 1 @(pf) & @(pfLS) @(nu) @(mu) * @(pfLS) + -1 + / *
+@print npfC=@(npfC)
 @iexp npfA @(pfLS) 1 @(pf) r 1 & @(mu) @(nu) * * /
 @iexp npfB @(pfLS) 2 @(pf) r 1 & @(mu) @(nu) * * /
 @iexp npf @(npfC) @(npfA) +
@@ -466,10 +457,11 @@ During tuning, think about several regions for prefetch:
    #define ATL_CSZT const size_t
 #endif
 @skip Helper func for DoIter[0].  
-@skip IN: pfLS,npfA,npfB, npfC, mu, nu, IN_K; 
+@skip IN: pfLS,npfA,npfB, npfC, ipb, ipa, mu, nu, IN_K; 
 @skip IN/OUT: mo, ipf
 @BEGINPROC DoPref
    @define kk @dum@
+   @define jj @dum@
    @SKIP commented out, now handled in ldB
    @BEGINSKIP
    @SKIP if (vmu == 2 && vnu == 2 && mo = 1) mo = 0
@@ -507,14 +499,49 @@ During tuning, think about several regions for prefetch:
          @endiif
          @iexp mo @(mo) 1 +
       @endiif
-      @iif IN_K ! 0
+@SKIP Handle prefetch of next k loop traversal, if it exists
+      @iif mo = 0
          @ifdef pfBk
-            @iif mo = 0
-            @(pfBk)(pB+incBn);
-               @undef pfBk
+            @SKIP if (NOKLOOP == 0 && IN_K != 0)
+            @iexp kk 0 @(NOKLOOP) = 0 @(IN_K) ! &
+            @iif kk ! 0
+               @(pfBk)(pB+incBn);
+                  @undef pfBk
+               @iexp mo @(mo) 1 +
+            @endiif
+            @iexp jj @(kb) @(nu) *
+            @SKIP if (NOKLOOP != 0 && ipb%pfLS == 0 && ipb < incBn)
+            @iexp kk @(pfLS) @(ipb) % 0 = @(NOKLOOP) 0 ! & @(jj) @(ipb) < &
+            @iif kk ! 0
+               @iexp jj @(jj) @(ipb) +
+            @(pfBk)(pB+@(jj));
+               @iexp ipb @(ipb) @(pfLS) +
+               @iexp mo @(mo) 1 +
+            @iexp kk @(jj) @(ipb) <
+            @endiif
+         @endifdef
+      @endiif
+      @iif mo = 0
+         @ifdef pfAk
+            @SKIP if (NOKLOOP == 0 && IN_K != 0)
+            @iexp kk 0 @(NOKLOOP) = 0 @(IN_K) ! &
+            @iif kk ! 0
+               @(pfAk)(pA+incAm);
+                  @undef pfAk
+               @iexp mo @(mo) 1 +
+            @endiif
+            @iexp jj @(kb) @(mu) *
+            @SKIP if (NOKLOOP != 0 && ipa%pfLS == 0 && ipa < incAm)
+            @iexp kk @(pfLS) @(ipa) % 0 = @(NOKLOOP) 0 ! & @(jj) @(ipa) < &
+            @iif kk ! 0
+               @iexp jj @(jj) @(ipa) +
+            @(pfAk)(pA+@(jj));
+               @iexp ipa @(ipa) @(pfLS) +
                @iexp mo @(mo) 1 +
             @endiif
          @endifdef
+      @endiif
+      @iif IN_K ! 0
          @ifdef pfAk
             @iif mo = 0
             @(pfAk)(pA+incAm);
@@ -524,6 +551,7 @@ During tuning, think about several regions for prefetch:
          @endifdef
       @endiif
    @endiif
+   @undef jj
    @undef kk
 @ENDPROC
 @beginskip
@@ -1006,8 +1034,26 @@ void ATL_USERMM
       #define incBn (@(nu)*ATL_MM_KB)
    #endif
 
+   @SKIP if (npfA > 0 & npfB > 0)
+   @iexp kk 0 @(npfA) > 0 @(npfB) > &
+   @iif kk ! 0
+   pAn = (pAn != pA) ? pAn : (pA + (incAm<<2));
+   pBn = (pBn != pB) ? pBn : (pB + (incbn<<3));
+   @endiif
+   @iif kk = 0
+      @iif npfA > 0
+         if (pAn == pA)
+            pAn = (pBn != pB) ? pBn : pCn;
+      @endiif
+      @iif npfB > 0
+         if (pBn == pB)
+            pBn = (pAn != pA) ? pAn : pCn;
+      @endiif
+   @endiif
    @iexp mo 0 0 +
    @iexp ipf 0 0 +
+   @iexp ipa 0 0 +
+   @iexp ipb 0 0 +
    @iexp jl @(vnu) -1 +
    @iexp il @(vmu) -1 +
    @iif vnu > 2
