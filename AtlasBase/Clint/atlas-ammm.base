@@ -5577,32 +5577,15 @@ static int IMVS=3;     /* move ptrs in timing encoded in last 3 bits: CBA */
 ATL_mmnode_t *GetGenCases(char pre)
 {
    ATL_mmnode_t *mb, *mp;
-   char ln[64];
-   if (pre == 'z')
-      pre = 'd';
-   else if (pre == 'c')
-      pre = 's';
    mb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
-   assert(mb);
-@beginskip
-   mb = ReadMMFileWithPath(pre, "res", "gmvAMMUR.sum");
    if (!mb)
    {
-      sprintf(ln, "make res/%cgmvAMMUR.sum", pre);
+      char ln[32];
+      sprintf(ln, "make res/%cgAMMRES.sum", pre);
       assert(!system(ln));
-      mb = ReadMMFileWithPath(pre, "res", "gmvAMMUR.sum");
-      assert(mb);
+      mb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
    }
-   mp = ATL_LastMMNode(mb);
-   mp->next = ReadMMFileWithPath(pre, "res", "gkvAMMUR.sum");
-   if (!mp->next)
-   {
-      sprintf(ln, "make res/%cgkvAMMUR.sum", pre);
-      assert(!system(ln));
-      mp->next = ReadMMFileWithPath(pre, "res", "gkvAMMUR.sum");
-      assert(mp->next);
-   }
-@endskip
+   assert(mb);
    MMFillInGenStrings(pre, mb);
    return(mb);
 }
@@ -5790,7 +5773,7 @@ ATL_mmnode_t *BestBlocking_BFI
          mp->next->mflop[0] = mfS;
       }
    }
-   WriteMMFileWithPath(pre, "res", "AMMEXBLKS.sum", mp);
+   WriteRefreshedMMFileWithPath(pre, "res", "AMMEXBLKS.sum", mp);
    return(mp);
 }
 
@@ -5817,7 +5800,7 @@ ATL_mmnode_t *TimeExtraBlockings(char pre, int verb)
             printf("%4d %5d %5d %11.1f\n", 
                    mp->mbB, mp->nbB, mp->kbB, mp->mflop[0]);
       }
-      WriteMMFileWithPath(pre, "res", "AMMEXBLKS.sum", eb);
+      WriteRefreshedMMFileWithPath(pre, "res", "AMMEXBLKS.sum", eb);
    }
    return(eb);
 }
@@ -5884,8 +5867,7 @@ ATL_mmnode_t *GetGenKernForNB(char pre, int nb)
          mp->ku = mp->kbB = nb;
       else if (nb%(mp->ku))
          mp->ku = (pM) ? 1 : mp->vlen;
-      if (!FLAG_IS_SET(mp->flag,MMF_KRUNTIME))
-         mp->kbB = nb;
+      mp->mbB = mp->nbB = mp->kbB = nb;
       mp->rout = MMGetGenName(pre, nb, mp);
       mp->genstr = MMGetGenString(pre, mp);
       return(mp);
@@ -6065,6 +6047,7 @@ ATL_mmnode_t *GetGenKernForNB(char pre, int nb)
       pM->kbB = nb;
    pM->rout = MMGetGenName(pre, nb, pM);
    pM->genstr = MMGetGenString(pre, pM);
+   pM->mbB = pM->nbB = pM->kbB = nb;
    return(pM);
 }
 @beginskip
@@ -6447,8 +6430,8 @@ void PrintUsage(char *name, int ierr, char *flag)
    exit(ierr ? ierr : -1);
 }
 
-ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, 
-                       int *verb, int *NREG, int *NB, int *CS)
+void GetFlags(int nargs, char **args, char *PRE, int *verb, int *NREG, 
+              int *NB, int *CS)
 {
    ATL_mmnode_t *mmb=NULL, *mp;
    int B0, BN;
@@ -6491,8 +6474,6 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE,
       }
    }
    *PRE = pre;
-   mmb = GetGenCases(pre);
-   assert(mmb);
 /*
  * NREG has been stored by search in ivar.  Read it, and then zero ivar so
  * it won't propogate, making .sum files confusing
@@ -6514,7 +6495,6 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE,
    }
    if (*CS == 0)
       *CS = GetL1CacheElts(pre);
-   return(mmb);
 }
 @ROUT ammsearch uammsearch
 static INLINE void ApplyMoves2Flag
@@ -6699,7 +6679,7 @@ ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
    i = FLAG_IS_SET(mmp->flag, MMF_KVEC);
    KillMMNode(mmp);
    mmp = MMGetNodeGEN(pre, 0, nb, (i)?muB:muB*VL, nuB, ku, VL, i, 0, 0, NULL);
-   WriteMMFileWithPath(pre, "res", "gAMMMUNU.sum", mmp);
+   WriteRefreshedMMFileWithPath(pre, "res", "gAMMMUNU.sum", mmp);
 @skip   KillMMNode(mmp);
    printf("BEST CASE IS MU=%d, NU=%d, MFLOP=%.2f (%.2f)\n\n", 
           muB, nuB, mf, mfB);
@@ -7778,7 +7758,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       printf("NO VALID USER-SUBMITTED K-CLEANUP KERNELS\n\n");
    free(dl);
 @skip   ApplyMoves2Flags(gmmb, MOVES);  /* gen must know operand movement pattern */
-   WriteMMFileWithPath(pre, "res", "@(kpr)KCLEAN.sum", gmmb);
+   WriteRefreshedMMFileWithPath(pre, "res", "@(kpr)KCLEAN.sum", gmmb);
    return(gmmb);
 }
 
@@ -8009,7 +7989,7 @@ ATL_mmnode_t *FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    {
       MMFillInGenStrings(pre, clnb);
       TimeNegMMKernels(0, verb, 0, clnb, pre, 1, 0, -1);
-      WriteMMFileWithPath(pre, "res", "k1AMM.sum", clnb);
+      WriteRefreshedMMFileWithPath(pre, "res", "k1AMM.sum", clnb);
       return(clnb);
    }
 /*
@@ -8109,7 +8089,7 @@ ATL_mmnode_t *FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    KillAllMMNodes(mkb);
    if (verb)
       printf("DONE FINDING FULL LIST OF K-CLEANERS\n");
-   WriteMMFileWithPath(pre, "res", "k1AMM.sum", clnb);
+   WriteRefreshedMMFileWithPath(pre, "res", "k1AMM.sum", clnb);
    return(clnb);
 }
 
@@ -8162,7 +8142,7 @@ ATL_mmnode_t *KCleanByNB
                 nb, kb, mp->mu, mp->nu, mp->mflop[0], mp->mflop[1]);
       }
       printf("Done.\n");
-      WriteMMFileWithPath(pre, "res", "@(kpr)KCLEANBYNB.sum", nkb);
+      WriteRefreshedMMFileWithPath(pre, "res", "@(kpr)KCLEANBYNB.sum", nkb);
       return(nkb);
    }
 @ROUT ammsearch uammsearch
@@ -8211,7 +8191,7 @@ ATL_mmnode_t *KCleanByNB
    }
    printf("DONE.\n\n");
    KillAllMMNodes(mkb);
-   WriteMMFileWithPath(pre, "res", "@(kpr)KCLEANBYNB.sum", nkb);
+   WriteRefreshedMMFileWithPath(pre, "res", "@(kpr)KCLEANBYNB.sum", nkb);
    return(nkb);
 }
 
@@ -8249,7 +8229,7 @@ void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
                 mb, nb, kb, p->mu, p->nu, p->mflop[0]);
       }
       printf("Done.\n\n");
-      WriteMMFileWithPath(pre, "res", fn, mmb);
+      WriteRefreshedMMFileWithPath(pre, "res", fn, mmb);
       KillAllMMNodes(mmb);
       return;
    }
@@ -8271,7 +8251,7 @@ void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
       else
          mmb = np = p;
    }
-   WriteMMFileWithPath(pre, "res", fn, mmb);
+   WriteRefreshedMMFileWithPath(pre, "res", fn, mmb);
    KillAllMMNodes(mmb);
    printf("Done.\n");
 }
@@ -8390,7 +8370,7 @@ void ComputeKClean(int verb, char pre)
    if (verb)
       printf("DONE SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS.\n");
    KillAllMMNodes(mmGE);
-   WriteMMFileWithPath(pre, "res", "geAMMKCLEAN.sum", mmGEk);
+   WriteRefreshedMMFileWithPath(pre, "res", "geAMMKCLEAN.sum", mmGEk);
    KillAllMMNodes(mmGEk);
 /*
  * Now do same for square kernels
@@ -8401,7 +8381,7 @@ void ComputeKClean(int verb, char pre)
    if (verb)
       printf("DONE SPECIALIZING K-CLEANERS FOR SQUARE BLOCKINGS.\n");
    KillAllMMNodes(mmSQ);
-   WriteMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum", mmSQk);
+   WriteRefreshedMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum", mmSQk);
    KillAllMMNodes(mmSQk);
    if (verb)
       printf("\nDONE FINDING K-CLEANUP FOR EACH KB.\n");
@@ -8881,7 +8861,7 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
          i++;
       }
       if (WRT)
-         WriteMMFileWithPath(pre, "res", "bAMMRES.sum", mm3b);
+         WriteRefreshedMMFileWithPath(pre, "res", "bAMMRES.sum", mm3b);
       printf("DONE %d CASES.\n\n", i);
       return(mm3b);
    }
@@ -8911,7 +8891,7 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
  * Now, get rid of any blocking factor that is slower than the preceeding one
  */
    mmb = WinnowCases(0, mmb);
-   WriteMMFileWithPath(pre, "res", "bAMMRES.sum", mmb);
+   WriteRefreshedMMFileWithPath(pre, "res", "bAMMRES.sum", mmb);
    return(mmb);
 }
 
@@ -9275,43 +9255,81 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, ATL_mmnode_t *mmb)
 ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB, 
                                   ATL_mmnode_t *mmb)
 {
-   ATL_mmnode_t *mmp, *mmSQ=NULL, *prev=NULL;
-   int maxU=0, i;
+   ATL_mmnode_t *mp, *mmSQ=NULL, *mmGN, *prev=NULL, *mmS;
+   int maxU=0, i, KM;
    int vlen;
+   const char upr = (pre == 's' || pre == 'c') ? 's' : 'd';
 
-   vlen = GetNativeVLEN(pre);
+   mmGN = GetGenCases(pre);
+   assert(mmGN);
+   vlen = mmGN->next->next->vlen;
+@skip   vlen = GetNativeVLEN(pre);
    if (vlen < 1)
       vlen = 1;
-   for (mmp=mmb; mmp; mmp = mmp->next)
+   for (mp=mmb; mp; mp = mp->next)
    {
-      if (mmp->mu > maxU)
-         maxU = mmp->mu;
-      if (mmp->nu > maxU)
-         maxU = mmp->nu;
+      if (mp->mu > maxU)
+         maxU = mp->mu;
+      if (mp->nu > maxU)
+         maxU = mp->nu;
 @beginskip
-      if (mmp->nbB > maxNB)
-         maxNB = mmp->nbB;
-      if (mmp->mbB > maxNB)
-         maxNB = mmp->mbB;
-      if (mmp->kbB > maxNB)
-         maxNB = mmp->kbB;
+      if (mp->nbB > maxNB)
+         maxNB = mp->nbB;
+      if (mp->mbB > maxNB)
+         maxNB = mp->mbB;
+      if (mp->kbB > maxNB)
+         maxNB = mp->kbB;
 @endskip
    }
    maxNB = 1.2 * maxNB;
    maxNB = ((maxNB+maxU-1) / maxU)*maxU;
-@skip   gmm = DecentGenCase(verb, pre, nregs);
-@skip   gmm->next = mmb;
-
-   mmSQ = prev = BestForThisNB(verb, pre, mmb, 4, 4-1, 4+1);
-   for (i=(vlen > 4) ? vlen : 4+vlen; i <= maxNB; i += vlen)
+/*
+ * For small problems, try full generated & user kerns, since square kerns
+ * are very likely to use some odd kernel that got winnowed in original file
+ */
+   mmS = ReadMMFileWithPath(upr, "res", "WORKING.sum");
+   ATL_LastMMNode(mmS)->next = CloneMMQueue(mmGN);
+/*
+ * Find best NB=4 case to start queue
+ */
+   mmSQ = prev = BestForThisNB(verb, pre, mmS, 4, 4-1, 4+1);
+/*
+ * for nb < vlen, scope every multiple of 2
+ */
+   KM = Mmax(vlen,16);
+   for (i=6; i <= KM; i += 2)
    {
-      mmp = BestForThisNB(verb, pre, mmb, i, i-1, i+1);
-      if (prev->mflop[0] >= mmp->mflop[0])
-         KillMMNode(mmp);
+      mp = BestForThisNB(verb, pre, mmS, i, i-1, i+1);
+      if (prev->mflop[0] >= mp->mflop[0])
+         KillMMNode(mp);
       else
       {
-         prev->next = mmp;
-         prev = mmp;
+         prev->next = mp;
+         prev = mp;
+      }
+   }
+   KillAllMMNodes(mmS);  /* don't need small queue anymore */
+/*
+ * For larger problems, only use user kernels that won against generated.
+ * We add back in all generated kerns in case we need an eliminated one for
+ * cleanup.  Could do same for user (use mmS for all), but mmGN is at most
+ * length 5, while mmb is of any length, which is why we don't want to time
+ * all those kerns.
+ */
+   mmb = AddUniqueMMKernCompList(mmGN, mmb);
+/*
+ * For square cases > VLEN, try only multiples of VLEN: since we always 
+ * vectorize along at least one dim, only these dims can be fully vectorized
+ */
+   for (i=((16+vlen)/vlen)*vlen; i <= maxNB; i += vlen)
+   {
+      mp = BestForThisNB(verb, pre, mmb, i, i-1, i+1);
+      if (prev->mflop[0] >= mp->mflop[0])
+         KillMMNode(mp);
+      else
+      {
+         prev->next = mp;
+         prev = mp;
       }
    }
    return(mmSQ);
@@ -9605,7 +9623,7 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
 @skip      mmb = GetUniqueUserKerns(mmb);
       mmSQ = FindBestSquareCases(pre, verb, nregs, maxNB, mmb);
 @skip      KillAllMMNodes(mmb);
-      WriteMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
+      WriteRefreshedMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
    }
    return(mmSQ);
 }
@@ -9630,7 +9648,7 @@ void DoTRSM(char pre, int verb)
                printf("   trsmKL %dx%d: %.2f\n", tp->mbB,tp->nbB, tp->mflop[0]);
          }
       }
-      WriteMMFileWithPath(pre, "res", "tsAMMRES.sum", tb);
+      WriteRefreshedMMFileWithPath(pre, "res", "tsAMMRES.sum", tb);
       KillAllMMNodes(tb);
       return;
    }
@@ -9643,7 +9661,7 @@ void DoTRSM(char pre, int verb)
       if (verb)
          printf("   trsmKL %dx%d: %.2f\n", tp->mbB, tp->nbB, tp->mflop[0]);
    }
-   WriteMMFileWithPath(pre, "res", "tsAMMRES.sum", tb);
+   WriteRefreshedMMFileWithPath(pre, "res", "tsAMMRES.sum", tb);
    printf("DONE TRSM TIMING.\n");
    KillAllMMNodes(tb);
 }
@@ -9651,9 +9669,9 @@ void DoTRSM(char pre, int verb)
 /*
  * Finds main amm kernels
  */
-ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS,ATL_mmnode_t *mmGE)
+ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
 {
-   ATL_mmnode_t *mmb, *sqmmb, *mp, *mmGEN;
+   ATL_mmnode_t *mmb, *sqmmb, *mp, *mmGN;
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
 /* 
  * If we are quick returning, still must possibly retime subsearches
@@ -9665,64 +9683,36 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS,ATL_mmnode_t *mmGE)
       return(mmb);
    }
 /*
- * Make copy of original generated kernels in case they get eliminated
+ * Find the generated cases for each cache context
  */
-   mmGEN = CloneMMQueue(mmGE);
+   mmGN = GetGenCases(pre);
+   assert(mmGN);
 /*
- * Find which kernels can compile on this platform
+ * Find which user-supplied kernels can compile on this platform
  */
    mmb = GetWorkingUserCases(verb, upr);
 /*
  * Add gmmsearch-suggested kernels to those being considered.
  */
-   mp = ATL_LastMMNode(mmGE);
+   mp = ATL_LastMMNode(mmGN);
    mp->next = mmb;
-   mmb = mmGE;
+   mmb = mmGN;
 /*
  * Find the best user-supplied cases for the three common cache blking cases
  */
    mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
 /*
- * Adjust mmGEN blocking so that it doesn't interfere with best found NB!
- */
-   if (mmGEN)
-   {
-      int mb=0, nb=0, kb=0;
-      for (mp=mmb; mp; mp = mp->next)
-      {
-         mb = (mp->mbB < mb) ? mb : mp->mbB;
-         nb = (mp->nbB < nb) ? nb : mp->nbB;
-         kb = (mp->kbB < kb) ? kb : mp->kbB;
-      }
-      for (mp=mmGEN; mp; mp = mp->next)
-      {
-         int b;
-         b = (mb / mp->mu) * mp->mu;
-         assert(b);
-         mp->mbB = b;
-         b = (nb / mp->nu) * mp->nu;
-         assert(b);
-         mp->nbB = b;
-         if (!FLAG_IS_SET(mp->flag, MMF_KUISKB) && mp->kbB != mp->ku)
-            b = (kb / mp->ku) * mp->ku;
-         assert(b);
-         mp->kbB = b;
-      }
-   }
-/*
  * Now find best square cases
  */
-   mmGEN = AddUniqueMMKernCompList(mmGEN, mmb);
-   sqmmb = DoSquare(pre, verb, nregs, mmGEN);
-   KillAllMMNodes(mmGEN);
+   sqmmb = DoSquare(pre, verb, nregs, mmb);
 /*
- * Now add small-case kernels back in, and write it out
+ * Now merge square & rect lists for best performing kernels, and write it out
  */
    mp = MergeCases(0, mmb, sqmmb);
    KillAllMMNodes(sqmmb);
    KillAllMMNodes(mmb);
    mmb = WinnowCases(0, mp);
-   WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
+   WriteRefreshedMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
    return(mmb);
 }
 @beginskip
@@ -9925,7 +9915,7 @@ ATL_mmnode_t *DoRankK(char pre, int verb, int nregs, const ATL_mmnode_t *mainb)
       mp->next = rkb;
       rkb = mp;
    }
-   WriteMMFileWithPath(pre, "res", "rkAMMRES.sum", rkb);
+   WriteRefreshedMMFileWithPath(pre, "res", "rkAMMRES.sum", rkb);
    return(rkb);
 }
 
@@ -9934,10 +9924,10 @@ int main(int nargs, char **args)
    char pre='d';
    int verb, nregs, nb, CS, gmu, gnu;
    char *fnout;
-   ATL_mmnode_t *mmb, *rnkK, *grnkK, *emb, *mp, *mmSQ, *mmGN;
+   ATL_mmnode_t *mmb, *rnkK, *grnkK, *emb, *mp, *mmSQ;
 
-   mmGN = GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
-   mmb = DoMainMM(pre, verb, nregs, CS, mmGN);
+   GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
+   mmb = DoMainMM(pre, verb, nregs, CS);
    emb = TimeExtraBlockings(pre, verb);
    if (emb)
    {
@@ -9967,9 +9957,9 @@ int main(int nargs, char **args)
    }
    mp = GetUniqueUserKerns(mmb);
    KillAllMMNodes(mmb);
-   WriteMMFileWithPath(pre, "res", "AMMFRCLST.sum", mp);
+   WriteRefreshedMMFileWithPath(pre, "res", "AMMFRCLST.sum", mp);
    KillAllMMNodes(mp);
-   GetGenKernForNB(pre, 0);
+   GetGenKernForNB(pre, 0);  /* dealloc static mmnodes */
    exit(0);
 }
 @ROUT uammsearch
@@ -10923,7 +10913,7 @@ DONE:
    mmp->mflop[0] = mfB;
    printf("BEST FULL-SEARCH CASE IS B=(%d,%d,%d), U=(%d,%d) MFLOP=%.2f\n\n", 
           mbB, nbB, kbB, muB, nuB, mfB);
-   WriteMMFileWithPath(pre, "res", fn, mmp);
+   WriteRefreshedMMFileWithPath(pre, "res", fn, mmp);
    return(mmp);
 }
 
@@ -10946,7 +10936,7 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
    {
       MMFillInGenStrings(pre, mmp);
       TimeNegMMKernels(0, verb, 0, mmp, pre, 1, 0, -1);
-      WriteMMFileWithPath(pre, "res", fn, mmp);
+      WriteRefreshedMMFileWithPath(pre, "res", fn, mmp);
       return(mmp);
    }
    mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, 1, 1, 0, 0, 0, 
@@ -11006,7 +10996,7 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
    assert(mfB > 0.0);
    printf("BEST MU=%d CASE IS B=(%d,%d,%d) U=(%d,%d), MFLOP=%.2f\n\n", 
           I, mbB, nbB, kbB, mu, nuB, mfB);
-   WriteMMFileWithPath(pre, "res", fn, mmp);
+   WriteRefreshedMMFileWithPath(pre, "res", fn, mmp);
    return(mmp);
 }
 
@@ -11030,7 +11020,7 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
    {
       MMFillInGenStrings(pre, mmp);
       TimeNegMMKernels(0, verb, 0, mmp, pre, 1, 0, -1);
-      WriteMMFileWithPath(pre, "res", fn, mmp);
+      WriteRefreshedMMFileWithPath(pre, "res", fn, mmp);
       return(mmp);
    }
    mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 0, 0,
@@ -11113,7 +11103,7 @@ DONE:
    mmp->mflop[0] = mfB;
    printf("BEST POW2 CASE IS B=(%d,%d,%d) U=(%d,%d), MFLOP=%.2f\n\n", 
           mbB, nbB, kbB, muB, nuB, mfB);
-   WriteMMFileWithPath(pre, "res", fn, mmp);
+   WriteRefreshedMMFileWithPath(pre, "res", fn, mmp);
    return(mmp);
 }
 
@@ -11296,7 +11286,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    }
    else
       KillAllMMNodes(mmp2);
-   WriteMMFileWithPath(pre, "res", fn, mmp);
+   WriteRefreshedMMFileWithPath(pre, "res", fn, mmp);
    printf("BEST CASE IS B=(%d,%d,%d), U=(%d,%d), MFLOP=%.2f\n\n", 
           mmp->mbB, mmp->nbB, mmp->kbB, mmp->mu, mmp->nu, mmp->mflop[0]);
    return(mmp);
@@ -11584,8 +11574,8 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
       MMFillInGenStrings(pre, mpN);
       TimeNegMMKernels(0, verb, 0, mp, pre, 1, 0, -1);
       TimeNegMMKernels(0, verb, 0, mpN, pre, 1, 0, -1);
-      WriteMMFileWithPath(pre, "res", "gmvAMMUR.sum", mp);
-      WriteMMFileWithPath(pre, "res", "gkvAMMUR.sum", mpN);
+      WriteRefreshedMMFileWithPath(pre, "res", "gmvAMMUR.sum", mp);
+      WriteRefreshedMMFileWithPath(pre, "res", "gkvAMMUR.sum", mpN);
       KillAllMMNodes(mp);
       KillAllMMNodes(mpN);
       if (WNR)
@@ -11622,7 +11612,7 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    KillAllMMNodes(mpN);
    mp = ReverseMMQ(mp);
    mp->ivar = nreg;
-   WriteMMFileWithPath(pre, "res", "gmvAMMUR.sum", mp);
+   WriteRefreshedMMFileWithPath(pre, "res", "gmvAMMUR.sum", mp);
    KillAllMMNodes(mp);
 
    mp = SrchMUNU(flag, verb, pre, nreg, NB, vlen, 1);
@@ -11631,7 +11621,7 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    mp = AddUniqueMMKernCompList(mp, mpN);
    KillAllMMNodes(mpN);
    mp = ReverseMMQ(mp);
-   WriteMMFileWithPath(pre, "res", "gkvAMMUR.sum", mp);
+   WriteRefreshedMMFileWithPath(pre, "res", "gkvAMMUR.sum", mp);
    KillAllMMNodes(mp);
    if (WNR)
    {
@@ -12041,58 +12031,62 @@ void DoKUs(char pre, int flg, int verb, ATL_mmnode_t *mmb)
    printf("DONE TUNING KU FOR ALL KERNELS.\n\n");
 }
 
-void PrintPref(FILE *fp, ATL_mmnode_t *mp)
+@ROUT prefparse
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+@ROUT prefparse gmmsearch
+void PrintPref(FILE *fp, int ipf)
 {
-   fprintf(fp, "PREF:");
-   if (mp->pref & 2)
+   if (ipf & 2)
    {
-      if (mp->pref & 64)
+      if (ipf & 64)
          fprintf(fp, " Ab to L1");
-      else if (mp->pref & 512)
+      else if (ipf & 512)
          fprintf(fp, " Ab to LLC");
       else
          fprintf(fp, " Ab to L2");
    }
    else
       fprintf(fp, " NO Ab PREF");
-   if (mp->pref & 4)
+   if (ipf & 4)
    {
-      if (mp->pref & 128)
+      if (ipf & 128)
          fprintf(fp, ", Bb to L1");
-      else if (mp->pref & 1024)
+      else if (ipf & 1024)
          fprintf(fp, ", Bb to LLC");
       else
          fprintf(fp, ", Bb to L2");
    }
    else
       fprintf(fp, ", NO Bb PREF");
-   if (mp->pref & 8)
+   if (ipf & 8)
    {
-      if (mp->pref & 2048)
+      if (ipf & 2048)
          fprintf(fp, ", Ak to L1");
-      else if (mp->pref & 8192)
+      else if (ipf & 8192)
          fprintf(fp, ", Ak to LLC");
       else
          fprintf(fp, ", Ak to L2");
    }
    else
       fprintf(fp, ", NO Ak PREF");
-   if (mp->pref & 16)
+   if (ipf & 16)
    {
-      if (mp->pref & 4096)
+      if (ipf & 4096)
          fprintf(fp, ", Bk to L1");
-      else if (mp->pref & 16384)
+      else if (ipf & 16384)
          fprintf(fp, ", Bk to LLC");
       else
          fprintf(fp, ", Bk to L2");
    }
    else
       fprintf(fp, ", NO Bk PREF");
-   if (mp->pref & 1)
+   if (ipf & 1)
    {
-      if (mp->pref & 32)
+      if (ipf & 32)
          fprintf(fp, ", C to L1");
-      else if (mp->pref &256)
+      else if (ipf &256)
          fprintf(fp, ", C to LLC");
       else
          fprintf(fp, ", C to L2");
@@ -12100,6 +12094,7 @@ void PrintPref(FILE *fp, ATL_mmnode_t *mp)
    else
       fprintf(fp, ", NO C PREF");
 }
+@ROUT gmmsearch
 
 void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
 /*
@@ -12191,8 +12186,8 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
       TryPref(pre, verb, mp, 1, 0, ipf|1|32, 64);
       TryPref(pre, verb, mp, 1, 0, ipf|1|256, 64);
       printf("   C PREFETCH FOR %s SPEEDUP=%.3f\n", ctxt[k], mp->mflop[0]/mf0);
-      printf("   ");
-      PrintPref(stdout, mp);
+      printf("   PREF:");
+      PrintPref(stdout, mp->pref);
       printf("; SPD=%.2f\n", mp->mflop[0] / mp->mflop[1]);
       mp->mflop[1] = 0.0;
    }
@@ -12252,7 +12247,7 @@ void DoBlock(char pre, int flg, int verb)
    mmb = mm3;
    DoKUs(pre, flg, verb, mmb);   /* find best ku */
    DoPref(pre, flg, verb, mmb);  /* find best prefetch patterns */
-   WriteMMFileWithPath(pre, "res", "gAMMRES.sum", mmb);
+   WriteRefreshedMMFileWithPath(pre, "res", "gAMMRES.sum", mmb);
    KillAllMMNodes(mmb);
 }
 
@@ -23233,3 +23228,123 @@ int Mjoin(PATL,ammm_syrk)
    #undef rC
    #undef incw2
 #endif
+@ROUT prefparse
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -b <ipf> : translate pref bitvec to string\n");
+   fprintf(stderr, "   -p <Ab> <Bb> <C> <Ak> <Bk>\n");
+   fprintf(stderr, "      Each arg to -p is the cache level to prefetch to.\n");
+   fprintf(stderr, "      0 means do not prefetch, 3 means pfX\n");
+   exit(ierr ? ierr : -1);
+}
+
+int GetFlags(int nargs, char **args, int ipfs[5])
+{
+   int i, k, ipf;
+   if (nargs < 2)
+   {
+      fprintf(stderr, "\nMUST SPECIFY EITHER -p OR -b!\n");
+      PrintUsage(args[0], 1, NULL);
+   }
+   ipf = 0;
+   ipfs[0] = -1;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'b':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         ipf = atoi(args[i]);
+         break;
+      case 'p':
+         for (k=0; k < 5; k++)
+         {
+            int j;
+            if (++i >= nargs)
+                PrintUsage(args[0], i-1, NULL);
+            j = ipfs[k] = atoi(args[i]);
+            if (j > 3 || j < 0)
+               PrintUsage(args[0], i, "Cache level out of range");
+         }
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (ipf && ipfs[0] != -1)
+   {
+      printf("\nCANNOT SPECIFY BOTH -p AND -b!\n");
+      PrintUsage(args[0], 1, NULL);
+   }
+   return(ipf);
+}
+
+int main(int nargs, char **args)
+{
+   int ipf, ipfs[5];
+
+   ipf = GetFlags(nargs, args, ipfs);
+   if (ipfs[0] == -1)  /* translating bitvec to string */
+   {
+      printf("IPF=%d:", ipf);
+      PrintPref(stdout, ipf);
+      printf("\n");
+   }
+   else  /* translate pref setting to bitvec */
+   {     /* ipfs = 0:Ab 1:Bb 2:C 3:Ak 4:Bk */
+      ipf = 0;
+      if (ipfs[0])
+      {
+         ipf |= 2;
+         if (ipfs[0] == 1)
+            ipf |= 64;
+         else if (ipfs[0] == 3)
+            ipf |= 512;
+      }
+      if (ipfs[1])
+      {
+         ipf |= 4;
+         if (ipfs[1] == 1)
+            ipf |= 128;
+         else if (ipfs[1] == 3)
+            ipf |= 1024;
+      }
+      if (ipfs[2])
+      {
+         ipf |= 1;
+         if (ipfs[2] == 1)
+            ipf |= 32;
+         else if (ipfs[2] == 3)
+            ipf |= 256;
+      }
+      if (ipfs[3])
+      {
+         ipf |= 8;
+         if (ipfs[3] == 1)
+            ipf |= 2048;
+         else if (ipfs[3] == 3)
+            ipf |= 8192;
+      }
+      if (ipfs[4])
+      {
+         ipf |= 16;
+         if (ipfs[4] == 1)
+            ipf |= 4096;
+         else if (ipfs[4] == 3)
+            ipf |= 16384;
+      }
+      printf("Ab=%d, Bb=%d, C=%d, Ak=%d, Bk=%d: bitvec=%d\n", 
+             ipfs[0],ipfs[1],ipfs[2],ipfs[3],ipfs[4], ipf);
+   }/* ipfs = 0:Ab 1:Bb 2:C 3:Ak 4:Bk */
+   return(0);
+}

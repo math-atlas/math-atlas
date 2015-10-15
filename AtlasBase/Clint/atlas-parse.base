@@ -308,6 +308,7 @@ static char *GetStrForSprintf
    assert(old);
    return(old);
 }
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static int NumDecDigits(int num)
@@ -327,6 +328,16 @@ static int NumDecDigits(int num)
    for (bound=9; num > bound; nd++)
       bound = bound*10 + 9;
    return(nd);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int NumHexDigits(unsigned int num)
+{
+   int dig;
+
+   for (dig=1; num; num >>= 4);
+   return(dig);
 }
 
 @iexp ip @(ip) 1 +
@@ -1401,7 +1412,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @endwhile
 @ROUT mmread 
-@whiledef jj mu nu ku kbmin kbmax pref vlen ivar
+@whiledef jj mu nu ku kbmin kbmax pref vlen ivar pfLS
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
       p->@(jj) = atoi(sp+@len@(jj)+1);
@@ -1552,7 +1563,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @ROUT mmread 
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "OPMV=%d ", ATL_MMF_MVGET(np->flag));
-@whiledef kw ivar kbmin kbmax pref vlen
+@whiledef kw ivar kbmin kbmax pref pfLS vlen
    if (np->@(kw))
    {
       if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
@@ -2219,6 +2230,11 @@ static int MMKernCompsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
  */
    if (!FLAG_IS_SET(p0->flag, MMF_KRUNTIME) && p0->kbB != p1->kbB)
       return(0);
+/*
+ * Generated kernels aren't same if prefetch is different
+ */
+   if ((p0->ID | p1->ID) == 0 && (p0->pref != p1->pref || p0->pfLS != p1->pfLS))
+      return(0);
    return(MMKernsSame(p0, p1));
 }
 
@@ -2298,6 +2314,54 @@ static ATL_mmnode_t *AddUniqueMMKernCompList
       }
    }
    return(mmb);
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int UniqueMMNameLen(char pre, char *nm, ATL_mmnode_t *mp)
+{
+   int len=5;                         /* ATL_<pre> */
+   len += strlen(nm);                 /* ATL_<pre><nm> */
+   len += NumDecDigits(mp->ID);       /* ATL_<pre><nm><ID> */
+   len += 1 + NumHexDigits(mp->pref); /* ATL_<pre><nm><ID>p<pf> */
+   len += NumDecDigits(mp->pfLS);     /* ATL_<pre><nm><ID>p<pf><LS> */
+   len += 1 + NumHexDigits(mp->flag); /* ATL_<pre><nm><ID>p<pf>_<flg> */
+   len += 1 + NumDecDigits(mp->mu);   /* ATL_<pre><nm><ID>p<pf><LS>_<mu> */
+   len += 1 + NumDecDigits(mp->nu);   /* ATL_<pre><nm><ID>p<pf><LS>_MUxNU */
+   len += 1 + NumDecDigits(mp->ku);   /* ATL_<pre><nm><ID>p<pf><LS>_MUxNUxKU */
+   len++;                             /* string terminator */
+   return(len);
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int SprintUniqueMMName(char pre, char *nm, ATL_mmnode_t *mp, char *name)
+{
+   int i, kb=0, ku=mp->ku;
+
+   if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
+      ku = kb = mp->kbB;
+   else if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      kb = mp->kbB;
+   i = sprintf(name, "ATL_%c%s%d_%dp%xx%d_%x_%dx%dx%d",
+               pre, nm, mp->ID, kb, mp->pref, mp->flag, mp->pfLS, 
+               mp->mu, mp->nu, mp->ku);
+   return(i);
+}
+static char *GetUniqueMMName(char pre, char *nm, ATL_mmnode_t *mp, int extra)
+/*
+ * Get a string of form ATL_<pre><nm>suff, where suff encodes all info
+ * required to differentiate between amm kernels
+ */
+{
+   int i, h;
+   char *name;
+
+   i = UniqueMMNameLen(pre, nm, mp);
+   extra = (extra >= 0) ? extra : 0;
+   name = malloc(i+extra);
+   assert(name);
+   h = SprintUniqueMMName(pre, nm, mp, name);
+   assert(h < i);
+   return(name);
 }
 
 @ROUT mvread r1read mmread
@@ -2949,10 +3013,13 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
    char *rout;
-   rout = malloc(48);
+   int KB=0;
+   rout = malloc(64);
    assert(rout);
+   if ((mp->flag) & ((1<<MMF_KRUNTIME)|(1<<MMF_KUISKB)))
+      KB = (kb) ? kb : mp->kbB;
    /* ATL_<pre>amm<kb>_<vlen>[k,m]_<mu>x<nu>x<ku>_pf<pf>x<pfLS>_<flag>.c */
-   sprintf(rout, "ATL_%camm%d_%d%c_%dx%dx%d_pf%xx%d_%x.c", pre, kb, mp->vlen, 
+   sprintf(rout, "ATL_%camm%d_%d%c_%dx%dx%d_pf%xx%d_%x.c", pre, KB, mp->vlen, 
            FLAG_IS_SET(mp->flag,MMF_KVEC)?'k':'m', mp->mu, mp->nu, mp->ku,
            mp->pref, mp->pfLS, mp->flag);
    return(rout);
@@ -3022,6 +3089,35 @@ void MMFillInGenNames(char pre, ATL_mmnode_t *mmb)
       if (mp->ID == 0 && !mp->rout)
          mp->rout = MMGetGenName(pre, mp->kbB, mp);
    }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) : fix genstrs and routs that may have gone stale */
+void MMRefreshGenNodes(char pre, ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mp;
+   const char upr=(pre == 'c' || pre == 's') ? 's' : 'z';
+
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (!mp->ID)
+      {
+         if (mp->rout)
+            free(mp->rout);
+         if (mp->genstr)
+            free(mp->genstr);
+         mp->rout = MMGetGenName(pre, mp->kbB, mp);
+         mp->genstr = MMGetGenString(pre, mp);
+      }
+   }
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) : fix genstrs and routs that may have gone stale */
+void WriteRefreshedMMFileWithPath
+   (char pre, char *path, char *file, ATL_mmnode_t *nq)
+{
+   MMRefreshGenNodes(pre, nq);
+   WriteMMFileWithPath(pre, path, file, nq);
 }
 
 @iexp ip @(ip) 1 +
