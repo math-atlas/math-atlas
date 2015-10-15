@@ -12041,6 +12041,66 @@ void DoKUs(char pre, int flg, int verb, ATL_mmnode_t *mmb)
    printf("DONE TUNING KU FOR ALL KERNELS.\n\n");
 }
 
+void PrintPref(FILE *fp, ATL_mmnode_t *mp)
+{
+   fprintf(fp, "PREF:");
+   if (mp->pref & 2)
+   {
+      if (mp->pref & 64)
+         fprintf(fp, " Ab to L1");
+      else if (mp->pref & 512)
+         fprintf(fp, " Ab to LLC");
+      else
+         fprintf(fp, " Ab to L2");
+   }
+   else
+      fprintf(fp, " NO Ab PREF");
+   if (mp->pref & 4)
+   {
+      if (mp->pref & 128)
+         fprintf(fp, ", Bb to L1");
+      else if (mp->pref & 1024)
+         fprintf(fp, ", Bb to LLC");
+      else
+         fprintf(fp, ", Bb to L2");
+   }
+   else
+      fprintf(fp, ", NO Bb PREF");
+   if (mp->pref & 8)
+   {
+      if (mp->pref & 2048)
+         fprintf(fp, ", Ak to L1");
+      else if (mp->pref & 8192)
+         fprintf(fp, ", Ak to LLC");
+      else
+         fprintf(fp, ", Ak to L2");
+   }
+   else
+      fprintf(fp, ", NO Ak PREF");
+   if (mp->pref & 16)
+   {
+      if (mp->pref & 4096)
+         fprintf(fp, ", Bk to L1");
+      else if (mp->pref & 16384)
+         fprintf(fp, ", Bk to LLC");
+      else
+         fprintf(fp, ", Bk to L2");
+   }
+   else
+      fprintf(fp, ", NO Bk PREF");
+   if (mp->pref & 1)
+   {
+      if (mp->pref & 32)
+         fprintf(fp, ", C to L1");
+      else if (mp->pref &256)
+         fprintf(fp, ", C to LLC");
+      else
+         fprintf(fp, ", C to L2");
+   }
+   else
+      fprintf(fp, ", NO C PREF");
+}
+
 void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
 /*
  * Given routs times with no prefetch (mflop stored at imf), try various
@@ -12065,6 +12125,7 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
       const int ipf=mp->pref;
       int npf, i;
       double mf0=mp->mflop[0];
+      mp->mflop[1] = mf0;
       if (k <= 2) /* for cases where L1 is full */
          npf = 8; /* only try prefetches to L2 (really last level cache) */
       else if (k == 3) /* room for one block */
@@ -12084,7 +12145,11 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
       for (i=0; i < npf; i++)
       {
          const int kpf = mp->pref;
+         const double kmf = mp->mflop[0];
          int pf;
+
+         mp->mflop[0] = mf0;
+         mp->pref = ipf;
 /*
  *       Try fetching next B working set to L1, L2, & L3
  */
@@ -12103,8 +12168,13 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
  *       Now try combining best-found with above
  */
          pf = mp->pref;
-         if (pf != kpf)
+         if (pf != kpf && kpf)
             TryPref(pre, verb, mp, 1, 0, pf|kpf, 64);
+         if (mp->mflop[i] < kmf*1.005) /* if new settings (pen expen k-pref) */
+         {                              /* slower M/N fetch alone, revert */
+            mp->pref = kpf;
+            mp->mflop[0] = kmf;
+         }
       }
       printf("   A/B PREFETCH FOR %s SPEEDUP=%.3f\n", ctxt[k],mp->mflop[0]/mf0);
    }
@@ -12121,6 +12191,10 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
       TryPref(pre, verb, mp, 1, 0, ipf|1|32, 64);
       TryPref(pre, verb, mp, 1, 0, ipf|1|256, 64);
       printf("   C PREFETCH FOR %s SPEEDUP=%.3f\n", ctxt[k], mp->mflop[0]/mf0);
+      printf("   ");
+      PrintPref(stdout, mp);
+      printf("; SPD=%.2f\n", mp->mflop[0] / mp->mflop[1]);
+      mp->mflop[1] = 0.0;
    }
    printf("DONE  PREFETCH TUNING FOR ALL CACHE CONTEXTS\n\n");
 }
@@ -12145,10 +12219,10 @@ void DoBlock(char pre, int flg, int verb)
 /*
  * Compute # of L1 cache elements, and join M- & K-vec kernels found so far
  */
-   L1ELTS = GetL1CacheElts(pre);
-   mmb = ReadMMFileWithPath(pre, "res", "gmvAMMUR.sum");
+   L1ELTS = GetL1CacheElts(upr);
+   mmb = ReadMMFileWithPath(upr, "res", "gmvAMMUR.sum");
    assert(mmb);
-   mp = ReadMMFileWithPath(pre, "res", "gkvAMMUR.sum");
+   mp = ReadMMFileWithPath(upr, "res", "gkvAMMUR.sum");
    ATL_LastMMNode(mmb)->next = mp;
    MMFillInGenStrings(pre, mmb);
 /*
@@ -12185,11 +12259,16 @@ void DoBlock(char pre, int flg, int verb)
 int main(int nargs, char **args)
 {
    int flg, verb, nreg, VLEN, NB, TEST;
-   char pre;
+   char pre, upr;
    GetFlags(nargs, args, &flg, &verb, &pre, &nreg, &VLEN, &NB, &TEST);
+   upr = pre;
+   if (pre == 'z')
+      upr = 'd';
+   else if (pre == 'c')
+      upr = 's';
    if (TEST)
       return(CountFails(flg, verb, pre, NB, nreg, VLEN));
-   FindInfo(flg, verb, pre, NB, &nreg, &VLEN);
+   FindInfo(flg, verb, upr, NB, &nreg, &VLEN);
    DoBlock(pre, flg, verb);
 @skip   DoSquare(flg, verb, pre, nreg, VLEN);
    return(0);
