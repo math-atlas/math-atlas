@@ -58,6 +58,7 @@
 #define MMF_KVEC       14  /* 1: vectorize on K-dim. 0: do not vec on K dim */
 #define MMF_KUISKB     15  /* 1: only works for fully unrolled, constant K */
 #define MMF_NOBCAST    16  /* 1: use ld/splat to get B, rather than bcast */
+#define MMF_FKO        17  /* 1: compile using FKO, else [d,s]MC */
 
 #define MMF_MVSET  ( (1<<MMF_MVA) | (1<<MMF_MVB) | (1<<MMF_MVC) )
 #define MMF_MVDEF  ( (1<<MMF_MVA) | (1<<MMF_MVB) )
@@ -336,7 +337,8 @@ static int NumHexDigits(unsigned int num)
 {
    int dig;
 
-   for (dig=1; num; num >>= 4);
+   for (dig=1; num; num >>= 4) 
+      dig++;
    return(dig);
 }
 
@@ -2317,52 +2319,124 @@ static ATL_mmnode_t *AddUniqueMMKernCompList
 }
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-int UniqueMMNameLen(char pre, char *nm, ATL_mmnode_t *mp)
+int MMNamelen(char pre, char *nm, ATL_mmnode_t *mp, int kb)
 {
    int len=5;                         /* ATL_<pre> */
+
+@skip   if (mp->ID && kb < 0)  /* user filename length)
+@skip      return(strlen(mp->rout);
    len += strlen(nm);                 /* ATL_<pre><nm> */
    len += NumDecDigits(mp->ID);       /* ATL_<pre><nm><ID> */
-   len += 1 + NumHexDigits(mp->pref); /* ATL_<pre><nm><ID>p<pf> */
-   len += NumDecDigits(mp->pfLS);     /* ATL_<pre><nm><ID>p<pf><LS> */
-   len += 1 + NumHexDigits(mp->flag); /* ATL_<pre><nm><ID>p<pf>_<flg> */
-   len += 1 + NumDecDigits(mp->mu);   /* ATL_<pre><nm><ID>p<pf><LS>_<mu> */
-   len += 1 + NumDecDigits(mp->nu);   /* ATL_<pre><nm><ID>p<pf><LS>_MUxNU */
-   len += 1 + NumDecDigits(mp->ku);   /* ATL_<pre><nm><ID>p<pf><LS>_MUxNUxKU */
-   len++;                             /* string terminator */
-   return(len);
-}
+   len += 1 + NumDecDigits(kb);       /* ATL_<pre><nm><ID>_<kb> */
+   len += 1 + NumDecDigits(mp->vlen); /* +[m,k]<vlen>, V=[m,k]*/
+   len += 1 + NumHexDigits(mp->pref); /* +p<pref> */
+   len += 1 + NumDecDigits(mp->pfLS); /* +x<LS> */
+   len += 1 + NumHexDigits(mp->flag); /* +_<flg> */
+   len += 1 + NumDecDigits(mp->mu);   /* +_mu */
+   len += 1 + NumDecDigits(mp->nu);   /* +_nu */
+   len += 1 + NumDecDigits(mp->ku);   /* +_ku */
+   return(len);     /* string terminator/beta/file ext not included! */
+} /* ATL_<pre><nm><ID>_<kb>[m,n]<vlen>p<pf>x<LS>_<flg>_MUxNUxKU */
 @iexp ip @(ip) 1 +
+
+/*
+ * A kernel name is how a kernel is called from code, and is set by 
+ * redefining ATL_USERMM, so we see that it can be unrelated to filename.
+ * However, during install we will make all filenames the same as the
+ * kernel name, with the following exceptions:
+ * 1. _bX is done through recompilation, so is replaced by file ext (.c, etc.)
+ * 2. KB will not match the kernel name in the (a) case below:
+ *    a. For kerns that that need compile-time K, but can simply be recompiled
+ *       for each differing KB, we will encode KB=1 (never a valid KB).
+ *    b. For kerns taking a runtime KB, KB is 0
+ *    c. For kerns that only supply an exact KB, KB is set to mp->kbB.
+ * 
+ * During installation, we can use mp->str to temporarily store the filename,
+ * while we use mp->rout to store the kernel (call) name, w/o beta suffix.
+ */
 /* procedure @(ip) */
-int SprintUniqueMMName(char pre, char *nm, ATL_mmnode_t *mp, char *name)
+int SprintMMName(char *name, char pre, char *nm, ATL_mmnode_t *mp, int kb)
+/*
+ * kb >= 0 : print kb in name, else don't
+ */
 {
-   int i, kb=0, ku=mp->ku;
+   int i, ku=mp->ku;
 
    if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
-      ku = kb = mp->kbB;
-   else if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
-      kb = mp->kbB;
-   i = sprintf(name, "ATL_%c%s%d_%dp%xx%d_%x_%dx%dx%d",
-               pre, nm, mp->ID, kb, mp->pref, mp->flag, mp->pfLS, 
-               mp->mu, mp->nu, mp->ku);
+      ku = mp->kbB;
+   /* ATL_<pre><nm><ID>_kb[m,n]<vlen>p<pf>x<LS>_<flg>_MUxNUxKU */
+   i = sprintf(name, "ATL_%c%s%d_%d%c%dp%xx%d_%x_%dx%dx%d", pre, nm, mp->ID, kb,
+               FLAG_IS_SET(mp->flag, MMF_KVEC) ? 'k':'m', mp->vlen,
+               mp->pref, mp->pfLS, mp->flag, mp->mu, mp->nu, mp->ku);
    return(i);
 }
-static char *GetUniqueMMName(char pre, char *nm, ATL_mmnode_t *mp, int extra)
+
+/* procedure @(ip) */
+static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp, char beta)
 /*
  * Get a string of form ATL_<pre><nm>suff, where suff encodes all info
  * required to differentiate between amm kernels
  */
 {
-   int i, h;
+   int i, h, kb=0;
    char *name;
 
-   i = UniqueMMNameLen(pre, nm, mp);
-   extra = (extra >= 0) ? extra : 0;
-   name = malloc(i+extra);
+   if (FLAG_IS_SET(mp->flag,MMF_KUISKB) || !FLAG_IS_SET(mp->flag,MMF_KRUNTIME))
+      kb = mp->kbB;
+   i = MMNamelen(pre, nm, mp, kb);
+   name = malloc(i+3+1);  /* 3 for beta name, +1 is for string terminator */
    assert(name);
-   h = SprintUniqueMMName(pre, nm, mp, name);
-   assert(h < i);
+   h = SprintMMName(name, pre, nm, mp, kb);
+   assert(h <= i);
+   name[h] = '_';
+   name[h+1] = 'b';
+   if (beta == 0)
+      name[h+2] = '0';
+   else
+      name[h+2] = (beta < 0) ? 'n' : '1';
+   name[h+3] = '\0';
    return(name);
 }
+
+/* procedure @(ip) */
+static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
+/*
+ * Get a string of form ATL_<pre><nm>suff, where suff encodes all info
+ * required to differentiate between amm kernels
+ */
+{
+   int i, h, kb;
+   char *name;
+
+   if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
+      kb = mp->kbB;
+   else if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      kb = (mp->kbmax != mp->kbB || mp->kbmin != mp->kbB) ? 1 : mp->kbB;
+   else 
+      kb = 0;
+   i = MMNamelen(pre, nm, mp, kb); 
+   name = malloc(i+2+1);           /* 2 file ext, 1 str term */
+   assert(name);
+   h = SprintMMName(name, pre, nm, mp, kb);
+   assert(h <= i);
+   name[h] = '.';
+   if (mp->ID == 0)
+      name[h+1] = 'c';
+   else if (FLAG_IS_SET(mp->flag, MMF_FKO))
+      name[h+1] = 'B';
+   else if (mp->rout) /* user supplied kern, get ext from orig name */
+   {
+      int k;
+      k = strlen(mp->rout)-1;
+      assert(mp->rout[k-1] == '.');
+      name[h+1] = mp->rout[k];
+   }
+   else /* user-supplied w/o name, assume C */
+      name[h+1] = 'c';
+   name[h+2] = '\0';
+   return(name);
+}
+
 
 @ROUT mvread r1read mmread
 #endif  /* end atlas_@(rt)parse.h guard */
@@ -3012,6 +3086,11 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 /* procedure @(ip) */
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
+   mp->rout = GetMMFilename(pre, "amm", mp);
+}
+@beginskip
+char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
+{
    char *rout;
    int KB=0;
    rout = malloc(64);
@@ -3024,6 +3103,7 @@ char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
            mp->pref, mp->pfLS, mp->flag);
    return(rout);
 }
+@endskip
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -3106,6 +3186,10 @@ void MMRefreshGenNodes(char pre, ATL_mmnode_t *mmb)
             free(mp->rout);
          if (mp->genstr)
             free(mp->genstr);
+         if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
+            mp->kbmin = mp->kbmax = mp->kbB;
+         else if (mp->ku > 1)
+            mp->kbmin = mp->ku;
          mp->rout = MMGetGenName(pre, mp->kbB, mp);
          mp->genstr = MMGetGenString(pre, mp);
       }
