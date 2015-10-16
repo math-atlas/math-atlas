@@ -2705,12 +2705,17 @@ void HandleIIf(EXTENV *EE, char *ln)
 {
    char ch;
    int i, j, ia1, ia2;
-   ch = GetIntComp(EE, ln+5, &i, &j, &ia1, &ia2, NULL, NULL);
-   if (ch == '=') i = (ia1 == ia2);
-   else if (ch == '!') i = (ia1 != ia2);
-   else if (ch == '<') i = (ia1 < ia2);
-   else if (ch == '{') i = (ia1 <= ia2);
-   else if (ch == '}') i = (ia1 >= ia2);
+   if (WstrcmpN(ln+5, "@iexp ",6)) /* rest of line is @iexp, */
+      i = icalc(EE, ln+5+6);
+   else
+   {
+      ch = GetIntComp(EE, ln+5, &i, &j, &ia1, &ia2, NULL, NULL);
+      if (ch == '=') i = (ia1 == ia2);
+      else if (ch == '!') i = (ia1 != ia2);
+      else if (ch == '<') i = (ia1 < ia2);
+      else if (ch == '{') i = (ia1 <= ia2);
+      else if (ch == '}') i = (ia1 >= ia2);
+   }
    if (!i) /* skip */
       DumpSkip(EE, NULL, "@iif ", "@endiif ");
    else

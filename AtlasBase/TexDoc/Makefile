@@ -16,6 +16,11 @@ atlas_install_html:
 	rm -f atlas_install.aux atlas_install.dvi atlas_install.log \
               atlas_install.toc atlas_install.bbl atlas_install.blg \
               texput.log
+extract.pdf : extract.tex
+	pdflatex extract ; pdflatex extract
+	pdflatex extract ; pdflatex extract
+	rm -f extract.aux extract.dvi extract.log \
+              extract.toc texput.log
 atlas_devel.pdf : atlas_devel.tex
 	pdflatex atlas_devel ; pdflatex atlas_devel
 	rm -f atlas_devel.aux atlas_devel.dvi atlas_devel.log \
