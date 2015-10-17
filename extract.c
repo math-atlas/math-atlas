@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  07/31/15.                           */
+/*  Last modified by the author on  10/16/15.                           */
 /************************************************************************/
 
 #include <stdio.h>
