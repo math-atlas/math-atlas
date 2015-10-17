@@ -762,7 +762,8 @@ int GetLn(EXTENV *EE, char *line)
 {
    if (ExtDone) return(0);
    EE->FpIn->LineNo++;
-   return( (int) fgets(line, LNLEN, EE->FpIn->Fp) );
+/*   return( (int) fgets(line, LNLEN, EE->FpIn->Fp) ); */
+   return( (fgets(line, LNLEN, EE->FpIn->Fp) != NULL) );
 }
 
 FILE2 *OpenFile(EXTENV *EE, char *Fnam, char *mode)
@@ -2237,7 +2238,8 @@ void HandleIfdef(EXTENV *EE, char line[])
    }
    for(i=k; !Mciswspace(line[i]); i++) tline[i-k] = line[i];
    tline[i-k] = '\0';
-   defined = (int) FindMac(tline);
+/*   defined = (int) FindMac(tline); */
+   defined = (FindMac(tline) != NULL);
    if (line[7] == '!') defined = !defined;
    if (GetLn(EE, line)) KeepOn = 1;
    else KeepOn = 0;
@@ -3249,7 +3251,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Store where my macros begin
  */
-   sprintf(line, "@__MyMacBeg__%d", (int) &EE);
+   sprintf(line, "@__MyMacBeg__%p", &EE);
    PushMacro2(&EE, 0, line, "");
    EE.MyMacBeg = MacroBase;
 
@@ -3305,7 +3307,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Pop MyMacBeg
  */
-   sprintf(line, "__MyMagBeg__%d", (int)&EE);
+   sprintf(line, "__MyMacBeg__%p", &EE);
    PopMacro2(&EE, line);
 
 /*
