@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  10/16/15.                           */
+/*  Last modified by the author on  10/17/15.                           */
 /************************************************************************/
 
 #include <stdio.h>
@@ -2591,8 +2591,8 @@ char GetIntComp(EXTENV *EE, char *ln, int *A1CONST, int *A2CONST,
    if (wp->next->word[0] == '>') { wp1 = wp; wp0 = wp->next->next; }
    else if (wp->next->word[0] == '=') comp = '=';
    else if (wp->next->word[0] == '!') comp = '!';
-   else if (wp->next->word[0] == 'e') comp = 'e';
-   else if (wp->next->word[0] == 'E') comp = 'E';
+   else if (wp->next->word[0] == '{') comp = 'e';
+   else if (wp->next->word[0] == '}') comp = 'E';
    else if (wp->next->word[0] != '<')
       ExtErr(EE, "Invalid integer condition: '%s'\n", ln);
 
