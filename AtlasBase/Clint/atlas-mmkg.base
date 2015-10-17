@@ -139,7 +139,6 @@ During tuning, think about several regions for prefetch:
 @endiif
 @SKIP npfC = (pf&1) * ((mu*nu + pfLS -1) / pfLS)
 @iexp npfC 1 @(pf) & @(pfLS) @(nu) @(mu) * @(pfLS) + -1 + / *
-@print npfC=@(npfC)
 @iexp npfA @(pfLS) 1 @(pf) r 1 & @(mu) @(nu) * * /
 @iexp npfB @(pfLS) 2 @(pf) r 1 & @(mu) @(nu) * * /
 @iexp npf @(npfC) @(npfA) +
@@ -192,13 +191,8 @@ During tuning, think about several regions for prefetch:
    @endiif
 @VEC KDIM
    @iexp vku @(vl) @(ku) /
-   @iexp kk @(vku) @(vl) *
-   @iif kk ! ku
+   @iif @iexp @(vku) @(vl) * @(ku) !
       @abort "KU=@(ku) illegal with VLEN=@(vl)!"
-   @endiif
-   @iexp kk @(vl) @(mu) @(nu) * %
-   @iif kk ! 0
-      @abort "MU*NU (@(mu)*@(nu)) must be a multiple of VLEN (@(vl))!"
    @endiif
 @VEC NO
    @iif vl ! 1
@@ -288,7 +282,6 @@ During tuning, think about several regions for prefetch:
       ATL_vst(p_, d_); \
    }
 #endif
-@print npfA=@(npfA) npfB=@(npfB) npfC=@(npfC) npf=@(npf)
 @VEC MDIM
    @iif bc = 0
       @BEGINPROC ldB spc d i_
@@ -403,18 +396,36 @@ During tuning, think about several regions for prefetch:
    @ENDPROC
 @VEC KDIM
    @BEGINPROC storeC spc
+      @define k @dum@
+      @define i @dum@
+      @define j @dum@
+      @define ii @dum@
+      @define jj @dum@
+      @define kk @dum@
+      @define nn @dum@
+      @define nf @dum@
    @beginindent 1 @(spc)
       @iexp kN @(mu) @(nu) *
-      @iexp k 0 0 +
+      @iexp k 0
       @iwhile k < kN
          @iexp j @(mu) @(k) /
          @iexp i @(mu) @(k) %
          @iexp nn @(k) @(vl) +
+         @iexp nf @(nn)
+         @iif nf > kN
+   ATL_vzero(rB0);  // get rid of this in final, deb only
+            @iexp nf @(kN)
+         @endiif
+@print nf=@(nf) nn=@(nn)
          @declare "   ATL_vvrsum@(vl)(" y n ");"
-            @iwhile k < @(nn)
+            @iwhile k < @(nf)
                @iexp jj @(mu) @(k) /
                @iexp ii @(mu) @(k) %
                rC@(ii)_@(jj)
+               @iexp k @(k) 1 +
+            @endiwhile
+            @iwhile k < @(nn)
+               rB0
                @iexp k @(k) 1 +
             @endiwhile
          @enddeclare
@@ -423,6 +434,14 @@ During tuning, think about several regions for prefetch:
    ATL_vbeta(pC+@(kk), rC@(i)_@(j));
       @endiwhile
    @endindent
+      @undef k
+      @undef i
+      @undef j
+      @undef ii
+      @undef jj
+      @undef kk
+      @undef nn
+      @undef nf
    @ENDPROC
 @VEC KDIM
    @iexp incAk @(mu) @(ku) *
@@ -1123,14 +1142,12 @@ void ATL_USERMM
       @iexp IN_K 0 0 +
       @iexp npeel 1 0 +
       @CALLPROC DoIter0
-@print ipf=@(ipf) npf=@(npf) npeel=@(npeel)
       @iwhile ipf < npf
 /*
  *       Peel K=@(npeel) it to allow prefetch of C or next blocks of A&B
  */
          @VEC KDIM `@iexp kk @(npeel) @(vl) *`
          @VEC ! KDIM `@iexp kk @(npeel) 0 +`
-@print kk=@(kk) npeel=@(npeel) vl=@(vl)
          if (K == @(kk))
             goto KDONE;
             @CALLPROC DoIter
@@ -1138,7 +1155,6 @@ void ATL_USERMM
       @endiwhile
          @VEC KDIM `@iexp kk @(npeel) @(vl) *`
          @VEC ! KDIM `@iexp kk @(npeel) 0 +`
-@print !! kk=@(kk) npeel=@(npeel) vl=@(vl)
          for (k=@(kk); k < ATL_MM_KB; k += @(ku))
          {
             @iexp IN_K 0 1 +
@@ -1149,7 +1165,8 @@ KDONE:
       @endiif
    @endiif
          @CALLPROC storeC 6
-         @iexp kk @(mu) @(nu) *
+         @VEC KDIM   `@iexp kk @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *`
+         @VEC ! KDIM `@iexp kk @(mu) @(nu) *`
          pC += @(kk);
    @iif NOKLOOP ! 0
          pB += incBn;
@@ -1206,16 +1223,17 @@ KDONE:
 @endifdef
 @SKIP blksz = ((mu*nu+vlen-1)/vlen)*vlen
 @iexp bs @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *
+// HERE vl=@(vl), mu=@(mu), nu=@(nu) bs=@(bs)
 @SKIP IN: mu, nu, beta, alpha
 @BEGINPROC doBlock m_ n_
    @define i @dum@
    @define j @dum@
    @define k @dum@
-   @iexp k 0
    @iexp j 0
    @iwhile j < @(n_)
       @iexp i 0
       @iwhile i < @(m_)
+         @iexp k @(j) @(mu) * @(i) +
          @iif alpha = 1
             @iif beta = 0
             C@(j)[@(i)] = p[@(k)];
@@ -1259,7 +1277,6 @@ KDONE:
             @endiif
          @endiif
          @iexp i @(i) 1 +
-         @iexp k @(k) 1 +
       @endiwhile
       @iif m_ = mu
             C@(j) += @(mu);
@@ -1282,15 +1299,15 @@ void @(rtnm)
    const size_t ldc     /* stride between row elements */
 )
 @endiif
-@iif vl > 1
+@iif cpvl > 1
 static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha, 
                          const @(typ) *b, const SCALAR beta, 
                          @(typ) *C, ATL_CSZT ldc)
 @endiif
 {
-   const unsigned int nf = N/@(nu), mf = M/@(mu);
+   const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
-   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs);
+   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
    const unsigned int incC = ldc*@(nu) - m;
    unsigned int i, j;
    @declare "   @(typ) " n n ";"
@@ -1305,23 +1322,20 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    for (j=nf; j; j--, b += @(bs))
    {
       const @(typ) *p = b;
-      for (i=0; i < mf; i++, p += pansz)
+      for (i=mf; i; i--, p += pansz)
       {
-         for (i=mf; i; i--, p += pansz)
-         {
-            @callproc doBlock @(mu) @(nu)
-         }
-         switch(mr)
-         {
+         @callproc doBlock @(mu) @(nu)
+      }
+      switch(mr)
+      {
    @iexp m 1
    @iwhile m < @(mu)
-         case @(m):
+      case @(m):
       @callproc doBlock @(m) @(nu)
       @iexp m @(m) 1 +
    @endiwhile
-            break;
-         default:;
-         }
+         break;
+      default:;
       }
    @iexp j 0
    @iwhile j < @(nu)
@@ -1331,9 +1345,26 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    }
    switch(nr)
    {
+      const @(typ) *p = b;
    @iexp n 1
    @iwhile n < @(nu)
    case @(n):
+      for (i=0; i < mf; i++, p += pansz)
+      {
+         @callproc doBlock @(mu) @(n)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(n)
+      @iexp m @(m) 1 +
+   @endiwhile
+         break;
+      default:;
+      }
+      break;
       @iexp n @(n) 1 +
    @endiwhile
    default:;
