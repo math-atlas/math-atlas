@@ -11689,7 +11689,7 @@ int TestWithKU(int verb, char pre, int NB, ATL_mmnode_t *mp, FILE *fperr)
    return(nf);
 }
 
-int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
+int CountFails(int TEST, int flg, int verb, char pre, int NB, int nreg, int VL)
 {
    int i, j, ntest=0, nfail=0;
    char *frm="%8d %4d %3d %3d %3d  %2d   %c %2d  %5d\n";
@@ -11748,7 +11748,7 @@ int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
             }
             mp = KillMMNode(mp);
          }
-         if ((i*j)%VL == 0) /* try k-vec wt bcast */
+         if (1 /*(i*j)%VL == 0*/) /* try k-vec */
          {
             mp = MMGetNodeGEN(pre, 0, NB, i, j, VL, VL, 1, 0, 0, NULL);
             nf = NumberBetaFails(fperr, pre, NB, mp);
@@ -11766,101 +11766,105 @@ int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
          }
       }
    }
-   printf("\n   .... start of prefetch tests ....\n");
-/*
- * Now test some prefetch on both 1- & 2-D kernels.  Prefetch of next block of
- * A & B affect peeling, and so can cause errors (K-loop prefetch no).
- * Fully unrolled cases don't need to be tested again, since they are totally
- * peeled with or without prefetch.
- */
-   assert(nreg > 2);
-   for (i=0; i < 7; i++)  /* 1-D in both directions, and some 2-D */
+   if (TEST > 1)
    {
-      const int NOBCAST = (i == 5 || i == 6); /* spec cases only for no-bcast */
-      int MU;
-      int mu, nu, pfLS;
-      if (i == 0)
-      {
-         mu = nreg - 2;
-         nu = 1;
-      }
-      else if (i == 1)
-      {
-         mu = 1;
-         nu = nreg - 2;
-         if (nu > VL)
-            nu = (nu / VL) * VL;
-      }
-      else if (i == 2)
-      {
-         mu = 3;
-         for (nu=3; nu*mu+mu+1 < nreg; nu++);
-      }
-      else if (i == 4)
-         mu = nu = 2;
-      else if (i == 5)
-      {
-         nu = VL;
-         mu = 3;
-      }
-      else if (i == 6)
-      {
-         nu = VL*2;
-         mu = 2;
-      }
-
-      if (i <= 2)  /* 1-D case */
-      {
-         if (mu*nu+1 > nreg)
-            continue;
-      }
-      else if (mu*nu+Mmin(mu,nu)+1 > nreg)
-         continue;
-
-      MU = mu*VL;
-
-      for (pfLS=16; pfLS < 128; pfLS += pfLS)
-      {
-         int k, pfs[6]={1, 2, 4, 1|2, 2|4, 1|2|4};
-         for (k=0; k < 5; k++)
-         {
-            ATL_mmnode_t *mp;
-            int nf;
+      printf("\n   .... start of prefetch tests ....\n");
 /*
- *          Test M-vec using broadcast
+ *    Now test some pref on both 1- & 2-D kernels.  Prefetch of next block of
+ *    A & B affect peeling, and so can cause errors (K-loop prefetch no).
+ *    Fully unrolled cases don't need to be tested again, since they are
+ *    totally peeled with or without prefetch.
  */
-            if (!NOBCAST)
+      assert(nreg > 2);
+      for (i=0; i < 7; i++)  /* 1-D in both directions, and some 2-D */
+      {
+         const int NOBCAST = (i == 5 || i == 6); /* spec cases for no-bcast */
+         int MU;
+         int mu, nu, pfLS;
+         if (i == 0)
+         {
+            mu = nreg - 2;
+            nu = 1;
+         }
+         else if (i == 1)
+         {
+            mu = 1;
+            nu = nreg - 2;
+            if (nu > VL)
+               nu = (nu / VL) * VL;
+         }
+         else if (i == 2)
+         {
+            mu = 3;
+            for (nu=3; nu*mu+mu+1 < nreg; nu++);
+         }
+         else if (i == 4)
+            mu = nu = 2;
+         else if (i == 5)
+         {
+            nu = VL;
+            mu = 3;
+         }
+         else if (i == 6)
+         {
+            nu = VL*2;
+            mu = 2;
+         }
+   
+         if (i <= 2)  /* 1-D case */
+         {
+            if (mu*nu+1 > nreg)
+               continue;
+         }
+         else if (mu*nu+Mmin(mu,nu)+1 > nreg)
+            continue;
+   
+         MU = mu*VL;
+   
+         for (pfLS=16; pfLS < 128; pfLS += pfLS)
+         {
+            int k, pfs[6]={1, 2, 4, 1|2, 2|4, 1|2|4};
+            for (k=0; k < 5; k++)
             {
-               mp = MMGetNodeGEN(pre, 0, NB, MU, nu, 1, VL, 0, 
-                                 pfs[k], pfLS, NULL);
-               nf = NumberBetaFails(fperr, pre, NB, mp);
-               printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 
-                      FLAG_IS_SET(mp->flag, MMF_NOBCAST), 3-nf);
-               nfail += nf;
-               ntest += 3;
-               KillMMNode(mp);
-            }
-            if (nu%VL == 0)  /* try m-vec using splat & w/o bcast */
-            {
-               mp = MMGetNodeGEN(pre, 1, NB, MU, nu, 1, VL, 0, 
-                                 pfs[k], pfLS, NULL);
-               nf = NumberBetaFails(fperr, pre, NB, mp);
-               printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 
-                      FLAG_IS_SET(mp->flag, MMF_NOBCAST), 3-nf);
-               nfail += nf;
-               nfail += nf;
-               ntest += 3;
-               KillMMNode(mp);
-            }
-            if (!NOBCAST && (mu*nu)%VL == 0)  /* try k-vec */
-            {
-               mp = MMGetNodeGEN(pre, 0, NB, mu, nu, VL, VL, 1, 
-                                 pfs[k], pfLS, NULL);
-               nf = NumberBetaFails(fperr, pre, NB, mp);
-               printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'K', 0, 3-nf);
-               nfail += nf;
-               ntest += 3;
-               KillMMNode(mp);
+               ATL_mmnode_t *mp;
+               int nf;
+/*
+ *             Test M-vec using broadcast
+ */
+               if (!NOBCAST)
+               {
+                  mp = MMGetNodeGEN(pre, 0, NB, MU, nu, 1, VL, 0, 
+                                    pfs[k], pfLS, NULL);
+                  nf = NumberBetaFails(fperr, pre, NB, mp);
+                  printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 
+                         FLAG_IS_SET(mp->flag, MMF_NOBCAST), 3-nf);
+                  nfail += nf;
+                  ntest += 3;
+                  KillMMNode(mp);
+               }
+               if (nu%VL == 0)  /* try m-vec using splat & w/o bcast */
+               {
+                  mp = MMGetNodeGEN(pre, 1, NB, MU, nu, 1, VL, 0, 
+                                    pfs[k], pfLS, NULL);
+                  nf = NumberBetaFails(fperr, pre, NB, mp);
+                  printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 
+                         FLAG_IS_SET(mp->flag, MMF_NOBCAST), 3-nf);
+                  nfail += nf;
+                  nfail += nf;
+                  ntest += 3;
+                  KillMMNode(mp);
+               }
+               if (!NOBCAST && (mu*nu)%VL == 0)  /* try k-vec */
+               {
+                  mp = MMGetNodeGEN(pre, 0, NB, mu, nu, VL, VL, 1, 
+                                    pfs[k], pfLS, NULL);
+                  nf = NumberBetaFails(fperr, pre, NB, mp);
+                  printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'K', 
+                         0, 3-nf);
+                  nfail += nf;
+                  ntest += 3;
+                  KillMMNode(mp);
+               }
             }
          }
       }
@@ -12262,7 +12266,7 @@ int main(int nargs, char **args)
    else if (pre == 'c')
       upr = 's';
    if (TEST)
-      return(CountFails(flg, verb, pre, NB, nreg, VLEN));
+      return(CountFails(TEST, flg, verb, pre, NB, nreg, VLEN));
    FindInfo(flg, verb, upr, NB, &nreg, &VLEN);
    DoBlock(pre, flg, verb);
 @skip   DoSquare(flg, verb, pre, nreg, VLEN);
