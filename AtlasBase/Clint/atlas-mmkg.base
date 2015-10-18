@@ -1236,6 +1236,7 @@ KDONE:
       @endifdef
    @endiif
 @endifdef
+@PRE S D
 @SKIP blksz = ((mu*nu+vlen-1)/vlen)*vlen
 @iexp bs @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *
 // HERE vl=@(vl), mu=@(mu), nu=@(nu) bs=@(bs)
@@ -1342,7 +1343,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
    const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
-   const unsigned int incC = ldc*@(nu) - m;
+   const size_t incC = ldc*@(nu) - m;
    unsigned int i, j;
 @ROUT blk2C `   @declare "   @(typ) " n n ";"`
 @ROUT C2blk `   @declare "   const @(typ) " n n ";"`
@@ -1379,6 +1380,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       @iexp j @(j) 1 +
    @endiwhile
    }
+@iif nu > 1
    switch(nr)
    {
 @ROUT blk2C `      const @(typ) *p = b;`
@@ -1406,5 +1408,361 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @endiwhile
    default:;
    }
+@endiif
+}
+@PRE C Z
+   @iexp betX 0 @(beta) ! 1 @(beta) ! & -1 @(beta) ! &
+   @iexp alpX 0 @(alpha) ! 1 @(alpha) ! & -1 @(alpha) ! &
+@SKIP blksz = ((mu*nu+vlen-1)/vlen)*vlen
+@iexp bs @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *
+// HERE vl=@(vl), mu=@(mu), nu=@(nu) bs=@(bs)
+@SKIP IN: mu, nu, beta, alpha
+@BEGINPROC doBlock m_ n_
+   @define i @dum@
+   @define ir @dum@
+   @define ii @dum@
+   @define j @dum@
+   @define k @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(m_)
+         @iexp ir @(i) @(i) +
+         @iexp ii @(ir) 1 +
+         @iexp k @(j) @(mu) * @(i) +
+         @iif alpha = 1
+            @iif beta = 0
+@ROUT blk2C 
+            C@(j)[@(ir)] = pr[@(k)];
+            C@(j)[@(ii)] = pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = C@(j)[@(ir)];
+            pi[@(k)] = C@(j)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            C@(j)[@(ir)] += pr[@(k)];
+            C@(j)[@(ii)] += pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] += C@(j)[@(ir)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            C@(j)[@(ir)] = pr[@(k)] - C@(j)[@(ir)];
+            C@(j)[@(ii)] = pi[@(k)] - C@(j)[@(ii)];
+@ROUT C2blk 
+            pr[@(k)] = C@(j)[@(ir)] - pr[@(k)];
+            pi[@(k)] = C@(j)[@(ii)] - pi[@(k)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rr=pr[@(k)], ir=pi[@(k)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr=C@(j)[@(ir)], ir=C@(j)[@(ii)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               pr[@(k)] = rr;
+               pi[@(k)] = ic;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iif alpha = -1
+            @iif beta = 0
+@ROUT blk2C 
+            C@(j)[@(ir)] = -pr[@(k)];
+            C@(j)[@(ii)] = -pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = -C@(j)[@(ir)];
+            pi[@(k)] = -C@(j)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            C@(j)[@(ir)] -= pr[@(k)];
+            C@(j)[@(ii)] -= pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] -= C@(j)[@(ir)];
+            pi[@(k)] -= C@(j)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            C@(j)[@(ir)] = -C@(j)[@(ir)] - pr[@(k)];
+            C@(j)[@(ii)] = -C@(j)[@(ii)] - pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = -C@(j)[@(ir)] - pr[@(k)];
+            pi[@(k)] = -C@(j)[@(ii)] - pi[@(k)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rr = -pr[@(k)], ir = -pi[@(k)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr = -C@(j)[@(ir)], ir = -C@(j)[@(ii)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               pr[@(k)] = rr;
+               pi[@(k)] = ic;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+            @iif beta = 0
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr, ir;
+               rr = rc * ra;
+               ir = ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rr, ir;
+               rr  = rc * ra;
+               ir  = ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr=C@(j)[@(ir)], ir=C@(j)[@(ii)]
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               const register @(typ) rr=pr[@(k)], ir=pi[@(k)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr = -C@(j)[@(ir)], ir = -C@(j)[@(ii)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               const register @(typ) rr = -pr[@(k)], ir = -pi[@(k)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            {
+               register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rB=pr[@(k)], iB=pi[@(k)], r0, i0, r1, i1;
+               r0  = rb * rc;
+               r1  = ra * rB;
+               i0  = rb * ic;
+               i1  = ra * iB;
+               r0 -= ib * ic;
+               i1 += ib * rc;
+               r1 -= ia * iB;
+               i1 += ia * rB;
+               C@(j)[@(ir)] = r0 + r1;
+               C@(j)[@(ii)] = i0 + i1;
+            }
+@ROUT C2blk 
+            {
+               register @(typ) rB=C@(j)[@(ir)], iB=C@(j)[@(ii)];
+               register @(typ) rc=pr[@(k)], ic=pi[@(k)], r0, i0, r1, i1;
+               r0  = rb * rc;
+               r1  = ra * rB;
+               i0  = rb * ic;
+               i1  = ra * iB;
+               r0 -= ib * ic;
+               i1 += ib * rc;
+               r1 -= ia * iB;
+               i1 += ia * rB;
+               pr[@(k)] = r0 + r1;
+               pi[@(k)] = i0 + i1;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iexp i @(mu) @(mu) +
+      @iif m_ = mu
+            C@(j) += @(i);
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef k
+   @undef ii
+   @undef ir
+   @undef j
+@ENDPROC
+@ROUT blk2C
+@ROUT blk2C C2blk
+@iif cpvl = 1
+void @(rtnm)
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   const @(typ) *alpha, /* scalar for b */
+   @ROUT blk2C
+   const @(typ) *rC,    /* real block stored in @(mu)x@(nu)-major order */
+   const @(typ) *iC,    /* imag block stored in @(mu)x@(nu)-major order */
+   const @(typ) *beta,  /* scalar for C */
+   @(typ) *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+   @ROUT C2blk
+   const @(typ) *C,     /* matrix to be copied to access-major format */
+   const size_t ldc,    /* stride between row elements */
+   const @(typ) beta,   /* scalar for C */
+   @(typ) *rC,          /* real block stored in @(mu)x@(nu)-major order */
+   @(typ) *iC,          /* imag block stored in @(mu)x@(nu)-major order */
+   @ROUT C2blk blk2C
+)
+@endiif
+@iif cpvl > 1
+static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha, 
+                         const @(typ) *b, const SCALAR beta, 
+                         @(typ) *C, ATL_CSZT ldc)
+@endiif
+{
+   const unsigned int mf = M/@(mu), nf = N/@(nu);
+   const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
+   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+   const size_t incC = ldc*@(nu) - m, ldc2 = ldc+ldc;
+   unsigned int i, j;
+   @iif alpX ! 0
+   const register @(typ) ra=(*alpha), ia=alpha[1];
+   @endiif
+   @iif betX ! 0
+   const register @(typ) rb=(*beta), ib=beta[1];
+   @endiif
+@ROUT blk2C `   @declare "   @(typ) " n n ";"`
+@ROUT C2blk `   @declare "   const @(typ) " n n ";"`
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc2
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+   for (j=nf; j; j--, rC += @(bs), iC += @(bs))
+   {
+@ROUT blk2C `      const @(typ) *pr = rC, *pi = iC;`
+@ROUT C2blk `      @(typ) *pr = rC, *pi = iC;`
+      for (i=mf; i; i--, pr += pansz, pi += pansz)
+      {
+         @callproc doBlock @(mu) @(nu)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(nu)
+      @iexp m @(m) 1 +
+   @endiwhile
+         break;
+      default:;
+      }
+   @iexp j 0
+   @iwhile j < @(nu)
+      C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+   }
+@iif nu > 1
+   switch(nr)
+   {
+@ROUT blk2C `      const @(typ) *pr = rC, *pi = iC;`
+@ROUT C2blk `      @(typ) *pr = rC, *pi = iC;`
+   @iexp n 1
+   @iwhile n < @(nu)
+   case @(n):
+      for (i=0; i < mf; i++, pr += pansz, pi += pansz)
+      {
+         @callproc doBlock @(mu) @(n)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(n)
+      @iexp m @(m) 1 +
+   @endiwhile
+         break;
+      default:;
+      }
+      break;
+      @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+@endiif
 }
 @ROUT
