@@ -70,19 +70,30 @@
 #define ATL_MMF_MVPUT(field_, v_) \
    (field_) = ( ((field_) & ~MMF_MVSET) | (((v_) & 7) << MMF_MVA) )
 
+typedef struct MMStg ATL_mmstg_t;
+struct MMstg
+{
+   int extelts;
+   short ID, flag;
+   char *szfunc;
+};
+
 typedef struct MMNode ATL_mmnode_t;
 struct MMNode
 {
-   double mflop[8];     /* 1st entry perf using mbB, nbB, kbB */
-   int ID, mu, nu, ku;  /* ID, and unrolling on each loop */
-   int kbmin, kbmax;    /* min/max KB this kernel can handle */
-   int SSE;             /* 0: no SSE, 1: SSE1 req, 2: SSE2 req, etc */
-   int vlen;            /* vector length, 0 or 1 if scalar code */
-@skip   int kmaj;            /* k-major access storage? */
-   int pref;            /* pref strategy used */
-   int pfLS;            /* pref line size */
-   int ivar;            /* int param used for various purposes */
-   int mbB, nbB, kbB;   /* best blocking dims found by search */
+   double mflop[8];             /* 1st entry perf using mbB, nbB, kbB */
+   int ID, mu, nu, ku;          /* ID, and unrolling on each loop */
+   int kbmin, kbmax;            /* min/max KB this kernel can handle */
+   int SSE;                     /* 0: no SSE, 1: SSE1 req, 2: SSE2 req, etc */
+   int vlen;                    /* vector length, 0 or 1 if scalar code */
+@skip   int kmaj;                  /* k-major access storage? */
+   int pref;                    /* pref strategy used */
+   int pfLS;                    /* pref line size */
+   int ivar;                    /* int param used for various purposes */
+   int mbB, nbB, kbB;           /* best blocking dims found by search */
+   int szA, szB, szC;           /* size in elts for block; 0: use normal */
+   int szExtra;                 /* extra elts needed at end of alloc */
+   int stgA, stgB, stgC;        /* storage ID, 0: access major */
    enum ATLAS_TRANS TA, TB;
    int asmbits;   /* bitfield indicating which assembly(ies) is required */
    char *rout, *auth, *comp, *cflags;
@@ -1414,7 +1425,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @endwhile
 @ROUT mmread 
-@whiledef jj mu nu ku kbmin kbmax pref vlen ivar pfLS
+@whiledef jj mu nu ku kbmin kbmax pref vlen ivar pfLS szExtra stgA stgB stgC
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
       p->@(jj) = atoi(sp+@len@(jj)+1);
@@ -3273,81 +3284,67 @@ char *MMGetTestString
    char pre,                    /* precision/type prefix */
    int mb, int nb, int kb,      /* dimensions to test */
    int beta,                    /* beta case to test */
-   ATL_mmnode_t *umm            /* mmkern ptr */
+   ATL_mmnode_t *mp            /* mmkern ptr */
 )
 {
-   int i, k, lnlen, Dd, Ud, Vd;
-   int len0, len1, len2, len3, len4, len5;
+   int i, k, Dd, Ud, Vd;
+   int len;
    char *ln;
 /*
  * Horrific code so we don't have to rely on snprintf, which some ancient
- * compiler may lack
+ * compiler may lack.  The len adjustments should be >= the following
+ * sprintf calls (in same order, so they can be adjusted together)
  */
-   Ud = NumDecDigits(umm->mu);
-   i = NumDecDigits(umm->nu);
-   Ud = Mmax(Ud,i);
-   i = NumDecDigits(umm->ku);
-   Ud = Mmax(Ud,i);
-   Dd = NumDecDigits(mb);
-   i = NumDecDigits(mb);
-   Dd = Mmax(Dd,i);
-   i = NumDecDigits(kb);
-   Dd = Mmax(Dd,i);
-   Vd = NumDecDigits(umm->vlen);
-   len0 = 64+strlen(umm->rout) + 3*Dd; /* guess for first print */
-   len1 = (8 + Vd)*2;  /* kmaj */
-   len2 = 22;      /* beta */
-   if (umm->comp)
-      len3 = 24 + strlen(umm->comp) + strlen(umm->cflags);
-   else 
-      len3 = 0;
-   len4 = 40 + 3*(Dd+Ud);  /* dim/unroll print */
-   len5 = 20; /* redirect */
-   lnlen = len0 + len1 + len2 + len3 + len4 + len5;
-   ln = malloc(lnlen);
+   len = 22 + 21;                              /* begin & end */
+   len += strlen(mp->rout);
+   if (mp->ID > 0)
+      len += 9;                                /* "AMMCASES/" */
+   len += 38 + NumDecDigits(mb) + NumDecDigits(nb) + NumDecDigits(kb);
+   len += 16 + NumDecDigits(mp->mu)+NumDecDigits(mp->nu)+NumDecDigits(mp->ku);
+   @whiledef iv szA szB szC szExtra vlen
+      len += @len@(iv) + 2 + NumDecDigits(mp->@(iv));
+   @endwhile
+   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      len += 5 + NumDecDigits(mp->vlen);
+   if (beta != 1)
+      len += (beta == -1) ? 21 : 6;
+   if (mp->comp)
+      len += 28 + strlen(mp->comp) + strlen(mp->cflags);
+
+   ln = malloc(len);
    assert(ln);
 
-   if (umm->ID > 0)
-      i = sprintf(ln, "make %cammmtst mmrout=AMMCASES/%s mu=%d nu=%d ku=%d ",
-                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
+   i = sprintf(ln, "make %cammmtst mmrout=", pre);
+   if (mp->ID > 0)
+      i += sprintf(ln+i, "AMMCASES/%s ", mp->rout);
    else
-      i = sprintf(ln, "make %cammmtst mmrout=%s mu=%d nu=%d ku=%d ",
-                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
-   assert(i < len0);
-   if (FLAG_IS_SET(umm->flag, MMF_KVEC))
-   {
-      k = sprintf(ln+i, "kmaj=%d vlen=%d ", umm->vlen, umm->vlen);
-      i += k;
-      assert(k < len1);
-   }
+      i += sprintf(ln+i, "%s ", mp->rout);
+   i += sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=0 nb=0 kb=%d ",
+                pre, mb, nb, kb, FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:kb);
+   i += sprintf(ln+i, "mu=%d nu=%d ku=%d ", mp->mu, mp->nu, mp->ku);
+   @whiledef iv szA szB szC szExtra vlen
+    if (mp->@(iv))
+       i += sprintf(ln+i, "@(iv)=%d ", mp->@(iv));
+   @endwhile
+   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      i += sprintf(ln+i, "kmaj=%d ", mp->vlen);
    if (beta != 1)
    {
       if (beta == -1)
-         k = sprintf(ln+i, "beta=-1 betan=\"N1\" ");
+         i += sprintf(ln+i, "beta=-1 betan=\"N1\" ");
       else if (beta == 0)
-         k = sprintf(ln+i, "beta=%d ", beta);
+         i += sprintf(ln+i, "beta=%d ", beta);
       else
          assert(0);
-      assert(k < len2);
-      i += k;
    }
-   if (umm->comp)
+   if (mp->comp)
    {
       char ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
-      k = sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
-                  ch, umm->comp, ch, umm->cflags);
-      assert(k < len3);
-      i += k;
+      i += sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
+                   ch, mp->comp, ch, mp->cflags);
    }
-   k = sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
-               pre, mb, nb, kb, 0, 0,
-               FLAG_IS_SET(umm->flag, MMF_KRUNTIME) ? 0 : kb);
-   assert(k < len4);
-   i += k;
-   k = sprintf(ln+i, " > /dev/null 2>&1\n");
-   assert(k < len5);
-   i += k;
-   assert(i < lnlen);
+   i += sprintf(ln+i, " > /dev/null 2>&1\n");
+   assert(i < len);
    return(ln);
 }
 
@@ -3723,6 +3720,10 @@ double TimeMMKernel
          else
             i += sprintf(ln+i, " mmrout=AMMCASES/%s", mmp->rout);
          i += sprintf(ln+i, " mu=%d nu=%d ku=%d", mmp->mu, mmp->nu, KU);
+   @whiledef iv szA szB szC szExtra vlen
+       if (mmp->@(iv))
+          i += sprintf(ln+i, " @(iv)=%d", mmp->@(iv));
+   @endwhile
          i += sprintf(ln+i, " mvA=%d mvB=%d mvC=%d", ((mmp->flag >> MMF_MVA)&1), 
                       ((mmp->flag >> MMF_MVB)&1), ((mmp->flag >> MMF_MVC)&1));
          i += sprintf(ln+i, " kmoves=\"");
@@ -4092,6 +4093,8 @@ void TimeAllMMKernels
                                        beta, mflop, cflush);
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 double TimeTSKernel
 (
    int verb,                    /* 0: no output, 1 min output, 2: full output */
@@ -4136,6 +4139,281 @@ double TimeTSKernel
 }
 
 #endif  /* end guard around atlas_@(rt)testtime.h */
+@ROUT atlas_mmgen.h
+   @iexp ip 0
+#ifndef ATLAS_MMGEN_H
+   #define ATLAS_MMGEN_H
+/*
+ * This file contains helper functions for code generation
+ */
+#include "atlas_mmparse.h"
+#include "atlas_mmtesttime.h"
+
+#define MMCP_CBLK     0
+#define MMCP_ABBLK    1
+#define MMCP_TOBLK    2
+#define MMCP_TRANS    3
+#define MMCP_SINGLE   4
+#define MMCP_REAL     5
+
+typedef struct MMCopyFunc ATL_mmcp_t;
+struct MMCopyFunc
+{                      /* stg=0 means standard examine mmnode to det number */
+   int stg;            /* type of storage: 1-5 are atlas standard types */
+   int ID; 
+   int mu, nu;        /* unrollings: A/B copies use only nu */
+   int kvec;          /* vlen for k-vec storage, else 0 */
+   int flag;          /* bits: vals are MMCP_* */
+   char *file;        /* filename */
+   char *rout;        /* callable routine name w dummy alpha/beta suffix */
+   ATL_mmcp_t *next;
+};
+
+#if 0
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int FillCopyNodeFromMMNode
+(
+   char mat,      /* [A,B,C] */
+   char TA,       /* 't':trans A/B;  'n': notrans A/B */
+   int flg,       /* has type & precision already encoded */
+   ATL_mmnode_t *mp   /* mm kern */
+   ATL_mmcp_t *cp,    /* copy struct to modify */
+)
+/*
+ * RETURNS: 0 if this was an native copy rout, else 1
+ */
+{
+   int iret=0, stg;
+
+   if (mat == 'C')
+   {
+      flg |= (1<<MMCP_CBLK);
+      stg = mp->stgC;
+      if (stg < 100) /* atlas case can be filled in now */
+      {
+      }
+   }
+   else
+   {
+      flg |= (1<<MMCP_ABBLK);
+      if (TA == 't')
+         flg |= (1<<MMCP_TRANS);
+      stg = mp->stgA;
+   }
+   if (stg > 99)  /* user storage uses all 3 params, but can't be completed */
+   {              /* until we read in user copy routs */
+      cp->flag = flg;
+   }
+   return(iret);
+}
+#endif
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int ATL_CopyAreDiff(ATL_mmcp_t *c0, ATL_mmcp_t *c1)
+/*
+ * RETURNS: 1 if c0 & c1 have different functionality, 0 if equivalent
+ */
+{
+   int iret=1;
+   assert(c0->stg && c1->stg);  /* should be set prior to calling this func */
+   iret &= (c0->stg == c1->stg);
+   iret &= (c0->nu == c1->nu) & (c0->mu == c1->mu);
+   iret &= (c0->kvec == c1->kvec);
+   return(iret);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char MMCopyGetPre(int flag)
+{
+   char pre;
+   if (flag & (1<<MMCP_REAL))
+      pre = (flag & (1<<MMCP_SINGLE)) ? 's':'d';
+   else
+      pre = (flag & (1<<MMCP_SINGLE)) ? 'c':'z';
+   return(pre);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char MMCopyGetUpr(int flag)
+{
+   return((flag & (1<<MMCP_SINGLE)) ? 's':'d');
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char MMCopyGetTrans(int flag)
+{
+   return((flag & (1<<MMCP_TRANS)) ? 'T':'N');
+}
+
+/* procedure @(ip) */
+static char *MMCopyGetDirect(int flag)
+{
+   return((flag&(1<<MMCP_TOBLK)) ? "Into" : "From");
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char *GetCopyName(ATL_mmcp_t *p)
+/*
+ * RETURNS : Unique name for copy file, with at least 5 extra bytes alloc
+ *           so that you can suffix it with _aXbX or .c
+ */
+{
+   char *sp=NULL, *dir;
+   int len, i=0;
+   char pre;
+
+   pre = MMCopyGetPre(p->flag);
+   dir = MMCopyGetDirect(p->flag);
+   len = NumDecDigits(p->mu)+NumDecDigits(p->nu)+NumDecDigits(p->ID)+5;
+   if (p->flag & (1<<MMCP_CBLK))
+   {
+      len += 27;
+      sp = malloc(len);
+      assert(sp);
+      i = sprintf(sp, "ATL_%c%dcpy%sC_%dx%d_%d", pre, p->ID, dir, 
+                  p->mu, p->nu, p->kvec);
+   }
+   else if (p->flag & (1<<MMCP_ABBLK))
+   {
+      char TA;
+
+      len += 31;
+      sp = malloc(len);
+      assert(sp);
+      TA  = MMCopyGetTrans(p->flag);
+      i = sprintf(sp, "ATL_%c%dcpy%sA%c_%dx%d_%d", pre, p->ID, dir, TA,
+                  p->mu, p->nu, p->kvec);
+   }
+   assert(i < len);
+   return(sp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmcp_t *ATL_GetCopyNode(int stg, int mu, int nu)
+{
+   ATL_mmcp_t *cp;
+   cp = calloc(1, sizeof(ATL_mmcp_t));
+   cp->stg = stg;
+   cp->mu  = stg;
+   cp->mu  = stg;
+   assert(cp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmcp_t *ATL_CloneCopyNode(ATL_mmcp_t *b)
+{
+   ATL_mmcp_t *p;
+   p = malloc(sizeof(ATL_mmcp_t));
+   memcpy(p, b, sizeof(ATL_mmcp_t));
+   p->next = NULL;
+/*
+ * Now get our own copies of strings
+ */
+   @whiledef st rout
+   if (p->@(st))
+      p->@(st) = DupString(p->@(st));
+   @endwhile
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmcp_t *ATL_KillCopyNode(ATL_mmcp_t *cp)
+{
+   ATL_mmcp_t *next=NULL;
+   if (cp)
+   {
+      next = cp->next;
+      free(cp);
+   }
+   return(next);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmcp_t *ATL_KillAllCopyNodes(ATL_mmcp_t *cp)
+{
+   while (cp)
+      cp = ATL_KillCopyNode(cp);
+   return(NULL);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip): RETURNS ptr to entry in b if n already there, else NULL */
+ATL_mmcp_t *ATL_FindCopy(ATL_mmcp_t *b, ATL_mmcp_t *n)
+{
+   ATL_mmcp_t *p;
+   for (p=b; p; p = p->next)
+      if (!ATL_CopyAreDiff(p, n))
+         return(p);
+   return(NULL);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmcp_t *ATL_AddUniqueCopyNode(ATL_mmcp_t *cb, ATL_mmcp_t *cnb)
+/*
+ * Adds all copy entries in cnb to cb, if cb doesn't already have a 
+ * functionally equivalent entry. cnb is unchanged.
+ */
+{
+   ATL_mmcp_t *p;
+   for (p=cnb; p; p = p->next)
+   {
+      if (!ATL_FindCopy(cb, p))
+      {
+         ATL_mmcp_t *np;
+         np = ATL_CloneCopyNode(p);
+         np->next = cb;
+         cb = np;
+      }
+   }
+   return(cb);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmcp_t *AddCopyNodesFromMMNode
+(
+   char pre,
+   ATL_mmcp_t *ab,    /* A/B copy routines base */
+   ATL_mmcp_t *cb,    /* C copy routines base */
+   ATL_mmnode_t *mb   /* list of amm kerns */
+)
+{
+   ATL_mmcp_t *cp;
+   ATL_mmnode_t *mp;
+   int flagI;
+
+   if (pre == 'd')
+      flagI = (1<<MMCP_REAL);
+   else if (pre == 's')
+      flagI = (1<<MMCP_REAL) | (1<<MMCP_SINGLE);
+   else if (pre == 'c')
+      flagI = (1<<MMCP_SINGLE);
+
+   cp = ATL_GetCopyNode(0, 0, 0);
+   for (mp=mb; mp; mp = mp->next)
+   {
+      cp->mu = mp->mu;
+      cp->nu = mp->nu;
+      cp->kvec = (FLAG_IS_SET(mp->flag, MMF_KVEC)) ? mp->vlen : 0;
+   }
+   ATL_KillCopyNode(cp);
+}
+
+static ATL_mmcp_t *ATL_MergeCopyFromMM(ATL_mmcp_t *cb, ATL_mmnode_t *mb)
+{
+}
+
+#endif  /* end guard around atlas_@(rt)mmgen.h */
 @ROUT getflagarrs
 
 @iexp ip @(ip) 1 +

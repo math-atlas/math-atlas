@@ -2299,6 +2299,9 @@ outF=
 bcast=1
 vlen=1
 cpvlen=1
+@whiledef iv szExtra
+@(iv)=0
+@endwhile
 FMF=750.0
 NRF=-1  # change to -2 to get unconstrained MB
 casarg = pre=$(pre) ta=$(ta) tb=$(tb) muladd=$(muladd) lat=$(lat) \
@@ -2344,6 +2347,14 @@ x@(rout) : $(INCAdir)/atlas_type.h @(rout).o @(dep) $(parsedeps)
   @undef dep
 @endwhile
 
+DoSzBlk :
+	rm -f szblk.c xszblk
+	echo "int getsz(int M, int N, int mu, int nu, int vlen)" > szblk.c
+	echo "{return(${szfunc});}" >> szblk.c
+	cat $(mySRCdir)/szblk.c >> szblk.c
+	$(XCC) $(XCCFLAGS) -o xszblk szblk.c
+	./xszblk $(mb) $(nb) $(mu) $(nu) $(vlen)
+
 @whiledef pre z c
    @whiledef rt am2cm am2rm cm2am rm2am
 ATL_@(pre)@(rt)_a$(al)_$(UR).c : $(basf) force_build
@@ -2378,6 +2389,8 @@ ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c : $(basf) force_build
 @endwhile
 xprefparse : $(mySRCdir)/prefparse.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/prefparse.c
+xammgen :  $(mySRCdir)/ammgen.c $(parsedeps) $(INCSdir)/atlas_mmgen.h
+	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/ammgen.c -lm
 xemit_amm : $(mySRCdir)/emit_amm.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/emit_amm.c -lm
 xemit_uamm : $(mySRCdir)/emit_uamm.c $(parsedeps)
@@ -2992,9 +3005,12 @@ cwrk3=0
 @whiledef pre z c
 @(pre)ammtst: @(pre)ammmtst
 @(pre)ammmtst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
+	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o cammmtst.c pre=@(pre) vec=NA \
+                rout=blk2C -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+                -def cpvl $(cpvlen) -def beta 0 -def alpha 1
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def be "${beta}" \
-                 -def M "${M}" -def N "${N}" -def K "${K}" -def kmaj "$(kmaj)" \
-                -o cammmtst.c rout=cammmtst
+                -def M "${M}" -def N "${N}" -def K "${K}" -def kmaj "$(kmaj)" \
+                 rout=cammmtst >> cammmtst.c
 	- rm -f @(pre)ammm_b1.o @(pre)ammm_b0.o @(pre)ammm_bn.o
 	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA1 \
            -DKB=${kb} -DATL_USERMM=cmm_b1 -o @(pre)ammm_b1.o -c $(mmrout) 

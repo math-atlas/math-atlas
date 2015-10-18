@@ -1,11 +1,78 @@
-@ROUT damcases.idx samcases.idx
+@ROUT copy.idx storage.idx damcases.idx samcases.idx
 #
 # In this file, any line beginning with a '#' is ignored, but the # must be in
 # column 0.  All multiple whitespace is reduced to one space (i.e. used only
 # to distinguish where words begin/end).  Lines may be extended by putting '\'
 # as the *last* character of line.
 #
-# The file has the following format:
+@ROUT copy.idx
+# This file indexes the user-supplied copy routines for the storage schemes
+# indexed in storage.ids, and has the following format (non-mandatory
+# keys show the default in []):
+# ID=<id> STGID=<stgid> FROMCM=[0,1] TRANS=[N,T,C,H] MU=<mu> NU=<nu>
+# ID: Mandatory.  Unique (in this file only) int >= 0.  
+# STGID: Mandatory.  Number >0 matching and ID in storage.idx.
+# FROMCM: Mandatory. 
+#         1: copies from column-major to STGID storage
+#         2: copies from STGID storage to column-major
+# MU/NU: [0] unrolling along rows/cols
+# TRANS: [n] Needed only for A/B storage, indicates transpose being done:
+#    N: No transpose
+#    T: Tranpose 
+#    C: Conjugate tranpose (tranpose, imaginary elements negated)
+#    H: No tranpose, imaginary elements negated)
+#
+# NOTE: for a storage format to be used by ATLAS, enough copy funcs must
+#       be supplied for use, and the number required varies by whether the
+#       format is for GEMM's A/B or C matrix:
+#       A&B: FROMCM=1 and for real TRANS=N&T, cplx TRANS=N&T&C&H
+#            FROMCM=0 must be present for testing & custom uses.
+#       C  : FROMCM=0 required. FROMCM=1 needed. for testing & custom uses.
+#
+@ROUT storage.idx
+# This file indexes the user-supplied storage schemes, and has the following
+# format:
+# The file has the following format (default values in []):
+# ID=<id> FLAG=<bitfield> BLKSZF='iexp' EXTELTF='iexp'
+# ID must be a unique >100 number identifying the storage scheme.  A copy
+#    routine with a matching STGID must be found for both copy directions
+#    in the appropriate [s,c,d,z]blkcpy.idx types.  The storage IDs that
+#    are so far in use by ATLAS itself (<100) are:
+#      0: access major storage as used in generator, details in struct
+#      1: access major (unvectorized or m-vec) storage for A or B
+#      2: access major (unvectorized or m-vec) storage for C
+#      3: K-vectorized access major storage for A or B
+#      4: K-vectorized access major storage for C
+#      5: block major (ATLAS 3.10 or older code gen support)
+# 'iexp': must contain in '' a valid ANSI C integer expression which computes
+#         the indicated storage using only constants and the key-specific
+#         variables.
+# BLKSZF [((M+mu-1)/mu)*((N+nu-1)/nu)*mu*nu]
+#        must contain in '' a valid ANSI C integer expression which computes
+#        iexp computes the number of elements to store one block using this
+#        storage pattern.  ATLAS assumes real & imag components stored 
+#        separately, so complex size should be half of total size.
+#        The only variables that can be used will be chosen by the search after
+#        tuning and passed to a function with the following prototype:
+#           int getsz(int M, int N, int mu, int nu, int vlen);
+#        to allow ATLAS to allocate storage for an individual block. j
+#        The expression may use the following variables, in addition
+#        to any constants (these args themselved might be constants for some
+#        storage formats):
+#          M : number of rows chosen for block factor
+#          N : number of cols chosen for block factor
+#         mu : unroll&jam chosen for M dim
+#         nu : unroll&jam chosen for N dim
+#       vlen : length of vectorization employed
+# EXTELTF: [4*mu*nu]
+#          how many elements must be allocated past the end of allocated
+#          block memory so that advanced loads don't seg fault.  This number
+#          should be small.  The generated size function will have prototype:
+#            int getsz(int mu, int nu, int vlen);
+#
+@ROUT damcases.idx samcases.idx
+# This file indexes the user-supplied matmul kernels, and has the 
+# following format:
 # ROUT='routine name' AUTH='author names' COMP='compiler name' CFLAGS='flags'
 # ID=<id> NU=<nu> MU=<mu> KU=<ku> KBMAX=<kbmax> KBMIN=<kbmin>
 # SSE=[0,1,2,3] X87=[0,1] BMABC=<0/1> BMAB=<0/1> JKMAB=<0/1> JKMABC=<0/1>
@@ -2615,7 +2682,7 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
    pres[0] = pre;
    pres[1] = (pre == 's') ? 'c' : 'z';
 
-    GenAmmSwapFiles(pre, mmb, outd);
+   GenAmmSwapFiles(pre, mmb, outd);
 /*
  * Build list of all unique MU/NU combos for copy routines
  */
@@ -10703,6 +10770,8 @@ int NumberBetaFails(FILE *fperr, char pre, int nb, ATL_mmnode_t *p)
    nb = ((nb+nu-1)/nu)*nu;
    for (i=(-1); i < 2; i++)
    {
+      if (pre == 'z' || pre == 'c')  /* beta=0 case tests all 3 real betas */
+         i = 0;
       if (MMKernelFailsTest(pre, mb, nb, kb, i, p))
       {
          if (fperr)
@@ -10717,6 +10786,8 @@ int NumberBetaFails(FILE *fperr, char pre, int nb, ATL_mmnode_t *p)
          }
          nfail++;
       }
+      if (pre == 'z' || pre == 'c')
+         break;
    }
    return(nfail);
 }
@@ -23350,5 +23421,186 @@ int main(int nargs, char **args)
       printf("Ab=%d, Bb=%d, C=%d, Ak=%d, Bk=%d: bitvec=%d\n", 
              ipfs[0],ipfs[1],ipfs[2],ipfs[3],ipfs[4], ipf);
    }/* ipfs = 0:Ab 1:Bb 2:C 3:Ak 4:Bk */
+   return(0);
+}
+@ROUT szblk
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+int main(int nargs, char **args)
+{
+   int i, iarr[5];
+   if (nargs != 6)
+   {
+      /* entry in iarr:            0    1    2    3      4 */
+      fprintf(stderr, "USAGE: %s <mb> <nb> <mu> <nu> <vlen>\n", args[0]);
+      exit(1);
+   }
+   for (i=0; i < 5; i++)
+   {
+      int k;
+      k = atoi(args[i+1]);
+      assert (k > 0);
+      if (i == 2 || i == 3)
+         assert(k < iarr[i-2]);
+      iarr[i] = k;
+   }
+   i = getsz(iarr[0],iarr[1],iarr[2],iarr[3],iarr[4]);
+   printf("BLOCKSIZE=%d\n", i);
+   return(0);
+}
+@ROUT ammgen
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 
+#include "atlas_misc.h"
+#include "atlas_mmgen.h"
+#include "atlas_sys.h"
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -p [s,d]: set type/precision prefix (d) \n");
+   fprintf(stderr, "      s/d will generate for complex (c/z) as well\n");
+   fprintf(stderr, "   -d <outdir>: directory to dump files to\n");
+@beginskip
+   fprintf(stderr, "   -g <rect kern file> <geKCleanFile>\n");
+   fprintf(stderr, "   -r <rank-K kernel file> \n");
+   fprintf(stderr, "   -s <square-case kernel file> <sqKCleanFile>\n");
+   fprintf(stderr, "   -t <trsm file> : should match -s\n");
+@endskip
+   exit(ierr ? ierr : -1);
+}
+
+/*
+ * RETURNS: precision prefix [s,d,c,z]
+ */
+char GetFlags(int nargs, char **args, char **DOUT,
+              ATL_mmnode_t **GEMM, ATL_mmnode_t **GEK1,
+              ATL_mmnode_t **SQMM, ATL_mmnode_t **SQK1,
+              ATL_mmnode_t **RKMM, ATL_mmnode_t **TRSM,
+              ATL_mmnode_t **cGEMM, ATL_mmnode_t **cGEK1,
+              ATL_mmnode_t **cSQMM, ATL_mmnode_t **cSQK1,
+              ATL_mmnode_t **cRKMM, ATL_mmnode_t **cTRSM)
+{
+   int i, j=0, n, k;
+   char pre='d', cpre;
+   ATL_mmnode_t *gemm=NULL, *gek1=NULL, *sqmm=NULL, *sqk1=NULL, *rkmm=NULL;
+   ATL_mmnode_t *trsm=NULL, *mmb=NULL, *mmp, *mp;
+
+   *DOUT = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'g':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        gemm = ReadMMFile(args[i]);
+        assert(gemm);
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        gek1 = ReadMMFile(args[i]);
+        assert(gek1);
+        break;
+      case 't':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        trsm = ReadMMFile(args[i]);
+        assert(trsm);
+      case 's':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        sqmm = ReadMMFile(args[i]);
+        assert(sqmm);
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        sqk1 = ReadMMFile(args[i]);
+        assert(sqk1);
+        break;
+      case 'r':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        rkmm = ReadMMFile(args[i]);
+        break;
+      case 'd':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *DOUT = DupString(args[i]);
+        break;
+      case 'i':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        mmp = ReadMMFile(args[i]);
+        if (mmb)
+        {
+           ATL_mmnode_t *mp;
+           for (mp=mmb; mp->next; mp = mp->next);
+           mp->next = mmp;
+        }
+        else
+           mmb = mmp;
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!gemm)
+   {
+      assert(!gek1);
+      gemm = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
+      assert(gemm);
+      gek1 = ReadMMFileWithPath(pre, "res", "geAMMKCLEAN.sum");
+      assert(gek1);
+   }
+   if (!sqmm)
+   {
+      assert(!sqk1);
+      sqmm = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
+      assert(sqmm);
+      sqk1 = ReadMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum");
+      assert(sqk1);
+   }
+   if (!trsm)
+   {
+      trsm = ReadMMFileWithPath(pre, "res", "tsAMMRES.sum");
+      assert(trsm);
+   }
+   if (!rkmm)
+   {
+      rkmm = ReadMMFileWithPath(pre, "res", "rkAMMRES.sum");
+      assert(rkmm);
+   }
+   if (!(*DOUT))
+      *DOUT = DupString("KERNEL");
+   cpre = (pre == 'd') ? 'z' : 'c';
+   *cGEMM = ReadMMFileWithPath(cpre, "res", "geAMMRES.sum");
+   *cGEK1 = ReadMMFileWithPath(cpre, "res", "geAMMKCLEAN.sum");
+   *cSQMM = ReadMMFileWithPath(cpre, "res", "sqAMMRES.sum");
+   *cSQK1 = ReadMMFileWithPath(cpre, "res", "sqAMMKCLEAN.sum");
+   *cRKMM = ReadMMFileWithPath(cpre, "res", "rkAMMRES.sum");
+   *cTRSM = ReadMMFileWithPath(cpre, "res", "tsAMMRES.sum");
+   *GEMM = gemm;
+   *GEK1 = gek1;
+   *SQMM = sqmm;
+   *SQK1 = sqk1;
+   *RKMM = rkmm;
+   *TRSM = trsm;
+   return(pre);
+}
+int main(int nargs, char **args)
+{
    return(0);
 }
