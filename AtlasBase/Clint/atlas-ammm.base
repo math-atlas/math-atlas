@@ -23461,6 +23461,7 @@ int main(int nargs, char **args)
 #define IRKK  4
 #define ITRSM 5
 
+@extract -b @(basd)/atlas.base rout=Mylcm
 void PrintUsage(char *name, int ierr, char *flag)
 {
    if (ierr > 0)
@@ -23571,10 +23572,148 @@ char *GetFlags(int nargs, char **args, char *PRE, ATL_mmnode_t **lists)
       const int k = (i<6) ? i : i-6;
       if (!lists[i])
          lists[i] = ReadMMFileWithPath(pr, "res", fn[k]);
+      if (!lists[i])
+         fprintf(stderr, "CANNOT FIND FILE 'res/%c%s'!\n", pr, fn[k]);
       assert(lists[i]);
    }
    return(outd);
 }
+
+double GenPerfH(char pre, char *outd, char *cn, double mfMax,
+                ATL_mmnode_t *mb, ATL_mmnode_t *k1)
+{
+   FILE *fp;
+   ATL_mmnode_t *mp;
+   #define NTHRSH 11
+   int THRSH[NTHRSH] = {25, 33, 50, 66, 75, 80, 85, 90, 95, 98, 99};
+   int idxT[NTHRSH];
+   ATL_mmnode_t *mpT[NTHRSH];
+   const int FNDMAX = (mfMax == 0.0);
+   int i, n, idxMax=0;
+
+   fp = OpenGenHeader(outd, 0, pre, cn, 0, 0, "perf");
+/*
+ * If not already set, compute the max perf & its index.  We'll use this
+ * max as the denominator in our PERF array.
+ */
+   if (FNDMAX)
+   {
+      for (i=0; i < NTHRSH; i++)
+         mpT[i] = NULL;
+      for (n=0,mp=mb; mp; n++, mp = mp->next)
+      {
+         if (mp->mflop[0] > mfMax)
+         {
+            mfMax = mp->mflop[0];
+            idxMax = n;
+         }
+      }
+   }
+/*
+ * If our denom comes from other file, just count the number of entries
+ */
+   else
+   {
+      for (n=0,mp=mb; mp; n++, mp = mp->next);
+      idxMax = -1;
+   }
+   fprintf(fp, "#define ATL_%sAMM_DENOM %le /* (%.2f)*/ \n", cn,
+           mfMax, mfMax);
+   fprintf(fp, "#define ATL_%sAMM_MAXMFLOPIDX %d\n\n", cn, idxMax);
+   if (FNDMAX)
+   {
+      for (n=0,mp=mb; mp; mp = mp->next, n++)
+      {
+         double mf = mp->mflop[0] / mfMax;
+         for (i=0; i < NTHRSH; i++)
+         {
+            if (!mpT[i] && THRSH[i]*0.01*mfMax < mp->mflop[0])
+            {
+               mpT[i] = mp;
+               idxT[i] = n;
+            }
+         }
+      }
+      for (i=0; i < NTHRSH; i++)
+      {
+         mp = mpT[i];
+         fprintf(fp, "#define ATL_%sAMM_%dLCMU %d\n", cn, THRSH[i],
+                 Mylcm(Mylcm(mp->mu,mp->nu),mp->ku));
+         fprintf(fp, "#define ATL_%sAMM_%dLCMMN %d\n", cn, THRSH[i],
+                 Mylcm(mp->mu,mp->nu));
+         fprintf(fp, "#define ATL_%sAMM_%dKB %d\n", cn, THRSH[i], mp->kbB);
+         fprintf(fp, "#define ATL_%sAMM_%dNB %d\n", cn, THRSH[i], mp->nbB);
+         fprintf(fp, "#define ATL_%sAMM_%dMB %d\n", cn, THRSH[i], mp->mbB);
+         fprintf(fp, "#define ATL_%sAMM_%dIDX %d\n", cn, THRSH[i], idxT[i]);
+      }
+      fprintf(fp, "\n");
+   }
+
+   fprintf(fp, "#ifndef NOPERF\n");
+   fprintf(fp, "static const float ATL_%sAMM_PERF[%d] =\n", cn, n);
+   fprintf(fp, "{  /* %% of performance of best kernel */\n");
+   for (i=0,mp=mb; mp; i++,mp = mp->next)
+      fprintf(fp, "   %f%c  /* IDX=%d, KB=%d, mf=%.0f */\n", mp->mflop[0]/mfMax,
+              (mp->next)?',':' ', i, mp->kbB, mp->mflop[0]);
+   fprintf(fp, "};\n#endif\n\n");
+
+   if (k1)
+   {
+      ATL_mmnode_t *kp;
+      fprintf(fp, "#ifndef NOK1RATIO\n");
+      fprintf(fp, "static const float ATL_%sAMM_K1RATIO[%d] =\n", cn, n);
+      fprintf(fp, "{  /* ratio of %sAMM perf wt that of its K=1 K-cleaner */\n",
+              cn);
+      for (i=0,mp=mb,kp=k1; mp; i++,mp = mp->next,kp = kp->next)
+         fprintf(fp, "   %f%c  /* IDX=%d, KB=%d IDs=[%d,%d]*/\n", 
+                 kp->mflop[0]/mp->mflop[0], (mp->next)?',':' ', i, mp->kbB,
+                 mp->ID, kp->ID);
+      fprintf(fp, "};\n#endif\n\n");
+   }
+
+   fprintf(fp, "#ifndef NOTIME\n");
+   fprintf(fp, "static const float ATL_%sAMM_TIME[%d] =\n", cn, n);
+   fprintf(fp, "{  /* actual seconds to compute one block */\n");
+   for (i=0,mp=mb; mp; i++,mp = mp->next)
+      fprintf(fp, "   %e%c  /* IDX=%d, B=(%d,%d,%d) */\n",
+              2.0*mp->mbB*mp->nbB*mp->kbB / (mp->mflop[0]*1.0e6),
+              (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
+   fprintf(fp, "};\n#endif\n");
+   CloseGenHeader(fp);
+   return(mfMax);
+}
+
+void GenAllPerfH(char pre, char *outd, ATL_mmnode_t **lists)
+{
+   int i, k;
+   char *nm="perf";
+   char *cn[4]={"ge", "sq", "rk", "ts"};
+   double mfMax;
+   char pr = pre;
+
+   for (k=0; k < 2*NMMLISTS; k += NMMLISTS)
+   {
+      mfMax = GenPerfH(pr, outd, "ge", 0.0, lists[k+IGE], lists[k+IGEK1]);
+      GenPerfH(pr, outd, "ts", mfMax, lists[k+ITRSM], NULL);
+      KillAllMMNodes(lists[k+ITRSM]);  /* done with these! */
+      lists[k+ITRSM] = NULL;
+
+      GenPerfH(pr, outd, "sq", 0.0, lists[k+ISQ], lists[k+ISQK1]);
+      GenPerfH(pr, outd, "rk", 0.0, lists[k+IRKK], NULL);
+      pr = (pre == 'd') ? 'z' : 'c';
+   }
+}
+
+void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
+{
+   FILE *fp;
+   ATL_mmnode_t ulsts[NMMLISTS*2];
+/*
+ * First, generate performance files, which require nothing hard
+ */
+   GenAllPerfH(pre, outd, lists);
+}
+
 int main(int nargs, char **args)
 {
    char *outd;
@@ -23598,5 +23737,11 @@ int main(int nargs, char **args)
       else
          PrepMMForGen(pre, "ammK", lists[i]);
    }
+
+   GenAllFiles(pre, outd, lists);
+
+   free(outd);
+   for(i=0; i < 2*NMMLISTS; i++)
+      KillAllMMNodes(lists[i]);
    return(0);
 }

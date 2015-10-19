@@ -4489,6 +4489,78 @@ static void PrepMMForGen(char pre, char *nm, ATL_mmnode_t *mb)
    }
 }
 
+FILE *OpenGenHeader
+(
+   char *outd,/* directory to write to must be non-NULL */
+   int UID,   /* 0 for ATLAS files, >0 for uammsearch */
+   char pre,  /* [d,s,z,c] */
+   char *cn,  /* "[ge,sq,rk,u]" */
+   char alp,  /* [1,n,X]; if 0 -> not doing copy file */
+   char bet,  /* [0,1,n,X] if 0 -> not doing cblk file */
+   char *nm   /* "[blk,kern,flag,perf,sum,ablk2cmat,cmat2ablk,cm2am,am2cm]" */
+)
+{
+   char *fn, bs[6];
+   int len, i;
+   FILE *fp;
+
+   /* NAME WILL BE: <outd>/atlas_<pre><cn>[ID]amm_<nm>.h */
+   assert(nm && outd);
+   len = strlen(outd) + 1; /* outd+/*/
+   len += 6 + 1 + 4 + 2;  /* atlas+pre+amm_+.h */
+   if (cn)
+      len += strlen(cn);
+   else
+      cn = "";
+   if (UID)
+      len += NumDecDigits(UID);
+   len += strlen(nm);
+   if (alp | bet)  /* doing copy header */
+   {
+      len += 3;
+      bs[0] = '_'; bs[1] = 'a'; bs[2] = alp; bs[3] = 0;
+
+      if (bet)   /* doing Cblock, need beta too */
+      {
+         len += 2;
+         bs[3] = 'b';
+         bs[4] = bet;
+         bs[5] = 0;
+      }
+   }
+   else
+      bs[0] = 0;
+
+   fn = malloc(len+1);
+   assert(fn);
+   if (UID)
+      i = sprintf(fn, "%s/atlas_%c%s%damm_%s%s.h", outd, pre, cn, UID, nm, bs);
+   else
+      i = sprintf(fn, "%s/atlas_%c%samm_%s%s.h", outd, pre, cn, nm, bs);
+   assert(i <= len);
+   fp = fopen(fn, "w");
+   assert(fp);
+/*
+ * Now change file part of string to guard text: uppercase & ".h" -> "_H";
+ */
+   fn[i-1] = 'H';
+   fn[i-2] = '_';
+   for (i -= 3; fn[i] != '/'; i--)
+      fn[i] = toupper(fn[i]);
+   i++;
+   fprintf(fp, "#ifndef %s\n", fn+i);
+   fprintf(fp, "   #define %s 1\n", fn+i);
+   fprintf(fp, "   /* Genned by ATLAS/src/blas/gemm/ammgen.c */\n\n");
+
+   free(fn);
+   return(fp);
+}
+void CloseGenHeader(FILE *fp)
+{
+   fprintf(fp, "\n#endif\n");
+   fclose(fp);
+}
+
 #endif  /* end guard around atlas_@(rt)mmgen.h */
 @ROUT getflagarrs
 
