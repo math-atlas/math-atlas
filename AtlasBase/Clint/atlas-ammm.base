@@ -9,7 +9,7 @@
 # This file indexes the user-supplied copy routines for the storage schemes
 # indexed in storage.ids, and has the following format (non-mandatory
 # keys show the default in []):
-# ID=<id> STGID=<stgid> FROMCM=[0,1] TRANS=[N,T,C,H] MU=<mu> NU=<nu>
+# ID=<id> STGID=<stgid> FROMCM=[0,1] TRANS=[0,1] MU=<mu> NU=<nu>
 # ID: Mandatory.  Unique (in this file only) int >= 0.  
 # STGID: Mandatory.  Number >0 matching and ID in storage.idx.
 # FROMCM: Mandatory. 
@@ -17,10 +17,8 @@
 #         2: copies from STGID storage to column-major
 # MU/NU: [0] unrolling along rows/cols
 # TRANS: [n] Needed only for A/B storage, indicates transpose being done:
-#    N: No transpose
-#    T: Tranpose 
-#    C: Conjugate tranpose (tranpose, imaginary elements negated)
-#    H: No tranpose, imaginary elements negated)
+#    N: cols of matrix stored contiguously, rows strided (col-major)
+#    T: rows of matrix stored contiguously, cols strided (row-major)
 #
 # NOTE: for a storage format to be used by ATLAS, enough copy funcs must
 #       be supplied for use, and the number required varies by whether the
@@ -23455,6 +23453,14 @@ int main(int nargs, char **args)
 #include "atlas_mmgen.h"
 #include "atlas_sys.h"
 
+#define NMMLISTS 6
+#define IGE   0
+#define IGEK1 1
+#define ISQ   2
+#define ISQK1 3
+#define IRKK  4
+#define ITRSM 5
+
 void PrintUsage(char *name, int ierr, char *flag)
 {
    if (ierr > 0)
@@ -23466,32 +23472,27 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -p [s,d]: set type/precision prefix (d) \n");
    fprintf(stderr, "      s/d will generate for complex (c/z) as well\n");
    fprintf(stderr, "   -d <outdir>: directory to dump files to\n");
-@beginskip
-   fprintf(stderr, "   -g <rect kern file> <geKCleanFile>\n");
-   fprintf(stderr, "   -r <rank-K kernel file> \n");
-   fprintf(stderr, "   -s <square-case kernel file> <sqKCleanFile>\n");
-   fprintf(stderr, "   -t <trsm file> : should match -s\n");
-@endskip
+   fprintf(stderr, "   -g [r,c] <rect kern file> <geKCleanFile>\n");
+   fprintf(stderr, "   -r [r,c] <rank-K kernel file> \n");
+   fprintf(stderr, "   -s [r,c] <square-case kernel file> <sqKCleanFile>\n");
+   fprintf(stderr, "   -t [r,c] <trsm file> : should match -s\n");
    exit(ierr ? ierr : -1);
 }
+
 
 /*
  * RETURNS: precision prefix [s,d,c,z]
  */
-char GetFlags(int nargs, char **args, char **DOUT,
-              ATL_mmnode_t **GEMM, ATL_mmnode_t **GEK1,
-              ATL_mmnode_t **SQMM, ATL_mmnode_t **SQK1,
-              ATL_mmnode_t **RKMM, ATL_mmnode_t **TRSM,
-              ATL_mmnode_t **cGEMM, ATL_mmnode_t **cGEK1,
-              ATL_mmnode_t **cSQMM, ATL_mmnode_t **cSQK1,
-              ATL_mmnode_t **cRKMM, ATL_mmnode_t **cTRSM)
+char *GetFlags(int nargs, char **args, char *PRE, ATL_mmnode_t **lists)
 {
    int i, j=0, n, k;
-   char pre='d', cpre;
-   ATL_mmnode_t *gemm=NULL, *gek1=NULL, *sqmm=NULL, *sqk1=NULL, *rkmm=NULL;
-   ATL_mmnode_t *trsm=NULL, *mmb=NULL, *mmp, *mp;
+   char pre='d', cpre, ch;
+   char *outd=NULL;
+   char *fn[6]={"geAMMRES.sum","geAMMKCLEAN.sum",
+      "sqAMMRES.sum","sqAMMKCLEAN.sum", "rkAMMRES.sum", "tsAMMRES.sum"};
 
-   *DOUT = NULL;
+   for (i=0; i < 2*NMMLISTS; i++)
+      lists[i] = NULL;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
@@ -23503,104 +23504,99 @@ char GetFlags(int nargs, char **args, char **DOUT,
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
         pre = tolower(args[i][0]);
-        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        if (pre == 'z')
+           pre = 'd';
+        else if (pre == 'c')
+           pre = 's';
+        assert(pre == 's' || pre == 'd');
+        cpre = (pre == 'd') ? 'z' : 'c';
         break;
-      case 'g':
+   @multidef i   0 2
+   @whiledef flg g s
+      case '@(flg)': /* [r,c] <amm file> <K1file> */
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-        gemm = ReadMMFile(args[i]);
-        assert(gemm);
+        ch = args[i][0];
+        if (ch == 'c')
+           k = NMMLISTS + @(i);
+        else if (ch == 'r')
+           k = @(i);
+        else
+            PrintUsage(args[0], i, "1st arg to -@(flg) must be 'r' or 'c'!");
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-        gek1 = ReadMMFile(args[i]);
-        assert(gek1);
+        lists[k] = ReadMMFile(args[i]);
+        assert(lists[k]);
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        lists[++k] = ReadMMFile(args[i]);
+        assert(lists[k]);
         break;
-      case 't':
+      @undef i
+   @endwhile
+   @multidef i   4 5
+   @whiledef flg r t
+      case '@(flg)': /* [r,c] <amm file> */
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-        trsm = ReadMMFile(args[i]);
-        assert(trsm);
-      case 's':
+        ch = args[i][0];
+        if (ch == 'c')
+           k = NMMLISTS + @(i);
+        else if (ch == 'r')
+           k = @(i);
+        else
+            PrintUsage(args[0], i, "1st arg to -@(flg) must be 'r' or 'c'!");
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-        sqmm = ReadMMFile(args[i]);
-        assert(sqmm);
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        sqk1 = ReadMMFile(args[i]);
-        assert(sqk1);
-        break;
-      case 'r':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        rkmm = ReadMMFile(args[i]);
-        break;
+        lists[k] = ReadMMFile(args[i]);
+        assert(lists[k]);
+      @undef i
+   @endwhile
       case 'd':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-        *DOUT = DupString(args[i]);
-        break;
-      case 'i':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        mmp = ReadMMFile(args[i]);
-        if (mmb)
-        {
-           ATL_mmnode_t *mp;
-           for (mp=mmb; mp->next; mp = mp->next);
-           mp->next = mmp;
-        }
-        else
-           mmb = mmp;
+        outd = DupString(args[i]);
         break;
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
-   if (!gemm)
+   *PRE = pre;
+/*
+ * Fill in any required list entry
+ */
+   for (i=0; i < 12; i++)
    {
-      assert(!gek1);
-      gemm = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
-      assert(gemm);
-      gek1 = ReadMMFileWithPath(pre, "res", "geAMMKCLEAN.sum");
-      assert(gek1);
+      const char pr=(i<6) ? pre : cpre;
+      const int k = (i<6) ? i : i-6;
+      if (!lists[i])
+         lists[i] = ReadMMFileWithPath(pr, "res", fn[k]);
+      assert(lists[i]);
    }
-   if (!sqmm)
-   {
-      assert(!sqk1);
-      sqmm = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
-      assert(sqmm);
-      sqk1 = ReadMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum");
-      assert(sqk1);
-   }
-   if (!trsm)
-   {
-      trsm = ReadMMFileWithPath(pre, "res", "tsAMMRES.sum");
-      assert(trsm);
-   }
-   if (!rkmm)
-   {
-      rkmm = ReadMMFileWithPath(pre, "res", "rkAMMRES.sum");
-      assert(rkmm);
-   }
-   if (!(*DOUT))
-      *DOUT = DupString("KERNEL");
-   cpre = (pre == 'd') ? 'z' : 'c';
-   *cGEMM = ReadMMFileWithPath(cpre, "res", "geAMMRES.sum");
-   *cGEK1 = ReadMMFileWithPath(cpre, "res", "geAMMKCLEAN.sum");
-   *cSQMM = ReadMMFileWithPath(cpre, "res", "sqAMMRES.sum");
-   *cSQK1 = ReadMMFileWithPath(cpre, "res", "sqAMMKCLEAN.sum");
-   *cRKMM = ReadMMFileWithPath(cpre, "res", "rkAMMRES.sum");
-   *cTRSM = ReadMMFileWithPath(cpre, "res", "tsAMMRES.sum");
-   *GEMM = gemm;
-   *GEK1 = gek1;
-   *SQMM = sqmm;
-   *SQK1 = sqk1;
-   *RKMM = rkmm;
-   *TRSM = trsm;
-   return(pre);
+   return(outd);
 }
 int main(int nargs, char **args)
 {
+   char *outd;
+   ATL_mmnode_t *lists[2*NMMLISTS];
+   int i;
+   char pre;
+
+   outd = GetFlags(nargs, args, &pre, lists);
+/*
+ * Prep file for generation.  Free present values, and replace with:
+ * ->auth  : kernel name without _b[1,n,0] suffix
+ * ->genstr: for ID=0: genstr, else user kernel name (came in ->rout)
+ * ->rout  : correct present filename
+ * TRSM entries we just set all these to NULL, since not needed.
+ * TRSM used to tsamm_perf.h, needs perf,NB,IDX
+ */
+   for (i=0; i < 2*NMMLISTS; i++)
+   {
+      if (i == ITRSM || i == ITRSM+NMMLISTS)
+         KillAllMMStrings(lists[i]);
+      else
+         PrepMMForGen(pre, "ammK", lists[i]);
+   }
    return(0);
 }

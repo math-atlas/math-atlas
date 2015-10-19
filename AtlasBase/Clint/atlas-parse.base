@@ -1041,6 +1041,23 @@ static void KillAll@up@(rt)Routs(ATL_@(rt)node_t *b)
    }
 }
 
+@ROUT mmread
+/* procedure @(ip) */
+void *KillAllMMStrings(ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp;
+
+   for (mp=mb; mp; mp = mp->next)
+   {
+      @whiledef sv rout auth comp cflags str genstr exflags moves
+      if (mp->@(sv))
+         free(mp->@(sv));
+      mp->@(sv) = NULL;
+      @endwhile
+   }
+}
+
+@ROUT r1read mvread mmread
 @iexp ip @(ip) 1 +
 /* procedure @(ip): frees all ->genstr entries in queue b */
 static void KillAll@up@(rt)Genstr(ATL_@(rt)node_t *b)
@@ -2383,10 +2400,12 @@ int SprintMMName(char *name, char pre, char *nm, ATL_mmnode_t *mp, int kb)
 }
 
 /* procedure @(ip) */
-static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp, char beta)
+static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp)
 /*
  * Get a string of form ATL_<pre><nm>suff, where suff encodes all info
- * required to differentiate between amm kernels
+ * required to differentiate between amm kernels.  Name must be suffixed
+ * later with _b[n,1,0] to be fully qualified, and there is room left in
+ * string to add that.
  */
 {
    int i, h, kb=0;
@@ -2399,6 +2418,7 @@ static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp, char beta)
    assert(name);
    h = SprintMMName(name, pre, nm, mp, kb);
    assert(h <= i);
+@beginskip
    name[h] = '_';
    name[h+1] = 'b';
    if (beta == 0)
@@ -2406,6 +2426,7 @@ static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp, char beta)
    else
       name[h+2] = (beta < 0) ? 'n' : '1';
    name[h+3] = '\0';
+@endskip
    return(name);
 }
 
@@ -2447,7 +2468,6 @@ static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
    name[h+2] = '\0';
    return(name);
 }
-
 
 @ROUT mvread r1read mmread
 #endif  /* end atlas_@(rt)parse.h guard */
@@ -4169,14 +4189,13 @@ struct MMCopyFunc
    ATL_mmcp_t *next;
 };
 
-#if 0
+@beginskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int FillCopyNodeFromMMNode
 (
-   char mat,      /* [A,B,C] */
-   char TA,       /* 't':trans A/B;  'n': notrans A/B */
-   int flg,       /* has type & precision already encoded */
+   char mat,          /* [A,B,C] */
+   int flg,           /* has type & precision already encoded */
    ATL_mmnode_t *mp   /* mm kern */
    ATL_mmcp_t *cp,    /* copy struct to modify */
 )
@@ -4207,11 +4226,11 @@ int FillCopyNodeFromMMNode
    }
    return(iret);
 }
-#endif
+@endskip
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static int ATL_CopyAreDiff(ATL_mmcp_t *c0, ATL_mmcp_t *c1)
+static int CopyAreDiff(ATL_mmcp_t *c0, ATL_mmcp_t *c1)
 /*
  * RETURNS: 1 if c0 & c1 have different functionality, 0 if equivalent
  */
@@ -4296,7 +4315,7 @@ static char *GetCopyName(ATL_mmcp_t *p)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *ATL_GetCopyNode(int stg, int mu, int nu)
+static ATL_mmcp_t *GetCopyNode(int stg, int mu, int nu)
 {
    ATL_mmcp_t *cp;
    cp = calloc(1, sizeof(ATL_mmcp_t));
@@ -4308,7 +4327,7 @@ static ATL_mmcp_t *ATL_GetCopyNode(int stg, int mu, int nu)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *ATL_CloneCopyNode(ATL_mmcp_t *b)
+static ATL_mmcp_t *CloneCopyNode(ATL_mmcp_t *b)
 {
    ATL_mmcp_t *p;
    p = malloc(sizeof(ATL_mmcp_t));
@@ -4325,7 +4344,7 @@ static ATL_mmcp_t *ATL_CloneCopyNode(ATL_mmcp_t *b)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *ATL_KillCopyNode(ATL_mmcp_t *cp)
+static ATL_mmcp_t *KillCopyNode(ATL_mmcp_t *cp)
 {
    ATL_mmcp_t *next=NULL;
    if (cp)
@@ -4338,27 +4357,27 @@ static ATL_mmcp_t *ATL_KillCopyNode(ATL_mmcp_t *cp)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *ATL_KillAllCopyNodes(ATL_mmcp_t *cp)
+static ATL_mmcp_t *KillAllCopyNodes(ATL_mmcp_t *cp)
 {
    while (cp)
-      cp = ATL_KillCopyNode(cp);
+      cp = KillCopyNode(cp);
    return(NULL);
 }
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip): RETURNS ptr to entry in b if n already there, else NULL */
-ATL_mmcp_t *ATL_FindCopy(ATL_mmcp_t *b, ATL_mmcp_t *n)
+ATL_mmcp_t *FindCopy(ATL_mmcp_t *b, ATL_mmcp_t *n)
 {
    ATL_mmcp_t *p;
    for (p=b; p; p = p->next)
-      if (!ATL_CopyAreDiff(p, n))
+      if (!CopyAreDiff(p, n))
          return(p);
    return(NULL);
 }
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *ATL_AddUniqueCopyNode(ATL_mmcp_t *cb, ATL_mmcp_t *cnb)
+static ATL_mmcp_t *AddUniqueCopyNode(ATL_mmcp_t *cb, ATL_mmcp_t *cnb)
 /*
  * Adds all copy entries in cnb to cb, if cb doesn't already have a 
  * functionally equivalent entry. cnb is unchanged.
@@ -4367,10 +4386,10 @@ static ATL_mmcp_t *ATL_AddUniqueCopyNode(ATL_mmcp_t *cb, ATL_mmcp_t *cnb)
    ATL_mmcp_t *p;
    for (p=cnb; p; p = p->next)
    {
-      if (!ATL_FindCopy(cb, p))
+      if (!FindCopy(cb, p))
       {
          ATL_mmcp_t *np;
-         np = ATL_CloneCopyNode(p);
+         np = CloneCopyNode(p);
          np->next = cb;
          cb = np;
       }
@@ -4399,18 +4418,75 @@ ATL_mmcp_t *AddCopyNodesFromMMNode
    else if (pre == 'c')
       flagI = (1<<MMCP_SINGLE);
 
-   cp = ATL_GetCopyNode(0, 0, 0);
+   cp = GetCopyNode(0, 0, 0);
    for (mp=mb; mp; mp = mp->next)
    {
       cp->mu = mp->mu;
       cp->nu = mp->nu;
       cp->kvec = (FLAG_IS_SET(mp->flag, MMF_KVEC)) ? mp->vlen : 0;
    }
-   ATL_KillCopyNode(cp);
+   KillCopyNode(cp);
 }
 
-static ATL_mmcp_t *ATL_MergeCopyFromMM(ATL_mmcp_t *cb, ATL_mmnode_t *mb)
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmcp_t *MergeCopyFromMM(ATL_mmcp_t *cb, ATL_mmnode_t *mb)
 {
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static void PrepMMForGen(char pre, char *nm, ATL_mmnode_t *mb)
+/*
+ * Prep mb for generation.  Free present values, and replace with:
+ * ->auth  : kernel name without _b[1,n,0] suffix
+ * ->genstr: for ID=0: genstr, else user kernel name (came in ->rout)
+ * ->rout  : correct present filename (used in generation & compilation)
+ */
+{
+   ATL_mmnode_t *mp;
+   char suff[3]={'.', 'c', '\0'};
+
+   for (mp=mb; mp; mp = mp->next)
+   {
+      if (mp->auth)
+         free(mp->auth);
+      mp->auth = GetMMKernName(pre, nm, mp);
+      if (mp->ID) /* user-supplied kernel */
+      {
+         int h;
+         char ch = 'c', och;
+
+         assert(!mp->genstr);
+         assert(mp->rout);
+         h = strlen(mp->rout);
+@beginskip
+/*
+ *       If original name ended in .s or .S, change to .S (we add cpp).
+ *       If name doesn't look normal, then keep .c filename, and assume
+ *       user has used flags to manually tell the compile if the code
+ *       is anything other than C.
+ */
+         och = mp->rout[h-1];
+         if (och != ch)  /* should we change file type suffix to .S? */
+         {               /* only if filename looks normal */
+            if (mp->rout[h-2] == '.' && och == 's' || och == 'S')
+               suff[2] = 'S';
+         }
+@endskip
+         mp->genstr = mp->rout;
+         mp->rout = GetMMFilename(pre, nm, mp);
+      }
+      else  /* generated kernel */
+      {
+         if (mp->rout)
+            free(mp->rout);
+         if (mp->genstr)
+            free(mp->genstr);
+         mp->rout = NewMergedString(mp->auth, suff);
+         mp->genstr = MMGetGenString(pre, mp);
+      }
+   }
 }
 
 #endif  /* end guard around atlas_@(rt)mmgen.h */
