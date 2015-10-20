@@ -23617,6 +23617,7 @@ double GenPerfH(char pre, char *outd, char *cn, double mfMax,
       for (n=0,mp=mb; mp; n++, mp = mp->next);
       idxMax = -1;
    }
+   fprintf(fp, "#define ATL_%sAMM_NCASES %d\n", cn, n);
    fprintf(fp, "#define ATL_%sAMM_DENOM %le /* (%.2f)*/ \n", cn,
            mfMax, mfMax);
    fprintf(fp, "#define ATL_%sAMM_MAXMFLOPIDX %d\n\n", cn, idxMax);
@@ -23683,7 +23684,27 @@ double GenPerfH(char pre, char *outd, char *cn, double mfMax,
    return(mfMax);
 }
 
-void GenAllPerfH(char pre, char *outd, ATL_mmnode_t **lists)
+void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
+{
+   FILE *fp;
+
+   fp = OpenGenHeader(outd, 0, pre, cn, 0, 0, "blk");
+   PrintMMIntOffArr(fp, pre, "MBs", mb, GetOffset(&mb->mbB, mb));
+   PrintMMIntOffArr(fp, pre, "NBs", mb, GetOffset(&mb->nbB, mb));
+   PrintMMIntOffArr(fp, pre, "KBs", mb, GetOffset(&mb->kbB, mb));
+   PrintMMIntOffArr(fp, pre, "MUs", mb, GetOffset(&mb->mu, mb));
+   PrintMMIntOffArr(fp, pre, "NUs", mb, GetOffset(&mb->nu, mb));
+   PrintMMIntOffArr(fp, pre, "KUs", mb, GetOffset(&mb->ku, mb));
+   PrintMMIntOffArr(fp, pre, "KBMINs", mb, GetOffset(&mb->kbmin, mb));
+   PrintMMIntOffArr(fp, pre, "KBMAXs", mb, GetOffset(&mb->kbmax, mb));
+   CloseGenHeader(fp);
+}
+
+ATL_mmnode_t **GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists, 
+                             ATL_mmnode_t **ulsts)
+/*
+ * RETURNS: unique comp lists
+ */
 {
    int i, k;
    char *nm="perf";
@@ -23691,6 +23712,9 @@ void GenAllPerfH(char pre, char *outd, ATL_mmnode_t **lists)
    double mfMax;
    char pr = pre;
 
+/*
+ * Handle [perf,blk] which require only ordered lists
+ */
    for (k=0; k < 2*NMMLISTS; k += NMMLISTS)
    {
       mfMax = GenPerfH(pr, outd, "ge", 0.0, lists[k+IGE], lists[k+IGEK1]);
@@ -23700,18 +23724,47 @@ void GenAllPerfH(char pre, char *outd, ATL_mmnode_t **lists)
 
       GenPerfH(pr, outd, "sq", 0.0, lists[k+ISQ], lists[k+ISQK1]);
       GenPerfH(pr, outd, "rk", 0.0, lists[k+IRKK], NULL);
+
+      GenBlkH(pr, outd, "ge", lists[k+IGE]); 
+      GenBlkH(pr, outd, "sq", lists[k+ISQ]); 
+      GenBlkH(pr, outd, "rk", lists[k+IRKK]);
       pr = (pre == 'd') ? 'z' : 'c';
    }
+/*
+ * Create lists of only the unique kernels for [ge,sq,rk] in real & cplx
+ * for use in prototyping.  We combine kern & K1 lists for each.
+ */
+   for (i=0; i < 3; i++)
+   {
+      for (k=0; k < 2; k++)
+      {
+         const int h = i+i+k*NMMLISTS, u=k*3+i;
+         ulsts[u] = AddUniqueMMKernCompList(NULL, lists[h]);
+         ulsts[u] = AddUniqueMMKernCompList(ulsts[u], lists[h+1]);
+      }
+   }
+/*
+ * Can now gen [blk,flag,kern,sum]
+ */
+/*
+ * Need unique copy for [cm2am_a[1,n,X],rm2am_a[1,n,X] and
+ * [cmat2ablk_a[1,n,X]_b[0,1,n,X],ablk2cmat_a?_b?,am2cm_a[1,n,X]]
+ * -> have never genned, can we?: am2rm_a[1,n,X],
+ */
+   return(ulsts);
 }
 
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
 {
    FILE *fp;
-   ATL_mmnode_t ulsts[NMMLISTS*2];
+   ATL_mmnode_t *ulsts[6];  /* unordered lists of only unique kernels */
+   int i;
 /*
  * First, generate performance files, which require nothing hard
  */
-   GenAllPerfH(pre, outd, lists);
+   GenAllHeaders(pre, outd, lists, ulsts);
+   for (i=0; i < 6; i++)
+      KillAllMMNodes(ulsts[i]);
 }
 
 int main(int nargs, char **args)

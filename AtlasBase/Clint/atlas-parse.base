@@ -4489,7 +4489,9 @@ static void PrepMMForGen(char pre, char *nm, ATL_mmnode_t *mb)
    }
 }
 
-FILE *OpenGenHeader
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static FILE *OpenGenHeader
 (
    char *outd,/* directory to write to must be non-NULL */
    int UID,   /* 0 for ATLAS files, >0 for uammsearch */
@@ -4555,10 +4557,102 @@ FILE *OpenGenHeader
    free(fn);
    return(fp);
 }
-void CloseGenHeader(FILE *fp)
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static void CloseGenHeader(FILE *fp)
 {
    fprintf(fp, "\n#endif\n");
    fclose(fp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int GetMMIntOff(ATL_mmnode_t *mp, int off)
+{
+   return(*((int*)(((char*)mp)+off)));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int GetOffset(void *v0, void *v1)
+{
+   size_t i0=(size_t)v0, i1=(size_t)v1;
+   if (v1 > v0)
+      return(v1-v0);
+   return(v0-v1);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static double GetMMDoubleOff(ATL_mmnode_t *mp, int off)
+{
+   return(*((double*)(((char*)mp)+off)));
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int GetMMIntOffMaxMin(ATL_mmnode_t *mb, int off, int *MAX, int *MIN)
+/*
+ * Find the maximum and minimum of any integer in mb+off in list.
+ * RETURNS: number of nodes searched.
+ */
+{
+   register int max=0, min=0, n=0;
+   if (mb)
+   {
+      ATL_mmnode_t *mp;
+      min = max = GetMMIntOff(mb, off);
+      for (n=1,mp=mb->next; mp; n++, mp = mp->next)
+      {
+         register int i = GetMMIntOff(mp, off);
+         max = (max >= i) ? max : i;
+         min = (min <= i) ? min : i;
+      }
+   }
+   *MAX = max;
+   *MIN = min;
+   return(n);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char *GetSafeIntType(ATL_mmnode_t *mb, int off, int *CNT)
+{
+   int max, min, n;
+   *CNT = GetMMIntOffMaxMin(mb, off, &max, &min);
+   if (min < 0)
+   {
+      if (max < (1<<7))
+         return("char");
+      else if (max < (1<<15))
+         return("short");
+      return("int");
+   }
+   else if (max < (1<<8))
+      return("unsigned char");
+   else if (max < (1<<16))
+      return("unsigned short");
+   return("unsigned int");
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void PrintMMIntOffArr(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off)
+/*
+ * Dumps integer stored at byte offset off mb's MMNodes to file fp using name nm
+ */
+{
+   ATL_mmnode_t *mp;
+   char *type;
+   int i, n;
+
+   type = GetSafeIntType(mb, off, &n);
+   fprintf(fp, "#ifndef NO%s\n", nm);
+   fprintf(fp, "static const %s ATL_AMM_%s[%d] =\n{\n", type, nm, n);
+   for (i=0,mp=mb; mp; i++,mp = mp->next)
+      fprintf(fp, "%8d%c  /* IDX=%d */\n", *((int*)(((char*)mp)+off)),
+              mp->next ? ',':' ', i);
+   fprintf(fp, "}\n#endif\n\n");
 }
 
 #endif  /* end guard around atlas_@(rt)mmgen.h */
