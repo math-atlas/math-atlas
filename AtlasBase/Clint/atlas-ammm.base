@@ -23684,19 +23684,39 @@ double GenPerfH(char pre, char *outd, char *cn, double mfMax,
    return(mfMax);
 }
 
+void GenKernH
+   (char pre, char *outd, char *cn, ATL_mmnode_t *mb, ATL_mmnode_t *mkb,
+    ATL_mmnode_t *ub)
+{
+   FILE *fp;
+   int ib;
+   char bes[3] = {'0', '1', 'n'};
+
+   fp = OpenGenHeader(outd, 0, pre, cn, 0, 0, "kern");
+   for (ib=0; ib < 3; ib++)
+      PrintMMProtos(fp, pre, "KERN", ub, GetOffset(&ub->auth, ub), "ammkern_t",
+                    0, bes[ib]);
+   for (ib=0; ib < 3; ib++)
+   {
+      PrintMMStrOffArr(fp, pre, "KERN", mb, GetOffset(&mb->auth, mb), 0,
+                       "ammkern_t", 0, bes[ib]);
+      if (mkb)
+         PrintMMStrOffArr(fp, pre, "KERN_K1", mb, GetOffset(&mb->auth, mb), 0,
+                          "ammkern_t", 0, bes[ib]);
+   }
+   CloseGenHeader(fp);
+}
+
 void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
 {
    FILE *fp;
 
    fp = OpenGenHeader(outd, 0, pre, cn, 0, 0, "blk");
-   PrintMMIntOffArr(fp, pre, "MBs", mb, GetOffset(&mb->mbB, mb));
-   PrintMMIntOffArr(fp, pre, "NBs", mb, GetOffset(&mb->nbB, mb));
-   PrintMMIntOffArr(fp, pre, "KBs", mb, GetOffset(&mb->kbB, mb));
-   PrintMMIntOffArr(fp, pre, "MUs", mb, GetOffset(&mb->mu, mb));
-   PrintMMIntOffArr(fp, pre, "NUs", mb, GetOffset(&mb->nu, mb));
-   PrintMMIntOffArr(fp, pre, "KUs", mb, GetOffset(&mb->ku, mb));
-   PrintMMIntOffArr(fp, pre, "KBMINs", mb, GetOffset(&mb->kbmin, mb));
-   PrintMMIntOffArr(fp, pre, "KBMAXs", mb, GetOffset(&mb->kbmax, mb));
+   @multidef st KBMAXs KBMINs KUs NUs MUs KBs NBs MBs
+   @whiledef iv kbmax kbmin ku nu mu kbB nbB mbB
+   PrintMMIntOffArr(fp, pre, "@(st)", mb, GetOffset(&mb->@(iv), mb));
+      @undef st
+   @endwhile
    CloseGenHeader(fp);
 }
 
@@ -23713,7 +23733,7 @@ ATL_mmnode_t **GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists,
    char pr = pre;
 
 /*
- * Handle [perf,blk] which require only ordered lists
+ * Handle [perf,blk,flag,sum] which require only ordered lists
  */
    for (k=0; k < 2*NMMLISTS; k += NMMLISTS)
    {
@@ -23733,6 +23753,7 @@ ATL_mmnode_t **GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists,
 /*
  * Create lists of only the unique kernels for [ge,sq,rk] in real & cplx
  * for use in prototyping.  We combine kern & K1 lists for each.
+ * We can now gen [kern].
  */
    for (i=0; i < 3; i++)
    {
@@ -23740,12 +23761,15 @@ ATL_mmnode_t **GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists,
       {
          const int h = i+i+k*NMMLISTS, u=k*3+i;
          ulsts[u] = AddUniqueMMKernCompList(NULL, lists[h]);
-         ulsts[u] = AddUniqueMMKernCompList(ulsts[u], lists[h+1]);
+         if (i < 2)
+         {
+            ulsts[u] = AddUniqueMMKernCompList(ulsts[u], lists[h+1]);
+            GenKernH(pre, outd, cn[i], lists[h], lists[h+1], ulsts[u]);
+         }
+         else
+            GenKernH(pre, outd, cn[i], lists[h], NULL, ulsts[u]);
       }
    }
-/*
- * Can now gen [blk,flag,kern,sum]
- */
 /*
  * Need unique copy for [cm2am_a[1,n,X],rm2am_a[1,n,X] and
  * [cmat2ablk_a[1,n,X]_b[0,1,n,X],ablk2cmat_a?_b?,am2cm_a[1,n,X]]
