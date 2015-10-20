@@ -4169,7 +4169,7 @@ double TimeTSKernel
 #include "atlas_mmparse.h"
 #include "atlas_mmtesttime.h"
 
-#define MMCP_TOBLK    0  /* set: copy to block format;  unset: opposite direc */
+#define MMCP_TOBLK    0  /* set: copy to blk format;  unset: opposite direc */
 #define MMCP_CBLK     1  /* set: C format;  unset:A/B */
 #define MMCP_ABLK     2  /* set: scope mu;  unset: scope nu */
 #define MMCP_TRANS    3
@@ -4189,7 +4189,7 @@ struct MMCopyFunc
    int kvec;          /* vlen for k-vec storage, else 0 */
    int flag;          /* bits: vals are MMCP_* */
    char *file;        /* filename */
-   char *rout;        /* callable routine name w dummy alpha/beta suffix */
+   char *rout;        /* callable routine name w/o alpha/beta suffix */
    char *genstr;      /* string that will generate ID=0 kerns */
    ATL_mmcp_t *next;
 };
@@ -4244,6 +4244,52 @@ static char MMCopyGetTrans(int flag)
 static char *MMCopyGetDirect(int flag)
 {
    return((flag&(1<<MMCP_TOBLK)) ? "Into" : "From");
+}
+
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMCopyEncode
+(              /* all args take 0, which means don't set */
+   char pre,  /* [s,d,c,z] */
+   char dir,  /* 'I': copy Into block storage, 'F': copy From block */
+   char mat,  /* [c,a,b] */
+   char TA    /* [n,t,c,h] */
+)
+/* 
+ * returns arginfo as ATL_mmcp_t flag
+ */
+{
+   int flag;
+   if (pre)
+   {
+      flag = (pre == 'd' || pre == 's') ? (1<<MMCP_REAL) : 0;
+      flag |= (pre == 's' || pre == 'c') ? (1<<MMCP_SINGLE) : 0;
+   }
+   if (dir)
+   {
+      if (!(dir == 'F' || dir == 'f'))
+         flag |= (1<<MMCP_TOBLK);
+   }
+   if (mat)
+   {
+      if (mat == 'C')
+         flag |= (1<<MMCP_CBLK);
+      else /* A or B */
+      {
+         flag |= (mat == 'a' || mat == 'A') ? (1<<MMCP_ABLK) : 0;
+         if (TA)
+         {
+            if (TA == 't' || TA == 'T')
+               flag |= (1<<MMCP_TRANS);
+            else if (TA == 'c' || TA == 'C')
+               flag |= (1<<MMCP_CONJ);
+            else if (TA == 'H' || TA == 'h')
+               flag |= (1<<MMCP_TRANS) | (1<<MMCP_CONJ);
+         }
+      }
+   }
+   return(flag);
 }
 
 @iexp ip @(ip) 1 +
@@ -4355,6 +4401,10 @@ static ATL_mmcp_t *KillCopyNode(ATL_mmcp_t *cp)
    ATL_mmcp_t *next=NULL;
    if (cp)
    {
+      @whiledef st file rout genstr
+      if (cp->@(st))
+         free(cp->@(st));
+      @endwhile
       next = cp->next;
       free(cp);
    }
@@ -4405,10 +4455,9 @@ static ATL_mmcp_t *AddUniqueCopyNode(ATL_mmcp_t *cb, ATL_mmcp_t *cnb)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_mmcp_t *GetMMCopyNodesFromMMNodes
+ATL_mmcp_t *GetMMCopyFromMMNodes
 (
-   char pre,
-   int flag,          /* bits: MMCP_* */
+   int flag,          /* set with call to MMCopyEncode */
    ATL_mmnode_t *mb   /* list of amm kerns */
 )
 {
@@ -4416,13 +4465,8 @@ ATL_mmcp_t *GetMMCopyNodesFromMMNodes
    ATL_mmnode_t *mp;
    const int CP_C = (flag&(1<<MMCP_CBLK)), CP_A = (flag&(1<<MMCP_ABLK));
 /*
- * Encode type in flag 
+ * Setup copy list matching the MM kerns in mb 
  */
-   if (pre == 's' || pre == 'c')
-      flag |= (1<<MMCP_SINGLE);
-   if (pre == 'z' || pre == 'c')
-      flag |= (1<<MMCP_REAL);
-
    cp = cb = GetMMCopyNode(0, 0, 0, 0, 0);
    for (mp=mb; mp; mp = mp->next)
    {
@@ -4451,6 +4495,8 @@ ATL_mmcp_t *GetMMCopyNodesFromMMNodes
       if (!ID & FLAG_IS_SET(mp->flag, MMF_KVEC))
          kvec = mp->vlen;
       cp->next = GetMMCopyNode(ID, mu, nu, kvec, flag);
+      cp = cp->next;
+      cp->rout = GetMMCopyName(cp);
    }
    return(KillCopyNode(cb));
 }
