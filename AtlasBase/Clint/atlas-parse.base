@@ -787,6 +787,7 @@ static int *GF_IntRange2IntList(int N0, int NN, int incN)
       iarr[n] = i;
    return(iarr);
 }
+@iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static int GetNativeVLEN(char pre)
 {
@@ -818,6 +819,8 @@ static int GetNativeVLEN(char pre)
    return(0);   /* 0 means: I don't know */
 #endif
 }
+
+@iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static int GetNumVecRegs(char pre)
 {
@@ -839,6 +842,84 @@ static int GetNumVecRegs(char pre)
    return(0);   /* 0 means: I don't know */
 #endif
 }
+
+/*
+ * The following are functions that allow us to operate on generic lists
+ * of any structure.  The idea is that you pass the byte offset where
+ * the next pointer is found, as well as the data item you want to access.
+ * Since we are loading raw memory, note that your type must match precisely.
+ * Eg., GetIntAtOff is only used with int (signed or unsigned), not any 
+ * intergral (it will fail for short or char).  Assuming you have a pointer
+ * to the structure in question:
+ *    GetOffset(&p->next, p);
+ * can be used to calculate the offnxt these funcs require.
+ */
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int GetOffset(void *v0, void *v1)
+/*
+ * Find (postive) gap between addresses
+ */
+{
+   size_t i0=(size_t)v0, i1=(size_t)v1;
+   if (v1 > v0)
+      return(v1-v0);
+   return(v0-v1);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int GetIntAtOff(void *p, int off)
+/*
+ * RETURNS: derefence *(p+off) interpeted an integer address.
+ */
+{
+   return(*((int*)(((char*)p)+off)));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char *GetStrAtOff(void *p, int off)
+{
+   return( *((char**)(((char*)p)+off)) );
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static double GetDoubleAtOff(void *mp, int off)
+{
+   return(*((double*)(((char*)mp)+off)));
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int GetIntMaxMinAtOff(void *vb, int nxtoff, int off, int *MAX, int *MIN)
+/*
+ * Find the max and min of any integer in vb+off in list, next ptr at nxtoff;
+ * Works for any list with a next ptr, and any int stored as int native
+ * (will not work for short/char/etc).
+ * RETURNS: number of nodes searched.
+ */
+{
+   char *cp=vb;
+   register int max=0, min=0, n=0;
+
+   if (vb)
+   {
+      min = max = GetIntAtOff(cp, off);
+      while( (cp = GetStrAtOff(cp, nxtoff)) )
+      {
+         register int i;
+         i = GetIntAtOff(cp, off);
+         max = (max >= i) ? max : i;
+         min = (min <= i) ? min : i;
+      }
+   }
+   *MAX = max;
+   *MIN = min;
+   return(n);
+}
+
+
 #endif /* end atlas_genparse.h guard */
 @ROUT mmread
 #ifndef ATL_DEF_MMFLAG
@@ -4494,6 +4575,9 @@ ATL_mmcp_t *GetMMCopyFromMMNodes
       }
       if (!ID & FLAG_IS_SET(mp->flag, MMF_KVEC))
          kvec = mp->vlen;
+      cp->mu = mu;
+      cp->nu = nu;
+      cp->kvec = kvec;
       cp->next = GetMMCopyNode(ID, mu, nu, kvec, flag);
       cp = cp->next;
       cp->rout = GetMMCopyName(cp);
@@ -4641,65 +4725,10 @@ static void CloseGenHeader(FILE *fp)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static int GetMMIntOff(ATL_mmnode_t *mp, int off)
-{
-   return(*((int*)(((char*)mp)+off)));
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static char *GetMMStrOff(ATL_mmnode_t *mp, int off)
-{
-   return( *((char**)(((char*)mp)+off)) );
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static int GetOffset(void *v0, void *v1)
-{
-   size_t i0=(size_t)v0, i1=(size_t)v1;
-   if (v1 > v0)
-      return(v1-v0);
-   return(v0-v1);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static double GetMMDoubleOff(ATL_mmnode_t *mp, int off)
-{
-   return(*((double*)(((char*)mp)+off)));
-}
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static int GetMMIntOffMaxMin(ATL_mmnode_t *mb, int off, int *MAX, int *MIN)
-/*
- * Find the maximum and minimum of any integer in mb+off in list.
- * RETURNS: number of nodes searched.
- */
-{
-   register int max=0, min=0, n=0;
-   if (mb)
-   {
-      ATL_mmnode_t *mp;
-      min = max = GetMMIntOff(mb, off);
-      for (n=1,mp=mb->next; mp; n++, mp = mp->next)
-      {
-         register int i = GetMMIntOff(mp, off);
-         max = (max >= i) ? max : i;
-         min = (min <= i) ? min : i;
-      }
-   }
-   *MAX = max;
-   *MIN = min;
-   return(n);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static char *GetSafeIntType(ATL_mmnode_t *mb, int off, int *CNT)
+static char *GetSafeIntType(void *vb, int nxtoff, int off, int *CNT)
 {
    int max, min, n;
-   *CNT = GetMMIntOffMaxMin(mb, off, &max, &min);
+   *CNT = GetIntMaxMinAtOff(vb, nxtoff, off, &max, &min);
    if (min < 0)
    {
       if (max < (1<<7))
@@ -4715,6 +4744,7 @@ static char *GetSafeIntType(ATL_mmnode_t *mb, int off, int *CNT)
    return("unsigned int");
 }
 
+@beginskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 void PrintMMIntOffArr(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off)
@@ -4726,7 +4756,7 @@ void PrintMMIntOffArr(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off)
    char *type;
    int i, n;
 
-   type = GetSafeIntType(mb, off, &n);
+   type = GetSafeIntType(mb, GetOffset(&mb->next, mb), off, &n);
    fprintf(fp, "#ifndef NO%s\n", nm);
    fprintf(fp, "static const %s ATL_AMM_%s[%d] =\n{\n", type, nm, n);
    for (i=0,mp=mb; mp; i++,mp = mp->next)
@@ -4734,6 +4764,7 @@ void PrintMMIntOffArr(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off)
               mp->next ? ',':' ', i);
    fprintf(fp, "};\n#endif\n\n");
 }
+@endskip
 
 char *FillInMMScalarSuff(char alp, char bet)
 {
@@ -4763,39 +4794,8 @@ char *FillInMMScalarSuff(char alp, char bet)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-void PrintMMStrOffArr(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off,
-                      int off2, char *type, char alp, char bet)
-/*
- * Dumps integer stored at byte offset off mb's MMNodes to file fp using name nm
- */
-{
-   ATL_mmnode_t *mp;
-   int i, n;
-   char *ab;
-
-   ab = FillInMMScalarSuff(alp, bet);
-   for (mp=mb,n=0; mp; n++, mp = mp->next);
-   if (bet == '0' && !strcmp(nm, "KERN_K1"))
-      fprintf(fp, "#ifndef NOKERN_K1\n");
-   else
-      fprintf(fp, "#ifndef NO%s%s\n", nm,ab);
-   fprintf(fp, "static const %s ATL_AMM_%s%s[%d] =\n{\n", type, nm, ab, n);
-   for (i=0,mp=mb; mp; i++,mp = mp->next)
-   {
-      if (!off2)
-         fprintf(fp, "/* IDX=%3d */ %s%s%c\n", 
-                 i, GetMMStrOff(mp, off), ab, mp->next ? ',':' ');
-      else
-         fprintf(fp, "%s%s%c  /* IDX=%d file='%s' */\n", GetMMStrOff(mp, off), 
-                 ab, mp->next ? ',':' ', i, GetMMStrOff(mp, off2));
-   }
-   fprintf(fp, "};\n#endif\n\n");
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
 void PrintMMProtos(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off,
-                   char *type, char alp, char bet)
+                   char alp, char bet)
 {
    ATL_mmnode_t *mp;
    char *ab;
@@ -4813,13 +4813,97 @@ void PrintMMProtos(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off,
    }
    for (mp=mb; mp; mp = mp->next)
    {
-      fprintf(fp, "void %s%s\n%s\n%s\n", GetMMStrOff(mp, off), ab,
+      fprintf(fp, "void %s%s\n%s\n%s\n", GetStrAtOff(mp, off), ab,
               "   (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,",
               "    const TYPE*,const TYPE*,const TYPE*);");
-@skip         fprintf(fp, "%s %s%s;\n", type, GetMMStrOff(mp, off), ab);
+@skip         fprintf(fp, "%s %s%s;\n", type, GetStrAtOff(mp, off), ab);
    }
    fprintf(fp, "#endif\n\n");
 }
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void PrintMMCpProtos(FILE *fp, char *nm, ATL_mmcp_t *cb, char alp, char bet)
+{
+   ATL_mmcp_t *cp;
+   char *ab;
+
+   ab = FillInMMScalarSuff(alp, bet);
+   fprintf(fp, "#ifndef NO%s%s\n", nm,ab);
+   for (cp=cb; cp; cp = cp->next)
+      fprintf(fp, "void %s%s\n%s\n", cp->rout, ab,
+         "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*);");
+   fprintf(fp, "#endif\n\n");
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void PrintIntArrAtOff
+(
+   FILE *fp,
+   char pre,   /* [d,s,c,z] */
+   char *nm,   /* name of the array, optionally decorated by _aX_bX */
+   void *sb,
+   int nxtoff, /* offset (bytes) in struct to next pointer */
+   int ioff,   /* offset in struct to integer val we are printing */
+   char alp,
+   char bet
+)
+/*
+ * Dumps integer stored at ioff in sb's struct to file fp using name nm.
+
+ */
+{
+   char *cp = sb;
+   char *type;
+   char *ab;
+   int i, n;
+
+   ab = FillInMMScalarSuff(alp, bet);
+
+   type = GetSafeIntType(sb, nxtoff, ioff, &n);
+   fprintf(fp, "#ifndef NO%s\n", nm);
+   fprintf(fp, "static const %s ATL_AMM_%s%s[%d] =\n{\n", type, nm, ab, n);
+   for (i=0; cp; i++)
+   {
+      char *nxt;
+      nxt = GetStrAtOff(cp, nxtoff);
+      fprintf(fp, "%8d%c  /* IDX=%d */\n", *((int*)(cp+ioff)), nxt?',':' ', i);
+      cp = nxt;
+   }
+   fprintf(fp, "};\n#endif\n\n");
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void PrintStrArrAtOff(FILE *fp, char pre, char *nm, void *vb,
+                      int nxtoff, int off, char *type, char alp, char bet)
+/*
+ * Dumps integer stored at byte offset off mb's MMNodes to file fp using name nm
+ */
+{
+   char *cp;
+   int i, n;
+   char *ab;
+
+   ab = FillInMMScalarSuff(alp, bet);
+   for (cp=vb,n=0; cp; n++)
+      cp = GetStrAtOff(cp, nxtoff);
+   if (bet == '0' && !strcmp(nm, "KERN_K1"))
+      fprintf(fp, "#ifndef NOKERN_K1\n");
+   else
+      fprintf(fp, "#ifndef NO%s%s\n", nm,ab);
+   fprintf(fp, "static const %s ATL_AMM_%s%s[%d] =\n{\n", type, nm, ab, n);
+   for (i=0,cp=vb; cp; i++)
+   {
+      char *next;
+      next = GetStrAtOff(cp, nxtoff);
+      fprintf(fp, "/* IDX=%3d */ %s%s%c\n", 
+              i, GetStrAtOff(cp, off), ab, next ? ',':' ');
+      cp = next;
+   }
+   fprintf(fp, "};\n#endif\n\n");
+}
+
 
 #endif  /* end guard around atlas_@(rt)mmgen.h */
 @ROUT getflagarrs
