@@ -890,6 +890,21 @@ static double GetDoubleAtOff(void *mp, int off)
 {
    return(*((double*)(((char*)mp)+off)));
 }
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int CountListEntries(void *vb, int nxtoff)
+{
+   int i=0;
+   char *cp = vb;
+   while (cp)
+   {
+      cp = GetStrAtOff(cp, nxtoff);
+      i++;
+   }
+   return(i);
+}
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static int GetIntMaxMinAtOff(void *vb, int nxtoff, int off, int *MAX, int *MIN)
@@ -906,12 +921,14 @@ static int GetIntMaxMinAtOff(void *vb, int nxtoff, int off, int *MAX, int *MIN)
    if (vb)
    {
       min = max = GetIntAtOff(cp, off);
+      n = 1;
       while( (cp = GetStrAtOff(cp, nxtoff)) )
       {
          register int i;
          i = GetIntAtOff(cp, off);
          max = (max >= i) ? max : i;
          min = (min <= i) ? min : i;
+         n++;
       }
    }
    *MAX = max;
@@ -4290,7 +4307,7 @@ static int CopyAreDiff(ATL_mmcp_t *c0, ATL_mmcp_t *c1)
       iret &= (c0->kvec == c1->kvec);
       iret &= (c0->flag == c1->flag);
    }
-   return(iret);
+   return(!iret);
 }
 
 @iexp ip @(ip) 1 +
@@ -4452,7 +4469,7 @@ static ATL_mmcp_t *GetMMCopyNode(int ID, int mu, int nu, int kvec, int flag)
    cp = calloc(1, sizeof(ATL_mmcp_t));
    cp->ID = ID;
    cp->mu = mu;
-   cp->mu = nu;
+   cp->nu = nu;
    cp->kvec = kvec;
    cp->flag = flag;
    assert(cp);
@@ -4473,6 +4490,7 @@ static ATL_mmcp_t *CloneCopyNode(ATL_mmcp_t *b)
    if (p->@(st))
       p->@(st) = DupString(p->@(st));
    @endwhile
+   return(p);
 }
 
 @iexp ip @(ip) 1 +
@@ -4575,9 +4593,6 @@ ATL_mmcp_t *GetMMCopyFromMMNodes
       }
       if (!ID & FLAG_IS_SET(mp->flag, MMF_KVEC))
          kvec = mp->vlen;
-      cp->mu = mu;
-      cp->nu = nu;
-      cp->kvec = kvec;
       cp->next = GetMMCopyNode(ID, mu, nu, kvec, flag);
       cp = cp->next;
       cp->rout = GetMMCopyName(cp);
@@ -4885,9 +4900,8 @@ void PrintStrArrAtOff(FILE *fp, char pre, char *nm, void *vb,
    int i, n;
    char *ab;
 
+   n = CountListEntries(vb, nxtoff);
    ab = FillInMMScalarSuff(alp, bet);
-   for (cp=vb,n=0; cp; n++)
-      cp = GetStrAtOff(cp, nxtoff);
    if (bet == '0' && !strcmp(nm, "KERN_K1"))
       fprintf(fp, "#ifndef NOKERN_K1\n");
    else
