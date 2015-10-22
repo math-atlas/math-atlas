@@ -23706,18 +23706,40 @@ void GenKernH
    CloseGenHeader(fp);
 }
 
+void PrintFlagArr(FILE *fp, ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp;
+   int n;
+
+   n = CountListEntries(mb, GetOffset(&mb->next, mb));
+   fprintf(fp, "#ifndef NOKFLAG\n");
+   fprintf(fp, "static const unsigned char ATL_AMM_KFLAG[%d]\n{\n", n);
+   for (n=0,mp=mb; mp; n++, mp = mp->next)
+   {
+      unsigned char flag=FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 1 : 0;
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+         flag |= 2;
+      fprintf(fp, "%6d%c   /* IDX=%d */\n", flag, mp->next ? ',':' ', n);
+   }
+   fprintf(fp, "}\n");
+   fprintf(fp, "   #define ATL_AMM_KRUNTIME(idx_) (ATL_AMM_KFLAG[idx_] & 1)\n");
+   fprintf(fp, "   #define ATL_AMM_KMAJOR(idx_) (ATL_AMM_KFLAG[idx_] & 2)\n");
+   fprintf(fp, "#endif\n");
+}
 void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
 {
    FILE *fp;
+   int n;
 
    fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "blk", mb);
    @multidef st KBMAXs KBMINs KUs NUs MUs KBs NBs MBs
-   @whiledef iv kbmax kbmin ku nu mu kbB nbB mbB
+   @whiledef iv kbmax  kbmin  ku  nu  mu  kbB nbB mbB
 @skip   PrintMMIntOffArr(fp, pre, "@(st)", mb, GetOffset(&mb->@(iv), mb));
    PrintIntArrAtOff(fp, pre, "@(st)", mb, GetOffset(&mb->next, mb), 
                    GetOffset(&mb->@(iv), mb), 0, 0);
       @undef st
    @endwhile
+   PrintFlagArr(fp, mb);
    CloseGenHeader(fp);
 }
 
@@ -23766,6 +23788,45 @@ void GenCpyC(char pre, char *outd, char *cn, ATL_mmnode_t *mb, ATL_mmnode_t *ub)
    CloseGenHeader(fp);
 }
 
+double PrintSum(FILE *fp, char *cn, ATL_mmnode_t *b, double mfGE)
+{
+   int inxt, max, i;
+   double mf;
+   inxt = GetOffset(&b->next, b);
+   fprintf(fp, "#define ATL_%sAMM_NCASES %d\n", cn, CountListEntries(b, inxt));
+   b = ATL_FindLastNode(b, inxt);
+   fprintf(fp, "#define ATL_%sAMM_LASTMB %d\n", cn, b->mbB);
+   fprintf(fp, "#define ATL_%sAMM_LASTNB %d\n", cn, b->nbB);
+   fprintf(fp, "#define ATL_%sAMM_LASTKB %d\n", cn, b->kbB);
+   mf = b->mflop[0];
+   fprintf(fp, "#define ATL_%sAMM_LASTMFLOP %e\n", cn, mf);
+   if (mfGE > 0.0)
+      fprintf(fp, "#define ATL_%sAMM_MFLOP_RATIO %e\n", cn, mf/mfGE);
+   fprintf(fp, "\n");
+   return(mf);
+}
+
+void GenSumH(char pre, char *outd, ATL_mmnode_t *gb, ATL_mmnode_t *sb, 
+             ATL_mmnode_t *rb)
+/*
+ * cn:[ge,sq,rk]
+ * For [ge,sq,rk] report: ncases, max[nb,mb,kb]
+ * -> for maxB, report: perf,time,ratio wt best ge
+ */
+{
+   FILE *fp;
+   double mf;
+   int i;
+
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, 0, 0, "sum", gb);
+   mf = PrintSum(fp, "ge", gb, 0.0);
+   if (sb)
+      PrintSum(fp, "sq", sb, mf);
+   if (rb)
+      PrintSum(fp, "rk", rb, mf);
+   CloseGenHeader(fp);
+}
+
 void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
 {
    ATL_mmcp_t *cb;
@@ -23794,6 +23855,9 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
       GenBlkH(pr, outd, "rk", lists[k+IRKK]);
       pr = (pre == 'd') ? 'z' : 'c';
    }
+   GenSumH(pre, outd, lists[IGE], lists[ISQ], lists[IRKK]);
+   GenSumH(pr, outd, lists[IGE+NMMLISTS], lists[ISQ+NMMLISTS], 
+           lists[IRKK+NMMLISTS]);
 /*
  * Create lists of only the unique kernels for [ge,sq,rk] in real & cplx
  * for use in prototyping.  We combine kern & K1 lists for each.
