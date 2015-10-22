@@ -23591,7 +23591,7 @@ double GenPerfH(char pre, char *outd, char *cn, double mfMax,
    const int FNDMAX = (mfMax == 0.0);
    int i, n, idxMax=0;
 
-   fp = OpenGenHeader(outd, 0, pre, cn, 0, 0, "perf");
+   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "perf", mb);
 /*
  * If not already set, compute the max perf & its index.  We'll use this
  * max as the denominator in our PERF array.
@@ -23692,7 +23692,7 @@ void GenKernH
    int ib;
    char bes[3] = {'0', '1', 'n'};
 
-   fp = OpenGenHeader(outd, 0, pre, cn, 0, 0, "kern");
+   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "kern", mb);
    for (ib=0; ib < 3; ib++)
       PrintMMProtos(fp, pre, "KERN", ub, GetOffset(&ub->auth, ub), 0, bes[ib]);
    for (ib=0; ib < 3; ib++)
@@ -23710,7 +23710,7 @@ void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
 {
    FILE *fp;
 
-   fp = OpenGenHeader(outd, 0, pre, cn, 0, 0, "blk");
+   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "blk", mb);
    @multidef st KBMAXs KBMINs KUs NUs MUs KBs NBs MBs
    @whiledef iv kbmax kbmin ku nu mu kbB nbB mbB
 @skip   PrintMMIntOffArr(fp, pre, "@(st)", mb, GetOffset(&mb->@(iv), mb));
@@ -23727,7 +23727,7 @@ void GenCpyA(char pre, char *outd, char *cn, ATL_mmnode_t *mb, ATL_mmnode_t *ub)
    ATL_mmcp_t *cb, *ucb;
    int flag=0, i, j;
 
-   fp = OpenGenHeader(outd, 0, pre, cn, 0, 0, "cm2am_a1");
+   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "cm2am_a1", mb);
    cb = GetMMCopyFromMMNodes(MMCopyEncode(pre, 'I', 'a', 'n'), mb);
    assert(cb);
    #ifdef Debug
@@ -23743,19 +23743,38 @@ void GenCpyA(char pre, char *outd, char *cn, ATL_mmnode_t *mb, ATL_mmnode_t *ub)
    KillAllCopyNodes(cb);
    CloseGenHeader(fp);
 }
-
-ATL_mmnode_t **GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists, 
-                             ATL_mmnode_t **ulsts)
-/*
- * RETURNS: unique comp lists
- */
+void GenCpyC(char pre, char *outd, char *cn, ATL_mmnode_t *mb, ATL_mmnode_t *ub)
 {
-   int i, k;
+   FILE *fp;
+   ATL_mmcp_t *cb, *ucb;
+   int flag=0, i, j;
+
+   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "ablk2cmat", mb);
+   cb = GetMMCopyFromMMNodes(MMCopyEncode(pre, 'F', 'c', 'n'), mb);
+   assert(cb);
+   #ifdef Debug
+      i = CountListEntries(cb, GetOffset(&cb->next, cb));
+      j = CountListEntries(mb, GetOffset(&mb->next, mb));
+      fprintf(stderr, "ncpy=%d, nmm=%d!\n", i, j);
+   #endif
+   ucb = AddUniqueCopyNode(NULL, cb);
+   PrintMMCpProtos(fp, "BLK2C", ucb, 'n', 'X');
+   KillAllCopyNodes(ucb);
+   PrintStrArrAtOff(fp, pre, "BLK2C", cb, GetOffset(&cb->next, cb),
+                    GetOffset(&cb->rout, cb), "ablk2cmat_t", 'n', 'X');
+   KillAllCopyNodes(cb);
+   CloseGenHeader(fp);
+}
+
+void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
+{
+   ATL_mmcp_t *cb;
+   ATL_mmnode_t *ulsts[6];  /* unordered lists of only unique kernels */
    char *nm="perf";
    char *cn[4]={"ge", "sq", "rk", "ts"};
    double mfMax;
+   int i, k;
    char pr = pre;
-   ATL_mmcp_t *cb;
 
 /*
  * Handle [perf,blk,flag,sum] which require only ordered lists
@@ -23782,19 +23801,19 @@ ATL_mmnode_t **GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists,
  */
    for (i=0; i < 3; i++)
    {
-//      for (k=0; k < 2; k++)  // cplx overwrite some 'd' --> fix better
-      k = 0;
+      for (k=0; k < 2; k++)  // cplx overwrite some 'd' --> fix better
       {
          const int h = i+i+k*NMMLISTS, u=k*3+i;
          ulsts[u] = AddUniqueMMKernCompList(NULL, lists[h]);
          if (i < 2)
          {
             ulsts[u] = AddUniqueMMKernCompList(ulsts[u], lists[h+1]);
-            GenKernH(pre, outd, cn[i], lists[h], lists[h+1], ulsts[u]);
+            GenKernH(pr, outd, cn[i], lists[h], lists[h+1], ulsts[u]);
          }
          else
-            GenKernH(pre, outd, cn[i], lists[h], NULL, ulsts[u]);
+            GenKernH(pr, outd, cn[i], lists[h], NULL, ulsts[u]);
       }
+      pr = (pre == 's') ? 'c' : 'z';
    }
 /*
  * Need unique copy for [cm2am_a[1,n,X],rm2am_a[1,n,X] and
@@ -23802,20 +23821,52 @@ ATL_mmnode_t **GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists,
  * -> have never genned, can we?: am2rm_a[1,n,X],
  */
    GenCpyA(pre, outd, "ge", lists[0], ulsts[0]);
-   return(ulsts);
+   GenCpyC(pre, outd, "ge", lists[0], ulsts[0]);
+   for (i=0; i < 6; i++)
+      KillAllMMNodes(ulsts[i]);  /* done with these! */
 }
 
+void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb, ATL_mmnode_t *ib)
+{
+   ATL_mmnode_t *cpA, *cpC;
+//   cpA = GetMMCopyFromMMNodes
+}
+void GenMake(char pre, char *outd, ATL_mmnode_t *rb, ATL_mmnode_t *ib)
+{
+}
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
 {
    FILE *fp;
-   ATL_mmnode_t *ulsts[6];  /* unordered lists of only unique kernels */
    int i;
+   ATL_mmnode_t *rb=NULL, *ib=NULL;;
 /*
- * First, generate performance files, which require nothing hard
+ * First, generate performance files, which require routs separated by
+ * various lists
  */
-   GenAllHeaders(pre, outd, lists, ulsts);
-   for (i=0; i < 6; i++)
-      KillAllMMNodes(ulsts[i]);
+   GenAllHeaders(pre, outd, lists);
+
+/* !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ * NOTE: before doing this, probably need to add something rank-K so we
+ *       we can use -DMove, even though we are not using this func now!
+ */
+/*
+ * Generating kernels & Makefile do not care which list kernels came from,
+ * or their order, so combine them all into one list for each data type 
+ * (2 lists total: real,complex), and remove any redundancies.
+ * NOTE: rank-K should be distinguished by flag setting (MMF_MV[A,B,C]),
+ * and so doesn't protection in new naming system.
+ */
+   for (i=0; i < ITRSM; i++)
+   {
+      rb = AddUniqueMMKernCompList(rb, lists[i]);
+      KillAllMMNodes(lists[i]);
+      ib = AddUniqueMMKernCompList(ib, lists[NMMLISTS+i]);
+      KillAllMMNodes(lists[NMMLISTS+i]);
+   }
+   GenAllKerns(pre, outd, rb, ib);
+   GenMake(pre, outd, rb, ib);
+   KillAllMMNodes(rb);
+   KillAllMMNodes(ib);
 }
 
 int main(int nargs, char **args)
@@ -23839,13 +23890,11 @@ int main(int nargs, char **args)
       if (i == ITRSM || i == ITRSM+NMMLISTS)
          KillAllMMStrings(lists[i]);
       else
-         PrepMMForGen(pre, "ammK", lists[i]);
+         PrepMMForGen(pre, "amm", lists[i]);
    }
 
    GenAllFiles(pre, outd, lists);
 
    free(outd);
-   for(i=0; i < 2*NMMLISTS; i++)
-      KillAllMMNodes(lists[i]);
    return(0);
 }

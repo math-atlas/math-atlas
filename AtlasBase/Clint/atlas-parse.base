@@ -4371,7 +4371,7 @@ static int MMCopyEncode
    }
    if (mat)
    {
-      if (mat == 'C')
+      if (mat == 'C' || mat == 'c')
          flag |= (1<<MMCP_CBLK);
       else /* A or B */
       {
@@ -4418,15 +4418,15 @@ static char *GetMMCopyName(ATL_mmcp_t *p)
    {
       if (p->ID) /* user-supplied */
       {
-         len += 14 - 2*2;
-         i = sprintf(sp, "ATL_%c%dcpy%sC", pre, ID, dir);
+         len += 16 - 2*2;
+         i = sprintf(sp, "ATL_%c%dcp%sBlkC", pre, ID, dir);
       }
       else /* ATL_<pre>cpy[To,From]C_<mu>x<nu>_<kvec> */
       {
-         len += 21 - 4*2;
+         len += 23 - 4*2;
          sp = malloc(len+1);
          assert(sp);
-         i = sprintf(sp, "ATL_%ccpy%sC_%dx%d_%d", pre, dir, 
+         i = sprintf(sp, "ATL_%ccp%sBlkC_%dx%d_%d", pre, dir, 
                      p->mu, p->nu, p->kvec);
       }
    }
@@ -4442,19 +4442,17 @@ static char *GetMMCopyName(ATL_mmcp_t *p)
 
       if (ID)  /* ATL_<pre><ID>cpy[To,From]A[N,T,C,H] */
       {
-         len += 16 - 3*2;
+         len += 18 - 3*2;
          sp = malloc(len+1);
          assert(sp);
-         i = sprintf(sp, "ATL_%c%dcpy%sA%c", pre, ID, dir, TA);
+         i = sprintf(sp, "ATL_%c%dcp%sBlkA%c", pre, ID, dir, TA);
       }
       else     /* ATL_<pre>cpy[To,From]A[N,T]_<u>_<kvec> */
       {
-         int u;
-         u = (flag & (1<<MMCP_ABLK)) ? p->mu : p->nu;
-         len += 22 - 4*2;
+         len += 24 - 4*2;
          sp = malloc(len+1);
          assert(sp);
-         i = sprintf(sp, "ATL_%ccpy%sA%c_%d_%d", pre, dir, TA, u, p->kvec);
+         i=sprintf(sp, "ATL_%ccp%sBlkA%c_%d_%d", pre, dir, TA, p->nu, p->kvec);
       }
    }
    assert(i < len);
@@ -4583,7 +4581,7 @@ ATL_mmcp_t *GetMMCopyFromMMNodes
       {
          ID = mp->stgA;
          if (!ID)
-            mu = mp->mu;
+            nu = mp->mu;  /* A/B storage always uses nu, only C uses mu */
       }
       else
       {
@@ -4598,12 +4596,6 @@ ATL_mmcp_t *GetMMCopyFromMMNodes
       cp->rout = GetMMCopyName(cp);
    }
    return(KillCopyNode(cb));
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static ATL_mmcp_t *MergeCopyFromMM(ATL_mmcp_t *cb, ATL_mmnode_t *mb)
-{
 }
 
 @iexp ip @(ip) 1 +
@@ -4663,7 +4655,7 @@ static void PrepMMForGen(char pre, char *nm, ATL_mmnode_t *mb)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static FILE *OpenGenHeader
+static FILE *OpenMMGenHeader
 (
    char *outd,/* directory to write to must be non-NULL */
    int UID,   /* 0 for ATLAS files, >0 for uammsearch */
@@ -4671,7 +4663,8 @@ static FILE *OpenGenHeader
    char *cn,  /* "[ge,sq,rk,u]" */
    char alp,  /* [1,n,X]; if 0 -> not doing copy file */
    char bet,  /* [0,1,n,X] if 0 -> not doing cblk file */
-   char *nm   /* "[blk,kern,flag,perf,sum,ablk2cmat,cmat2ablk,cm2am,am2cm]" */
+   char *nm,  /* "[blk,kern,flag,perf,sum,ablk2cmat,cmat2ablk,cm2am,am2cm]" */
+   ATL_mmnode_t *mb 
 )
 {
    char *fn, bs[6];
@@ -4725,6 +4718,22 @@ static FILE *OpenGenHeader
    fprintf(fp, "#ifndef %s\n", fn+i);
    fprintf(fp, "   #define %s 1\n", fn+i);
    fprintf(fp, "   /* Genned by ATLAS/src/blas/gemm/ammgen.c */\n\n");
+   fprintf(fp, "#include \"atlas_amm.h\"\n");
+   if (mb && strcmp(nm, "perf"))
+   {
+      i = CountListEntries(mb, GetOffset(&mb->next, mb));
+      if (cn[0] == 'g' && cn[1] == 'e')
+      {
+         fprintf(fp, "#ifdef ATL_AMM_NCASES\n   #if ATL_MM_NCASES != %d\n", i);
+         fprintf(fp, "      #error \"NCASES MISMATCH!\"\n   #endif\n");
+         fprintf(fp, "#else\n   #define ATL_AMM_NCASES %d\n#endif\n", i);
+      }
+      else
+      {
+         fprintf(fp, "#ifdef ATL_AMM_NCASES\n   #undef ATL_AMM_NCASES\n");
+         fprintf(fp, "#endif\n#define ATL_%sAMM_NCASES %d\n", cn, i);
+      }
+   }
 
    free(fn);
    return(fp);
