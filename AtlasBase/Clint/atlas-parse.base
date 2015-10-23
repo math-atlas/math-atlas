@@ -901,6 +901,13 @@ static double GetDoubleAtOff(void *mp, int off)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static void SetPtrAtOff(void *vb, int off, void *p)
+{
+   *((void**)(((char*)vb)+off)) = p;
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static int CountListEntries(void *vb, int nxtoff)
 {
    int i=0;
@@ -953,6 +960,62 @@ void *ATL_FindLastNode(void *vp, int nxtoff)
          vp = nxt;
    }
    return(vp);
+}
+
+void *FindNodeWithMaskOR(void *p, int nxtoff, int bvoff, int mask)
+/*
+ * Assuming list with next ptr at nxtoff, and bitvec at bvoff, search
+ * for any node with any bits present int mask set.
+ * RETURNS: ptr to first node with bits matching any bit in mask, if none, NULL
+ * NOTE: this function does a logical OR (any mask bit set) operation, not AND!
+ */
+{
+   while (p)
+   {
+      int bv;
+      bv = GetIntAtOff(p, bvoff);
+      if (bv & mask)
+         return(p);
+      p = GetStrAtOff(p, nxtoff);
+   }
+   return(NULL);
+}
+
+void *RemoveNodeFromList(void *vb, void *vp, int nxtoff)
+/*
+ * Finds struct ptr vp in vb, and removes it from singly-linked list
+ * RETURNS: possibly changed vb (only in case vb == vp)
+ */
+{
+   if (vb)
+   {
+      char *nxt, *prv=vb, *cur;
+      nxt = GetStrAtOff(vb, nxtoff);
+      if (vb == vp)
+      {
+         SetPtrAtOff(vb, nxtoff, NULL);
+         return((void*)nxt);
+      }
+      cur = nxt;
+
+      while (cur)
+      {
+         nxt = GetStrAtOff(vb, nxtoff);
+         if (cur == vp)
+         {
+            SetPtrAtOff(prv, nxtoff, nxt);
+            SetPtrAtOff(cur, nxtoff, NULL);
+            return(vb);
+         }
+         cur = nxt;
+      }
+   }
+   if (vb)
+   {
+      fprintf(stderr, "ERROR: cannot find %p in basefile %p!\n", vp, vb);
+      exit(1);
+   }
+   return(NULL);
 }
 
 #endif /* end atlas_genparse.h guard */
@@ -2481,7 +2544,6 @@ int MMNamelen(char pre, char *nm, ATL_mmnode_t *mp, int kb)
    len += 1 + NumDecDigits(mp->ku);   /* +_ku */
    return(len);     /* string terminator/beta/file ext not included! */
 } /* ATL_<pre><nm><ID>_<kb>[m,n]<vlen>p<pf>x<LS>_<flg>_MUxNUxKU */
-@iexp ip @(ip) 1 +
 
 /*
  * A kernel name is how a kernel is called from code, and is set by 
@@ -2498,6 +2560,7 @@ int MMNamelen(char pre, char *nm, ATL_mmnode_t *mp, int kb)
  * During installation, we can use mp->str to temporarily store the filename,
  * while we use mp->rout to store the kernel (call) name, w/o beta suffix.
  */
+@iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int SprintMMName(char *name, char pre, char *nm, ATL_mmnode_t *mp, int kb)
 /*
@@ -2515,6 +2578,7 @@ int SprintMMName(char *name, char pre, char *nm, ATL_mmnode_t *mp, int kb)
    return(i);
 }
 
+@iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp)
 /*
@@ -2546,6 +2610,7 @@ static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp)
    return(name);
 }
 
+@iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
 /*
@@ -2584,7 +2649,35 @@ static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
    name[h+2] = '\0';
    return(name);
 }
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int RemoveMMRuntimeK
+(
+   ATL_mmnode_t **MMB,  /* IN/OUT: original base ptr */
+   ATL_mmnode_t **KRUN, /* IN/OUT: base ptr for all runtime-K kerns  */
+)
+/*
+ * Splits original list MMB into runtime-K kerns, which are added to KRUN,
+ * and compile-time fixed K loops, which remain in MMB.  This possibly
+ * changes both lists, though no node is lost.
+ * RETURNS: number of runtime constant nodes removed from MMB added to KRUN
+ */
+{
+   ATL_mmnode_t *mb=(*MMB), *kb=(*KRUN), *mp;
+   int nk=0, nxtoff;
+   const int mask = (1<<MMF_KRUNTIME);
 
+   nxtoff = GetOffset(&mb->next, mb);
+   while ( (mp = FindNodeWithMaskOR(mb, nxtoff, mask)) )
+   {
+      mb = RemoveNodeFromList(mb, mp, nxtoff);
+      mp->next = kb;
+      kb = mp;
+   }
+   *MMB = mb;
+   *KRUN = kb;
+   return(nk);
+}
 @ROUT mvread r1read mmread
 #endif  /* end atlas_@(rt)parse.h guard */
 @ROUT atlas_mvtesttime.h
