@@ -981,6 +981,19 @@ void *FindNodeWithMaskOR(void *p, int nxtoff, int bvoff, int mask)
    return(NULL);
 }
 
+void *FindNodeWithIval(void *p, int nxtoff, int ivoff, int val)
+{
+   while (p)
+   {
+      int iv;
+      iv = GetIntAtOff(p, ivoff);
+      if (iv == val)
+         return(p);
+      p = GetStrAtOff(p, nxtoff);
+   }
+   return(NULL);
+}
+
 void *RemoveNodeFromList(void *vb, void *vp, int nxtoff)
 /*
  * Finds struct ptr vp in vb, and removes it from singly-linked list
@@ -2649,12 +2662,13 @@ static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
    name[h+2] = '\0';
    return(name);
 }
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static int RemoveMMRuntimeK
 (
    ATL_mmnode_t **MMB,  /* IN/OUT: original base ptr */
-   ATL_mmnode_t **KRUN, /* IN/OUT: base ptr for all runtime-K kerns  */
+   ATL_mmnode_t **KRUN  /* IN/OUT: base ptr for all runtime-K kerns  */
 )
 /*
  * Splits original list MMB into runtime-K kerns, which are added to KRUN,
@@ -2664,15 +2678,17 @@ static int RemoveMMRuntimeK
  */
 {
    ATL_mmnode_t *mb=(*MMB), *kb=(*KRUN), *mp;
-   int nk=0, nxtoff;
+   int nk=0, nxtoff, bvoff;
    const int mask = (1<<MMF_KRUNTIME);
 
    nxtoff = GetOffset(&mb->next, mb);
-   while ( (mp = FindNodeWithMaskOR(mb, nxtoff, mask)) )
+   bvoff =  GetOffset(&mb->flag, mb);
+   while ( (mp = FindNodeWithMaskOR(mb, nxtoff, bvoff, mask)) )
    {
       mb = RemoveNodeFromList(mb, mp, nxtoff);
       mp->next = kb;
       kb = mp;
+      nk++;
    }
    *MMB = mb;
    *KRUN = kb;
@@ -4397,7 +4413,8 @@ struct MMCopyFunc
    int mu, nu;        /* unrollings: A/B copies use only nu */
    int kvec;          /* vlen for k-vec storage, else 0 */
    int flag;          /* bits: vals are MMCP_* */
-   char *file;        /* filename */
+@skip   char *file;        /* filename */
+   int rtlen;         /* # of chars/bytes in rout */
    char *rout;        /* callable routine name w/o alpha/beta suffix */
    char *genstr;      /* string that will generate ID=0 kerns */
    ATL_mmcp_t *next;
@@ -4503,7 +4520,7 @@ static int MMCopyEncode
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static char *GetMMCopyName(ATL_mmcp_t *p)
+static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
 /*
  * RETURNS : Unique name for copy file, with at least 5 extra bytes alloc
  *           so that you can suffix it with _aXbX or .c
@@ -4522,8 +4539,8 @@ static char *GetMMCopyName(ATL_mmcp_t *p)
       len = 9+NumDecDigits(p->mu)+NumDecDigits(p->nu)+NumDecDigits(p->kvec);
 /*
  * For C format routine naming scheme is:
- * ID=0 : ATL_<pre>cpy[Into,From]C_<mu>x<nu>_<kvec>
- * ID>0 : ATL_<pre><ID>cpy[Into,From]C
+ * ID=0 : ATL_<pre>cp[Into,From]BlkC_<mu>x<nu>_<kvec>
+ * ID>0 : ATL_<pre><ID>cp[Into,From]BlkC
  */
    if (flag & (1<<MMCP_CBLK))
    {
@@ -4543,22 +4560,22 @@ static char *GetMMCopyName(ATL_mmcp_t *p)
    }
 /*
  * For A/B format, routine name scheme is:
- * ID=0 : ATL_<pre>cpy[To,From]A[N,T]_<u>_<kvec>
- * ID>0 : ATL_<pre><ID>cpy[To,From]A[N,T,C,H]
+ * ID=0 : ATL_<pre>cp[To,From]BlkA[N,T]_<u>_<kvec>
+ * ID>0 : ATL_<pre><ID>cp[To,From]BlkA[N,T,C,H]
  */
    else
    {
       char TA;
       TA  = MMCopyGetTrans(flag);
 
-      if (ID)  /* ATL_<pre><ID>cpy[To,From]A[N,T,C,H] */
+      if (ID)  /* ATL_<pre><ID>cp[To,From]BlkA[N,T,C,H] */
       {
          len += 18 - 3*2;
          sp = malloc(len+1);
          assert(sp);
          i = sprintf(sp, "ATL_%c%dcp%sBlkA%c", pre, ID, dir, TA);
       }
-      else     /* ATL_<pre>cpy[To,From]A[N,T]_<u>_<kvec> */
+      else     /* ATL_<pre>cp[To,From]BlkA[N,T]_<u>_<kvec> */
       {
          len += 24 - 4*2;
          sp = malloc(len+1);
@@ -4567,6 +4584,8 @@ static char *GetMMCopyName(ATL_mmcp_t *p)
       }
    }
    assert(i < len);
+   if (LEN)
+      *LEN = i;
    return(sp);
 }
 
@@ -4595,7 +4614,7 @@ static ATL_mmcp_t *CloneCopyNode(ATL_mmcp_t *b)
 /*
  * Now get our own copies of strings
  */
-   @whiledef st rout file genstr
+   @whiledef st rout genstr
    if (p->@(st))
       p->@(st) = DupString(p->@(st));
    @endwhile
@@ -4609,7 +4628,7 @@ static ATL_mmcp_t *KillCopyNode(ATL_mmcp_t *cp)
    ATL_mmcp_t *next=NULL;
    if (cp)
    {
-      @whiledef st file rout genstr
+      @whiledef st rout genstr
       if (cp->@(st))
          free(cp->@(st));
       @endwhile
@@ -4675,7 +4694,7 @@ void GetMMCopyRefresh(int flag, ATL_mmnode_t *mb)
       mp->flag = flag;
       if (mp->rout)
          free(mp->rout);
-      mp->rout = GetMMCopyName(mp);
+      mp->rout = GetMMCopyName(mp, &mp->rtlen);
    }
 }
 
@@ -4723,9 +4742,103 @@ ATL_mmcp_t *GetMMCopyFromMMNodes
          kvec = mp->vlen;
       cp->next = GetMMCopyNode(ID, mu, nu, kvec, flag);
       cp = cp->next;
-      cp->rout = GetMMCopyName(cp);
+      cp->rout = GetMMCopyName(cp, &cp->rtlen);
    }
    return(KillCopyNode(cb));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void GetMMAllUniqueCopyFromMMNodes
+(
+   ATL_mmnode_t *mb,  /* list of amm kerns */
+   ATL_mmcp_t **AB,  /* cpy func where A & B can use same routine */
+   ATL_mmcp_t **CB    /* copy routines for C */
+)
+/*
+ * Creates seperate lists for copy funcs for A&B, and C.  For types where
+ * A & B format are the same other than tranposition (includes both access-
+ * and block-major ATLAS formats), each mb node will generate four ab nodes,
+ * one for mu/nu/N/T.  For user types that can only be applied to A or B,
+ * will need a way to find both Trans and NoTrans versions; right now we
+ * have only one stgID!
+ */
+{
+   ATL_mmcp_t *ab=(*AB), *cb = (*CB), *np;
+   ATL_mmnode_t *mp;
+
+   np = GetMMCopyNode(0, 0, 0, 0, 0);
+
+/*
+ * Setup copy list matching the MM kerns in mb 
+ */
+   for (mp=mb; mp; mp = mp->next)
+   {
+      ATL_mmcp_t *p;
+      int kvec = 0;
+
+      np->kvec = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 0;
+      np->ID = mp->stgC; np->mu = mp->mu; np->nu = mp->nu;
+      if (!FindCopy(cb, np))  /* not already in list, so add it */
+      {
+         p = CloneCopyNode(np);
+         p->flag = (1<<MMCP_CBLK);
+         p->rout = GetMMCopyName(p, &p->rtlen);
+         p->next = cb;
+         cb = p;
+      }
+/*
+ *    Add to A/B lists as necessary
+ */
+      np->ID = mp->stgA;
+      np->mu = 0;
+      np->flag = (1<<MMCP_ABLK) | (1<<MMCP_TOBLK);
+      if (np->ID) /* user-generated kerns may not go to both cases */
+      {
+         assert(0); // should not happen yet
+      }
+      else /* Add four nodes to ab, using [mu,nu]x[N,T] */
+      {
+         np->nu = mp->mu;
+         if (!FindCopy(ab, np))
+         {
+            p = CloneCopyNode(np);
+            p->rout = GetMMCopyName(p, &p->rtlen);
+            p->next = ab;
+            ab = p;
+         }
+         np->flag |= (1<<MMCP_TRANS);
+         if (!FindCopy(ab, np))
+         {
+            p = CloneCopyNode(np);
+            p->rout = GetMMCopyName(p, &p->rtlen);
+            p->next = ab;
+            ab = p;
+         }
+
+         np->flag = (1<<MMCP_TOBLK);
+         np->nu = mp->nu;
+         if (!FindCopy(ab, np))
+         {
+            p = CloneCopyNode(np);
+            p->rout = GetMMCopyName(p, &p->rtlen);
+            p->next = ab;
+            ab = p;
+         }
+         np->flag |= (1<<MMCP_TRANS);
+         if (!FindCopy(ab, np))
+         {
+            p = CloneCopyNode(np);
+            p->rout = GetMMCopyName(p, &p->rtlen);
+            p->next = ab;
+            ab = p;
+         }
+      }
+   }
+
+   KillCopyNode(np);
+   *AB = ab;
+   *CB = cb;
 }
 
 @iexp ip @(ip) 1 +
@@ -4743,6 +4856,8 @@ static void PrepMMForGen(char pre, char *nm, ATL_mmnode_t *mb)
 
    for (mp=mb; mp; mp = mp->next)
    {
+      if (mp->flag & (1<<MMF_KUISKB))
+         assert((mp->flag & (1<<MMF_KRUNTIME)) == 0);
       if (mp->auth)
          free(mp->auth);
       mp->auth = GetMMKernName(pre, nm, mp);
