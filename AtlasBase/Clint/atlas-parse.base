@@ -4452,6 +4452,18 @@ static char MMCopyGetPre(int flag)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static char *MMCopyGetCompType(int flag)
+{
+   char *ctyp;
+   if (flag & (1<<MMCP_REAL))
+      ctyp = (flag & (1<<MMCP_SINGLE)) ? "SREAL":"DREAL";
+   else
+      ctyp = (flag & (1<<MMCP_SINGLE)) ? "SCPLX":"DCPLX";
+   return(ctyp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static char MMCopyGetUpr(int flag)
 {
    return((flag & (1<<MMCP_SINGLE)) ? 's':'d');
@@ -4660,6 +4672,18 @@ ATL_mmcp_t *FindCopy(ATL_mmcp_t *b, ATL_mmcp_t *n)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+ATL_mmcp_t *FindLastCopyNode(ATL_mmcp_t *b)
+{
+   if (b)
+   {
+      while(b->next)
+         b = b->next;
+   }
+   return(b);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static ATL_mmcp_t *AddUniqueCopyNode(ATL_mmcp_t *cb, ATL_mmcp_t *cnb)
 /*
  * Adds all copy entries in cnb to cb, if cb doesn't already have a 
@@ -4751,6 +4775,9 @@ ATL_mmcp_t *GetMMCopyFromMMNodes
 /* procedure @(ip) */
 void GetMMAllUniqueCopyFromMMNodes
 (
+   char pre,  /* '[s,d,c,z]' */
+   char dirC,  /* '[T,F]' */
+   char dirA,  /* '[T,F]' */
    ATL_mmnode_t *mb,  /* list of amm kerns */
    ATL_mmcp_t **AB,  /* cpy func where A & B can use same routine */
    ATL_mmcp_t **CB    /* copy routines for C */
@@ -4766,6 +4793,17 @@ void GetMMAllUniqueCopyFromMMNodes
 {
    ATL_mmcp_t *ab=(*AB), *cb = (*CB), *np;
    ATL_mmnode_t *mp;
+   int flgA, flgC;
+
+   flgC = (pre == 's' || pre == 'd') ? (1<<MMCP_REAL) : 0;
+   if (pre == 's' || pre == 'c')
+      flgC |= (1<<MMCP_SINGLE);
+   flgA = flgC;
+   if (dirA == 'T')
+      flgA |= (1<<MMCP_TOBLK);
+   if (dirC == 'T')
+      flgC |= (1<<MMCP_TOBLK);
+   flgC |= (1<<MMCP_CBLK);
 
    np = GetMMCopyNode(0, 0, 0, 0, 0);
 
@@ -4779,10 +4817,10 @@ void GetMMAllUniqueCopyFromMMNodes
 
       np->kvec = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 0;
       np->ID = mp->stgC; np->mu = mp->mu; np->nu = mp->nu;
+      np->flag = flgC;
       if (!FindCopy(cb, np))  /* not already in list, so add it */
       {
          p = CloneCopyNode(np);
-         p->flag = (1<<MMCP_CBLK);
          p->rout = GetMMCopyName(p, &p->rtlen);
          p->next = cb;
          cb = p;
@@ -4792,13 +4830,13 @@ void GetMMAllUniqueCopyFromMMNodes
  */
       np->ID = mp->stgA;
       np->mu = 0;
-      np->flag = (1<<MMCP_ABLK) | (1<<MMCP_TOBLK);
+      np->flag = flgA;
       if (np->ID) /* user-generated kerns may not go to both cases */
       {
          assert(0); // should not happen yet
       }
-      else /* Add four nodes to ab, using [mu,nu]x[N,T] */
-      {
+      else /* Add four nodes to ab, using [A(mu),B(nu)]x[N,T] */
+      {    /* don't set MMCP_ABLK, since A or B is same for us */
          np->nu = mp->mu;
          if (!FindCopy(ab, np))
          {
@@ -4816,22 +4854,25 @@ void GetMMAllUniqueCopyFromMMNodes
             ab = p;
          }
 
-         np->flag = (1<<MMCP_TOBLK);
-         np->nu = mp->nu;
-         if (!FindCopy(ab, np))
+         if (mp->mu != mp->nu)
          {
-            p = CloneCopyNode(np);
-            p->rout = GetMMCopyName(p, &p->rtlen);
-            p->next = ab;
-            ab = p;
-         }
-         np->flag |= (1<<MMCP_TRANS);
-         if (!FindCopy(ab, np))
-         {
-            p = CloneCopyNode(np);
-            p->rout = GetMMCopyName(p, &p->rtlen);
-            p->next = ab;
-            ab = p;
+            np->flag = flgA;
+            np->nu = mp->nu;
+            if (!FindCopy(ab, np))
+            {
+               p = CloneCopyNode(np);
+               p->rout = GetMMCopyName(p, &p->rtlen);
+               p->next = ab;
+               ab = p;
+            }
+            np->flag |= (1<<MMCP_TRANS);
+            if (!FindCopy(ab, np))
+            {
+               p = CloneCopyNode(np);
+               p->rout = GetMMCopyName(p, &p->rtlen);
+               p->next = ab;
+               ab = p;
+            }
          }
       }
    }

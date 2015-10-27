@@ -23965,35 +23965,182 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
               lists[IRKK+NMMLISTS]);
 }
 
-void GenAllKerns(char pre, char *outd, ATL_mmnode_t **rb, ATL_mmnode_t **ib,
-                 ATL_mmcp_t **rcpA, **rcpC, ATL_mmcp_t **icpA, **icpC)
+static void AddAlpBetSuf(char *rt, int rl, int ial, int ibe)
+/*
+ * Add _aXbX suffix to rt, which is presently of length rl
+ */
 {
-   ATL_mmcp_t *rA=NULL, *rC=NULL, *iA=NULL, *iC=NULL;
-
-   GetMMAllUniqueCopyFromMMNodes(&rA, &rC);
-
-   *rcpA = rA;
-   *rcpC = rC;
-   *icpA = iA;
-   *icpC = iC;
+   rt[rl] = '_';
+   rt[rl+1] = 'a';
+   if (ial == -1)
+      rt[rl+2] = 'n';
+   else if (ial == 2)
+      rt[rl+2] = 'X';
+   else
+      rt[rl+2] = ial+48;
+   rt[rl+3] = 'b';
+   if (ibe == -1)
+      rt[rl+4] = 'n';
+   else if (ibe > 1)
+      rt[rl+4] = 'X';
+   else
+      rt[rl+4] = ibe+48;
 }
 
-void GenMake(char pre, char *outd, ATL_mmnode_t *rb, ATL_mmnode_t *ib)
+void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb, 
+                 ATL_mmcp_t *cpA, ATL_mmcp_t *cpC)
+{
+   ATL_mmcp_t *last, *cp;
+   char *sgen;
+   int i, len, mID, mU;
+   char pr=pre;
+/*
+ * join all copy routs into one list temporarily
+ */
+   last = FindLastCopyNode(cpA);
+   last->next = cpC;
+/*
+ * Get a string of max length for all system calls
+ */
+   mID=mU=len=i=0;
+   for (cp=(!i)?cpA:cpC; cp; cp = cp->next)
+   {
+      len = Mmax(len, cp->rtlen);
+      mID = Mmax(mID, cp->ID);
+      mU = Mmax(mU, cp->mu);
+      mU = Mmax(mU, cp->nu);
+      mU = Mmax(mU, cp->kvec);
+   }
+   len += strlen(outd) + 1;  /* outd */
+   len += 17;  /* " > /dev/null 2>&1" */
+   assert(mID == 0);  /* just until we support user copies */
+   len += 64 - 2*4;  /* C format string */
+   len += 4*NumDecDigits(mU); /* mu,nu,kvec */
+   sgen = malloc(len+1);
+   assert(sgen);
+/*
+ * Generate all needed copy routines
+ */
+   printf("\nGENERATING MMCOPY FILES\n");
+   for (cp=cpA; cp; cp = cp->next)
+   {
+      int flag = cp->flag;
+      int k;
+      char pr;
+      pr = MMCopyGetPre(cp->flag);
+      printf("   -> %s\n", cp->rout);
+      if (flag & (1<<MMCP_CBLK))
+      {
+         k = sprintf(sgen, 
+      "make genall_%s pre=%c vec=NA vl=%d mu=%d nu=%d cpvlen=1 rt=%s/%s.c",
+                     (flag&(1<<MMCP_TOBLK)) ? "C2blk":"blk2C", pr, 
+                     cp->kvec ? cp->kvec:1, cp->mu, cp->nu, outd, cp->rout);
+      }
+      else /* generate A/B copy */
+      {
+         k = sprintf(sgen, 
+             "make genall_%s pre=%c vec=NA vl=%d UR=%d cpvlen=1 rt=%s/%s.c",
+                     (flag&(1<<MMCP_TOBLK))?"A2blk":"blk2A", pr, 
+                     cp->kvec ? cp->kvec:1, cp->nu, outd, cp->rout);
+      }
+      assert(k < len);
+      k += sprintf(sgen+k, " > /dev/null 2>&1");
+      assert(k <= len);
+      if ((k=system(sgen)))
+      {
+         fprintf(stderr, "\n\ncpgenstr='%s' returns %d!\n\n", sgen, k);
+         exit(k);
+      }
+   }
+   printf("DONE GENERATING MMCOPY FILES\n");
+   last->next = NULL;  /* disconnect A/C lists */
+   free(sgen);
+}
+
+void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
+             ATL_mmcp_t *cpA, ATL_mmcp_t *cpC)
 /*
  * rb (real base) & ib (imag/cplx base) files have already been made
  * at least compile-time unique (same source file might occur multiple
  * times due to need to compile with -DKB)
  */
 {
+   FILE *fp;
+   char *fn;
+   ATL_mmcp_t *cp;
+   char *sals[3] = {"1", "N1", "X"};
    char als[3] = {'1', 'n', 'X'};
+   char *sbes[4] = {"0", "1", "N1", "X"};
    char bes[4] = {'0', '1', 'n', 'X'};  /* use 1st 3 for mmkerns */
-/*
- * Get a unique list of copy routines required for A, B, & C 
- * For native copies (ID=0), A/B lists are same, but user-defined storage
- * patterns may have different for A & B, so have to split user-defined
- * types from others
- */
+   char dcomp[8] = {'$', '(', 'D', 'M', 'C', ')', '\0'};
+   char dflags[12] = {'$','(','D','M','C','F','L','A','G','S',')','\0'};
 
+
+   fn = malloc(strlen(outd)+11);
+   assert(fn);
+   sprintf(fn, "%s/%cMake_amm", outd, pre);
+   fp = fopen(fn, "w");
+   assert(fp);
+   free(fn);
+   fprintf(fp, "include ../Make.inc\n");
+   fprintf(fp, "CDEFS2=$(CDEFS)\n\n");
+/*
+ * Spew out kernels to be compiled
+ */
+   fprintf(fp, "objs =");
+   for (cp=cpC; cp; cp = cp->next)  /* C copy routs */
+   {
+      int ib;
+      for (ib=0; ib < 4; ib++)
+      {
+         int ia;
+         for (ia=0; ia < 3; ia++)
+            fprintf(fp, " \\\n      %s_a%cb%c.o", cp->rout, als[ia], bes[ib]);
+      }
+   }
+   fprintf(fp, "\n");
+/*
+ * library make targets
+ */
+   fprintf(fp, "\n\nlib : %clib.grd\nall : %clib.grd\n%clib : %clib.grd\n",
+           pre, pre, pre, pre);
+   fprintf(fp, "%clib.grd : $(objs)\n", pre);
+   fprintf(fp, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t touch %clib.grd\n", pre);
+   fprintf(fp, "clean : %cclean\n", pre);
+   fprintf(fp, "%cclean:\n\t- rm -f $(objs)\n", pre);
+   fprintf(fp, "killall : %ckillall\n", pre);
+   fprintf(fp, "%ckillall : %cclean\n", pre, pre);
+   fprintf(fp, "\t- $(ARCHIVER) d $(ATLASlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t- rm -f ATL_%c*.[S,c]\n\n", pre);
+/*
+ * Make targets for C copy routines
+ */
+   dflags[3] = dcomp[3] = 'K';
+   for (cp=cpC; cp; cp = cp->next)  /* C copy routs */
+   {
+      char *styp;
+      int ib;
+      char pr;
+      styp = MMCopyGetCompType(cp->flag);
+      for (ib=0; ib < 4; ib++)
+      {
+         int ia;
+         for (ia=0; ia < 3; ia++)
+         {
+            fprintf(fp, "%s_a%cb%c.o : %s.c\n", cp->rout, als[ia], bes[ib], 
+                    cp->rout);
+            fprintf(fp, "\t%s %s -c $(CDEFS) -D%s=1 -DBETA%s=1 -DALPHA%s=1",
+                    dcomp, dflags, styp, sbes[ib], sals[ia]);
+            fprintf(fp, " -o %s_a%cb%c.o %s.c\n", cp->rout, als[ia], bes[ib], 
+                    cp->rout);
+         }
+      }
+   }
+
+   fclose(fp);
 }
 
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
@@ -24001,11 +24148,15 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
    FILE *fp;
    int i;
    ATL_mmnode_t *rb=NULL, *ib=NULL;;
+   ATL_mmcp_t *cpA=NULL, *cpC=NULL;
+   const char cpr = (pre == 'd') ? 'z' : 'c';
 /*
  * First, generate performance files, which require routs separated by
  * various lists
  */
+   printf("\nGENERATING HEADER FILES\n");
    GenAllHeaders(pre, outd, lists);
+   printf("DONE HEADER GENERATION\n");
 
 /*
  * Generating kernels & Makefile do not care which list kernels came from,
@@ -24023,10 +24174,22 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
       ib = AddUniqueMMKernCompList(ib, lists[NMMLISTS+i]);
       KillAllMMNodes(lists[NMMLISTS+i]);
    }
-   GenAllKerns(pre, outd, rb, ib);
-   GenMake(pre, outd, rb, ib);
-   KillAllMMNodes(rb);
+/*
+ * Now create lists of copy routines for both real & complex
+ */
+   GetMMAllUniqueCopyFromMMNodes(pre, 'F', 'T', rb, &cpA, &cpC);
+   GetMMAllUniqueCopyFromMMNodes(cpr, 'F', 'T', ib, &cpA, &cpC);
+/*
+ * Now, kerns are compiled the same for real and complex, so reduce real
+ * and complex to one unique list
+ */
+   rb = AddUniqueMMKernCompList(rb, ib);
    KillAllMMNodes(ib);
+   GenAllKerns(pre, outd, rb, cpA, cpC);
+   GenMake(pre, outd, rb, cpA, cpC);
+   KillAllMMNodes(rb);
+   KillAllCopyNodes(cpA);
+   KillAllCopyNodes(cpC);
 }
 
 int main(int nargs, char **args)
