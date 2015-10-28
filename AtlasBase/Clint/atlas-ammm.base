@@ -24038,10 +24038,14 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
       }
       else /* generate A/B copy */
       {
+         char *targ;
+         if (flag & (1<<MMCP_REAL))
+            targ = (flag & (1<<MMCP_TOBLK)) ? "A2blk":"blk2A";
+         else
+            targ = (flag & (1<<MMCP_TOBLK)) ? "cA2blk":"cblk2A";
          k = sprintf(sgen, 
              "make genall_%s pre=%c vec=NA vl=%d UR=%d cpvlen=1 rt=%s/%s.c",
-                     (flag&(1<<MMCP_TOBLK))?"A2blk":"blk2A", pr, 
-                     cp->kvec ? cp->kvec:1, cp->nu, outd, cp->rout);
+                     targ, pr, cp->kvec ? cp->kvec:1, cp->nu, outd, cp->rout);
       }
       assert(k < len);
       k += sprintf(sgen+k, " > /dev/null 2>&1");
@@ -24072,6 +24076,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
    char als[3] = {'1', 'n', 'X'};
    char *sbes[4] = {"0", "1", "N1", "X"};
    char bes[4] = {'0', '1', 'n', 'X'};  /* use 1st 3 for mmkerns */
+   char ctas[4] = {'N', 'T', 'C', 'H'};
    char dcomp[8] = {'$', '(', 'D', 'M', 'C', ')', '\0'};
    char dflags[12] = {'$','(','D','M','C','F','L','A','G','S',')','\0'};
 
@@ -24134,12 +24139,41 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
                     cp->rout);
             fprintf(fp, "\t%s %s -c $(CDEFS) -D%s=1 -DBETA%s=1 -DALPHA%s=1",
                     dcomp, dflags, styp, sbes[ib], sals[ia]);
-            fprintf(fp, " -o %s_a%cb%c.o %s.c\n", cp->rout, als[ia], bes[ib], 
-                    cp->rout);
+            fprintf(fp, "\\\n -DATL_MU=%d -DATL_NU=%d -o %s_a%cb%c.o %s.c\n", 
+                    cp->mu, cp->nu, cp->rout, als[ia], bes[ib], cp->rout);
          }
       }
    }
-
+/*
+ * Make targets for A/B copy routines
+ */
+   for (cp=cpA; cp; cp = cp->next) 
+   {
+      char *styp, *cnj[2] = {"", "-DConj_=1"};
+      const int flag = cp->flag;
+      int ic;
+      char pr;
+      styp = MMCopyGetCompType(cp->flag);
+      for (ic=(flag&(1<<MMCP_REAL))?1:0; ic >=0 ; ic--)
+      {
+         int it;
+         for (it=0; it < 2; it++)
+         {
+            int ia;
+            for (ia=0; ia < 3; ia++)
+            {
+               fprintf(fp, "%s_%ca%c.o : %s.c\n", cp->rout, ctas[2*ic+it], 
+                       als[ia], cp->rout);
+               fprintf(fp, "\t%s %s -c $(CDEFS) -D%s=1 -DALPHA%s=1",
+                       dcomp, dflags, styp, sals[ia]);
+               fprintf(fp, " \\\n           -DATL_NU=%d -DTRANS%c_=1 %s", 
+                       cp->nu, ctas[it],  cnj[ic]);
+               fprintf(fp, " \\\n           -o %s%c_a%c.o %s.c\n", 
+                       cp->rout, als[ia], ctas[2*ic+it], cp->rout);
+            }
+         }
+      }
+   }
    fclose(fp);
 }
 
