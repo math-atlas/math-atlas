@@ -23698,10 +23698,10 @@ void GenKernH
    for (ib=0; ib < 3; ib++)
    {
       PrintStrArrAtOff(fp, pre, "KERN", mb, GetOffset(&mb->next, mb),
-                       GetOffset(&mb->auth, mb), "ammkern_t", 0, bes[ib]);
+                       GetOffset(&mb->auth, mb), "ammkern_t", 0, 0, bes[ib]);
       if (mkb)
          PrintStrArrAtOff(fp, pre, "KERN_K1", mb, GetOffset(&mb->next, mb),
-                          GetOffset(&mb->auth, mb), "ammkern_t", 0, bes[ib]);
+                          GetOffset(&mb->auth, mb), "ammkern_t", 0, 0, bes[ib]);
    }
    CloseGenHeader(fp);
 }
@@ -23760,8 +23760,8 @@ void GenCpyA(char pre, char *outd, char *cn, char dir, char alp,
    else
       sprintf(fn, "am2cm_a%c", alp);
    fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, fn, mb);
-   fn[6] = 't';  /* switch file name base to type name */
-   fn[7] = '\0';
+   fn[6] = 't'; fn[7] = '\0';  /* switch fn to type name */
+
    for (im=0; im < 2; im++)
    {
       arrnm[0] = mats[im];
@@ -23776,10 +23776,10 @@ void GenCpyA(char pre, char *outd, char *cn, char dir, char alp,
          assert(cb);
          ucb = AddUniqueCopyNode(NULL, cb);
          arrnm[6] = '\0';
-         PrintMMCpProtos(fp, arrnm, ucb, alp, 0);
+         PrintMMCpProtosA(fp, arrnm, ucb, dir, alp);
          KillAllCopyNodes(ucb);
          PrintStrArrAtOff(fp, pre, arrnm, cb, GetOffset(&cb->next, cb),
-                          GetOffset(&cb->rout, cb), fn, alp, 0);
+                          GetOffset(&cb->rout, cb), fn, ta, alp, 0);
          KillAllCopyNodes(cb);
       }
    }
@@ -23801,10 +23801,10 @@ void GenCpyC(FILE *fp, char pre, char *outd, char *cn, char dir, char *type,
       fprintf(stderr, "ncpy=%d, nmm=%d!\n", i, j);
    #endif
    ucb = AddUniqueCopyNode(NULL, cb);
-   PrintMMCpProtos(fp, arrnm, ucb, alp, bet);
+   PrintMMCpProtosC(fp, arrnm, ucb, dir, alp, bet);
    KillAllCopyNodes(ucb);
    PrintStrArrAtOff(fp, pre, arrnm, cb, GetOffset(&cb->next, cb),
-                    GetOffset(&cb->rout, cb), type, alp, bet);
+                    GetOffset(&cb->rout, cb), type, 0, alp, bet);
    KillAllCopyNodes(cb);
 }
 
@@ -23819,8 +23819,10 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
       strcpy(rt, "cmat2ablk");
    else
       strcpy (rt, "ablk2cmat");
+
    fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, rt, mb);
    rt[9] = '_'; rt[10] = 't'; rt[11] = '\0';
+@skip   strcpy(rt, dir == 'T' ? "cmat2ablk_t" : "ablk2cmat_t");
    for (ib=0; ib < 4; ib++)
    {
       int ia;
@@ -23961,7 +23963,7 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
    GenAllCpyA(pr, outd, 'T', lists[IGE+NMMLISTS], lists[ISQ+NMMLISTS], 
               lists[IRKK+NMMLISTS]);
    GenAllCpyC(pre, outd, 'F', lists[IGE], lists[ISQ], lists[IRKK]);
-   GenAllCpyC(pre, outd, 'F', lists[IGE+NMMLISTS], lists[ISQ+NMMLISTS], 
+   GenAllCpyC(pr, outd, 'F', lists[IGE+NMMLISTS], lists[ISQ+NMMLISTS], 
               lists[IRKK+NMMLISTS]);
 }
 
@@ -24103,6 +24105,18 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
             fprintf(fp, " \\\n      %s_a%cb%c.o", cp->rout, als[ia], bes[ib]);
       }
    }
+
+   for (cp=cpA; cp; cp = cp->next)  /* A/B copy routs */
+   {
+      const int NTA = (cp->flag & (1<<MMCP_REAL)) ? 2:4;
+      int it;
+      for (it=0; it < NTA; it++)
+      {
+         int ia;
+         for (ia=0; ia < 3; ia++)
+            fprintf(fp, " \\\n      %s_%ca%c.o", cp->rout, ctas[it], als[ia]);
+      }
+   }
    fprintf(fp, "\n");
 /*
  * library make targets
@@ -24139,8 +24153,11 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
                     cp->rout);
             fprintf(fp, "\t%s %s -c $(CDEFS) -D%s=1 -DBETA%s=1 -DALPHA%s=1",
                     dcomp, dflags, styp, sbes[ib], sals[ia]);
-            fprintf(fp, "\\\n -DATL_MU=%d -DATL_NU=%d -o %s_a%cb%c.o %s.c\n", 
-                    cp->mu, cp->nu, cp->rout, als[ia], bes[ib], cp->rout);
+            fprintf(fp, 
+            " \\\n           -DATL_USERCPMM=%s_a%cb%c -DATL_MU=%d -DATL_NU=%d",
+                    cp->rout, als[ia], bes[ib], cp->mu, cp->nu);
+            fprintf(fp, " \\\n           -o %s_a%cb%c.o %s.c\n", 
+                    cp->rout, als[ia], bes[ib], cp->rout);
          }
       }
    }
@@ -24151,25 +24168,29 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
    {
       char *styp, *cnj[2] = {"", "-DConj_=1"};
       const int flag = cp->flag;
+      const int NC = (flag&(1<<MMCP_REAL)) ? 1 : 2;
       int ic;
       char pr;
       styp = MMCopyGetCompType(cp->flag);
-      for (ic=(flag&(1<<MMCP_REAL))?1:0; ic >=0 ; ic--)
+      for (ic=0; ic < NC; ic++)
       {
          int it;
          for (it=0; it < 2; it++)
          {
             int ia;
+            const int itc = ic*NC+it;
             for (ia=0; ia < 3; ia++)
             {
-               fprintf(fp, "%s_%ca%c.o : %s.c\n", cp->rout, ctas[2*ic+it], 
+               fprintf(fp, "%s_%ca%c.o : %s.c\n", cp->rout, ctas[itc], 
                        als[ia], cp->rout);
                fprintf(fp, "\t%s %s -c $(CDEFS) -D%s=1 -DALPHA%s=1",
                        dcomp, dflags, styp, sals[ia]);
                fprintf(fp, " \\\n           -DATL_NU=%d -DTRANS%c_=1 %s", 
                        cp->nu, ctas[it],  cnj[ic]);
-               fprintf(fp, " \\\n           -o %s%c_a%c.o %s.c\n", 
-                       cp->rout, als[ia], ctas[2*ic+it], cp->rout);
+               fprintf(fp, " \\\n           -DATL_USERCPMM=%s_%ca%c", cp->rout, 
+                       ctas[itc], als[ia]);
+               fprintf(fp, " \\\n           -o %s_%ca%c.o %s.c\n", 
+                       cp->rout, ctas[itc], als[ia], cp->rout);
             }
          }
       }

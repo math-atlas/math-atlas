@@ -5080,7 +5080,7 @@ void PrintMMIntOffArr(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off)
 }
 @endskip
 
-char *FillInMMScalarSuff(char alp, char bet)
+char *FillInMMScalarSuff(char ta, char alp, char bet)
 {
    static char ab[8];
    if (!(alp|bet))
@@ -5090,18 +5090,21 @@ char *FillInMMScalarSuff(char alp, char bet)
       int i;
       i = 1;
       ab[0] = '_';
-      if (alp)
+      if (!bet)
+      {
+         ab[1] = ta;
+         ab[2] = 'a';
+         ab[3] = alp;
+         ab[4] = '\0';
+      }
+      else
       {
          ab[1] = 'a';
          ab[2] = alp;
-         i = 3;
+         ab[3] = 'b';
+         ab[4] = bet;
+         ab[5] = '\0';
       }
-      if (bet)
-      {
-         ab[i++] = 'b';
-         ab[i++] = bet;
-      }
-      ab[i++] = '\0';
    }
    return(ab);
 }
@@ -5114,7 +5117,7 @@ void PrintMMProtos(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off,
    ATL_mmnode_t *mp;
    char *ab;
 
-   ab = FillInMMScalarSuff(alp, bet);
+   ab = FillInMMScalarSuff(0, alp, bet);
    if (bet == 0)  /* copy proto */
       fprintf(fp, "#ifndef NO%s%s\n", nm,ab);
    else
@@ -5137,16 +5140,41 @@ void PrintMMProtos(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-void PrintMMCpProtos(FILE *fp, char *nm, ATL_mmcp_t *cb, char alp, char bet)
+void PrintMMCpProtosA(FILE *fp, char *nm, ATL_mmcp_t *cb, char dir, char alp)
+{
+   ATL_mmcp_t *cp;
+   char *pro;
+
+   pro = (dir == 'F') ? 
+           "(ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*)"
+         : "(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*)";
+   fprintf(fp, "#ifndef NO%s_a%c\n", nm, alp);
+   for (cp=cb; cp; cp = cp->next)
+   {
+      char ta;
+      ta = MMCopyGetTrans(cp->flag);
+      fprintf(fp, "void %s_%ca%c\n   %s;\n", cp->rout, ta, alp, pro);
+   }
+   fprintf(fp, "#endif\n\n");
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void PrintMMCpProtosC(FILE *fp, char *nm, ATL_mmcp_t *cb, 
+                      char dir, char alp, char bet)
 {
    ATL_mmcp_t *cp;
    char *ab;
+   char *pro;
 
-   ab = FillInMMScalarSuff(alp, bet);
+   ab = FillInMMScalarSuff(0, alp, bet);
+   pro = (dir == 'F') ?
+"(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR,TYPE*,ATL_CSZT);"
+:
+"(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,const SCALAR,TYPE*);";
    fprintf(fp, "#ifndef NO%s%s\n", nm,ab);
    for (cp=cb; cp; cp = cp->next)
-      fprintf(fp, "void %s%s\n%s\n", cp->rout, ab,
-         "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*);");
+      fprintf(fp, "void %s%s\n   %s", cp->rout, ab, pro);
    fprintf(fp, "#endif\n\n");
 }
 
@@ -5173,7 +5201,7 @@ void PrintIntArrAtOff
    char *ab;
    int i, n;
 
-   ab = FillInMMScalarSuff(alp, bet);
+   ab = FillInMMScalarSuff(0, alp, bet);
 
    type = GetSafeIntType(sb, nxtoff, ioff, &n);
    fprintf(fp, "#ifndef NO%s\n", nm);
@@ -5190,7 +5218,8 @@ void PrintIntArrAtOff
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 void PrintStrArrAtOff(FILE *fp, char pre, char *nm, void *vb,
-                      int nxtoff, int off, char *type, char alp, char bet)
+                      int nxtoff, int off, char *type, 
+                      char ta, char alp, char bet)
 /*
  * Dumps integer stored at byte offset off mb's MMNodes to file fp using name nm
  */
@@ -5200,7 +5229,7 @@ void PrintStrArrAtOff(FILE *fp, char pre, char *nm, void *vb,
    char *ab;
 
    n = CountListEntries(vb, nxtoff);
-   ab = FillInMMScalarSuff(alp, bet);
+   ab = FillInMMScalarSuff(ta, alp, bet);
    if (bet == '0' && !strcmp(nm, "KERN_K1"))
       fprintf(fp, "#ifndef NOKERN_K1\n");
    else
