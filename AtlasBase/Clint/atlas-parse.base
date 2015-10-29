@@ -4888,7 +4888,7 @@ void GetMMAllUniqueCopyFromMMNodes
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static void PrepMMForGen(char pre, char *nm, ATL_mmnode_t *mb)
+static void PrepMMForGen(char pre, char *outd, char *nm, ATL_mmnode_t *mb)
 /*
  * Prep mb for generation.  Free present values, and replace with:
  * ->auth  : kernel name without _b[1,n,0] suffix
@@ -4898,7 +4898,9 @@ static void PrepMMForGen(char pre, char *nm, ATL_mmnode_t *mb)
 {
    ATL_mmnode_t *mp;
    char suff[3]={'.', 'c', '\0'};
+   char *od;
 
+   od = NewMergedString(outd, "/");
    for (mp=mb; mp; mp = mp->next)
    {
       if (mp->flag & (1<<MMF_KUISKB))
@@ -4933,14 +4935,21 @@ static void PrepMMForGen(char pre, char *nm, ATL_mmnode_t *mb)
       }
       else  /* generated kernel */
       {
+         char *sp, *sp1;
          if (mp->rout)
             free(mp->rout);
          if (mp->genstr)
             free(mp->genstr);
-         mp->rout = NewMergedString(mp->auth, suff);
-         mp->genstr = MMGetGenString(pre, mp);
+         sp = NewMergedString(mp->auth, suff);
+         mp->rout = NewMergedString(od, sp);  /* want to gen in outd/ */
+         sp1 = MMGetGenString(pre, mp);
+         mp->genstr = NewMergedString(sp1, " > /dev/null 2>&1");
+         free(sp1);
+         free(mp->rout);
+         mp->rout = sp; /* want filename w/o path for GenMake */
       }
    }
+   free(od);
 }
 
 @iexp ip @(ip) 1 +
@@ -5246,7 +5255,57 @@ void PrintStrArrAtOff(FILE *fp, char pre, char *nm, void *vb,
    fprintf(fp, "};\n#endif\n\n");
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+char *GetMMKernComp(ATL_mmnode_t *mmp, char *dcomp, char *dflags, char **flgs)
+{
+   char *comp = dcomp;
+   if (mmp->comp)
+   {
+      comp = (mmp->comp[0] == 'g' && mmp->comp[1] == 'c' &&
+              mmp->comp[2] == 'c' &&
+             (mmp->comp[3] == '\0' || mmp->comp[3] == ' '))
+             ? "$(GOODGCC)" : mmp->comp;
+      *flgs = mmp->cflags;
+   }
+   else
+      *flgs = dflags;
+   return(comp);
+}
 
+@beginskip
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void PrintKernComp
+(
+   FILE *fp,            /* file to print to */
+   char pre,
+   ATL_mmnode_t *mp,   /* kernel compile rule is for */
+   char *comp,          /* compiler to use */
+   char *cflags,        /* compiler flags to use */
+   char *styp,          /* string defining type (eg. "-DSREAL") */
+   char cbet,           /* character with beta name ('1', '0', 'n') */
+   char *sbet           /* string wt full beta name ("1", "N1", "0") */
+)
+{
+   const int kb = FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:mp->kbB;
+   fprintf(fp, "%s_b%c : %s\n", mp->auth, cbet
+   fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, sbet);
+   if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      fprintf(fp, " -DMB=%d -DNB=%d, -DKB=%d", mp->mbB, mp->nbB, mp->kbB);
+   if (FLAG_IS_SET(mp->flag, MMF_MVA))
+      fprintf(fp, " -DATL_MOVEA");
+   if (FLAG_IS_SET(mp->flag, MMF_MVB))
+      fprintf(fp, " -DATL_MOVEB");
+   if (FLAG_IS_SET(mp->flag, MMF_MVC))
+      fprintf(fp, " -DATL_MOVEC");
+         fprintf(fp, " -DATL_USERMM=ATL_%c%s_%d_%d_%x_%dx%dx%d_b%c", pre, nam,
+                 mp->ID, kb, flg, mp->mu, mp->nu, mp->ku, cbet);
+         fprintf(fp, " %s -o ATL_%c%s_%d_%d_%x_%dx%dx%d_b%c.o -c %s\n",
+                 cflags, pre, nam, mp->ID, kb, flg, mp->mu, mp->nu, mp->ku,
+                 cbet, mp->rout);
+}
+@endskip
 #endif  /* end guard around atlas_@(rt)mmgen.h */
 @ROUT getflagarrs
 

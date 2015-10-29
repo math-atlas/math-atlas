@@ -23993,8 +23993,9 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
                  ATL_mmcp_t *cpA, ATL_mmcp_t *cpC)
 {
    ATL_mmcp_t *last, *cp;
+   ATL_mmnode_t *mp;
    char *sgen;
-   int i, len, mID, mU;
+   int i, len, dlen, mID, mU;
    char pr=pre;
 /*
  * join all copy routs into one list temporarily
@@ -24013,7 +24014,8 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
       mU = Mmax(mU, cp->nu);
       mU = Mmax(mU, cp->kvec);
    }
-   len += strlen(outd) + 1;  /* outd */
+   dlen = strlen(outd);
+   len += dlen + 1;  /* outd */
    len += 17;  /* " > /dev/null 2>&1" */
    assert(mID == 0);  /* just until we support user copies */
    len += 64 - 2*4;  /* C format string */
@@ -24060,20 +24062,65 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
    }
    printf("DONE GENERATING MMCOPY FILES\n");
    last->next = NULL;  /* disconnect A/C lists */
+/*
+ * Generate/copy all required kernels.  This list has files with compile-time
+ * K repeated, but we'll check ID to avoid repeated copies of user-supplied, 
+ * and generated kernels need a new generation for each required KB.
+ */
+   printf("\nGENERATING AMM KERNS:\n");
+   for (mp=rb; mp; mp = mp->next)
+   {
+      const int id=mp->ID;
+      if (!id)
+      {
+         printf("   -> %s\n", mp->rout);
+         assert(mp->genstr);
+         if ( (i=system(mp->genstr)) )
+         {
+            fprintf(stderr, "GENSTR RETURNS %d:\n'%s'\n", i, mp->genstr);
+            exit(i);
+         }
+      }
+      else /* user-supplied kernel */
+      {
+         ATL_mmnode_t *p;
+         for (p=rb; p != mp && p->ID != id; p = p->next);
+         if (p == mp)  /* this is first mention of this ID */
+         {
+            printf("   %s -> %s\n", mp->genstr, mp->rout);
+            i = strlen(mp->genstr) + strlen(mp->rout) + dlen + 16;
+            if (i > len)
+            {
+               free(sgen);
+               sgen = malloc(i*sizeof(char));
+               assert(sgen);
+               len = i;
+            }
+            sprintf(sgen, "cp AMMCASES/%s %s/%s", mp->genstr, outd, mp->rout);
+            
+            if ( (i=system(sgen)) )
+            {
+               fprintf(stderr, "FAILED CP='%s'\n", sgen);
+               exit(i);
+            }
+         }
+      }
+   }
+   printf("DONE GENERATING AMM KERNS.\n");
    free(sgen);
 }
 
-void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
+void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
              ATL_mmcp_t *cpA, ATL_mmcp_t *cpC)
 /*
- * rb (real base) & ib (imag/cplx base) files have already been made
- * at least compile-time unique (same source file might occur multiple
- * times due to need to compile with -DKB)
+ * mb files have already been made at least compile-time unique (same source
+ * file might occur multiple times due to need to compile with -DKB)
  */
 {
    FILE *fp;
    char *fn;
    ATL_mmcp_t *cp;
+   ATL_mmnode_t *mp;
    char *sals[3] = {"1", "N1", "X"};
    char als[3] = {'1', 'n', 'X'};
    char *sbes[4] = {"0", "1", "N1", "X"};
@@ -24095,6 +24142,12 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
  * Spew out kernels to be compiled
  */
    fprintf(fp, "objs =");
+   for (mp=mb; mp; mp = mp->next)
+   {
+      int ib;
+      for (ib=0; ib < 3; ib++)
+         fprintf(fp, " \\\n       %s_b%c.o", mp->auth, bes[ib]);
+   }
    for (cp=cpC; cp; cp = cp->next)  /* C copy routs */
    {
       int ib;
@@ -24102,7 +24155,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
       {
          int ia;
          for (ia=0; ia < 3; ia++)
-            fprintf(fp, " \\\n      %s_a%cb%c.o", cp->rout, als[ia], bes[ib]);
+            fprintf(fp, " \\\n       %s_a%cb%c.o", cp->rout, als[ia], bes[ib]);
       }
    }
 
@@ -24114,7 +24167,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
       {
          int ia;
          for (ia=0; ia < 3; ia++)
-            fprintf(fp, " \\\n      %s_%ca%c.o", cp->rout, ctas[it], als[ia]);
+            fprintf(fp, " \\\n       %s_%ca%c.o", cp->rout, ctas[it], als[ia]);
       }
    }
    fprintf(fp, "\n");
@@ -24135,14 +24188,51 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
    fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
    fprintf(fp, "\t- rm -f ATL_%c*.[S,c]\n\n", pre);
 /*
+ * Make targets for amm kerns
+ */
+   fprintf(fp, "#\n#  AMM kernel rules\n#\n");
+   fn = (pre == 'd' || pre == 'z') ?  "-DDREAL=1" : "-DSREAL";
+   for (mp=mb; mp; mp = mp->next)
+   {
+      int ib;
+      char *comp, *flgs;
+
+      comp = GetMMKernComp(mp, dcomp, dflags, &flgs);
+      for (ib=0; ib < 3; ib++)
+      {
+         char *sp="";
+         fprintf(fp, "%s_b%c.o : %s\n", mp->auth, bes[ib], mp->rout);
+         fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1 \\\n", comp, fn, sbes[ib]);
+         if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+            fprintf(fp, "        -DMB=%d -DNB=%d -DKB=%d", 
+                    mp->mbB, mp->nbB, mp->kbB);
+         else
+            sp = "        ";
+   @whiledef mtx C B A
+         if (FLAG_IS_SET(mp->flag, MMF_MV@(mtx)))
+         {
+            fprintf(fp, "%s-DATL_MOVE@(mtx)", sp);
+            sp = " ";
+         }
+   @endwhile
+         fprintf(fp, " \\\n        %s \\\n", flgs);
+         fprintf(fp, 
+                 "        -DATL_USERMM=%s_b%c \\\n        -c -o %s_b%c.o \\\n",
+                 mp->auth, bes[ib], mp->auth, bes[ib]);
+         fprintf(fp, "        %s\n", mp->rout);
+      }
+   }
+/*
  * Make targets for C copy routines
  */
+   fprintf(fp, "#\n#  C copy rules\n#\n");
    dflags[3] = dcomp[3] = 'K';
    for (cp=cpC; cp; cp = cp->next)  /* C copy routs */
    {
       char *styp;
       int ib;
       char pr;
+
       styp = MMCopyGetCompType(cp->flag);
       for (ib=0; ib < 4; ib++)
       {
@@ -24164,6 +24254,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *rb,
 /*
  * Make targets for A/B copy routines
  */
+   fprintf(fp, "#\n#  A/B copy rules\n#\n");
    for (cp=cpA; cp; cp = cp->next) 
    {
       char *styp, *cnj[2] = {"", "-DConj_=1"};
@@ -24268,7 +24359,7 @@ int main(int nargs, char **args)
       if (i == ITRSM || i == ITRSM+NMMLISTS)
          KillAllMMStrings(lists[i]);
       else
-         PrepMMForGen(pre, "amm", lists[i]);
+         PrepMMForGen(pre, outd, "amm", lists[i]);
    }
 
    GenAllFiles(pre, outd, lists);
