@@ -6376,7 +6376,8 @@ ATL_mmnode_t *BestForThisNB
          mmB = mmp;
          mmB->mbB = mmB->nbB = mmB->kbB = nb;
       }
-      printf("   %d. %s: kb=%d, MFLOP=%.2f\n", mmp->ID, mmp->rout, nb, mf0);
+      printf("   %d. %s: kb=%d, flg=%x, MFLOP=%.2f\n", 
+             mmp->ID, mmp->rout, nb, mp->flag, mf0);
    }
    if (mmB)
    {
@@ -23694,7 +23695,7 @@ void GenKernH
 
    fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "kern", mb);
    for (ib=0; ib < 3; ib++)
-      PrintMMProtos(fp, pre, "KERN", ub, GetOffset(&ub->auth, ub), 0, bes[ib]);
+      PrintMMProtos(fp, pre, "KERN", ub, GetOffset(&ub->auth, ub), bes[ib]);
    for (ib=0; ib < 3; ib++)
    {
       PrintStrArrAtOff(fp, pre, "KERN", mb, GetOffset(&mb->next, mb),
@@ -23865,8 +23866,10 @@ void GenAllCpyA(char pre, char *outd, char dir, ATL_mmnode_t *gb,
 
 double PrintSum(FILE *fp, char *cn, ATL_mmnode_t *b, double mfGE)
 {
-   int inxt, max, i;
+   int inxt, max, i, kvec;
    double mf;
+   ATL_mmnode_t *mp;
+
    inxt = GetOffset(&b->next, b);
    fprintf(fp, "#define ATL_%sAMM_NCASES %d\n", cn, CountListEntries(b, inxt));
    b = ATL_FindLastNode(b, inxt);
@@ -23877,6 +23880,10 @@ double PrintSum(FILE *fp, char *cn, ATL_mmnode_t *b, double mfGE)
    fprintf(fp, "#define ATL_%sAMM_LASTMFLOP %e\n", cn, mf);
    if (mfGE > 0.0)
       fprintf(fp, "#define ATL_%sAMM_MFLOP_RATIO %e\n", cn, mf/mfGE);
+   for (kvec=0,mp=b; mp; mp = mp->next)
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+         kvec = Mmax(kvec, mp->vlen);
+   fprintf(fp, "#define ATL_%sAMM_MAXKVEC %d\n", cn, kvec);
    fprintf(fp, "\n");
    return(mf);
 }
@@ -24200,7 +24207,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
       comp = GetMMKernComp(mp, dcomp, dflags, &flgs);
       for (ib=0; ib < 3; ib++)
       {
-         char *sp="";
+         char *sp=" ";
          fprintf(fp, "%s_b%c.o : %s\n", mp->auth, bes[ib], mp->rout);
          fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1 \\\n", comp, fn, sbes[ib]);
          if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
