@@ -3342,7 +3342,7 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 /* procedure @(ip) */
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
-   mp->rout = GetMMFilename(pre, "amm", mp);
+   return(GetMMFilename(pre, "amm", mp));
 }
 @beginskip
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
@@ -4534,8 +4534,8 @@ static int MMCopyEncode
 /* procedure @(ip) */
 static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
 /*
- * RETURNS : Unique name for copy file, with at least 5 extra bytes alloc
- *           so that you can suffix it with _aXbX or .c
+ * RETURNS : Unique name for copy file, with at least 6 extra bytes alloc
+ *           so that you can suffix it with _aX_bX or .c
  */
 {
    char *sp=NULL, *dir;
@@ -4558,12 +4558,12 @@ static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
    {
       if (p->ID) /* user-supplied */
       {
-         len += 16 - 2*2;
+         len += 17 - 2*2;
          i = sprintf(sp, "ATL_%c%dcp%sBlkC", pre, ID, dir);
       }
       else /* ATL_<pre>cpy[To,From]C_<mu>x<nu>_<kvec> */
       {
-         len += 23 - 4*2;
+         len += 24 - 4*2;
          sp = malloc(len+1);
          assert(sp);
          i = sprintf(sp, "ATL_%ccp%sBlkC_%dx%d_%d", pre, dir, 
@@ -4613,6 +4613,7 @@ static ATL_mmcp_t *GetMMCopyNode(int ID, int mu, int nu, int kvec, int flag)
    cp->kvec = kvec;
    cp->flag = flag;
    assert(cp);
+   return(cp);
 }
 
 @iexp ip @(ip) 1 +
@@ -5023,14 +5024,16 @@ static FILE *OpenMMGenHeader
       i = CountListEntries(mb, GetOffset(&mb->next, mb));
       if (cn[0] == 'g' && cn[1] == 'e')
       {
-         fprintf(fp, "#ifdef ATL_AMM_NCASES\n   #if ATL_MM_NCASES != %d\n", i);
+         fprintf(fp, "#ifdef ATL_AMM_NCASES\n   #if ATL_AMM_NCASES != %d\n", i);
          fprintf(fp, "      #error \"NCASES MISMATCH!\"\n   #endif\n");
          fprintf(fp, "#else\n   #define ATL_AMM_NCASES %d\n#endif\n", i);
       }
       else
       {
-         fprintf(fp, "#ifdef ATL_AMM_NCASES\n   #undef ATL_AMM_NCASES\n");
-         fprintf(fp, "#endif\n#define ATL_%sAMM_NCASES %d\n", cn, i);
+         fprintf(fp, "#ifdef ATL_%sAMM_NCASES\n   #if ATL_%sAMM_NCASES != %d\n",
+                 cn, cn, i);
+         fprintf(fp, "      #error \"NCASES MISMATCH!\"\n   #endif\n");
+         fprintf(fp, "#else\n   #define ATL_%sAMM_NCASES %d\n#endif\n", cn, i);
       }
    }
 
@@ -5110,9 +5113,10 @@ char *FillInMMScalarSuff(char ta, char alp, char bet)
       {
          ab[1] = 'a';
          ab[2] = alp;
-         ab[3] = 'b';
-         ab[4] = bet;
-         ab[5] = '\0';
+         ab[3] = '_';
+         ab[4] = 'b';
+         ab[5] = bet;
+         ab[6] = '\0';
       }
    }
    return(ab);
@@ -5173,7 +5177,7 @@ void PrintMMCpProtosC(FILE *fp, char *nm, ATL_mmcp_t *cb,
 "(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,const SCALAR,TYPE*);";
    fprintf(fp, "#ifndef NO%s%s\n", nm,ab);
    for (cp=cb; cp; cp = cp->next)
-      fprintf(fp, "void %s%s\n   %s", cp->rout, ab, pro);
+      fprintf(fp, "void %s%s\n   %s\n", cp->rout, ab, pro);
    fprintf(fp, "#endif\n\n");
 }
 
@@ -5233,7 +5237,10 @@ void PrintStrArrAtOff(FILE *fp, char pre, char *nm, void *vb,
       fprintf(fp, "#ifndef NOKERN_K1\n");
    else
       fprintf(fp, "#ifndef NO%s%s\n", nm,ab);
-   fprintf(fp, "static const %s ATL_AMM_%s%s[%d] =\n{\n", type, nm, ab, n);
+   if (!bet) /* A/B copy funcs */
+      fprintf(fp, "static const %s ATL_AMM_%s_a%c[%d] =\n{\n",type,nm,alp,n);
+   else
+      fprintf(fp, "static const %s ATL_AMM_%s%s[%d] =\n{\n", type, nm, ab, n);
    for (i=0,cp=vb; cp; i++)
    {
       char *next;
