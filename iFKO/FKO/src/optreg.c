@@ -873,12 +873,6 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
    KillIGNode(snode);
 }
 
-
-int CreatePreHeader(BBLOCK *blk)
-{
-
-}
-
 void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
 /*
  * Attempt to combine preds IG with succ

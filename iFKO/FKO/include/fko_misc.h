@@ -14,6 +14,7 @@ void *NewPtrTable(int *n, void *old, int chunk);
 short *NewShortTable(int *n, short *old, int chunk);
 ILIST *NewIlist(INSTQ *inst, ILIST *next);
 ILIST *NewIlistAtEnd(INSTQ *inst, ILIST *top); 
+ILIST *NewIlistInBetween(INSTQ *inst, ILIST *prev, ILIST *next);
 ILIST *KillIlist(ILIST *ip);
 void KillAllIlist(ILIST *ilist);
 struct ptrinfo *FindPtrinfo(struct ptrinfo *base, short ptr);

@@ -93,7 +93,7 @@ int RevealArchMemUses(void)
    enum inst inst;
    /*short op, ir;*/
    short op3, vr, ir;
-   int nchanges, arinst;
+   int nchanges;
    extern int DTabs, DTabsd, DTnzero, DTnzerod;
    /*extern int DTabss, DTabsds, DTnzeros, DTnzerods;*/
    extern BBLOCK *bbbase;
@@ -204,7 +204,9 @@ int RevealArchMemUses(void)
                CalcThisUseSet(ipN);
                CalcThisUseSet(ip);
                nchanges++;
-               break;   
+               break;  
+            default:
+               break;
          }
       }
    }
@@ -939,8 +941,8 @@ void Extern2Local(INSTQ *next, int rsav)
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs; 
    /*extern int        DTnzerods, DTnzeros, DTabsds, DTabss;*/
-   extern int FKO_FLAG;
-   short i, j=0, flag, ir, k, kk, reg1=0, freg, dreg, vfreg, vdreg;
+   /*extern int FKO_FLAG;*/
+   short i, j=0, flag, ir, k, reg1=0, freg, dreg, vfreg, vdreg;
    int USED;
    #ifdef X86_64
       int nof, ni, nd, dr;

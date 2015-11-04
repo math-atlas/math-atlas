@@ -110,7 +110,7 @@ void PrintUsageN(char *name)
 
 struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
 {
-   int i;
+   /*int i;*/
    struct optblkq *op;
    op = calloc(1, sizeof(struct optblkq));
    assert(op);
@@ -119,10 +119,11 @@ struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
    op->nopt = nopt;
    op->flag = flag;
    op->next = NULL;
-#if 1
+#if 0
 /*
  * added nspill to keep track of resgister spilling (# of live-range which 
  * doesn't get register), -1 means not calculated yet
+ * FIXED: we will allocate memory when needed(inside DoOptList).
  */
    op->nspill = malloc(NTYPES*sizeof(int));
    assert(op->nspill);
@@ -1909,11 +1910,23 @@ BLIST **LoopBlocks(int *N)
    return(scopes);
 }
 
+int HasScopeIGReg(int nopt, enum FKOOPT *ops)
+{
+   int i;
+
+   for (i=0; i < nopt; i++)
+   {
+      if (ops[i] == RegAsg)
+         return 1;
+   }
+   return(0);
+}
+
 int CheckPreheaderPosttails(BLIST *scope)
 {
    int nerr = 0, pred =0, npred = 0;
    BBLOCK *bp;
-   BLIST *bl, *blp, *bls;
+   BLIST *bl, *blp;
    INT_BVI blkvec;
    extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
@@ -2046,9 +2059,8 @@ void FixPreheaderPosttails(BLIST *scope)
 {
    int npred = 0;
    BBLOCK *bp, *bnew;
-   BLIST *bl, *blp, *bls;
+   BLIST *bl, *blp;
    INT_BVI blkvec;
-   short ilb;
    char label[64];
    extern INT_BVI FKO_BVTMP;
    
@@ -2123,7 +2135,7 @@ void FixPreheaderPosttails(BLIST *scope)
    }
 }
 
-int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int *nspill)
+int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int **nspill)
 /*
  * Performs the nopt optimization in the sequence given by ops, returning
  * 0 if no transformations applied, nonzero if some changes were made
@@ -2139,7 +2151,6 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int *nspill)
    BBLOCK *bp;
    static short nlab=0, labs[4];
    /*static int iopt = 0, bv = 0;*/ /* Majedul: for opt logger, bv -> */
-   static int iopt = 0, bv = 0; /* Majedul: for opt logger, bv -> */
    /*extern LOOPQ *optloop;*/
    extern BBLOCK *bbbase;;
 /*
@@ -2226,14 +2237,21 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int *nspill)
 /*
  *       update nspill 
  *       NOTE: we will save nspill only for the optloop when IOPT_SCOP is 
- *       applied, otherwise for global scope
+ *       applied, otherwise for global scope. we don't save nspill for other
+ *       scopes now, but can do it by changing the following code.
  */
          if (global || !iscope0) /* scope no. 0 represents the optloop */
          {
-            for (j=0; j < NTYPES; j++)
-               nspill[j] = nsp[j];
+            if (*nspill) /* already has old reg info, delete it */
+            {
+               for (j=0; j < NTYPES; j++)
+                  (*nspill)[j] = nsp[j];
+               free(nsp);
+            }
+            else 
+               *nspill = nsp;
          }
-         else
+         else 
             free(nsp); /* delete other nspill info */
          break;
       case CopyProp:
@@ -2313,24 +2331,12 @@ LOOPQ *LoopOrder()
 }
 #endif
 
-int HasScopeIGReg(int nopt, enum FKOOPT *ops)
-{
-   int i;
-
-   for (i=0; i < nopt; i++)
-   {
-      if (ops[i] == RegAsg)
-         return 1;
-   }
-   return(0);
-}
-
 int DoOptBlock(int igscope, int ilscope, struct optblkq *op)
 /*
  * returns: nchanges applied
  */
 {
-   int i, j, k, nc, tnc=0, global;
+   int i, nc, tnc=0, global;
    struct optblkq *dp;
    int iscope, maxN;
 
@@ -2354,7 +2360,7 @@ int DoOptBlock(int igscope, int ilscope, struct optblkq *op)
  * If we've got a one time list, handle it
  */
    else if (!op->maxN)
-      nc = DoOptList(op->nopt, op->opts, iscope, global, op->nspill);
+      nc = DoOptList(op->nopt, op->opts, iscope, global, &(op->nspill));
 /*
  * otherwise, we have while(changes) optblk ... using down branch
  */
@@ -2363,7 +2369,7 @@ int DoOptBlock(int igscope, int ilscope, struct optblkq *op)
       maxN = op->maxN;
       for (i=0; i < maxN; i++)
       {
-         nc = DoOptList(op->nopt, op->opts, iscope, global, op->nspill);
+         nc = DoOptList(op->nopt, op->opts, iscope, global, &(op->nspill));
          for (dp=op->down; dp; dp = dp->down)
             nc += DoOptBlock(igscope, ilscope, dp);
          if (!nc)
@@ -3251,39 +3257,6 @@ void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
    int rglob[nreg];
    int nropt, nrglob, tnr;
 
-#if 0
-   for (op=optblks; op; op=op->next)
-   {
-      if (!op->flag && op->opts[0] == RegAsg) /* optloop */
-      {  
-         /*int,short,char */
-         ropt[R_INT] = op->nspill[T_INT] + op->nspill[T_SHORT] + 
-                       op->nspill[T_CHAR];
-         ropt[R_FLOAT] = op->nspill[T_FLOAT];
-         ropt[R_DOUBLE] = op->nspill[T_DOUBLE];
-         ropt[R_VINT] = op->nspill[T_VINT];
-         ropt[R_VFLOAT] = op->nspill[T_VFLOAT];
-         ropt[R_VDOUBLE] = op->nspill[T_VDOUBLE];
-         nropt = ropt[R_INT] + ropt[R_FLOAT] + ropt[R_DOUBLE] + ropt[R_VINT] 
-                 + ropt[R_VFLOAT] + ropt[R_VDOUBLE];
-         break;
-      }
-   }
-   assert(op);
-/*
- * last one must be global scope
- */
-   for(; op->next; op=op->next);
-   
-   rglob[R_INT] = op->nspill[T_INT] + op->nspill[T_SHORT] + op->nspill[T_CHAR];
-   rglob[R_FLOAT] = op->nspill[T_FLOAT];
-   rglob[R_DOUBLE] = op->nspill[T_DOUBLE];
-   rglob[R_VINT] = op->nspill[T_VINT];
-   rglob[R_VFLOAT] = op->nspill[T_VFLOAT];
-   rglob[R_VDOUBLE] = op->nspill[T_VDOUBLE];
-   tnr = nrglob = rglob[R_INT] + rglob[R_FLOAT] + rglob[R_DOUBLE] 
-      + rglob[R_VINT] + rglob[R_VFLOAT] + rglob[R_VDOUBLE];
-#else
    for (op=optblks; op; op=op->next)
    {
 /*
@@ -3316,8 +3289,6 @@ void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
 
       }
    }
-#endif
- 
 /*
  * print all info
  */
@@ -3975,7 +3946,7 @@ int main(int nargs, char **args)
 /*
  *    implementing slp here.. finalize after done.
  */
-      SLPvectorization();
+      SlpVectorization();
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {

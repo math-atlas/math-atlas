@@ -630,9 +630,9 @@ void CreateLocalDerefs()
 {
    short k;
    int fl;
-   short st; 
-   int i, vl, stype;
-   char ln[512];
+   /*short st; */
+   /*int i, vl, stype;*/
+   /*char ln[512];*/
 
    for (k=0; k != N; k++)
    {
@@ -935,10 +935,13 @@ void MarkFinalUnusedLocals(BBLOCK *bbase)
 {
    INSTQ *ip;
    short k, i;
-   enum inst inst;
+   /*enum inst inst;*/
    BBLOCK *bp;
-   extern int DTabsd, DTnzerod, DTabs, DTnzero, DTx87, DTx87d;
-   extern int DTabsds, DTnzerods, DTabss, DTnzeros;
+   #ifdef X86_32
+      extern int DTx87, DTx87d;
+   #endif
+   /*extern int DTabsd, DTnzerod, DTabs, DTnzero;*/
+   /*extern int DTabsds, DTnzerods, DTabss, DTnzeros;*/
 
 /*
  * Start out by marking all locals as unused, except the system const
