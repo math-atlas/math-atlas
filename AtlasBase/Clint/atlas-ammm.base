@@ -649,6 +649,12 @@ int Mjoin(PATL,ammmNMK)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, 
     const SCALAR,const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,
     TYPE*,ATL_CSZT);
+/*
+ * Functions for testing Info return flag
+ */
+#define ATL_AMMFLG_KRUNTIME(flg_) ((flg_) & 1)
+#define ATL_AMMFLG_KMAJOR(flg_) ((flg_) & 2)
+
 #endif  /* end include file guard */
 @ROUT emit_uamm
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012 -def cwdate 2013  -def cwdate 2014 
@@ -14624,7 +14630,71 @@ int Mjoin(PATL,ammm_IP)
  */
    if (K == 1)  /* really a GER */
    {
-      if (!SCALAR_IS_ONE(beta))
+   #ifdef TCPLX
+      if (!SCALAR_IS_ONE(beta))  /* can't use GER for beta != 1 */
+      {
+         int i;
+         const register TYPE ral=alpha[0], ial=alpha[1];
+         const size_t ldc2 = ldc+ldc;
+         ATL_CSZT incB = ((TB == AtlasNoTrans) ? ldb : 1)SHIFT;
+         const register TYPE
+            cjm = (TB==AtlasConj || TB==AtlasConjTrans) ? ATL_rnone:ATL_rone;
+         TYPE *X=(TYPE*)A;
+         void *vp=NULL;
+/*
+ *       Copy A if it's a row or if it must be conjugated
+ */
+         if (TA == AtlasTrans || TA == AtlasConjTrans || TA == AtlasConj)
+         {
+            vp = malloc(ATL_MulBySize(M)+ATL_Cachelen);
+            ATL_assert(vp);
+            X = ATL_AlignPtr(vp);
+            if (TA == AtlasTrans)
+               Mjoin(PATL,copy)(M, A, lda, X, 1);
+            else if (TA == AtlasConjTrans)
+               Mjoin(PATL,copyConj)(M, A, lda, X, 1);
+            else
+               Mjoin(PATL,copyConj)(M, A, 1, X, 1);
+         }
+         for (i=0; i < N; i++, B += incB, C += ldc2)
+         {
+            TYPE scal[2];
+            register TYPE rb=(*B), ib=cjm*B[1];
+            scal[0] = rb*ral - ib*ial;
+            scal[1] = rb*ial + ib*ral;
+            Mjoin(PATL,axpby)(M, scal,  X, 1, beta, C, 1);
+         }
+         if (vp)
+            free(vp);
+      }
+      else  /* BETA=1, can use GERU/GERC */
+      {
+         if (TA == AtlasConjTrans || TA == AtlasConj)  /* must copyConj A */
+         {
+            void *vp;
+            TYPE *X;
+            const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+            vp = malloc(ATL_MulBySize(M)+ATL_Cachelen);
+            ATL_assert(vp);
+            X = ATL_AlignPtr(vp);
+            Mjoin(PATL,moveConj)(M, alpha, A, (TA == AtlasConj) ? 1:lda, X, 1);
+            if (TB == AtlasConjTrans || TB == AtlasConj)  /* use gerc */
+               Mjoin(PATL,gerc)(M, N, ONE, X, 1, B,
+                                (TB == AtlasConj) ? ldb : 1, C, ldc);
+            else
+               Mjoin(PATL,geru)(M, N, ONE, X, 1, B,
+                                (TB == AtlasNoTrans) ? ldb : 1, C, ldc);
+            free(vp);
+         }
+         else if (TB == AtlasConjTrans || TB == AtlasConj)  /* use gerc */
+            Mjoin(PATL,gerc)(M, N, alpha, A, (TA == AtlasNoTrans) ? 1 : lda,
+                             B, (TB == AtlasConj) ? ldb : 1, C, ldc);
+         else /* use geru */
+            Mjoin(PATL,geru)(M, N, alpha, A, (TA == AtlasNoTrans) ? 1 : lda,
+                            B, (TB == AtlasNoTrans) ? ldb : 1, C, ldc);
+      }
+   #else
+      if (!SCALAR_IS_ONE(beta)) /* can't use GER for beta != 1 */
       {
          int i;
          ATL_CSZT incA = ((TA == AtlasNoTrans) ? 1 : lda);
@@ -14635,6 +14705,7 @@ int Mjoin(PATL,ammm_IP)
       else
          Mjoin(PATL,ger)(M, N, alpha, A, (TA == AtlasNoTrans) ? 1 : lda,
                          B, (TB == AtlasNoTrans) ? ldb : 1, C, ldc);
+   #endif
       return(0);
    }
    if (K == 2)
@@ -14642,28 +14713,85 @@ int Mjoin(PATL,ammm_IP)
                                   beta, C, ldc));
    if (N == 1)  /* Really GEMV with A as matrix, A & C as vectors */
    {
+   #ifdef TCPLX
+      TYPE *X = (TYPE*)B;
+      void *vp = NULL;
+      int incX = 1;
+/*
+ *    Copy B if it we need to conjugate it
+ */
+      if (TB == AtlasConj || TB == AtlasConjTrans)
+      {
+         vp = malloc(ATL_MulBySize(K)+ATL_Cachelen);
+         ATL_assert(vp);
+         X = ATL_AlignPtr(vp);
+         Mjoin(PATL,copyConj)(K, B, (TB == AtlasConj) ? 1:ldb, X, 1);
+      }
+      else
+         incX = (TB == AtlasNoTrans) ? 1:ldb;
+      if (TA == AtlasNoTrans || TA == AtlasConj)
+         Mjoin(PATL,gemv)(TA, M, K, alpha, A, lda, X, incX, beta, C, 1);
+      else /* if (TA == AtlasTrans || TA == AtlasConjTrans) */
+         Mjoin(PATL,gemv)(TA, K, M, alpha, A, lda, X, incX, beta, C, 1);
+      if (vp)
+         free(vp);
+   #else
       if (TA == AtlasNoTrans)
          Mjoin(PATL,gemv)(AtlasNoTrans, M, K, alpha, A, lda, B,
                           (TB == AtlasNoTrans) ? 1:ldb, beta, C, 1);
       else
          Mjoin(PATL,gemv)(AtlasTrans, K, M, alpha, A, lda, B,
                           (TB == AtlasNoTrans) ? 1:ldb, beta, C, 1);
+   #endif
       return(0);
    }
    if (M == 1)  /* Really GEMV with B as matrix, A & C as vectors */
    {
+   #ifdef TCPLX
+      TYPE *X = (TYPE*)A;
+      void *vp = NULL;
+      int incX = 1;
+/*
+ *    Copy A if it we need to conjugate it
+ */
+      if (TA == AtlasConj || TA == AtlasConjTrans)
+      {
+         vp = malloc(ATL_MulBySize(K)+ATL_Cachelen);
+         ATL_assert(vp);
+         X = ATL_AlignPtr(vp);
+         Mjoin(PATL,copyConj)(K, A, (TA == AtlasConj) ? lda:1, X, 1);
+      }
+      else
+         incX = (TA == AtlasNoTrans) ? lda:1;
+      if (TB == AtlasNoTrans)
+         Mjoin(PATL,gemv)(AtlasTrans, K, N, alpha, B, ldb, X, incX,
+                          beta, C, ldc);
+      else if (TB == AtlasConj)
+         Mjoin(PATL,gemv)(AtlasConjTrans, K, N, alpha, B, ldb, X, incX,
+                          beta, C, ldc);
+      else if (TB == AtlasTrans)
+         Mjoin(PATL,gemv)(AtlasNoTrans, N, K, alpha, B, ldb, X, incX,
+                          beta, C, ldc);
+      else if (TB == AtlasConjTrans)
+         Mjoin(PATL,gemv)(AtlasConj, N, K, alpha, B, ldb, X, incX,
+                          beta, C, ldc);
+      if (vp)
+         free(vp);
+   #else
       if (TB == AtlasNoTrans)
          Mjoin(PATL,gemv)(AtlasTrans, K, N, alpha, B, ldb, A,
                           (TA == AtlasNoTrans) ? lda:1, beta, C, ldc);
       else
          Mjoin(PATL,gemv)(AtlasNoTrans, N, K, alpha, B, ldb, A,
                           (TA == AtlasNoTrans) ? lda:1, beta, C, ldc);
+   #endif
       return(0);
    }
 /*
- * Special case mainly for LU, where K==4, N==4 beta=1.0, TA==AtlasNoTrans;
+ * Special case mainly for real LU, where K==4, N==4 beta=1.0, TA==AtlasNoTrans;
  * Can do a no-copy update with only one loop.
  */
+   #ifndef TCPLX
    if (K == 4 && N == 4 && TA==AtlasNoTrans && SCALAR_IS_ONE(beta))
    {
       int Mjoin(PATL,rk4n4)(enum ATLAS_TRANS,ATL_CSZT,const SCALAR,
@@ -14671,6 +14799,7 @@ int Mjoin(PATL,ammm_IP)
       if (!Mjoin(PATL,rk4n4)(TB, M, alpha, A, lda, B, ldb, C, ldc))
          return(0);
    }
+   #endif
 /*
  * 1-block special case code can return w/o doing op if it thinks
  * rank-K would be faster
@@ -14703,23 +14832,11 @@ int Mjoin(PATL,ammm_IP)
  * Next two loop orderings are general case, so use whichever uses least
  * workspace
  */
-#if 0
-   if (M >= N)
-      return(Mjoin(PATL,ammmMNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                 beta, C, ldc));
-/*
- * This guy tries to allocate (M+NB)*K + NB^2 worskpace, so recursion
- * may be needed to keep it within allotted memory.
- */
-   return(Mjoin(PATL,ammmNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                              beta, C, ldc));
-#else
    if (M > N)
       return(Mjoin(PATL,ammmKMNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc));
    return(Mjoin(PATL,ammmKNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
                                beta, C, ldc));
-#endif
 }
 @ROUT ATL_cammm
 {
@@ -14979,7 +15096,11 @@ void Mjoin(PATL,ammm)
    if (K > ATL_MAX_RK || (K >= N && K >= M))
    {
       const size_t kL=(K>>4)<<3, kR=K-kL;
-@ROUT ATL_cammm `   const TYPE ONE[2] = {ATL_rone, ATL_rzero};`
+      #ifdef TCPLX
+         const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+      #else
+         #define ONE ATL_rone
+      #endif
 
       Mjoin(PATL,ammm)(TA, TB, M, N, kL, alpha, A, lda, B, ldb, beta, C, ldc);
       if (TA == AtlasNoTrans || TA == AtlasConj)
@@ -14991,8 +15112,10 @@ void Mjoin(PATL,ammm)
       else
          B += (ldb*kL) SHIFT;
       Mjoin(PATL,ammm)(TA, TB, M, N, kR, alpha, A, lda, B, ldb, 
-@ROUT ATL_ammm `                       ATL_rone, C, ldc);`
-@ROUT ATL_cammm `                       ONE, C, ldc);`
+                       ONE, C, ldc);
+      #ifdef ONE
+         #undef ONE
+      #endif
    }
    else if (N >= M)  /* cutting N */
    {
@@ -23662,19 +23785,21 @@ void GenKernH
     ATL_mmnode_t *ub)
 {
    FILE *fp;
-   int ib;
+   int ib, inxt, iaut;
    char bes[3] = {'0', '1', 'n'};
 
+   inxt = GetOffset(&mb->next, mb);
+   iaut = GetOffset(&ub->auth, ub);
    fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "kern", mb);
    for (ib=0; ib < 3; ib++)
-      PrintMMProtos(fp, pre, "KERN", ub, GetOffset(&ub->auth, ub), bes[ib]);
+      PrintMMProtos(fp, pre, "KERN", ub, iaut, bes[ib]);
    for (ib=0; ib < 3; ib++)
    {
-      PrintStrArrAtOff(fp, pre, "KERN", mb, GetOffset(&mb->next, mb),
-                       GetOffset(&mb->auth, mb), "ammkern_t", 0, 0, bes[ib]);
+      PrintStrArrAtOff(fp, pre, "KERN", mb, inxt, iaut, "ammkern_t", 
+                       0, 0, bes[ib]);
       if (mkb)
-         PrintStrArrAtOff(fp, pre, "KERN_K1", mb, GetOffset(&mb->next, mb),
-                          GetOffset(&mb->auth, mb), "ammkern_t", 0, 0, bes[ib]);
+         PrintStrArrAtOff(fp, pre, "KERN_K1", mkb, inxt, iaut, "ammkern_t", 
+                          0, 0, bes[ib]);
    }
    CloseGenHeader(fp);
 }
@@ -23702,8 +23827,9 @@ void PrintFlagArr(FILE *fp, ATL_mmnode_t *mb)
 void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
 {
    FILE *fp;
-   int n, inxt;
    ATL_mmnode_t *mp;
+   int *KUs;
+   int i, n, inxt;
 
    fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "blk", mb);
    inxt = GetOffset(&mb->next, mb);
@@ -23711,12 +23837,33 @@ void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
    fprintf(fp, "#define ATL_%sAMM_LASTMB %d\n", cn, mp->mbB);
    fprintf(fp, "#define ATL_%sAMM_LASTNB %d\n", cn, mp->nbB);
    fprintf(fp, "#define ATL_%sAMM_LASTKB %d\n", cn, mp->kbB);
+   fprintf(fp, "\n");
+/*
+ * Save original KUs, and overwrite compile-time-K KUs with kbB for printing
+ */
+   n = CountListEntries(mb, inxt);
+   KUs = malloc(sizeof(int)*n*3);
+   assert(KUs);
+   for (i=0,mp=mb; mp; i++,mp = mp->next)
+   {
+      KUs[i] = mp->ku;
+      KUs[i+n] = mp->kbmin;
+      KUs[i+n+n] = mp->kbmax;
+      if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+         mp->kbmin = mp->kbmax = mp->ku = mp->kbB;
+   }
    @multidef st KBMAXs KBMINs KUs NUs MUs KBs NBs MBs
    @whiledef iv kbmax  kbmin  ku  nu  mu  kbB nbB mbB
 @skip   PrintMMIntOffArr(fp, pre, "@(st)", mb, GetOffset(&mb->@(iv), mb));
    PrintIntArrAtOff(fp, pre, "@(st)", mb, inxt, GetOffset(&mb->@(iv), mb),0,0);
       @undef st
    @endwhile
+   for (i=0,mp=mb; mp; i++,mp = mp->next)
+   {
+      mp->ku = KUs[i];
+      mp->kbmin = KUs[i+n];
+      mp->kbmax = KUs[i+n+n];
+   }
    PrintFlagArr(fp, mb);
    CloseGenHeader(fp);
 }
@@ -24089,6 +24236,14 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
                exit(i);
             }
          }
+         else /* they better have same filename! */
+         {
+            if (strcmp(mp->rout, p->rout))
+            {
+               printf("rout=(%s,%s)!\n", mp->rout, p->rout);
+               exit(1);
+            }
+         }
       }
    }
    printf("DONE GENERATING AMM KERNS.\n");
@@ -24229,7 +24384,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
             fprintf(fp, "\t%s %s -c $(CDEFS) -D%s=1 -DBETA%s=1 -DALPHA%s=1",
                     dcomp, dflags, styp, sbes[ib], sals[ia]);
             fprintf(fp, 
-            " \\\n           -DATL_USERCPMM=%s_a%cb%c -DATL_MU=%d -DATL_NU=%d",
+            " \\\n           -DATL_USERCPMM=%s_a%c_b%c -DATL_MU=%d -DATL_NU=%d",
                     cp->rout, als[ia], bes[ib], cp->mu, cp->nu);
             fprintf(fp, " \\\n           -o %s_a%cb%c.o %s.c\n", 
                     cp->rout, als[ia], bes[ib], cp->rout);

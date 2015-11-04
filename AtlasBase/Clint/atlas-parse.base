@@ -2564,11 +2564,13 @@ int MMNamelen(char pre, char *nm, ATL_mmnode_t *mp, int kb)
  * However, during install we will make all filenames the same as the
  * kernel name, with the following exceptions:
  * 1. _bX is done through recompilation, so is replaced by file ext (.c, etc.)
- * 2. KB will not match the kernel name in the (a) case below:
- *    a. For kerns that that need compile-time K, but can simply be recompiled
+ * 2. KB will not match the kernel name in the (a,b) cases below:
+ *    a. For ID != 0, KB is always 0 (same source file used regardless of
+ *       compile flags, etc).
+ *    b. For kerns that that need compile-time K, but can simply be recompiled
  *       for each differing KB, we will encode KB=1 (never a valid KB).
- *    b. For kerns taking a runtime KB, KB is 0
- *    c. For kerns that only supply an exact KB, KB is set to mp->kbB.
+ *    c. For kerns taking a runtime KB, KB is 0
+ *    d. For kerns that only supply an exact KB, KB is set to mp->kbB.
  * 
  * During installation, we can use mp->str to temporarily store the filename,
  * while we use mp->rout to store the kernel (call) name, w/o beta suffix.
@@ -2631,19 +2633,29 @@ static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
  * required to differentiate between amm kernels
  */
 {
-   int i, h, kb;
+   int i, h, kb, flg, pf, pfLS;
    char *name;
 
-   if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
+   if (mp->ID)
+      kb = 0;
+   else if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
       kb = mp->kbB;
    else if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
       kb = (mp->kbmax != mp->kbB || mp->kbmin != mp->kbB) ? 1 : mp->kbB;
    else 
       kb = 0;
+   flg = mp->flag;
+   pf = mp->pref;
+   pfLS = mp->pfLS;
+   if (mp->ID)       /* pref & flag don't matter for non-genned filenames */
+      mp->pref = mp->pfLS = mp->flag = 0;
    i = MMNamelen(pre, nm, mp, kb); 
    name = malloc(i+2+1);           /* 2 file ext, 1 str term */
    assert(name);
    h = SprintMMName(name, pre, nm, mp, kb);
+   mp->flag = flg;  /* restore flag/pref to correct vals */
+   mp->pref= pf;
+   mp->pfLS = pfLS;
    assert(h <= i);
    name[h] = '.';
    if (mp->ID == 0)
@@ -4917,20 +4929,6 @@ static void PrepMMForGen(char pre, char *outd, char *nm, ATL_mmnode_t *mb)
          assert(!mp->genstr);
          assert(mp->rout);
          h = strlen(mp->rout);
-@beginskip
-/*
- *       If original name ended in .s or .S, change to .S (we add cpp).
- *       If name doesn't look normal, then keep .c filename, and assume
- *       user has used flags to manually tell the compile if the code
- *       is anything other than C.
- */
-         och = mp->rout[h-1];
-         if (och != ch)  /* should we change file type suffix to .S? */
-         {               /* only if filename looks normal */
-            if (mp->rout[h-2] == '.' && och == 's' || och == 'S')
-               suff[2] = 'S';
-         }
-@endskip
          mp->genstr = mp->rout;
          mp->rout = GetMMFilename(pre, nm, mp);
       }
@@ -5153,10 +5151,21 @@ void PrintMMCpProtosA(FILE *fp, char *nm, ATL_mmcp_t *cb, char dir, char alp)
 {
    ATL_mmcp_t *cp;
    char *pro;
+   char pre;
 
-   pro = (dir == 'F') ? 
+   pre = MMCopyGetPre(cb->flag);
+   if (pre == 'd' || pre == 's')
+   {
+      pro = (dir == 'F') ? 
            "(ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*)"
          : "(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*)";
+   }
+   else
+   {
+      pro = (dir == 'F') ? 
+      "(ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*,const TYPE*);"
+      : "(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*,TYPE*);";
+   }
    fprintf(fp, "#ifndef NO%s_a%c\n", nm, alp);
    for (cp=cb; cp; cp = cp->next)
    {
@@ -5175,12 +5184,24 @@ void PrintMMCpProtosC(FILE *fp, char *nm, ATL_mmcp_t *cb,
    ATL_mmcp_t *cp;
    char *ab;
    char *pro;
+   char pre;
 
+   pre = MMCopyGetPre(cb->flag);
    ab = FillInMMScalarSuff(0, alp, bet);
-   pro = (dir == 'F') ?
+   if (pre == 'd' || pre == 's')
+   {
+      pro = (dir == 'F') ?
 "(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR,TYPE*,ATL_CSZT);"
 :
 "(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,const SCALAR,TYPE*);";
+   }
+   else
+   {
+      pro = (dir == 'F') ?
+"(ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const TYPE*,const SCALAR,\n     TYPE *,ATL_CSZT);"
+            :
+"   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,const SCALAR,\n     TYPE*,TYPE*);";
+   }
    fprintf(fp, "#ifndef NO%s%s\n", nm,ab);
    for (cp=cb; cp; cp = cp->next)
       fprintf(fp, "void %s%s\n   %s\n", cp->rout, ab, pro);
