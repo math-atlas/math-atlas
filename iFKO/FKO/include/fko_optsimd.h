@@ -26,6 +26,7 @@ int SpeculativeVectorAnalysis();
 int SpecSIMDLoop(int SB_UR);
 int RcVectorAnalysis();
 int RcVectorization();
+int SlpVectorization();
 void FindPaths(BBLOCK *head, BLIST *loopblocks, LOOPQ *lp, BLIST *blkstack);
 void KillPathTable();
 int PathVectorizable(int pnum);
