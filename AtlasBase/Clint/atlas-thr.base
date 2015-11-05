@@ -543,7 +543,7 @@ void ATL_@(pre)therk
 #endif
 #ifndef ATL_TGEMM_THRESH_MF
    #define ATL_TGEMM_THRESH_MF \
-      ((((2.0*(ATL_TGEMM_XOVER))*ATL_AMM_LLCMU)*ATL_AMM_LLCMU)*ATL_AMM_LLCMU)
+  ((((2.0*(ATL_TGEMM_XOVER))*ATL_geAMM_LASTLCMU)*ATL_geAMM_LASTLCMU)*ATL_geAMM_LASTLCMU)
 #endif
 /*
  * This is the minimal number of flops each thread requires once THRESH
@@ -551,7 +551,7 @@ void ATL_@(pre)therk
  */
 #ifndef ATL_TGEMM_PERTHR_MF
    #define ATL_TGEMM_PERTHR_MF \
-      ((((2.0*ATL_TGEMM_ADDP)*ATL_AMM_LLCMU)*ATL_AMM_LLCMU)*ATL_AMM_LLCMU)
+      ((((2.0*ATL_TGEMM_ADDP)*ATL_geAMM_LASTLCMU)*ATL_geAMM_LASTLCMU)*ATL_geAMM_LASTLCMU)
 #endif
 /*
  * For debugging, can define ATL_SERIAL_COMBINE, and then it any required
@@ -4249,7 +4249,7 @@ void ATL_DoWorkMM(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 @ROUT ATL_tNumGemmThreads
 #include "atlas_misc.h"
 #include "atlas_tlvl3.h"
-@skip #include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_use.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_perf.h))
 
 #if 1
 /*
@@ -4270,9 +4270,9 @@ size_t Mjoin(PATL,GetAmmmNthr)(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
          return(1);
    #endif
 
-   nmblks = (M >= ATL_AMM_66MB) ? M/ATL_AMM_66MB : 1;
-   nnblks = (N >= ATL_AMM_66NB) ? N/ATL_AMM_66NB : 1;
-   nkblks = (K >= ATL_AMM_66KB) ? K/ATL_AMM_66KB : 1;
+   nmblks = (M >= ATL_geAMM_66MB) ? M/ATL_geAMM_66MB : 1;
+   nnblks = (N >= ATL_geAMM_66NB) ? N/ATL_geAMM_66NB : 1;
+   nkblks = (K >= ATL_geAMM_66KB) ? K/ATL_geAMM_66KB : 1;
 /*
  * Any shape with two degenerate dimensions causes a lot of bus traffic,
  * with very little computation to overcome threading overheads,
@@ -4284,9 +4284,9 @@ size_t Mjoin(PATL,GetAmmmNthr)(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
 /*
  * If it is a rank-K update, ask to have 4 big blocks of C
  */
-   if (K <= ATL_MAXM_RKK)
+   if (K <= ATL_rkAMM_LASTKB)
    {
-      nnblks=N/ATL_MAXN_RKK, nmblks=M/ATL_MAXM_RKK;
+      nnblks=N/ATL_rkAMM_LASTNB, nmblks=M/ATL_rkAMM_LASTMB;
       return((nnblks*nmblks)>>2);
    }
    
@@ -4524,9 +4524,9 @@ void Mjoin(PATL,InitTMMNodes)
    }
    for (i=0; i < ATL_NTHREADS; i++)
    {
-      ptmms[i].mb = Mmin(ATL_AMM_LLCMU, ATL_AMM_MAXMB);
-      ptmms[i].nb = Mmin(ATL_AMM_LLCMU, ATL_AMM_MAXNB);
-      ptmms[i].kb = ATL_AMM_MAXKB;
+      ptmms[i].mb = Mmin(ATL_geAMM_LASTLCMU, ATL_geAMM_LASTMB);
+      ptmms[i].nb = Mmin(ATL_geAMM_LASTLCMU, ATL_geAMM_LASTNB);
+      ptmms[i].kb = ATL_geAMM_LASTKB;
       ptmms[i].gemmK = gemmK;
       ptmms[i].eltsz = ATL_sizeof;
       ptmms[i].eltsh = Mjoin(PATL,shift);
@@ -4859,8 +4859,8 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
    }
 @ROUT ATL_tgemm
 #ifdef TREAL
-@skip  if (N <= ATL_AMM_MAXMB && K <= ATL_AMM_MAXKB &&  K > 2 &&
-@skip      M >= (ATL_AMM_MAXMB<<2)*Mmin(ATL_NTHREADS,8))
+@skip  if (N <= ATL_geAMM_LASTMB && K <= ATL_geAMM_LASTKB &&  K > 2 &&
+@skip      M >= (ATL_geAMM_LASTMB<<2)*Mmin(ATL_NTHREADS,8))
    {
       int Mjoin(PATL,tammm)(enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
          ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, const SCALAR alpha,
@@ -5046,7 +5046,7 @@ void Mjoin(PATL,tvgemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @define trans @AtlasConjTrans@
 @ROUT ATL_themm ATL_tsymm
 #include "atlas_misc.h"
-#include Mstr(Mjoin(AMM_UPR,_sum.h))
+@skip #include Mstr(Mjoin(AMM_UPR,_sum.h))
 @skip #define ATL_LAUNCHORDER         /* we want static ATL_launchorder array */
 #include "atlas_threads.h"
 #include "atlas_tlvl3.h"
@@ -5251,7 +5251,7 @@ void Mjoin(PATL,t@(rt))
          Mjoin(PATL,gescal)(M, N, beta, C, ldc);
       return;
    }
-   if (!nb) nb = ATL_AMM_66KB;
+   if (!nb) nb = ATL_sqAMM_66KB;
    if (Side == AtlasLeft)
    {
       nblks = N / nb;
@@ -5611,7 +5611,7 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
 /*
  * Distribute RHS over the processors
  */
-   if (!nb) nb = ATL_AMM_66KB;
+   if (!nb) nb = ATL_sqAMM_66KB;
    if (side == AtlasLeft)
    {
       nblks = N/nb;
@@ -5735,15 +5735,15 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
  * We keep the block sizes a multiple of 4 because we have special rank-4 update
  * based code for some TRSM kernels that gets used for the solve part
  */
-   if (nrhs >= P*ATL_AMM_MAXNB)
-      rb = (ATL_AMM_MAXNB>>2)<<2;
-   #ifdef ATL_AMM_98NB
-      else if (nrhs >= P*ATL_AMM_98NB)
-         rb = (ATL_AMM_98NB>>2)<<2;
+   if (nrhs >= P*ATL_sqAMM_LASTNB)
+      rb = (ATL_sqAMM_LASTNB>>2)<<2;
+   #ifdef ATL_sqAMM_98NB
+      else if (nrhs >= P*ATL_sqAMM_98NB)
+         rb = (ATL_sqAMM_98NB>>2)<<2;
    #endif
-   #ifdef ATL_AMM_66NB
-      else if (nrhs >= P*ATL_AMM_66NB)
-         rb = (ATL_AMM_66NB>>2)<<2;
+   #ifdef ATL_sqAMM_66NB
+      else if (nrhs >= P*ATL_sqAMM_66NB)
+         rb = (ATL_sqAMM_66NB>>2)<<2;
    #endif
    else
       rb = 4;
@@ -5953,7 +5953,7 @@ void Mjoin(PATL,t@(rt))
  * sizes).  Other problems will experience cancelation under the serial order,
  * so AFAIK, neither is more correct numerically.
  */
-   if (N < 3*ATL_AMM_LLCMU && K < 3*ATL_AMM_LLCMU)
+   if (N < 3*ATL_sqAMM_LASTLCMU && K < 3*ATL_sqAMM_LASTLCMU)
    {
 @ROUT ATL_tsyr2k
       Mjoin(PATL,syr2k)(Uplo, Trans, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
@@ -5996,7 +5996,7 @@ void Mjoin(PATL,t@(rt))
       sy.TA2 = AtlasNoTrans;
       sy.TB2 = @(trans);
    }
-   sy.nb = ATL_AMM_66KB;
+   sy.nb = ATL_sqAMM_66KB;
    ATL_tvsyr2k_rec(&sy, N/sy.nb, N%sy.nb, A, B, C);
 }
 
@@ -7084,7 +7084,7 @@ static void ATL_init@up@(rt)_t
     void *C, ATL_CINT ldc)
 {
    int i, nb;
-   nb = ATL_AMM_66KB;
+   nb = ATL_sqAMM_66KB;
 
    for (i=0; i < P; i++)
    {
@@ -7342,7 +7342,7 @@ static int ATL_t@(rt)_M
    ATL_TSYRK_M_t syp[ATL_NTHREADS];
    int i, p;
    p = ATL_tsyrkdecomp_M(syp, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc,
-                         ATL_AMM_LLCMU, ATL_AMM_LMU, Mjoin(PATL,shift), 
+                         ATL_sqAMM_LASTLCMU, ATL_sqAMM_LASTMU, Mjoin(PATL,shift), 
                          (TA == AtlasNoTrans) ? @(TRANS) : AtlasNoTrans,
                          ATL_TGEMM_PERTHR_MF, (TA == AtlasNoTrans) ? 
                          Mjoin(PATL,tsvgemmN@(TAC)):Mjoin(PATL,tsvgemm@(TAC)N),
@@ -7395,7 +7395,7 @@ static int ATL_t@(rt)_N
    psy[0].K = K;
    psy[0].lda = lda;
    psy[0].ldc = ldc;
-   psy[0].nb = ATL_AMM_66KB;
+   psy[0].nb = ATL_sqAMM_66KB;
    psy[0].eltsh = Mjoin(PATL,shift);
    psy[0].Uplo = Uplo;
    psy[0].TA = Trans;
@@ -7474,26 +7474,26 @@ void Mjoin(PATL,t@(rt))
    #ifdef TREAL
    {
    @beginskip
-      #ifdef ATL_AMM_98MB
-         size_t nd = N / ATL_AMM_98MB;
+      #ifdef ATL_sqAMM_98MB
+         size_t nd = N / ATL_sqAMM_98MB;
       #else
-         size_t nd = N / ATL_AMM_MAXMB;
+         size_t nd = N / ATL_sqAMM_LASTMB;
       #endif
       nd = (nd*(nd-1))>>1;
       if (nd > ATL_NTHREADS)
    @endskip
-      #ifdef ATL_AMM_98MB
-         #define MY_MB ATL_AMM_98MB
+      #ifdef ATL_sqAMM_98MB
+         #define MY_MB ATL_sqAMM_98MB
       #else
-         #define MY_MB ATL_AMM_MAXMB
+         #define MY_MB ATL_sqAMM_LASTMB
       #endif
       #if ATL_NTHREADS > 8
           #define MY_NTHR 8
       #else
           #define MY_NTHR ATL_NTHREADS
       #endif
-      if (N >= (MY_MB<<2) || 
-          (N <= ATL_AMM_MAXNB && K > ATL_NTHREADS*(((size_t)ATL_AMM_MAXKB)<<8)))
+      if (N >= (MY_MB<<2) || (N <= ATL_sqAMM_LASTNB && 
+          K > ATL_NTHREADS*(((size_t)ATL_sqAMM_LASTKB)<<8)))
       {
          void Mjoin(PATL,tsyrk_amm)
             (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT N,
@@ -7506,7 +7506,7 @@ void Mjoin(PATL,t@(rt))
    #endif
 @ROUT ATL_tsyrk ATL_therk
 
-   nb = ATL_AMM_LLCMU;
+   nb = ATL_sqAMM_LASTLCMU;
    if (K > (N<<ATL_NTHRPOW2) && (((size_t)N)*N*sizeof(TYPE) <= ATL_PTMAXMALLOC))
    {
       Mjoin(PATL,t@(rt)_K_rec)(Uplo, Trans, N, K, alpha, A, lda, beta, 
@@ -11966,8 +11966,8 @@ int Mjoin(PATL,tammm_tMN)
 /*
  * Special case for tiny N&K, and large M
  */
-   if (N > ATL_AMM_MAXNB || M > ATL_AMM_MAXMB ||
-       K < Mmin(8,ATL_NTHREADS)*ATL_AMM_MAXKB)
+   if (N > ATL_geAMM_LASTNB || M > ATL_geAMM_LASTMB ||
+       K < Mmin(8,ATL_NTHREADS)*ATL_geAMM_LASTKB)
       return(1);
 /*
  * Not uncommon to recur and hit this degenerate case that's a dot product
@@ -11983,7 +11983,7 @@ int Mjoin(PATL,tammm_tMN)
          *C = alpha * dot + beta * (*C);
       return(0);
    }
-   nkblks = K / ATL_AMM_66KB;
+   nkblks = K / ATL_sqAMM_66KB;
    mb = Mjoin(PATL,tGetAmmmInfo)(&mminfo, Mmin(nkblks, ATL_NTHREADS), TA,
                                  TB, M, N, K, alpha, beta);
 
@@ -12020,7 +12020,7 @@ int Mjoin(PATL,tammm_tMN)
    else
    {
       nkblks++;
-      #if ATL_AMM_MAXKMAJ > 1
+      #if ATL_geAMM_MAXKVEC > 1
          if (ATL_AMMFLG_KMAJOR(mminfo.flag))
          {
             KB0 = ((kb0+ku-1)/ku)*ku;
@@ -12379,7 +12379,7 @@ static void trsmREC_LLN
 /*
  * Stop recursion when A & panel of B fit in cache
  */
-   sz = ((M*M)>>1) + M*(ATL_AMM_98KB<<1);
+   sz = ((M*M)>>1) + M*(ATL_sqAMM_98KB<<1);
    sz = ATL_MulBySize(sz);
    if (STOP_EARLY || sz < CacheEdge)
    {
@@ -12420,7 +12420,7 @@ static void trsmREC_LUT
 /*
  * Stop recursion when A & panel of B fit in cache
  */
-   sz = ((M*M)>>1) + M*(ATL_AMM_98KB<<1);
+   sz = ((M*M)>>1) + M*(ATL_sqAMM_98KB<<1);
    sz = ATL_MulBySize(sz);
    if (STOP_EARLY || sz < CacheEdge)
    {
@@ -12843,8 +12843,8 @@ int Mjoin(PATL,tammm_tNK)
 /*
  * Special case for tiny N&K, and large M
  */
-   if (N >= ATL_AMM_MAXNB || K >= ATL_AMM_MAXKB || M < ATL_AMM_MAXMB || 
-       M < Mmin(8,ATL_NTHREADS)*ATL_AMM_MAXMB)
+   if (N >= ATL_geAMM_LASTNB || K >= ATL_geAMM_LASTKB || M < ATL_geAMM_LASTMB 
+       || M < Mmin(8,ATL_NTHREADS)*ATL_geAMM_LASTMB)
       return(1);
    Mjoin(PATL,GetRankKInfo)(&mminfo, TA, TB, M, N, K, alpha, beta);
    pd.a2blk = mminfo.a2blk;
@@ -13385,8 +13385,8 @@ int Mjoin(PATL,tammm_G)
                          p4 = nthr>>2, p4_2 = nthr+nthr, p4_3 = p4_2+p4;
    #endif
 
-   nmblks = M / ATL_AMM_66MB;
-   nnblks = N / ATL_AMM_66NB;
+   nmblks = M / ATL_sqAMM_66MB;
+   nnblks = N / ATL_sqAMM_66NB;
    ncblks = sz = ((size_t)nmblks) * nnblks;
    if (ncblks != sz)   /* too many blocks to safely count */
       return(1);       /* so tell caller to recur or call something else */
@@ -13446,7 +13446,7 @@ int Mjoin(PATL,tammm_G)
    }
    else
    {
-      #if ATL_AMM_MAXKMAJ > 1
+      #if ATL_geAMM_MAXKVEC > 1
          if (ATL_AMMFLG_KMAJOR(mminfo.flag))
          {
             KB0 = ((kb0+ku-1)/ku)*ku;
@@ -13724,7 +13724,8 @@ int Mjoin(PATL,ammm_REC)
 /*
  *    Stopping criteria in case something is horribly wrong
  */
-      if (K <= ATL_AMM_MAXKB && M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB)
+      if (K <= ATL_geAMM_LASTKB && M <= ATL_geAMM_LASTMB && 
+          N <= ATL_geAMM_LASTNB)
       {
          Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
          return(0);
@@ -13787,13 +13788,13 @@ int Mjoin(PATL,tammm)
    ATL_CSZT ldc
 )
 {
-   if (N < ATL_AMM_MAXNB && K <= ATL_AMM_MAXKB && K > 2)
+   if (N < ATL_geAMM_LASTNB && K <= ATL_geAMM_LASTKB && K > 2)
       return(Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
-   else if (M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB)
+   else if (M <= ATL_geAMM_LASTMB && N <= ATL_geAMM_LASTNB)
       return(Mjoin(PATL,tammm_tMN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
-   else if (M > ATL_AMM_MAXMB && K >= 16 && N > ATL_AMM_MAXNB)
+   else if (M > ATL_geAMM_LASTMB && K >= 16 && N > ATL_geAMM_LASTNB)
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc, Mjoin(PATL,tammm_G)));
    return(1);
@@ -13939,19 +13940,19 @@ int Mjoin(PATL,tsyrk_amm_K)
    ATL_tsyrk_ammK_t pd;
    ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
       (amminfo_t *out, const int P, enum ATLAS_TRANS TA, ATL_CSZT N,ATL_CSZT K);
-   int kb=ATL_AMM_MAXKB, nkb = K / ATL_AMM_MAXKB, P = ATL_NTHREADS;
+   int kb=ATL_sqAMM_LASTKB, nkb = K / ATL_sqAMM_LASTKB, P = ATL_NTHREADS;
    int ku, kr, mb, nb, mu, nu;
    size_t sz;
    void *vp=NULL;
 
    if (nkb < P)
    {
-      kb = ATL_AMM_98KB;
-      nkb = K / ATL_AMM_98KB;
+      kb = ATL_sqAMM_98KB;
+      nkb = K / ATL_sqAMM_98KB;
       if (nkb < P)
       {
-         nkb = K / ATL_AMM_66KB;
-         kb = ATL_AMM_66KB;
+         nkb = K / ATL_sqAMM_66KB;
+         kb = ATL_sqAMM_66KB;
       }
    }
    if (nkb < P)
@@ -13993,7 +13994,7 @@ int Mjoin(PATL,tsyrk_amm_K)
    }
    else
    {
-      #if ATL_AMM_MAXKMAJ > 1
+      #if ATL_sqAMM_MAXKVEC > 1
          if (ATL_AMMFLG_KMAJOR(mminfo.flag))
          {
             pd.KB0 = ((kr+ku-1)/ku)*ku;
@@ -14833,10 +14834,10 @@ int Mjoin(PATL,tsyrk_amm_N)
       (amminfo_t *out, const int P, enum ATLAS_TRANS TA, ATL_CSZT N, 
        ATL_CSZT K, const SCALAR alpha, const SCALAR beta);
 
-   #ifdef ATL_AMM_98NB
-      ncblks = N / ATL_AMM_98NB;
+   #ifdef ATL_sqAMM_98NB
+      ncblks = N / ATL_sqAMM_98NB;
    #else
-      ncblks = N / ATL_AMM_MAXNB;
+      ncblks = N / ATL_sqAMM_LASTNB;
    #endif
    ncblks = (ncblks*(ncblks-1))>>1;
    #ifdef ATL_PHI_SORTED2
@@ -14916,7 +14917,7 @@ int Mjoin(PATL,tsyrk_amm_N)
    }
    else
    {
-      #if ATL_AMM_MAXKMAJ > 1
+      #if ATL_sqAMM_MAXKVEC > 1
          if (ATL_AMMFLG_KMAJOR(mminfo.flag))
          {
             KB0 = ((kb0+ku-1)/ku)*ku;
@@ -15081,7 +15082,7 @@ void Mjoin(PATL,tsyrk_amm)
     const SCALAR beta, TYPE *C, ATL_CINT ldc)
 
 {
-   if (N <= Mmax(ATL_AMM_MAXMB,ATL_AMM_MAXNB))
+   if (N <= Mmax(ATL_sqAMM_LASTMB,ATL_sqAMM_LASTNB))
    {
       if (!Mjoin(PATL,tsyrk_amm_K)(Uplo, Trans, N, K, alpha, A, lda, 
                                    beta, C, ldc))
