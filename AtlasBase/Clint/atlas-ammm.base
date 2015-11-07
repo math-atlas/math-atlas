@@ -642,6 +642,11 @@ int Mjoin(PATL,ammm_syrk)
 void Mjoin(PATL,ammmM)
    (rkinfo_t *rkinf, int N, int nb, int nnu, TYPE *a, int INCA,
     const TYPE *b, TYPE *c, const TYPE *A, TYPE *C, const SCALAR beta);
+void Mjoin(PATL,ammmN)
+   (rkinfo_t *rkinf, int M, int mb, int nmu, const TYPE *a, TYPE *b, int INCB,
+    TYPE *c, const TYPE *B, TYPE *C, const SCALAR beta);
+)
+@ROUT ATL_ammmN
 void Mjoin(PATL,ammmK)
    (amminfo_t*, const int mb, const int nmu, const int nb, const int nnu, 
     ATL_CINT nfkblks, const int kb, const int kb0, const int KB0, const TYPE *A,
@@ -21408,60 +21413,110 @@ void Mjoin(PATL,GetRKInfo)
       out->incBn = ldb*(NB SHIFT);
       out->incBnS = ldb*(nb SHIFT);
    }
-   out->inca = MB*kb;
-   out->incaS = mb*kb;
 /*
  * Once we have ATL_ammmN written, put alpha on A if there's only 1 blk of
  * of B.  For now, always put on B and use ATL_ammmM
  */
-   #if 0
-   #else
-   #ifdef TCPLX
-      if (TA == AtlasNoTrans)
-         out->a2blk = ATL_AMM_AT2BLK_a1[idx];
-      else if (TA == AtlasTrans)
-         out->a2blk = ATL_AMM_AN2BLK_a1[idx];
-      else
-         out->a2blk = (TA == AtlasConjTrans) ?
-            ATL_AMM_AC2BLK_a1[idx] : ATL_AMM_AH2BLK_a1[idx];
+   if (nnblks > 1 && nmblks < 2) /* If we only have row panel of C */
+   {                             /* apply alpha to A */
+      out->inca = NB*kb;
+      out->incaS = nb*kb;
+      #ifdef TCPLX
+         if (TB == AtlasNoTrans)
+            out->b2blk = ATL_AMM_BN2BLK_a1[idx];
+         else if (TB == AtlasTrans)
+            out->b2blk = ATL_AMM_BT2BLK_a1[idx];
+         else
+            out->b2blk = (TB == AtlasConjTrans) ?
+               ATL_AMM_BH2BLK_a1[idx] : ATL_AMM_BC2BLK_a1[idx];
 
    @define else @@
    @multidef at NONE ONE
    @whiledef an X n 1
       @ifdef ! at
-      else
+         else
       @endifdef
       @ifdef at
-      @(else)if (SCALAR_IS_@(at)(alpha))
+         @(else)if (SCALAR_IS_@(at)(alpha))
          @undef at
       @endifdef
       @undef else
       @define else @else @
-      {
-         if (TB == AtlasNoTrans)
-            out->b2blk = ATL_AMM_BN2BLK_a@(an)[idx];
-         else if (TB == AtlasTrans)
-            out->b2blk = ATL_AMM_BT2BLK_a@(an)[idx];
-         else
-            out->b2blk = (TB == AtlasConjTrans) ?
-               ATL_AMM_BH2BLK_a@(an)[idx] : ATL_AMM_BC2BLK_a@(an)[idx];
-      }
+         {
+            if (TA == AtlasNoTrans)
+               out->a2blk = ATL_AMM_AT2BLK_a@(an)[idx];
+            else if (TA == AtlasTrans)
+               out->a2blk = ATL_AMM_AN2BLK_a@(an)[idx];
+            else
+               out->a2blk = (TA == AtlasConjTrans) ?
+                  ATL_AMM_AC2BLK_a@(an)[idx] : ATL_AMM_AH2BLK_a@(an)[idx];
+         }
    @endwhile
    @undef else
-   #else
-      out->a2blk = (TA == AtlasTrans) ? 
-                   ATL_AMM_AN2BLK_a1[idx] : ATL_AMM_AT2BLK_a1[idx];
-      if (SCALAR_IS_ONE(alpha))
+      #else
          out->b2blk = (TB == AtlasTrans) ? 
-                   ATL_AMM_BT2BLK_a1[idx] : ATL_AMM_BN2BLK_a1[idx];
-      else if (SCALAR_IS_NONE(alpha))
-         out->b2blk = (TB == AtlasTrans) ? 
-                   ATL_AMM_BT2BLK_an[idx] : ATL_AMM_BN2BLK_an[idx];
-      else
-         out->b2blk = (TB == AtlasTrans) ? 
-                   ATL_AMM_BT2BLK_aX[idx] : ATL_AMM_BN2BLK_aX[idx];
-   #endif
-   #endif
+                      ATL_AMM_BT2BLK_a1[idx] : ATL_AMM_BN2BLK_a1[idx];
+         if (SCALAR_IS_ONE(alpha))
+            out->a2blk = (TA == AtlasTrans) ? 
+                      ATL_AMM_AN2BLK_a1[idx] : ATL_AMM_AT2BLK_a1[idx];
+         else if (SCALAR_IS_NONE(alpha))
+            out->a2blk = (TA == AtlasTrans) ? 
+                      ATL_AMM_AN2BLK_an[idx] : ATL_AMM_AT2BLK_an[idx];
+         else
+            out->a2blk = (TA == AtlasTrans) ? 
+                      ATL_AMM_AN2BLK_aX[idx] : ATL_AMM_AT2BLK_aX[idx];
+      #endif
+   }
+   else  /* apply alpha to B */
+   {
+      out->inca = MB*kb;
+      out->incaS = mb*kb;
+      #ifdef TCPLX
+         if (TA == AtlasNoTrans)
+            out->a2blk = ATL_AMM_AT2BLK_a1[idx];
+         else if (TA == AtlasTrans)
+            out->a2blk = ATL_AMM_AN2BLK_a1[idx];
+         else
+            out->a2blk = (TA == AtlasConjTrans) ?
+               ATL_AMM_AC2BLK_a1[idx] : ATL_AMM_AH2BLK_a1[idx];
+
+   @define else @@
+   @multidef at NONE ONE
+   @whiledef an X n 1
+      @ifdef ! at
+         else
+      @endifdef
+      @ifdef at
+         @(else)if (SCALAR_IS_@(at)(alpha))
+         @undef at
+      @endifdef
+      @undef else
+      @define else @else @
+         {
+            if (TB == AtlasNoTrans)
+               out->b2blk = ATL_AMM_BN2BLK_a@(an)[idx];
+            else if (TB == AtlasTrans)
+               out->b2blk = ATL_AMM_BT2BLK_a@(an)[idx];
+            else
+               out->b2blk = (TB == AtlasConjTrans) ?
+                  ATL_AMM_BH2BLK_a@(an)[idx] : ATL_AMM_BC2BLK_a@(an)[idx];
+         }
+   @endwhile
+   @undef else
+      #else
+         out->a2blk = (TA == AtlasTrans) ? 
+                      ATL_AMM_AN2BLK_a1[idx] : ATL_AMM_AT2BLK_a1[idx];
+         if (SCALAR_IS_ONE(alpha))
+            out->b2blk = (TB == AtlasTrans) ? 
+                      ATL_AMM_BT2BLK_a1[idx] : ATL_AMM_BN2BLK_a1[idx];
+         else if (SCALAR_IS_NONE(alpha))
+            out->b2blk = (TB == AtlasTrans) ? 
+                      ATL_AMM_BT2BLK_an[idx] : ATL_AMM_BN2BLK_an[idx];
+         else
+            out->b2blk = (TB == AtlasTrans) ? 
+                      ATL_AMM_BT2BLK_aX[idx] : ATL_AMM_BN2BLK_aX[idx];
+      #endif
+   }
    if (SCALAR_IS_NONE(beta))
       out->blk2C = ATL_AMM_BLK2C_a1_bn[idx];
    else if (SCALAR_IS_ONE(beta))
@@ -22384,6 +22439,164 @@ int Mjoin(PATL,GetSqMNAmmmInfo)
    }
    return(appAl);
 }
+@ROUT ATL_ammmN ATL_cammmN
+#include "atlas_amm.h"
+/*
+ * This function loops only over N.  Therefore, it updates 1 row-panel
+ * of C using a rank-kb update.
+ * If B2blk non-NULL, copy B, else assume already available in b.
+ */
+void Mjoin(PATL,ammmN) /* C <= beta*C + A*B, B/C nb-wide colpan */
+(
+   rkinfo_t *rkinf,
+   int M,              /* # of cols to do */
+   int mb,             /* CEIL(N/nu)*nu */
+   int nmu,            /* nb/nu */
+   const TYPE *a,      /* access-major kb*nb copy of B */
+   TYPE *b,            /* workspace for A */
+   int INCB,           /* 0: don't increment b, else do */
+   TYPE *c,            /* access-major mb*nb workspace for C */
+   const TYPE *B,      /* col/row-major (original) A */
+   TYPE *C,            /* col-major (original) C */
+   const SCALAR beta   /* scale factor for C */
+)
+@ROUT ATL_ammmN
+{
+   ammkern_t amm=rkinf->amm_b0;
+   ablk2cmat_t blk2C=rkinf->blk2C;/* frm C's access-maj storage to col-maj */
+   cm2am_t b2blk=rkinf->b2blk;    /* copy from row/col major A to access-maj */
+   const size_t nsnblks=rkinf->nsnblks, nnblks=rkinf->nnblks;
+   const size_t incBnS=rkinf->incBnS, incBn=rkinf->incBn; 
+   const size_t ldb=rkinf->ldb, ldc=rkinf->ldc;
+   size_t n, incC;
+   ATL_CINT nu=rkinf->nu, kb=rkinf->kb, K=rkinf->K;
+   ATL_INT j, nb, nnu, incb;
+/*
+ * Loop over small N-blks of size NNU-1
+ */
+   nb = rkinf->nb - nu;
+   nnu = rkinf->nnu - 1;
+   incC = nb * ldc;
+   incb = (INCB) ? rkinf->incaS : 0;
+   for (n=rkinf->N, j=0; j < nsnblks; n -= nb, j++)
+   {
+      TYPE *bn = b + incb;
+      const int nn = Mmin(n, nb);
+
+      if (b2blk)
+      {
+         b2blk(K, nn, ATL_rone, B, ldb, b);
+         B += incBnS;
+      }
+      amm(nmu, nnu, kb, a, b, c, a, bn, c);
+      if (blk2C)
+      {
+         blk2C(M, nn, ATL_rone, c, beta, C, ldc);
+         C += incC;
+      }
+      b = bn;
+   }
+/*
+ * Now, finish col-panel out by looping over full blocks
+ */
+   nnu++;
+   nb += nu;
+   incC = nb * ldc;
+   incb = (INCB) ? rkinf->inca : 0;
+   for (; j < nnblks; j++, n -= nb)
+   {
+      TYPE *bn = b + incb;
+      const int nn = Mmin(n, nb);
+
+      if (b2blk)
+      {
+         b2blk(K, nn, ATL_rone, B, ldb, b);
+         B += incBn;
+      }
+      amm(nmu, nnu, kb, a, b, c, a, bn, c);
+      if (blk2C)
+      {
+         blk2C(M, nn, ATL_rone, c, beta, C, ldc);
+         C += incC;
+      }
+      b = bn;
+   }
+}
+@ROUT ATL_cammmN
+{
+   ammkern_t amm_b0=rkinf->amm_b0, amm_b1=rkinf->amm_b1,amm_bn=rkinf->amm_bn;
+   ablk2cmat_t blk2C=rkinf->blk2C;/* frm C's access-maj storage to col-maj */
+   cm2am_t b2blk=rkinf->b2blk;    /* copy from row/col major A to access-maj */
+   TYPE *iB=b, *iC=c, *rC;
+   const TYPE *rA, *iA=a;
+   const size_t nsnblks=rkinf->nsnblks, nnblks=rkinf->nnblks;
+   const size_t incBnS=rkinf->incBnS, incBn=rkinf->incBn; 
+   const size_t ldb=rkinf->ldb, ldc=rkinf->ldc;
+   size_t n, incC;
+   ATL_CINT nu=rkinf->nu, kb=rkinf->kb, K=rkinf->K;
+   ATL_INT j, nb, nnu, incb;
+   TYPE ONE[2] = {ATL_rone, ATL_rzero};
+
+   rA = iA + rkinf->mb*kb;
+/*
+ * Loop over small N blks of size NNU-1
+ */
+   nb = rkinf->nb - nu;
+   incC = nb * (ldc+ldc);
+   rC = iC + mb*nb;
+   nnu = rkinf->nnu - 1;
+   incb = rkinf->incaS;
+   for (n=rkinf->N, j=0; j < nsnblks; n -= nb, j++)
+   {
+      TYPE *rB = iB + incb, *bn = (INCB) ? rB + incb : iB;
+      const int nn = Mmin(n, nb);
+
+      if (b2blk)
+      {
+         b2blk(K, nn, ONE, B, ldb, rB, iB);
+         B += incBnS;
+      }
+      amm_b0(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+      amm_b0(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+      amm_b1(nmu, nnu, kb, iA, rB, iC, rA, bn, iC);
+      if (blk2C)
+      {
+         blk2C(M, nn, ONE, rC, iC, beta, C, ldc);
+         C += incC;
+      }
+      iB = bn;
+   }
+/*
+ * Now, finish col-panel out by looping over full blocks
+ */
+   nb += nu;
+   incC = nb * (ldc+ldc);
+   nnu++;
+   rC = iC + mb*nb;
+   incb = rkinf->inca;
+   for (; j < nnblks; j++, n -= nb)
+   {
+      TYPE *rB = iB + incb, *bn = (INCB) ? rB + incb : iB;
+      const int nn = Mmin(n, nb);
+
+      if (b2blk)
+      {
+         b2blk(K, nn, ONE, B, ldb, rB, iB);
+         B += incBn;
+      }
+      amm_b0(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+      amm_b0(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+      amm_b1(nmu, nnu, kb, iA, rB, iC, rA, bn, iC);
+      if (blk2C)
+      {
+         blk2C(M, nn, ONE, rC, iC, beta, C, ldc);
+         C += incC;
+      }
+      iB = bn;
+   }
+}
 @ROUT ATL_ammmM ATL_cammmM
 #include "atlas_amm.h"
 /*
@@ -22563,12 +22776,11 @@ int Mjoin(PATL,ammm_rkKm)
    ATL_CSZT ldc
 )
 {
-   cm2am_t b2blk;
    void *vp;
    TYPE *a, *b, *c;
-   size_t szA, szB, szC, incC, incBn, nnblks, nsnblks, nmblks, nsmblks, n, j;
+   size_t szA, szB, szC, incC, incBn, nnblks, nsnblks, nmblks, nsmblks;
    rkinfo_t rkinf;
-   ATL_UINT kb, NOREP, mb, MB, NB, NMU, NNU, mu, nu;
+   ATL_UINT kb, NOREP, mb, MB, NB, NNU, mu, nu;
    #ifdef TCPLX
       TYPE *rB;
       const size_t ldc2=ldc+ldc;
@@ -22595,8 +22807,7 @@ int Mjoin(PATL,ammm_rkKm)
    mu = rkinf.mu;
    nu = rkinf.nu;
    mb = MB - mu;
-   NOREP = (nnblks < 2);
-   b2blk = rkinf.b2blk;
+   NOREP = (nnblks < 2 || nmblks < 2);
    if (NOREP)
       szA = MB*kb;
    else
@@ -22610,40 +22821,66 @@ int Mjoin(PATL,ammm_rkKm)
    a = ATL_AlignPtr(vp);
    b = a + (szA SHIFT);
    b = ATL_AlignPtr(b);
-   #ifdef TCPLX
-      rB = b + szB;
-   #endif
    c = b + (szB SHIFT);
    c = ATL_AlignPtr(c);
 
-   for (n=N,j=0; j < nnblks; j++)
+/*
+ * If we have a degenerate case of 1 row-panel of C, handle that seperately
+ */
+   if (nmblks < 2 && nnblks > 1)
    {
-      size_t incB;
-      int nmu, mb, nnu, nb, nn;
+      cm2am_t a2blk = rkinf.a2blk;
+      size_t M=rkinf.M;
+      int nmu = rkinf.nmu;
 
-      if (j < nsnblks)
-      {
-         nb = NB-nu;
-         nnu = NNU-1;
-         incB = rkinf.incBnS;
-      }
-      else
-      {
-         nb = NB;
-         nnu = NNU;
-         incB = rkinf.incBn;
-      }
-      nn = Mmin(n, nb);
       #ifdef TCPLX
-         b2blk(K, nn, alpha, B, ldb, rB, b);
+         a2blk(K, M, alpha, A, lda, a+szA, a);
       #else
-         b2blk(K, nn, alpha, B, ldb, b);
+         a2blk(K, M, alpha, A, lda, a);
       #endif
-      B += incB;
-      Mjoin(PATL,ammmM)(&rkinf, nn, nb, nnu, a, !NOREP, b, c, A, C, beta);
-      rkinf.a2blk = NULL;  /* A copied fully in this 1 call */
-      C += nb*ldc2;
-      n -= nb;
+      if (nsmblks)
+         nmu--;
+      else
+         mb = MB;
+      Mjoin(PATL,ammmN)(&rkinf, M, mb, nmu, a, b, 0, c, B, C, beta);
+   }
+   else  /* usual case, work on column-panel of C at a time */
+   {
+      cm2am_t b2blk = rkinf.b2blk;
+      size_t n, j;
+      #ifdef TCPLX
+         TYPE *rB = b + szB;
+      #endif
+
+      for (n=N,j=0; j < nnblks; j++)
+      {
+         size_t incB;
+         int nmu, mb, nnu, nb, nn;
+   
+         if (j < nsnblks)
+         {
+            nb = NB-nu;
+            nnu = NNU-1;
+            incB = rkinf.incBnS;
+         }
+         else
+         {
+            nb = NB;
+            nnu = NNU;
+            incB = rkinf.incBn;
+         }
+         nn = Mmin(n, nb);
+         #ifdef TCPLX
+            b2blk(K, nn, alpha, B, ldb, rB, b);
+         #else
+            b2blk(K, nn, alpha, B, ldb, b);
+         #endif
+         B += incB;
+         Mjoin(PATL,ammmM)(&rkinf, nn, nb, nnu, a, !NOREP, b, c, A, C, beta);
+         rkinf.a2blk = NULL;  /* A copied fully in this 1 call */
+         C += nb*ldc2;
+         n -= nb;
+      }
    }
    free(vp);
 }
