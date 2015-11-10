@@ -589,6 +589,7 @@ struct ipinfo
    size_t incAk, incBk;    /* block-kb increment for A/B ptrs */
    size_t sincAm, incAm;   /* small & large mb-block increment */
    size_t sincBn, incBn;   /* small & large nb-block increment */
+   size_t lda, ldb, ldc;   /* leading dim for all 3 matrices */
    #ifndef TCPLX
       TYPE alpA, alpB, alpC;
    #endif
@@ -650,11 +651,12 @@ void Mjoin(PATL,geComputeIPInfo)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc, 
     const SCALAR alpha, const SCALAR beta);
-void Mjoin(PATL,iploopsMK)(ipinfo_t *ip, size_t j, const TYPE *A,
-           const size_t lda, const TYPE *B, const size_t ldb, 
-           TYPE *C, const size_t ldc, const int MVS, TYPE *a, 
-           const int BIGAW, TYPE *b, 
-           TYPE *rC, TYPE *iC, const SCALAR beta, const ablk2cmat_t blk2c);
+@whiledef rt iploopsMK iploopsK
+void Mjoin(PATL,@(rt))
+   (ipinfo_t *ip, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C, 
+    const int MVS, TYPE *a, TYPE *b, TYPE *rC, TYPE *iC, 
+    const SCALAR beta, const ablk2cmat_t blk2c);
+@endwhile
 @beginskip
 void Mjoin(PATL,GetBestKBInfo)
    (rkinfo_t*,rkinfo_t*,enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,
@@ -13576,17 +13578,19 @@ int Mjoin(PATL,ammm_tN)
    szB = ipinf.sszB*ipinf.nsnblks + ipinf.szB * (ipinf.nnblks-ipinf.nsnblks);
    szB = ipinf.szB*(ipinf.nfkblks+1);
    vp = malloc(ATL_MulBySize(szC+ipinf.szA+szB+(ipinf.mu<<1)*ipinf.nu)
-               + ATL_Cachelen);
+               + 3*ATL_Cachelen);
    if (!vp)
       return(1);
    a = ATL_AlignPtr(vp);
    b = a + (ipinf.szA SHIFT);
+   b = ATL_AlignPtr(b);
    c = b + (szB SHIFT);
-   Mjoin(PATL,iploopsMK)(&ipinf, 0, A, lda, B, ldb, C, ldc, 2, a,
+   c = ATL_AlignPtr(c);
+   Mjoin(PATL,iploopsMK)(&ipinf, 0, 0, A, B, C, 2, a, b,
    #ifdef TCPLX
-                         0, b, c+szC, c, beta, ipinf.blk2c);
+                         c+szC, c, beta, ipinf.blk2c);
    #else
-                         0, b, c, c, beta, ipinf.blk2c);
+                         c, c, beta, ipinf.blk2c);
    #endif
 
    free(vp);
@@ -14189,14 +14193,16 @@ int Mjoin(PATL,ammm_IP)
    Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, K, lda, ldb, ldc, 
                                alpha, beta);
    vp = malloc(ATL_MulBySize(ip.szC+ip.szA+ip.szB+(ip.mu<<1)*ip.nu)
-               +ATL_Cachelen);
+               + 3*ATL_Cachelen);
    if (!vp)
       return(1);
 
    a = ATL_AlignPtr(vp);
    b = a + (ip.szA SHIFT);
+   b = ATL_AlignPtr(b);
    c = b + (ip.szB SHIFT);
-   Mjoin(PATL,iploopsK)(&ip, 0, 0, A, lda, B, ldb, C, ldc, 0, a, b, 
+   c = ATL_AlignPtr(c);
+   Mjoin(PATL,iploopsK)(&ip, 0, 0, A, B, C, 0, a, b, 
    #ifdef TCPLX
                         c+ip.szC, c, beta, ip.blk2c);
    #else
@@ -21189,6 +21195,9 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    ip->mu = mu = ATL_AMM_MUs[idx];
    ip->nu = nu = ATL_AMM_NUs[idx];
    ip->ku = ku = ATL_AMM_KUs[idx];
+   ip->lda = lda;
+   ip->ldb = ldb;
+   ip->ldc = ldc;
 /*
  * For testing, just always make smaller, use cache to make decision later
  */
@@ -23465,17 +23474,17 @@ int Mjoin(PATL,ammmNKM)
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+/*
+ * A & B ptrs should point to start of K iteration in this rout
+ */
 void Mjoin(PATL,iploopsK)
 (
    ipinfo_t *ip,
    size_t i,              /* which global row block of C is being computed */
    size_t j,              /* which global col block of C is being computed */
    const TYPE *A,         /* if non-NULL, Portion A to cpy */
-   const size_t lda,      /* stride between row elts in A */
    const TYPE *B,         /* if non-NULL, Portion B to cpy, else ignored */
-   const size_t ldb,      /* stride between row elts of B */
    TYPE *C,               /* original C to write ans to at end of Kloop */
-   const size_t ldc,      /* stride between row elts of B */
    int MV,                /* 1: move a, 2: move b, 3: move A & B */
    TYPE *a,               /* wrkspace for block-copied A */
    TYPE *b,               /* wrkspace for block-copied B */
@@ -23491,6 +23500,7 @@ void Mjoin(PATL,iploopsK)
    ATL_CUINT mu=ip->mu, nu=ip->nu;
    ATL_UINT nmu, nnu, mb, nb;
    const size_t nfkblks=ip->nfkblks, nsmblks=ip->nsmblks, nsnblks=ip->nsnblks;
+   const size_t lda=ip->lda, ldb=ip->ldb;
    const size_t nmblks=ip->nmblks, nnblks=ip->nnblks;
    const size_t incAk=ip->incAk, incBk=ip->incBk;
    size_t inca, incb, k;
@@ -23608,7 +23618,7 @@ void Mjoin(PATL,iploopsK)
       b = bn;
    }
    if (blk2c)
-      blk2c(mb, nb, ip->alpC, rC, iC, beta, C, ldc);
+      blk2c(mb, nb, ip->alpC, rC, iC, beta, C, ip->ldc);
 #else
    if (!(MV&1))
       inca = 0;
@@ -23675,29 +23685,33 @@ void Mjoin(PATL,iploopsK)
       b = bn;
    }
    if (blk2c)
-      blk2c(mb, nb, ip->alpC, rC, beta, C, ldc);
+      blk2c(mb, nb, ip->alpC, rC, beta, C, ip->ldc);
 #endif
 }
 
 /*
- * ASSUMES:
- * (1) b is large enough to hold 1 col-panel of B
- * (2) if BIGAW==0, a is large enough for 1 row-panel of A (no reuse of panel)
- *     else a large enough for entire matrix A (row-panels reused for all B)
+ * MVS: bit pattern with following meaning by bit position:
+ *   1: set: move A workspace;  unset: A work only mb*nb
+ *   2: set: move B workspace;  unset: B work only kb*nb
+ *   4: set: A wrkspc hold full mat;  unset: A wrkspc holds panel only
+ *      if bit 0 unset, this bit has no affect
+ *
+ * NOTE: we assume global (i,j), but this function assumes any j indexing
+ *       has been rolled into the B/C ptrs.  It does only i indexing for A&C.
+ *       When i|j > 0, we do *NOT* move around in the workspace as we would 
+ *       if we copied them ourselves.  This allows callers that don't need 
+ *       full workspace (eg., triangular loops) to avoid allocating it.
  */
 void Mjoin(PATL,iploopsMK)
 (
    ipinfo_t *ip,
+   size_t i,              /* which glbl rowblk to start at (ignore blks <i) */
    size_t j,              /* which global col block of C is being computed */
    const TYPE *A,         /* if non-NULL, A to cpy, else ignored */
-   const size_t lda,      /* stride between row elts in A */
    const TYPE *B,         /* if non-NULL, Portion B to cpy, else ignored */
-   const size_t ldb,      /* stride between row elts of B */
    TYPE *C,               /* original C to write ans to at end of Kloop */
-   const size_t ldc,      /* stride between row elts of B */
    const int MVS,         /* 1:move A workspace, 2:move B wrkspc, 3: mv both */
    TYPE *a,               /* wrkspace for block-copied A */
-   const int BIGAW,       /* 0: reuse same col-pan wrkspc for A, else sep */
    TYPE *b,               /* wrkspace for block-copied B */
    TYPE *rC,              /* ptr to real portion of C access-major workspace */
    TYPE *iC,              /* ptr to complex C workspace */
@@ -23706,31 +23720,51 @@ void Mjoin(PATL,iploopsMK)
 )
 {
    const size_t nsmblks=ip->nsmblks, nmblks=ip->nmblks;
-   size_t i=0;
-   const int BA=((BIGAW) && (MVS&1)) ? -1:0;
+   const size_t lda=ip->ldb;
+   const size_t BA=((MVS&1)&&(MVS&4)) ? (~0):0;
    const TYPE *pB=B;
-   if (nsmblks)
+   if (i < nsmblks)
    {
       const size_t incAm = ip->sincAm, incCm = (ip->mbS)SHIFT;
       const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->sszA)SHIFT));
-      for (i=0; i < nsmblks; i++)
+      if (i)
       {
-         Mjoin(PATL,iploopsK)(ip, i, j, A, lda, pB, ldb, C, ldc,
-                              MVS, a, b, rC, iC, beta, blk2c);
+         A += i * incAm;
+         C += i * incCm;
+@skip         a += i * pansz;
+      }
+      for (; i < nsmblks; i++)
+      {
+         Mjoin(PATL,iploopsK)(ip, i, j, A, pB, C, MVS, a, b, 
+                              rC, iC, beta, blk2c);
          A += incAm;
          C += incCm;
-         a += pansz;
+@skip         a += pansz;
          pB = NULL;  /* copy B col-panel only on first iteration */
       }
    }
-   if (nmblks != nsmblks)
+   else if (i && nsmblks)
+   {
+@skip      const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->sszA)SHIFT));
+      A += nsmblks * ip->sincAm;
+      C += nsmblks * ((ip->mbS)SHIFT);
+@skip      a += nsmblks * pansz;
+   }
+   if (i < nmblks)
    {
       const size_t incAm = ip->incAm, incCm = (ip->mb)SHIFT;
       const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->szA)SHIFT));
-      for (i=nsmblks; i < nmblks; i++)
+      if (i > nsmblks)
       {
-         Mjoin(PATL,iploopsK)(ip, i, j, A, lda, pB, ldb, C, ldc, MVS,
-                              a, b, rC, iC, beta, blk2c);
+         size_t k = i - nsmblks;
+         A += k * incAm;
+         C += k * incCm;
+@skip         a += k * pansz;
+      }
+      for (; i < nmblks; i++)
+      {
+         Mjoin(PATL,iploopsK)(ip, i, j, A, pB, C, MVS, a, b,
+                              rC, iC, beta, blk2c);
          A += incAm;
          C += incCm;
          a += pansz;
@@ -23739,6 +23773,74 @@ void Mjoin(PATL,iploopsMK)
    }
 }
 
+/*
+ * A & B ptrs should always be base ptrs to this func.
+ * MVS: a bit pattern describing hot to use workspace use/movement
+ *   0: set: move A workspace;  unset: A work only mb*nb
+ *   1: set: move B workspace;  unset: B work only kb*nb
+ */
+void Mjoin(PATL,iploopsNMK)
+(
+   ipinfo_t *ip,
+   size_t i,              /* which glbl rowblk to start at (ignore blks <i) */
+   size_t j,              /* which global col block of C is being computed */
+   const TYPE *A,         /* if non-NULL, A to cpy, else ignored */
+   const TYPE *B,         /* if non-NULL, Portion B to cpy, else ignored */
+   TYPE *C,               /* original C to write ans to at end of Kloop */
+   const int MVS,         /* 1:move A workspace, 2:move B wrkspc, 3: mv both */
+   TYPE *a,               /* wrkspace for block-copied A */
+   TYPE *b,               /* wrkspace for block-copied B */
+   TYPE *rC,              /* ptr to real portion of C access-major workspace */
+   TYPE *iC,              /* ptr to complex C workspace */
+   const SCALAR beta,     /* scaling factor for C */
+   const ablk2cmat_t blk2c   /* C = alpC*(rC,iC) + beta*C */
+)
+{
+   const size_t nsnblks=ip->nsnblks, nnblks=ip->nnblks, ldc=ip->ldc;
+   const size_t BMSKA=(MVS&1) ? (~0):0, BMSKB=(MVS&2) ? (~0):0;
+   if (j < nsnblks)
+   {
+      const size_t incBn = ip->sincBn, incCn = ldc*((ip->nbS)SHIFT);
+      const size_t pansz = BMSKB & ((ip->nfkblks+1)*((ip->sszB)SHIFT));
+      if (j)
+      {
+         B += j*incBn;
+         C += j*incCn;
+      }
+      for (; j < nsnblks; j++)
+      {
+         Mjoin(PATL,iploopsMK)(ip, i, j, A, B, C, MVS, a, b,
+                               rC, iC, beta, blk2c);
+         b += pansz;
+         B += incBn;
+         C += incCn;
+      }
+   }
+   else if (j && nsnblks)
+   {
+      B += j * ip->sincBn;
+      C += j * ldc * ((ip->nbS)SHIFT);
+   }
+   if (j < nnblks)
+   {
+      const size_t pansz = BMSKB & ((ip->nfkblks+1)*((ip->szB)SHIFT));
+      const size_t incBn = ip->incBn, incCn = ldc*((ip->nb)SHIFT);
+      if (j > nnblks)
+      {
+         size_t k = j - nsnblks;
+         B += k * incBn;
+         C += k * incCn;
+      }
+      for(; j < nnblks; j++)
+      {
+         Mjoin(PATL,iploopsMK)(ip, i, j, A, B, C, MVS, a, b,
+                               rC, iC, beta, blk2c);
+         b += pansz;
+         B += incBn;
+         C += incCn;
+      }
+   }
+}
 @ROUT ATL_ammmK ATL_cammmK
 #include "atlas_misc.h"
 #include "atlas_amm.h"
