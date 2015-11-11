@@ -582,28 +582,27 @@ struct ipinfo
       ammkern_t amm_bn;
       const TYPE *alpA, *alpB, *alpC, *ONE;
    #endif
-   size_t nsnblks;         /* # of N blks of size nb-nnu */
-   size_t nnblks;          /* total number of blocks, incl nsnblks */
-   size_t nsmblks, nmblks; /* small and total number of M blocks */
-   size_t nfkblks;         /* (K-kb0)/kb */
-   size_t incAk, incBk;    /* block-kb increment for A/B ptrs */
-   size_t sincAm, incAm;   /* small & large mb-block increment */
-   size_t sincBn, incBn;   /* small & large nb-block increment */
-   size_t lda, ldb, ldc;   /* leading dim for all 3 matrices */
+   size_t nfnblks, npnblks; /* # of of full and partial blks along N */
+   size_t nfmblks, npmblks; /* # of of full and partial blks along M */
+   size_t nfkblks;          /* # of full kblks = (K-kb0)/kb */
+   size_t incAk, incBk;     /* block-kb increment for A/B ptrs */
+   size_t pincAm, incAm;    /* partial & full mb-block increment */
+   size_t pincBn, incBn;    /* partial & full nb-block increment */
+   size_t lda, ldb, ldc;    /* leading dim for all 3 matrices */
    #ifndef TCPLX
       TYPE alpA, alpB, alpC;
    #endif
-   uint szC;               /* size of real portion of C workspace */
-   uint sszA, szA;         /* size of real portion of small & large blks of A */
-   uint sszB, szB;         /* size of real portion of small & large blks of B */
-   ushort mF, nF;          /* size of final part of mat before copy */
-   ushort mb, mbS, nb, nbS;/* large & small blk factors for M & N */
-   ushort kb;              /* sz of all K blks except first */
-   ushort kb0;             /* K%kb or if zero, kb */
-   ushort KB0;             /* if amm k-vec, ((kb0+ku-1)/ku)*ku, else kb0 */
-   uchar nmu, nnu;         /* # of unrollings along each dim */
-   uchar nmuS, nnuS;       /* # of unrollings in small blocks */
-   uchar mu, nu, ku;       /* unrolling for each dim used by amm */
+   uint szC;                /* size of real portion of C workspace */
+   uint pszA, szA;          /* size of real portion of part & full blks of A */
+   uint pszB, szB;          /* size of real portion of part & full blks of B */
+   ushort mF, nF;           /* size of final part of mat before copy */
+   ushort mb, pmb, nb, pnb; /* full & partial blk factors for M & N */
+   ushort kb;               /* sz of all K blks except first */
+   ushort kb0;              /* K%kb or if zero, kb */
+   ushort KB0;              /* if amm k-vec, ((kb0+ku-1)/ku)*ku, else kb0 */
+   uchar nmu, nnu;          /* # of unrollings along each dim */
+   uchar pnmu, pnnu;        /* # of unrollings in partial blocks */
+   uchar mu, nu, ku;        /* unrolling for each dim used by amm */
 };
 typedef struct rkinfo rkinfo_t;
 struct rkinfo
@@ -13571,29 +13570,29 @@ int Mjoin(PATL,ammm_tN)
    TYPE *a, *b, *c;
    void *vp;
    int idx;
-   ipinfo_t ipinf;
+   ipinfo_t ip;
 
 
    idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
-   Mjoin(PATL,geComputeIPInfo)(&ipinf, idx, TA, TB, M, N, K, lda, 
+   Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, 
                                ldb, ldc, alpha, beta);
-   szC = ipinf.szC;
-   szB = ipinf.sszB*ipinf.nsnblks + ipinf.szB * (ipinf.nnblks-ipinf.nsnblks);
-   szB = ipinf.szB*(ipinf.nfkblks+1);
-   vp = malloc(ATL_MulBySize(szC+ipinf.szA+szB+(ipinf.mu<<1)*ipinf.nu)
+   szC = ip.szC;
+   szB = ip.pszB*ip.npnblks + ip.szB*ip.nfnblks;
+   szB = ip.szB*(ip.nfkblks+1);
+   vp = malloc(ATL_MulBySize(szC+ip.szA+szB+(ip.mu<<1)*ip.nu)
                + 3*ATL_Cachelen);
    if (!vp)
       return(1);
    a = ATL_AlignPtr(vp);
-   b = a + (ipinf.szA SHIFT);
+   b = a + (ip.szA SHIFT);
    b = ATL_AlignPtr(b);
    c = b + (szB SHIFT);
    c = ATL_AlignPtr(c);
-   Mjoin(PATL,iploopsMK)(&ipinf, 0, 0, A, B, C, 2, a, b,
+   Mjoin(PATL,iploopsMK)(&ip, 0, 0, A, B, C, 2, a, b,
    #ifdef TCPLX
-                         c+szC, c, beta, ipinf.blk2c);
+                         c+szC, c, beta, ip.blk2c);
    #else
-                         c, c, beta, ipinf.blk2c);
+                         c, c, beta, ip.blk2c);
    #endif
 
    free(vp);
@@ -20997,7 +20996,7 @@ int Mjoin(PATL,tGetAmmmInfo)
 @ROUT ATL_GetAmmmInfo  ATL_GetAmmmInfoSQ
 static INLINE int ATL_CompBlkPart
    (size_t D, ATL_UINT maxB, ATL_UINT b, ATL_UINT u, 
-    ATL_UINT *BS, size_t *NS, size_t *NT)
+    ATL_UINT *BS, size_t *NS, size_t *NL)
 /*
  * Given dim D, and a blocking that is presently b (b <= maxB), and can be
  * maximally ncreased to maxB, find two blocking factors such that
@@ -21070,7 +21069,7 @@ static INLINE int ATL_CompBlkPart
    }
    *BS = bS;
    *NS = nS;
-   *NT = nL + nS;
+   *NL = nL;
    #ifdef DEBUG
       printf("nS*bS + nL*bL = %d*%d + %d*%d = %d (D=%d, Du=%d)\n", (int)nS, bS,
              (int)nL, bL, (int)(nS*bS+nL*bL), (int)D, (int)(((D+u-1)/u)*u));
@@ -21092,11 +21091,15 @@ double Mjoin(PATL,@(sh)GetAmmInfoDbl)(char wh, int idx)
    switch(wh)
    {
    case 'P':
-      return(ATL_@(sh)AMM_PERF[i]);
+      return(ATL_@(sh)AMM_PERF[idx]);
    case 'T':
-      return(ATL_@(sh)AMM_TIME[i]);
+      return(ATL_@(sh)AMM_TIME[idx]);
    case '1':
-      return(ATL_@(sh)AMM_K1RATIO[i]);
+@ROUT ATL_GetRankKInfo
+      return(1.0);
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
+      return(ATL_@(sh)AMM_K1RATIO[idx]);
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ ATL_GetRankKInfo
    default:
       fprintf(stderr, "unknown what='%c'!\n", wh);
       ATL_assert(0);
@@ -21133,7 +21136,6 @@ int Mjoin(PATL,@(sh)GetAmmInfoInt)(char wh, int idx)
    }
    return(0);
 }
-@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 int Mjoin(PATL,@(sh)GetAmmmIndx)(size_t M, size_t N, size_t K)
 {
    int idx=ATL_@(sh)AMM_NCASES-1;
@@ -21215,6 +21217,7 @@ int Mjoin(PATL,@(sh)GetAmmmIndx)(size_t M, size_t N, size_t K)
  * Given a selected amm index, fill in ipinfo for using inner-product based
  * amm loops
  */
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 void Mjoin(PATL,@(sh)ComputeIPInfo)
 (
    ipinfo_t *ip,
@@ -21232,7 +21235,7 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
 )
 {
    ATL_UINT ku, kb, kb0, KB0, MB, NB, mb, nb, mu, nu;
-   size_t k, nkblks, nsmblks, nmblks, nsnblks, nnblks;
+   size_t k, nkblks, npmblks, nmblks, npnblks, nnblks;
    #ifdef TCPLX
       static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
    #else 
@@ -21240,9 +21243,13 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    #endif
    int ic, maxNB=ATL_@(sh)AMM_LASTNB, maxMB=ATL_@(sh)AMM_LASTMB;
    
+@ROUT ATL_GetAmmmInfoSQ
+   ip->kb = mb = nb = kb = ATL_AMM_KBs[idx];
+@ROUT ATL_GetAmmmInfo
    mb = ATL_AMM_MBs[idx];
    nb = ATL_AMM_NBs[idx];
    ip->kb = kb = ATL_AMM_KBs[idx];
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
    ip->mu = mu = ATL_AMM_MUs[idx];
    ip->nu = nu = ATL_AMM_NUs[idx];
    ip->ku = ku = ATL_AMM_KUs[idx];
@@ -21250,55 +21257,8 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    ip->ldb = ldb;
    ip->ldc = ldc;
 /*
- * For testing, just always make smaller, use cache to make decision later
+ * Compute K remainder block, and how it affects kernel to use
  */
-   if ((mb+nb)*kb < ATL_L1elts)  /* fitting A & B into L1 */
-      maxNB = maxMB = (ATL_L1elts/kb)>>1;
-   else if (nb*kb < ATL_L1elts)  /* fitting only B */
-   {
-      maxMB = mb;
-      maxNB = ATL_L1elts / kb;
-   }
-
-   MB = ATL_CompBlkPart(M, maxMB, mb, mu, &mb, &nsmblks, &nmblks);
-   NB = ATL_CompBlkPart(N, maxNB, nb, nu, &nb, &nsnblks, &nnblks);
-   ip->nsmblks = nsmblks;
-   ip->nmblks = nmblks;
-   ip->nsnblks = nsnblks;
-   ip->nnblks = nnblks;
-   if (nsmblks == nmblks)  /* all blks small */
-   {
-      ip->mb = ip->mbS = MB = mb;
-      ip->nmu = ip->nmuS = mb / mu;
-      ip->mF = M - (nsmblks-1)*mb;
-   }
-   else if (!nmblks)
-   {
-   }
-   else
-   {
-      ip->mb  = MB;
-      ip->mbS = mb;
-      ip->nmu = MB / mu;
-      ip->nmuS = mb / mu;
-      ip->mF = M - (nsmblks)*mb - (nmblks-nsmblks-1)*MB;
-   }
-   if (nsnblks == nnblks) /* all blks small */
-   {
-      ip->nb = ip->nbS = NB = nb;
-      ip->nnu = ip->nnuS = nb / nu;
-      ip->nF = N - (nsnblks-1)*nb;
-   }
-   else
-   {
-      ip->nb  = NB;
-      ip->nnu = NB / nu;
-      ip->nbS = nb;
-      ip->nnuS = nb / nu;
-      ip->nF = N - (nnblks-1-nsnblks)*NB - nsnblks*nb;
-   }
-   ip->szC = MB * NB;
-
    nkblks = K / kb;
    KB0 = kb0 = K - nkblks*kb;
    ip->amm_b1 = ATL_AMM_KERN_b1[idx];
@@ -21351,6 +21311,88 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    }
    ip->KB0 = KB0;
    ip->kb0 = kb0;
+/*
+ * Compute M and N blocking factors to use
+ */
+   if ((mb+nb)*kb < ATL_L1elts)  /* fitting A & B into L1 */
+      maxNB = maxMB = (ATL_L1elts/kb)>>1;
+   else if (nb*kb < ATL_L1elts)  /* fitting only B */
+   {
+      maxMB = mb;
+      maxNB = ATL_L1elts / kb;
+   }
+
+@ROUT ATL_GetAmmmInfoSQ
+   if (!M)      /* requires N=M  (SYRK/SYR2K) */
+   {
+      if (mu == nu)
+      {
+         MB = NB = ATL_CompBlkPart(N, maxNB, nb, nu, &nb, &npnblks, &nnblks);
+         npmblks = npnblks;
+         nmblks = nnblks;
+      }
+      else
+      {
+         NB = nb;
+         nnblks = (N/nb);
+         nb = N - nnblks*nb;
+         npnblks = (nb) ? 1 : 0;
+      }
+   }
+   else if (!K) /* requires N=K  (TRSM/TRMM/SYMM, 'Right' */
+   {
+      MB = ATL_CompBlkPart(M, maxMB, mb, mu, &mb, &npmblks, &nmblks);
+      npnblks = (kb0 != kb);
+      nnblks = nkblks + 1 - npnblks;
+      NB = kb;
+      nb = kb0;
+   }
+   else if (!N) /* requires M=K  (TRSM/TRMM/SYMM, 'Left' */
+   {
+      NB = ATL_CompBlkPart(N, maxNB, nb, nu, &nb, &npnblks, &nnblks);
+      npmblks = (kb0 != kb);
+      nmblks = nkblks + 1 - npmblks;
+      MB = kb;
+      mb = kb0;
+   }
+@ROUT ATL_GetAmmmInfo
+   MB = ATL_CompBlkPart(M, maxMB, mb, mu, &mb, &npmblks, &nmblks);
+   NB = ATL_CompBlkPart(N, maxNB, nb, nu, &nb, &npnblks, &nnblks);
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
+   ip->npmblks = npmblks;
+   ip->nfmblks = nmblks;
+   ip->npnblks = npnblks;
+   ip->nfnblks = nnblks;
+   if (!nmblks)  /* all blks small */
+   {
+      ip->mb = ip->pmb = MB = mb;
+      ip->nmu = ip->pnmu = mb / mu;
+      ip->mF = M - (npmblks-1)*mb;
+   }
+   else
+   {
+      ip->mb  = MB;
+      ip->pmb = mb;
+      ip->nmu = MB / mu;
+      ip->pnmu = mb / mu;
+      ip->mF = M - npmblks*mb - (nmblks-1)*MB;
+   }
+   if (!nnblks) /* all blks small */
+   {
+      ip->nb = ip->pnb = NB = nb;
+      ip->nnu = ip->pnnu = nb / nu;
+      ip->nF = N - (npnblks-1)*nb;
+   }
+   else
+   {
+      ip->nb  = NB;
+      ip->nnu = NB / nu;
+      ip->pnb = nb;
+      ip->pnnu = nb / nu;
+      ip->nF = N - (nnblks-1)*NB - npnblks*nb;
+   }
+   ip->szC = MB * NB;
+
 
    ip->alpA = ip->alpB = ip->alpC = CONE;
    if (M < N)  /* alpha goes on A or C */
@@ -21477,29 +21519,29 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    {
       ip->incAk  = (kb SHIFT)*lda;
       ip->incAm  = (MB SHIFT);
-      ip->sincAm = (mb SHIFT);
+      ip->pincAm = (mb SHIFT);
    }
    else
    {
       ip->incAk  = (kb SHIFT);
       ip->incAm  = (MB SHIFT)*lda;
-      ip->sincAm = (mb SHIFT)*lda;
+      ip->pincAm = (mb SHIFT)*lda;
    }
    if (IS_COLMAJ(TB))
    {
       ip->incBk  = (kb SHIFT);
       ip->incBn  = (NB SHIFT)*ldb;
-      ip->sincBn = (nb SHIFT)*ldb;
+      ip->pincBn = (nb SHIFT)*ldb;
    }
    else
    {
       ip->incBk  = (kb SHIFT)*ldb;
       ip->incBn  = (NB SHIFT);
-      ip->sincBn = (nb SHIFT);
+      ip->pincBn = (nb SHIFT);
    }
-   ip->sszA = mb*kb;
+   ip->pszA = mb*kb;
    ip->szA = MB*kb;
-   ip->sszB = kb*nb;
+   ip->pszB = kb*nb;
    ip->szB = kb*NB;
 }
 #ifndef TCPLX
@@ -23559,9 +23601,9 @@ void Mjoin(PATL,iploopsK)
    ATL_CUINT kb=ip->kb, kb0=ip->kb0, KB0=ip->KB0;
    ATL_CUINT mu=ip->mu, nu=ip->nu;
    ATL_UINT nmu, nnu, mb, nb;
-   const size_t nfkblks=ip->nfkblks, nsmblks=ip->nsmblks, nsnblks=ip->nsnblks;
+   const size_t nfkblks=ip->nfkblks, npmblks=ip->npmblks, npnblks=ip->npnblks;
    const size_t lda=ip->lda, ldb=ip->ldb;
-   const size_t nmblks=ip->nmblks, nnblks=ip->nnblks;
+   const size_t nmblks=ip->nfmblks+npmblks, nnblks=ip->nfnblks+npnblks;
    const size_t incAk=ip->incAk, incBk=ip->incBk;
    size_t inca, incb, k;
    TYPE *an, *bn;
@@ -23573,11 +23615,11 @@ void Mjoin(PATL,iploopsK)
       const TYPE alpA=ip->alpA, alpB=ip->alpB;
    #endif
 
-   if (i < nsmblks)
+   if (i < npmblks)
    {
-      nmu = ip->nmuS;
-      inca = ip->sszA;
-      mb = (i+1 != nmblks) ? ip->mbS : ip->mF;
+      nmu = ip->pnmu;
+      inca = ip->pszA;
+      mb = (i+1 != nmblks) ? ip->pmb : ip->mF;
    }
    else
    {
@@ -23585,11 +23627,11 @@ void Mjoin(PATL,iploopsK)
       mb = (i+1 != nmblks) ? ip->mb : ip->mF;
       inca = ip->szA;
    }
-   if (j < nsnblks)
+   if (j < npnblks)
    {
-      nnu = ip->nnuS;
-      nb = (j+1 != nnblks) ? ip->nbS : ip->nF;
-      incb = ip->sszB;
+      nnu = ip->pnnu;
+      nb = (j+1 != nnblks) ? ip->pnb : ip->nF;
+      incb = ip->pszB;
    }
    else
    {
@@ -23781,19 +23823,19 @@ void Mjoin(PATL,iploopsMK)
    const ablk2cmat_t blk2c   /* C = alpC*(rC,iC) + beta*C */
 )
 {
-   const size_t nsmblks=ip->nsmblks, nmblks=ip->nmblks;
+   const size_t npmblks=ip->npmblks, nmblks=ip->nfmblks+ip->npmblks;
    const size_t BA=((MVS&1)&&(MVS&4)) ? (~0):0;
    const TYPE *pB=B;
-   if (i < nsmblks)
+   if (i < npmblks)
    {
-      const size_t incAm = (A) ? ip->sincAm:0, incCm = (ip->mbS)SHIFT;
-      const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->sszA)SHIFT));
+      const size_t incAm = (A) ? ip->pincAm:0, incCm = (ip->pmb)SHIFT;
+      const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->pszA)SHIFT));
       if (i)
       {
          A += i * incAm;
          C += i * incCm;
       }
-      for (; i < nsmblks; i++)
+      for (; i < npmblks; i++)
       {
          Mjoin(PATL,iploopsK)(ip, i, j, A, pB, C, MVS, a, b, 
                               rC, iC, beta, blk2c);
@@ -23803,19 +23845,19 @@ void Mjoin(PATL,iploopsMK)
          pB = NULL;  /* copy B col-panel only on first iteration */
       }
    }
-   else if (i && nsmblks)
+   else if (i && npmblks)
    {
       if (A)
-         A += nsmblks * ip->sincAm;
-      C += nsmblks * ((ip->mbS)SHIFT);
+         A += npmblks * ip->pincAm;
+      C += npmblks * ((ip->pmb)SHIFT);
    }
    if (i < nmblks)
    {
       const size_t incAm = (A) ? ip->incAm:0, incCm = (ip->mb)SHIFT;
       const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->szA)SHIFT));
-      if (i > nsmblks)
+      if (i > npmblks)
       {
-         size_t k = i - nsmblks;
+         size_t k = i - npmblks;
          A += k * incAm;
          C += k * incCm;
       }
@@ -23859,19 +23901,19 @@ void Mjoin(PATL,iploopsNMK)
    const ablk2cmat_t blk2c   /* C = alpC*(rC,iC) + beta*C */
 )
 {
-   const size_t nsnblks=ip->nsnblks, nnblks=ip->nnblks, ldc=ip->ldc;
+   const size_t npnblks=ip->npnblks, nnblks=ip->nfnblks+ip->npnblks,ldc=ip->ldc;
    const size_t BMSKA=((MVS&1)&&(MVS&4)) ? 0:(~0);
    const size_t BMSKB=((MVS&2)&&(MVS&8)) ? (~0):0;
-   if (j < nsnblks)
+   if (j < npnblks)
    {
-      const size_t incBn = ip->sincBn, incCn = ldc*((ip->nbS)SHIFT);
-      const size_t pansz = BMSKB & ((ip->nfkblks+1)*((ip->sszB)SHIFT));
+      const size_t incBn = ip->pincBn, incCn = ldc*((ip->pnb)SHIFT);
+      const size_t pansz = BMSKB & ((ip->nfkblks+1)*((ip->pszB)SHIFT));
       if (j)
       {
          B += j*incBn;
          C += j*incCn;
       }
-      for (; j < nsnblks; j++)
+      for (; j < npnblks; j++)
       {
          Mjoin(PATL,iploopsMK)(ip, i, j, A, B, C, MVS, a, b,
                                rC, iC, beta, blk2c);
@@ -23881,10 +23923,10 @@ void Mjoin(PATL,iploopsNMK)
          C += incCn;
       }
    }
-   else if (j && nsnblks)
+   else if (j && npnblks)
    {
-      B += j * ip->sincBn;
-      C += j * ldc * ((ip->nbS)SHIFT);
+      B += j * ip->pincBn;
+      C += j * ldc * ((ip->pnb)SHIFT);
    }
    if (j < nnblks)
    {
@@ -23892,7 +23934,7 @@ void Mjoin(PATL,iploopsNMK)
       const size_t incBn = ip->incBn, incCn = ldc*((ip->nb)SHIFT);
       if (j > nnblks)
       {
-         size_t k = j - nsnblks;
+         size_t k = j - npnblks;
          B += k * incBn;
          C += k * incCn;
       }
@@ -24420,7 +24462,7 @@ int Mjoin(PATL,ammmKNMKn)
  */
    extra = (ip.mu<<1)*ip.nu;
    extra = ATL_MulBySize(ip.szC+extra) + 3 * ATL_Cachelen; 
-   szA = ip.szA*(ip.nmblks-ip.nsmblks) + ip.sszA*ip.nsmblks;
+   szA = ip.szA*ip.nfmblks + ip.pszA*ip.npmblks;
    szB = ip.szB;
    while(1)
    {
