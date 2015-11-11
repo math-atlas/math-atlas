@@ -657,6 +657,9 @@ void Mjoin(PATL,@(rt))
     const int MVS, TYPE *a, TYPE *b, TYPE *rC, TYPE *iC, 
     const SCALAR beta, const ablk2cmat_t blk2c);
 @endwhile
+@whiledef rt ge sq rk
+int Mjoin(PATL,@(rt)GetAmmInfoInt)(char wh, int idx);
+@endwhile
 @beginskip
 void Mjoin(PATL,GetBestKBInfo)
    (rkinfo_t*,rkinfo_t*,enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,
@@ -21013,7 +21016,7 @@ static INLINE int ATL_CompBlkPart
    NU = (b+u-1)/u;       /* ceiling of number of unrollings in b */
    bL = NU*u;            /* blocking must be a multiple of unrolling */
    i = (((D+u-1)/u)*u);  /* aiming for CEIL(D/u)*u */
-   if (i <= maxB)
+   if (i < b+b && i <= maxB)
    {
       nS = bS = 0;
       nL = 1;
@@ -21082,6 +21085,54 @@ static INLINE int ATL_CompBlkPart
    @define sh @ge@
 @ROUT ATL_GetRankKInfo
    @define sh @rk@
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ ATL_GetRankKInfo
+double Mjoin(PATL,@(sh)GetAmmInfoDbl)(char wh, int idx)
+{
+   ATL_assert(idx >= 0 && idx < ATL_@(sh)AMM_NCASES);
+   switch(wh)
+   {
+   case 'P':
+      return(ATL_@(sh)AMM_PERF[i]);
+   case 'T':
+      return(ATL_@(sh)AMM_TIME[i]);
+   case '1':
+      return(ATL_@(sh)AMM_K1RATIO[i]);
+   default:
+      fprintf(stderr, "unknown what='%c'!\n", wh);
+      ATL_assert(0);
+   }
+   return(0.0);
+}
+
+int Mjoin(PATL,@(sh)GetAmmInfoInt)(char wh, int idx)
+{
+   ATL_assert(idx >= 0 && idx < ATL_@(sh)AMM_NCASES);
+   switch(wh)
+   {
+   case 'M':
+      return(ATL_AMM_MBs[idx]);
+   case 'N':
+      return(ATL_AMM_NBs[idx]);
+   case 'K':
+      return(ATL_AMM_KBs[idx]);
+   case 'm':
+      return(ATL_AMM_MUs[idx]);
+   case 'n':
+      return(ATL_AMM_NUs[idx]);
+   case 'k':
+      return(ATL_AMM_KUs[idx]);
+   case 'F':
+      return(ATL_AMM_KFLAG[idx]);
+   case '>':
+      return(ATL_AMM_KBMAXs[idx]);
+   case '<':
+      return(ATL_AMM_KBMINs[idx]);
+   default:
+      fprintf(stderr, "unknown what='%c'!\n", wh);
+      ATL_assert(0);
+   }
+   return(0);
+}
 @ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 int Mjoin(PATL,@(sh)GetAmmmIndx)(size_t M, size_t N, size_t K)
 {
@@ -21089,6 +21140,7 @@ int Mjoin(PATL,@(sh)GetAmmmIndx)(size_t M, size_t N, size_t K)
 /*
  * This shouldn't happen, but allow for debugging.
  */
+//return(0);
    if (K < ATL_@(sh)AMM_LASTKB)
    {
       for (idx=0; ATL_AMM_KBs[idx] < K; idx++);
@@ -21151,8 +21203,7 @@ int Mjoin(PATL,@(sh)GetAmmmIndx)(size_t M, size_t N, size_t K)
       }
    }
    else /* no degenerate dim */
-   {
-      ATL_assert(0);
+   {    /* for now, just return max case, tune for cleanup later */
    }
    #ifdef DEBUG
       printf("idx=%d, B=(%d,%d,%d)\n", idx, 
@@ -21209,8 +21260,8 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
       maxNB = ATL_L1elts / kb;
    }
 
-   MB = ATL_CompBlkPart(M, mb, maxMB, mu, &mb, &nsmblks, &nmblks);
-   NB = ATL_CompBlkPart(N, nb, maxNB, nu, &nb, &nsnblks, &nnblks);
+   MB = ATL_CompBlkPart(M, maxMB, mb, mu, &mb, &nsmblks, &nmblks);
+   NB = ATL_CompBlkPart(N, maxNB, nb, nu, &nb, &nsnblks, &nnblks);
    ip->nsmblks = nsmblks;
    ip->nmblks = nmblks;
    ip->nsnblks = nsnblks;
@@ -21220,6 +21271,9 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
       ip->mb = ip->mbS = MB = mb;
       ip->nmu = ip->nmuS = mb / mu;
       ip->mF = M - (nsmblks-1)*mb;
+   }
+   else if (!nmblks)
+   {
    }
    else
    {
@@ -21389,27 +21443,33 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
       ip->blk2c_b1 = ATL_AMM_BLK2C_a1_b1[idx];
       if (SCALAR_IS_NONE(beta))
          ip->blk2c = ATL_AMM_BLK2C_a1_bn[idx];
+      else if (SCALAR_IS_ONE(beta))
+         ip->blk2c = ip->blk2c_b1;
       else
-         ip->blk2c = (SCALAR_IS_ONE(beta)) ? 
-            ip->blk2c_b1 : ATL_AMM_BLK2C_a1_bX[idx];
+         ip->blk2c = (SCALAR_IS_ZERO(beta)) ? 
+            ATL_AMM_BLK2C_a1_b0[idx] : ATL_AMM_BLK2C_a1_bX[idx];
    }
    else if (SCALAR_IS_NONE(ip->alpC))
    {
       ip->blk2c_b1 = ATL_AMM_BLK2C_an_b1[idx];
       if (SCALAR_IS_NONE(beta))
          ip->blk2c = ATL_AMM_BLK2C_an_bn[idx];
+      else if (SCALAR_IS_ONE(beta))
+         ip->blk2c = ip->blk2c_b1;
       else
-         ip->blk2c = (SCALAR_IS_ONE(beta)) ? 
-            ip->blk2c_b1 : ATL_AMM_BLK2C_an_bX[idx];
+         ip->blk2c = (SCALAR_IS_ZERO(beta)) ? 
+            ATL_AMM_BLK2C_an_b0[idx] : ATL_AMM_BLK2C_an_bX[idx];
    }
    else /* alphaC = X */
    {
       ip->blk2c_b1 = ATL_AMM_BLK2C_aX_b1[idx];
       if (SCALAR_IS_NONE(beta))
          ip->blk2c = ATL_AMM_BLK2C_aX_bn[idx];
+      else if (SCALAR_IS_ONE(beta))
+         ip->blk2c = ip->blk2c_b1;
       else
-         ip->blk2c = (SCALAR_IS_ONE(beta)) ? 
-            ip->blk2c_b1 : ATL_AMM_BLK2C_aX_bX[idx];
+         ip->blk2c = (SCALAR_IS_ZERO(beta)) ? 
+            ATL_AMM_BLK2C_aX_b0[idx] : ATL_AMM_BLK2C_aX_bX[idx];
    }
 
    ip->nfkblks = nkblks;
@@ -21428,8 +21488,8 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    if (IS_COLMAJ(TB))
    {
       ip->incBk  = (kb SHIFT);
-      ip->incBn  = (NB SHIFT)*lda;
-      ip->sincBn = (nb SHIFT)*lda;
+      ip->incBn  = (NB SHIFT)*ldb;
+      ip->sincBn = (nb SHIFT)*ldb;
    }
    else
    {
@@ -23691,10 +23751,12 @@ void Mjoin(PATL,iploopsK)
 
 /*
  * MVS: bit pattern with following meaning by bit position:
- *   1: set: move A workspace;  unset: A work only mb*nb
- *   2: set: move B workspace;  unset: B work only kb*nb
- *   4: set: A wrkspc hold full mat;  unset: A wrkspc holds panel only
+ *   0: set: move A workspace;  unset: A work only mb*nb
+ *   1: set: move B workspace;  unset: B work only kb*nb
+ *   2: set: A wrkspc hold full mat;  unset: A wrkspc holds panel only
  *      if bit 0 unset, this bit has no affect
+ *   3: set: B wrkspc hold full mat;  unset: B wrkspc holds panel only
+ *      if bit 1 unset, this bit has no affect
  *
  * NOTE: we assume global (i,j), but this function assumes any j indexing
  *       has been rolled into the B/C ptrs.  It does only i indexing for A&C.
@@ -23720,18 +23782,16 @@ void Mjoin(PATL,iploopsMK)
 )
 {
    const size_t nsmblks=ip->nsmblks, nmblks=ip->nmblks;
-   const size_t lda=ip->ldb;
    const size_t BA=((MVS&1)&&(MVS&4)) ? (~0):0;
    const TYPE *pB=B;
    if (i < nsmblks)
    {
-      const size_t incAm = ip->sincAm, incCm = (ip->mbS)SHIFT;
+      const size_t incAm = (A) ? ip->sincAm:0, incCm = (ip->mbS)SHIFT;
       const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->sszA)SHIFT));
       if (i)
       {
          A += i * incAm;
          C += i * incCm;
-@skip         a += i * pansz;
       }
       for (; i < nsmblks; i++)
       {
@@ -23739,27 +23799,25 @@ void Mjoin(PATL,iploopsMK)
                               rC, iC, beta, blk2c);
          A += incAm;
          C += incCm;
-@skip         a += pansz;
+         a += pansz;
          pB = NULL;  /* copy B col-panel only on first iteration */
       }
    }
    else if (i && nsmblks)
    {
-@skip      const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->sszA)SHIFT));
-      A += nsmblks * ip->sincAm;
+      if (A)
+         A += nsmblks * ip->sincAm;
       C += nsmblks * ((ip->mbS)SHIFT);
-@skip      a += nsmblks * pansz;
    }
    if (i < nmblks)
    {
-      const size_t incAm = ip->incAm, incCm = (ip->mb)SHIFT;
+      const size_t incAm = (A) ? ip->incAm:0, incCm = (ip->mb)SHIFT;
       const size_t pansz = BA & ((ip->nfkblks + 1)*((ip->szA)SHIFT));
       if (i > nsmblks)
       {
          size_t k = i - nsmblks;
          A += k * incAm;
          C += k * incCm;
-@skip         a += k * pansz;
       }
       for (; i < nmblks; i++)
       {
@@ -23775,9 +23833,14 @@ void Mjoin(PATL,iploopsMK)
 
 /*
  * A & B ptrs should always be base ptrs to this func.
- * MVS: a bit pattern describing hot to use workspace use/movement
+ * MVS: bit pattern with following meaning by bit position:
  *   0: set: move A workspace;  unset: A work only mb*nb
  *   1: set: move B workspace;  unset: B work only kb*nb
+ *   2: set: A wrkspc hold full mat;  unset: A wrkspc holds panel only
+ *      if bit 0 unset, this bit has no affect
+ *   3: set: B wrkspc hold full mat;  unset: B wrkspc holds panel only
+ *      if bit 1 unset, this bit has no affect
+ *
  */
 void Mjoin(PATL,iploopsNMK)
 (
@@ -23797,7 +23860,8 @@ void Mjoin(PATL,iploopsNMK)
 )
 {
    const size_t nsnblks=ip->nsnblks, nnblks=ip->nnblks, ldc=ip->ldc;
-   const size_t BMSKA=(MVS&1) ? (~0):0, BMSKB=(MVS&2) ? (~0):0;
+   const size_t BMSKA=((MVS&1)&&(MVS&4)) ? 0:(~0);
+   const size_t BMSKB=((MVS&2)&&(MVS&8)) ? (~0):0;
    if (j < nsnblks)
    {
       const size_t incBn = ip->sincBn, incCn = ldc*((ip->nbS)SHIFT);
@@ -23811,6 +23875,7 @@ void Mjoin(PATL,iploopsNMK)
       {
          Mjoin(PATL,iploopsMK)(ip, i, j, A, B, C, MVS, a, b,
                                rC, iC, beta, blk2c);
+         A = (TYPE*)(((size_t)A) & BMSKA);
          b += pansz;
          B += incBn;
          C += incCn;
@@ -23835,6 +23900,7 @@ void Mjoin(PATL,iploopsNMK)
       {
          Mjoin(PATL,iploopsMK)(ip, i, j, A, B, C, MVS, a, b,
                                rC, iC, beta, blk2c);
+         A = (TYPE*)(((size_t)A) & BMSKA);
          b += pansz;
          B += incBn;
          C += incCn;
@@ -24308,6 +24374,95 @@ int Mjoin(PATL,ammmKNMK)
                      nk, a, b, c, alpA, alpB, alpC, beta);
       }
    }
+   free(vp);
+   return(0);
+}
+int Mjoin(PATL,ammmKNMKn)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   TYPE *a, *b, *c;
+   void *vp=NULL;
+   size_t szA, szB, nfkblks, nkblksP;
+   int i, kb, extra, nKp=0;
+   ipinfo_t ip;
+
+   i = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
+   Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, K, lda, ldb, ldc,
+                               alpha, beta);
+/*
+ * Figure out a partition of K that should allow malloc to succeed. 
+ * In this routine, we need to allocate space for a block of C,
+ * a column-panel of B, and the full matrix A.  If we can't get that
+ * much space, we partition K into Kp, and reduce Kp until the malloc
+ * succeeds.  If Kp drops below 3*LASTKB, we give up and return non-zero,
+ * to indicate that recursion should be used to cut all dims until a malloc
+ * can succeed.
+ */
+   kb = ip.kb;
+   nkblksP = nfkblks = ip.nfkblks;
+/*
+ * Set up extra to have all sizes that are independent of K.
+ * sz[A,B] will be multiplied by number of K blks to get final answer.
+ */
+   extra = (ip.mu<<1)*ip.nu;
+   extra = ATL_MulBySize(ip.szC+extra) + 3 * ATL_Cachelen; 
+   szA = ip.szA*(ip.nmblks-ip.nsmblks) + ip.sszA*ip.nsmblks;
+   szB = ip.szB;
+   while(1)
+   {
+      size_t sz;
+      sz = ATL_MulBySize((szA+szB)*(nkblksP+1)) + extra;
+      if (sz <= ATL_MaxMalloc)
+         vp = malloc(sz);
+      if (vp)
+         break;
+      nKp++;
+      nkblksP = (nkblksP>>1);
+      if (nkblksP < 3)
+         return(1);
+   }
+   szA *= (nkblksP+1);
+   szB *= (nkblksP+1);
+   a = ATL_AlignPtr(vp);
+   b = a + (szA SHIFT);
+   b = ATL_AlignPtr(b);
+   c = b + (szB SHIFT);
+   c = ATL_AlignPtr(c);
+
+   if (!nKp)
+      Mjoin(PATL,iploopsNMK)(&ip, 0, 0, A, B, C, 1|2|4, a, b, 
+   #ifdef TCPLX
+                             c+ip.szC, c, beta, ip.blk2c);
+   #else
+                             c, c, beta, ip.blk2c);
+   #endif
+   else
+   {
+      const size_t incAk = ip.incAk;
+      int k;
+      ATL_assert(0);
+      do
+      {
+         Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, K, lda, ldb, ldc,
+                                     alpha, beta);
+      }
+      while(k < nfkblks+1);
+   }
+
    free(vp);
    return(0);
 }
