@@ -2591,8 +2591,8 @@ char GetIntComp(EXTENV *EE, char *ln, int *A1CONST, int *A2CONST,
    if (wp->next->word[0] == '>') { wp1 = wp; wp0 = wp->next->next; }
    else if (wp->next->word[0] == '=') comp = '=';
    else if (wp->next->word[0] == '!') comp = '!';
-   else if (wp->next->word[0] == '{') comp = 'e';
-   else if (wp->next->word[0] == '}') comp = 'E';
+   else if (wp->next->word[0] == '{') comp = '{';
+   else if (wp->next->word[0] == '}') comp = '}';
    else if (wp->next->word[0] != '<')
       ExtErr(EE, "Invalid integer condition: '%s'\n", ln);
 
@@ -2755,6 +2755,8 @@ void HandleIwhile(EXTENV *EE, char *ln)
    if (comp == '<') KeepOn = (ia1 < ia2);
    else if (comp == '=') KeepOn = (ia1 == ia2);
    else if (comp == '!') KeepOn = (ia1 != ia2);
+   else if (comp == '{') KeepOn = (ia1 <= ia2);
+   else if (comp == '}') KeepOn = (ia1 >= ia2);
    while (KeepOn)
    {
       rewind(tfp.Fp);
@@ -2762,6 +2764,8 @@ void HandleIwhile(EXTENV *EE, char *ln)
       ia1 = Getiarg(EE, A1CONST, ia1, mac1);
       ia2 = Getiarg(EE, A2CONST, ia2, mac2);
       if (comp == '<') KeepOn = (ia1 < ia2);
+      else if (comp == '{') KeepOn = (ia1 <= ia2);
+      else if (comp == '}') KeepOn = (ia1 >= ia2);
       else if (comp == '=') KeepOn = (ia1 == ia2);
       else if (comp == '!') KeepOn = (ia1 != ia2);
    }
