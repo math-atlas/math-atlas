@@ -2061,7 +2061,8 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
 @iif TRI = 1
-   unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+   unsigned int pansz = @(bs);
+   const size_t incC0 = (ldc+1)*(@(nu)+@(nu));
 @endiif
 @iif TRI = 0
    const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
@@ -2084,21 +2085,21 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
+@iif TRI = 1
+   @iexp bs2 @(bs) @(bs) +
+   for (j=0; j < nf; j++)
+@endiif
+@iif TRI = 0
    for (j=nf; j; j--, rC += @(bs), iC += @(bs))
+@endiif
    {
 @ROUT blk2C `      const @(typ) *pr = rC, *pi = iC;`
 @ROUT C2blk `      @(typ) *pr = rC, *pi = iC;`
 @iif TRI = 1
-      if (j != nf)
-      {
-         const unsigned int incCj=(nf-j)*@(mu);
-   @iexp j 0
-   @iwhile j < @(nu)
-         C@(j) += incCj;
-         @iexp j @(j) 1 +
-   @endiwhile
-      }
-      for (i=j; i; i--, pr += pansz, pi += pansz)
+      unsigned int psz = pansz+@(bs2), incC = incC0 - (mf-j)*(@(mu)+@(mu));
+      @callproc doDiBlock @(nu)
+      pr += pansz; pi += pansz;
+      for (i=j+1; i < mf; i++, pr += psz, psz += @(bs2))
 @endiif
 @iif TRI = 0
       for (i=mf; i; i--, pr += pansz, pi += pansz)
@@ -2117,14 +2118,16 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @endiwhile
       default:;
       }
-@iif TRI = 1
-      pansz -=  @(bs);
-@endiif
    @iexp j 0
    @iwhile j < @(nu)
       C@(j) += incC;
       @iexp j @(j) 1 +
    @endiwhile
+@iif TRI = 1
+      pansz += @(bs2);
+      rC += pansz;
+      iC += pansz;
+@endiif
    }
 @iif nu > 1
    switch(nr)
@@ -2135,6 +2138,11 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @iwhile n < @(nu)
    case @(n):
       pr = rC; pi = iC;
+@iif TRI = 1
+      @callproc doDiBlock @(n)
+      break;
+@endiif
+@iif TRI = 0
       for (i=0; i < mf; i++, pr += pansz, pi += pansz)
       {
          @callproc doBlock @(mu) @(n)
@@ -2151,6 +2159,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       default:;
       }
       break;
+@endiif
       @iexp n @(n) 1 +
    @endiwhile
    default:;
