@@ -4461,19 +4461,18 @@ OPTLOOP=1
  *============================================================================*/
 {
    int i, npaths, nifs;
-   LOOPQ *lp;
    FILE *fpout=stdout;
    int MaxR, MinR, RC;
-   int VmaxminR, Vrc, Vspec, Vn;
    int *pvec;
    const int nelimbr = 3;
    char *cElimBr[] = {"NO", "MaxMin", "RedComp"};
    int iElimBr[] = {0, 0, 0};
    enum eElimBr {NO, MAXMIN, REDCOMP};
-   const int nvec = 3;
-   char *cVecMethod[] = {"NONE", "LoopLvl", "SpecVec"};
-   enum eVecMethod {NONE, LOOPLVL, SPECVEC};
-   int iVecMethod[] = {0, 0, 0};
+   int VmaxminR, Vrc, Vspec, Vn, Vslp;
+   const int nvec = 4;
+   char *cVecMethod[] = {"NONE", "LoopLvl", "SpecVec", "SLP"};
+   enum eVecMethod {NONE, LOOPLVL, SPECVEC, SLP};
+   int iVecMethod[] = {0, 0, 0, 0};
    extern FILE *fpLOOPINFO;
    extern short STderef;
    extern BBLOCK *bbbase;
@@ -4667,10 +4666,23 @@ OPTLOOP=1
             /*Vn = !(RcVectorAnalysis());*/ /* checking for shadow RC too */
                Vn = !(SpeculativeVectorAnalysis()); /*more restrictive tesdt */
                iVecMethod[LOOPLVL] = Vn;
+/*
+ *             check for slp vectorization
+ *             Restore state0 first
+ */
+               RestoreFKOState0();
+               GenPrologueEpilogueStubs(bbbase,0);
+               NewBasicBlocks(bbbase);
+               FindLoops(); 
+               CheckFlow(bbbase, __FILE__, __LINE__);
+
+               Vslp = !SlpVectorization();
+               iVecMethod[SLP] = Vslp;
+
             }
          }
       
-         if (Vn || Vrc || VmaxminR )
+         if (Vn || Vrc || VmaxminR || Vslp)
          {
             if (!Vspec)
                pvec[0] = 1; /* vectorizable, so default 1 for first path */
