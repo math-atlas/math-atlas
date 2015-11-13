@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  07/31/15.                           */
+/*  Last modified by the author on  10/17/15.                           */
 /************************************************************************/
 
 #include <stdio.h>
@@ -762,7 +762,8 @@ int GetLn(EXTENV *EE, char *line)
 {
    if (ExtDone) return(0);
    EE->FpIn->LineNo++;
-   return( (int) fgets(line, LNLEN, EE->FpIn->Fp) );
+/*   return( (int) fgets(line, LNLEN, EE->FpIn->Fp) ); */
+   return( (fgets(line, LNLEN, EE->FpIn->Fp) != NULL) );
 }
 
 FILE2 *OpenFile(EXTENV *EE, char *Fnam, char *mode)
@@ -2237,7 +2238,8 @@ void HandleIfdef(EXTENV *EE, char line[])
    }
    for(i=k; !Mciswspace(line[i]); i++) tline[i-k] = line[i];
    tline[i-k] = '\0';
-   defined = (int) FindMac(tline);
+/*   defined = (int) FindMac(tline); */
+   defined = (FindMac(tline) != NULL);
    if (line[7] == '!') defined = !defined;
    if (GetLn(EE, line)) KeepOn = 1;
    else KeepOn = 0;
@@ -2589,8 +2591,8 @@ char GetIntComp(EXTENV *EE, char *ln, int *A1CONST, int *A2CONST,
    if (wp->next->word[0] == '>') { wp1 = wp; wp0 = wp->next->next; }
    else if (wp->next->word[0] == '=') comp = '=';
    else if (wp->next->word[0] == '!') comp = '!';
-   else if (wp->next->word[0] == 'e') comp = 'e';
-   else if (wp->next->word[0] == 'E') comp = 'E';
+   else if (wp->next->word[0] == '{') comp = '{';
+   else if (wp->next->word[0] == '}') comp = '}';
    else if (wp->next->word[0] != '<')
       ExtErr(EE, "Invalid integer condition: '%s'\n", ln);
 
@@ -2705,12 +2707,17 @@ void HandleIIf(EXTENV *EE, char *ln)
 {
    char ch;
    int i, j, ia1, ia2;
-   ch = GetIntComp(EE, ln+5, &i, &j, &ia1, &ia2, NULL, NULL);
-   if (ch == '=') i = (ia1 == ia2);
-   else if (ch == '!') i = (ia1 != ia2);
-   else if (ch == '<') i = (ia1 < ia2);
-   else if (ch == '{') i = (ia1 <= ia2);
-   else if (ch == '}') i = (ia1 >= ia2);
+   if (WstrcmpN(ln+5, "@iexp ",6)) /* rest of line is @iexp, */
+      i = icalc(EE, ln+5+6);
+   else
+   {
+      ch = GetIntComp(EE, ln+5, &i, &j, &ia1, &ia2, NULL, NULL);
+      if (ch == '=') i = (ia1 == ia2);
+      else if (ch == '!') i = (ia1 != ia2);
+      else if (ch == '<') i = (ia1 < ia2);
+      else if (ch == '{') i = (ia1 <= ia2);
+      else if (ch == '}') i = (ia1 >= ia2);
+   }
    if (!i) /* skip */
       DumpSkip(EE, NULL, "@iif ", "@endiif ");
    else
@@ -2748,6 +2755,8 @@ void HandleIwhile(EXTENV *EE, char *ln)
    if (comp == '<') KeepOn = (ia1 < ia2);
    else if (comp == '=') KeepOn = (ia1 == ia2);
    else if (comp == '!') KeepOn = (ia1 != ia2);
+   else if (comp == '{') KeepOn = (ia1 <= ia2);
+   else if (comp == '}') KeepOn = (ia1 >= ia2);
    while (KeepOn)
    {
       rewind(tfp.Fp);
@@ -2755,6 +2764,8 @@ void HandleIwhile(EXTENV *EE, char *ln)
       ia1 = Getiarg(EE, A1CONST, ia1, mac1);
       ia2 = Getiarg(EE, A2CONST, ia2, mac2);
       if (comp == '<') KeepOn = (ia1 < ia2);
+      else if (comp == '{') KeepOn = (ia1 <= ia2);
+      else if (comp == '}') KeepOn = (ia1 >= ia2);
       else if (comp == '=') KeepOn = (ia1 == ia2);
       else if (comp == '!') KeepOn = (ia1 != ia2);
    }
@@ -3244,7 +3255,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Store where my macros begin
  */
-   sprintf(line, "@__MyMacBeg__%d", (int) &EE);
+   sprintf(line, "@__MyMacBeg__%p", &EE);
    PushMacro2(&EE, 0, line, "");
    EE.MyMacBeg = MacroBase;
 
@@ -3300,7 +3311,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Pop MyMacBeg
  */
-   sprintf(line, "__MyMagBeg__%d", (int)&EE);
+   sprintf(line, "__MyMacBeg__%p", &EE);
    PopMacro2(&EE, line);
 
 /*

@@ -373,7 +373,9 @@ include:
    @whiledef l2 syr syr2
 	touch include/atlas_@(pre)@(l2)NX.h
    @endwhile
-	touch include/atlas_@(pre)geamm_sum.h
+	touch include/atlas_@(pre)amm_sum.h
+	touch include/atlas_@(pre)geamm_perf.h
+	touch include/atlas_@(pre)sqamm_perf.h
 @endwhile
 	touch include/atlas_tsumm.h
 	touch include/atlas_taffinity.h
@@ -1465,7 +1467,7 @@ x@(pre)invtrsm : @(pre)invtrsm.o ATL_@(pre)trsm.o
 @(pre)bindep :
 	cd $(BINdir) ; $(MAKE) @(pre)lapack @(pre)tstlib @(pre)l3lib @(pre)l2lib \
                             @(pre)l1lib @(pre)cblas
-@(pre)invtrsm.o : $(mySRCdir)/invtrsm.c $(INCSdir)/atlas_misc.h (INCAdir)/atlas_@(pre)geamm_sum.h \
+@(pre)invtrsm.o : $(mySRCdir)/invtrsm.c $(INCSdir)/atlas_misc.h (INCAdir)/atlas_@(pre)amm_sum.h \
                   $(INCSdir)/atlas_lvl3.h
 	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -DATLCINT -DTimeC -D@(typ) $(mySRCdir)/invtrsm.c
 ATL_@(pre)trsm.o : $(mySRCdir)/ATL_trsm.c
@@ -2297,6 +2299,11 @@ mvB=1
 mvC=0
 outF=
 bcast=1
+vlen=1
+cpvlen=1
+@whiledef iv szExtra
+@(iv)=0
+@endwhile
 FMF=750.0
 NRF=-1  # change to -2 to get unconstrained MB
 casarg = pre=$(pre) ta=$(ta) tb=$(tb) muladd=$(muladd) lat=$(lat) \
@@ -2342,6 +2349,14 @@ x@(rout) : $(INCAdir)/atlas_type.h @(rout).o @(dep) $(parsedeps)
   @undef dep
 @endwhile
 
+DoSzBlk :
+	rm -f szblk.c xszblk
+	echo "int getsz(int M, int N, int mu, int nu, int vlen)" > szblk.c
+	echo "{return(${szfunc});}" >> szblk.c
+	cat $(mySRCdir)/szblk.c >> szblk.c
+	$(XCC) $(XCCFLAGS) -o xszblk szblk.c
+	./xszblk $(mb) $(nb) $(mu) $(nu) $(vlen)
+
 @whiledef pre z c
    @whiledef rt am2cm am2rm cm2am rm2am
 ATL_@(pre)@(rt)_a$(al)_$(UR).c : $(basf) force_build
@@ -2357,6 +2372,71 @@ ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c : $(basf) force_build
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def alpha "${alpha}" \
                 -def beta "${beta}" rout=ATL_ccmat2ablk \
                 -o ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c
+@endwhile
+@whiledef rt blk2C C2blk
+genall_@(rt): $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
+	- rm -f ATL_tmp.c $(rt)
+	touch $(rt)
+   @multidef ib 0 1 -1 2
+   @whiledef be 0 1 N1 X
+      @multidef ia 1 -1 2
+      @whiledef al 1 N1 X
+	echo "#if defined(BETA@(be)) && defined(ALPHA@(al))" >> $(rt)
+	make gen_@(rt) rt=ATL_tmp.c pre=$(pre) vl=$(vl) mu=$(mu) nu=$(nu) \
+             cpvlen=$(cpvlen) beta=@(ib) alpha=@(ia)
+	cat ATL_tmp.c >> $(rt)
+	echo "#endif" >> $(rt)
+         @undef ia
+      @endwhile
+      @undef ib
+   @endwhile
+	- rm -f ATL_tmp.c
+gen_@(rt) : $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
+	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o $(rt) pre=$(pre) vec=NA \
+                rout=@(rt) -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+                -def cpvl $(cpvlen) -def beta $(beta) -def alpha $(alpha)
+@endwhile
+@define pr @@
+@whiledef pr c
+genall_@(pr)A2blk:
+	- rm -f ATL_tmp.c $(rt)
+	touch $(rt)
+   @whiledef ta N T
+	echo "#ifdef TRANS@(ta)_" >> $(rt)
+      @multidef ia 1 -1 2
+      @whiledef al 1 N1 X
+	echo "   #if defined(ALPHA@(al))" >> $(rt)
+	make gen_@(pr)A@(ta)2blk UR=$(UR) alpha=@(ia) dupB=$(dupB) \
+             kmaj=$(kmaj) rt=ATL_tmp.c
+	cat ATL_tmp.c >> $(rt)
+	echo "   #endif /* end ALPHA@(al) */" >> $(rt)
+         @undef ia
+      @endwhile
+	echo "#endif /* end TRANS@(ta)_ */" >> $(rt)
+   @endwhile
+genall_@(pr)blk2A:
+	- rm -f ATL_tmp.c $(rt)
+	touch $(rt)
+   @whiledef ta N T
+	echo "#ifdef TRANS@(ta)_" >> $(rt)
+      @multidef ia 1 -1 2
+      @whiledef al 1 N1 X
+	echo "   #if defined(ALPHA@(al))" >> $(rt)
+	make gen_@(pr)blk2A@(ta) UR=$(UR) alpha=@(ia) dupB=$(dupB) \
+             kmaj=$(kmaj) rt=ATL_tmp.c
+	cat ATL_tmp.c >> $(rt)
+	echo "   #endif /* end ALPHA@(al) */" >> $(rt)
+         @undef ia
+      @endwhile
+	echo "#endif /* end TRANS@(ta)_ */" >> $(rt)
+   @endwhile
+@multidef tg blk2AN blk2AT AN2blk AT2blk
+@whiledef rt am2cm am2rm cm2am rm2am
+gen_@(pr)@(tg) : $(basf) force_build
+	$(extC) -def mu "${UR}" -def nu "${UR}" -def alpha "${alpha}" \
+                -def dupB "${dupB}" -def kmaj "${kmaj}" -o $(rt) rout=ATL_@(pr)@(rt)
+   @undef tg
+@endwhile
 @endwhile
 @whiledef pre d s
    @whiledef rt am2cm am2rm cm2am rm2am
@@ -2374,12 +2454,10 @@ ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c : $(basf) force_build
                 -def beta "${beta}" rout=ATL_cmat2ablk \
                 -o ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c
 @endwhile
-@whiledef pre z c d s
-res/@(pre)gmvAMMUR.sum : xgmmsearch
-	./xgmmsearch -p @(pre)
-res/@(pre)gkvAMMUR.sum : xgmmsearch
-	./xgmmsearch -p @(pre)
-@endwhile
+xprefparse : $(mySRCdir)/prefparse.c $(parsedeps)
+	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/prefparse.c
+xammgen :  $(mySRCdir)/ammgen.c $(parsedeps) $(INCSdir)/atlas_mmgen.h
+	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/ammgen.c -lm
 xemit_amm : $(mySRCdir)/emit_amm.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/emit_amm.c -lm
 xemit_uamm : $(mySRCdir)/emit_uamm.c $(parsedeps)
@@ -2394,11 +2472,15 @@ gen_fko : $(BINdir)/xextract
            -def vl $(vlen) -def mu $(mu) -def nu $(nu) -def ku $(ku) \
            -def kp $(kp) -def kb $(KB) \
            -def pf $(pf)  -def pfLS $(pfLS)
-gen_amm : $(BINdir)/xextract
+@multidef tri  0      1
+@whiledef rt amm amsyrk
+gen_@(rt) : $(BINdir)/xextract
 	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o $(rt) pre=$(pre) vec=$(vec) \
-           -def vl $(vlen) -def mu $(mu) -def nu $(nu) -def ku $(ku) \
+           rout=amm -def vl $(vlen) -def mu $(mu) -def nu $(nu) -def ku $(ku) \
            -def kp $(kp) -def bc $(bcast) -def kb $(KB) \
-           -def pf $(pf) -def pfLS $(pfLS)
+           -def pf $(pf) -def pfLS $(pfLS) -def TRI @(tri)
+   @undef tri
+@endwhile
 gen_amm_sse : $(BINdir)/xextract
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def kmaj "${kmaj}" \
                 rout=ATL_mm${kmaj}_${mu}x${nu}_1_sse -o $(rt) \
@@ -2566,6 +2648,10 @@ res/@(pre)nreg : xgmmsearch
 res/@(pre)@(rt) : xammsearch
 	./xammsearch -p @(pre)
 @endwhile
+@whiledef rt gAMMRES.sum gkvAMMUR.sum gmvAMMUR.sum
+res/@(pre)@(rt) : xgmmsearch
+	./xgmmsearch -p @(pre)
+@endwhile
 @(pre)save_uamm : $(usaved)
 	cp res/@(pre)uAMMFRC.sum $(usaved)/.
 	cp res/@(pre)UMMKCLEAN.sum $(usaved)/.
@@ -2599,7 +2685,8 @@ res/@(pre)@(rt) : xammsearch
       @multidef pp z d
    @ptyp s d
 @declare "@(pre)install_amm: " y n 
-   xemit_amm
+   xammgen
+@skip   xemit_amm
    @whiledef pp
       @whiledef rt geAMMRES sqAMMRES rkAMMRES geAMMKCLEAN sqAMMKCLEAN
          res/@(pp)@(rt).sum
@@ -2607,7 +2694,8 @@ res/@(pre)@(rt) : xammsearch
    @endwhile
 @enddeclare
 	- cd $(AMMdir)/KERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
-	./xemit_amm -p @(pre) -d $(AMMdir)/KERNEL 
+@skip	./xemit_amm -p @(pre) -d $(AMMdir)/KERNEL 
+	./xammgen -p @(pre) -d $(AMMdir)/KERNEL 
 	mv $(AMMdir)/KERNEL/*.h $(INCAdir)/.
 	cd $(AMMdir) ; $(PMAKE) @(pre)lib
 @beginskip
@@ -2620,12 +2708,12 @@ res/@(pre)@(rt) : xammsearch
 	cd $(AMMdir) ; $(PMAKE) @(pre)lib
 @endskip
    @ptyp z c
-$(INCAdir)/atlas_@(pre)geamm_sum.h : res/atlas_@(pre)geamm_sum.h
-	cp res/atlas_@(pre)geamm_sum.h $(INCAdir)/atlas_@(pre)geamm_sum.h
-res/atlas_@(pre)geamm_sum.h : 
+$(INCAdir)/atlas_@(pre)amm_sum.h : res/atlas_@(pre)amm_sum.h
+	cp res/atlas_@(pre)amm_sum.h $(INCAdir)/atlas_@(pre)amm_sum.h
+res/atlas_@(pre)amm_sum.h : 
 	$(MAKE) x@(pre)nbtune
-	$(ATLRUN) $(MMTdir) x@(pre)nbtune -f res/atlas_@(pre)geamm_sum.h
-@(pre)install_amm: $(INCAdir)/atlas_@(pre)geamm_sum.h
+	$(ATLRUN) $(MMTdir) x@(pre)nbtune -f res/atlas_@(pre)amm_sum.h
+@(pre)install_amm: $(INCAdir)/atlas_@(pre)amm_sum.h
 	$(MAKE) @(upr)install_amm
    @ptyp !
    @killkeys ptyp
@@ -2798,7 +2886,7 @@ x@(pre)tfc : $(INCAdir)/atlas_type.h $(L3INCdep) \
 @ptyp z c
 @(pre)ammlib:
 	cd $(AMMdir) ; make @(pre)lib
-@(pre)nbtune.o : $(mySRCdir)/cnbtune.c atlas_@(upr)geamm_sum.h
+@(pre)nbtune.o : $(mySRCdir)/cnbtune.c atlas_@(upr)amm_sum.h
 	$(@up@(upr)KC) $(CDEFS) $(@up@(upr)KCFLAGS) -D@(typ)=1 -c \
            -o @(pre)nbtune.o $(mySRCdir)/cnbtune.c
 x@(pre)nbtune : @(pre)nbtune.o @(pre)ammlib
@@ -2985,10 +3073,16 @@ cwrk3=0
 @multidef upr d s
 @whiledef pre z c
 @(pre)ammtst: @(pre)ammmtst
-@(pre)ammmtst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
+   @multidef tri   0    1
+   @whiledef rt ammm syrk
+@(pre)@(rt)tst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
+	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o c@(rt)tst.c pre=@(pre) \
+           vec=NA -def rtnm ATL_blk2C rout=blk2C -def vl $(vlen) \
+           -def TRI @(tri) -def mu $(mu) -def nu $(nu) \
+           -def cpvl $(cpvlen) -def beta 0 -def alpha 1
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def be "${beta}" \
-                 -def M "${M}" -def N "${N}" -def K "${K}" -def kmaj "$(kmaj)" \
-                -o cammmtst.c rout=cammmtst
+                -def M "${M}" -def N "${N}" -def K "${K}" -def kmaj "$(kmaj)" \
+                -def TRI @(tri) rout=cammmtst >> c@(rt)tst.c
 	- rm -f @(pre)ammm_b1.o @(pre)ammm_b0.o @(pre)ammm_bn.o
 	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA1 \
            -DKB=${kb} -DATL_USERMM=cmm_b1 -o @(pre)ammm_b1.o -c $(mmrout) 
@@ -2996,9 +3090,11 @@ cwrk3=0
            -DKB=${kb} -DATL_USERMM=cmm_b0 -o @(pre)ammm_b0.o -c $(mmrout)
 	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETAN1 \
            -DKB=${kb} -DATL_USERMM=cmm_bn -o @(pre)ammm_bn.o -c $(mmrout)
-	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)ammmtst -DATL_CWRK3=$(cwrk3) \
-              cammmtst.c @(pre)ammm_b1.o @(pre)ammm_b0.o @(pre)ammm_bn.o
-	$(ATLRUN) $(MMTdir) x@(pre)ammmtst 
+	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst -DATL_CWRK3=$(cwrk3) \
+              c@(rt)tst.c @(pre)ammm_b1.o @(pre)ammm_b0.o @(pre)ammm_bn.o
+	$(ATLRUN) $(MMTdir) x@(pre)@(rt)tst 
+      @undef tri
+   @endwhile
    @undef upr
    @undef typ
 @endwhile
@@ -3006,15 +3102,27 @@ cwrk3=0
 @multidef upr d s
 @whiledef pre d s
 @(pre)ammtst: @(pre)ammmtst
-@(pre)ammmtst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
+   @multidef tri   0    1
+   @whiledef rt ammm syrk
+@(pre)@(rt)tst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
+	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o @(rt)tst.c pre=@(pre) vec=NA \
+                rout=blk2C -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+                -def cpvl $(cpvlen) -def beta 0 -def alpha 1 \
+                -def rtnm ATL_blk2C -def TRI @(tri)
+	$(extC) -b $(mySRCdir)/atlas-mmkg.base pre=@(pre) vec=NA \
+                rout=C2blk -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+                -def rtnm ATL_C2blk -def TRI @(tri) \
+                -def cpvl $(cpvlen) -def beta 0 -def alpha 1 >> @(rt)tst.c
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def be "${beta}" \
                 -def M "${M}" -def N "${N}" -def K "${K}" -def dupB "${dupB}" \
-                -def kmaj "${kmaj}" -o ammmtst.c rout=ammmtst
+                -def kmaj "${kmaj}" -def TRI @(tri) rout=ammmtst >> @(rt)tst.c
 	- rm -f @(pre)ammm.o
 	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA${betan} \
            -DKB=${kb} -o @(pre)ammm.o -c $(mmrout)
-	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)ammmtst ammmtst.c @(pre)ammm.o
-	$(ATLRUN) $(MMTdir) x@(pre)ammmtst 
+	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst @(rt)tst.c @(pre)ammm.o
+	$(ATLRUN) $(MMTdir) x@(pre)@(rt)tst 
+    @undef tri
+   @endwhile
 @(pre)ammtst_fko: @(pre)ammmtst_fko
 @(pre)ammmtst_fko : $(INCAdir)/atlas_type.h $(BINdir)/xextract
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def be "${beta}" \
@@ -3980,7 +4088,7 @@ x@(pre)tlutst_bcamm : @(pre)tlutst_bcamm.o @(pre)tlapack @(pre)ttstlib \
                    $(F77BLASlib) $(UAMMlib) $(ATLASlib) $(LIBS)
 
 @(pre)tlutst_bcamm.o : $(mySRCdir)/lutst.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT $(intf) -DATL_USEPTHREADS -D@(typ) \
               -DTimeBCAMM $(mySRCdir)/lutst.c
 x@(pre)luflops_amm : @(pre)bcamm $(INCAdir)/atlas_@(upr)u0amm_blk.h \
@@ -4052,28 +4160,28 @@ x@(pre)tlatime_fl_sb : @(pre)tlatimeF.o @(pre)tlapack @(pre)ttstlib \
 	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) -DATL_USEPTHREADS=1 \
                  $(mySRCdir)/l3time.c
 @(pre)latimeF.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DTimeF77  -D@(typ) $(mySRCdir)/latime.c
 @(pre)latimeC.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DTimeC  -D@(typ) $(mySRCdir)/latime.c
 @(pre)latime.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) $(mySRCdir)/latime.c
 @(pre)tlatimeF.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATL_USEPTHREADS=1 -DTimeF77 \
               -D@(typ) $(mySRCdir)/latime.c
 @(pre)tlatimeC.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DTimeC  -DATL_USEPTHREADS=1 -D@(typ) \
                  $(mySRCdir)/latime.c
 @(pre)tlatime.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATL_USEPTHREADS=1 -D@(typ) \
                  $(mySRCdir)/latime.c
 @(pre)tlatime_bcamm.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DTimeBCAMM  -DATL_USEPTHREADS=1 -D@(typ) \
                  $(mySRCdir)/latime.c
 
@@ -4283,10 +4391,10 @@ x@(pre)mmtst_sys_pt : $(INCAdir)/atlas_type.h @(pre)gemmtst_f77_pt.o @(pre)tstli
 
 @whiledef rt gemmtst l3blastst
 @(pre)@(rt)_f77.o : $(mySRCdir)/@(rt).c $(INCSdir)/atlas_misc.h \
-                  $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h
+                  $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h
 	$(KC) -o $@ -c $(KCFLAGS) -DTEST_F77=1 -D@(typ) $(mySRCdir)/@(rt).c
 @(pre)@(rt)_f77_pt.o : $(mySRCdir)/@(rt).c $(INCSdir)/atlas_misc.h \
-                  $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h
+                  $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h
 	$(KC) -o $@ -c $(KCFLAGS) -DATL_USEPTHREADS -DTEST_F77=1 \
                -D@(typ) $(mySRCdir)/@(rt).c
 @endwhile
@@ -4303,7 +4411,7 @@ x@(pre)mmtst_noaff : $(INCAdir)/atlas_type.h @(pre)gemmtst_noaff.o \
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_noaff.o $(noaffobjd) \
               $(TESTlib) $(BLASlib) $(@(pre)mmobj) $(ATLASlib) $(LIBS)
 @(pre)gemmtst_noaff.o : $(mySRCdir)/gemmtst.c $(INCSdir)/atlas_misc.h \
-                  $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h
+                  $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h
 	$(KC) -o $@ -c $(KCFLAGS) -DATL_USEPTHREADS -DATL_NOAFFINITY=1 \
                -D@(typ) $(mySRCdir)/gemmtst.c
 
@@ -4332,7 +4440,7 @@ $(MMTdir)/res/@(pre)vMMRES :
 x@(pre)gpmmtst : $(INCAdir)/atlas_type.h @(pre)gpmmtst.o @(pre)mmlib @(pre)tstlib
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gpmmtst.o \
               $(TESTlib) $(BLASlib) $(@(pre)mmobj) $(ATLASlib) $(LIBS)
-@(pre)gpmmtst.o : $(mySRCdir)/gpmmtst.c $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_@(pre)geamm_sum.h \
+@(pre)gpmmtst.o : $(mySRCdir)/gpmmtst.c $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_@(pre)amm_sum.h \
                   $(INCSdir)/atlas_lvl3.h $(INCSdir)/atlas_pkblas.h
 	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) $(mySRCdir)/gpmmtst.c
 	
@@ -4391,7 +4499,7 @@ x@(pre)gpmmtst : $(INCAdir)/atlas_type.h @(pre)gpmmtst.o @(pre)mmlib @(pre)tstli
 x@(pre)printblk : @(pre)printblk.o
 	$(CLINKER) -o $@ @(pre)printblk.o $(ATLASlib)
 @(pre)printblk.o : $(INCSdir)/atlas_mv.h $(INCSdir)/atlas_r1.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(mySRCdir)/printblk.c
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(mySRCdir)/printblk.c
 	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) $(mySRCdir)/printblk.c
 
   @define df @@
@@ -4407,32 +4515,32 @@ x@(pre)printblk : @(pre)printblk.o
 	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) @(df) $(mySRCdir)/l2blastst.c
 
 @(pre)l3blastst@(pt).o : $(mySRCdir)/l3blastst.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT @(df) -D@(typ) \
                $(mySRCdir)/l3blastst.c
 @(pre)lanbtime@(pt).o : $(mySRCdir)/lanbtst.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT $(intf) @(df) -D@(typ) \
            -DATL_USE_ATL_ILAENV $(mySRCdir)/lanbtst.c
 @(pre)lanbtimeC@(pt).o : $(mySRCdir)/lanbtst.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT -DTimeC @(df) -D@(typ) \
                $(mySRCdir)/lanbtst.c
 @(pre)lanbtimeF@(pt).o : $(mySRCdir)/lanbtst.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT -DTimeF77 @(df) -D@(typ) \
                $(mySRCdir)/lanbtst.c
       @whiledef rt uum llt lu slv trtri inv lanb qr orm
 @(pre)@(rt)tst@(pt).o : $(mySRCdir)/@(rt)tst.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT $(intf) @(df) -D@(typ) \
                $(mySRCdir)/@(rt)tst.c
 @(pre)@(rt)tstC@(pt).o : $(mySRCdir)/@(rt)tst.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT -DTimeC @(df) -D@(typ) \
                $(mySRCdir)/@(rt)tst.c
 @(pre)@(rt)tstF@(pt).o : $(mySRCdir)/@(rt)tst.c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT -DTimeF77 @(df) -D@(typ) \
                $(mySRCdir)/@(rt)tst.c
       @endwhile
@@ -4442,7 +4550,7 @@ x@(pre)printblk : @(pre)printblk.o
 	$(KC) -o $@ -c $(KCFLAGS) @(df) -D@(typ) $(mySRCdir)/scaltst.c
 
 @(pre)gemmtst@(pt).o : $(mySRCdir)/gemmtst.c $(INCSdir)/atlas_misc.h \
-                  $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h
+                  $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h
 	$(KC) -o $@ -c $(KCFLAGS) @(df) -D@(typ) $(mySRCdir)/gemmtst.c
 
       @undef df
@@ -4451,7 +4559,7 @@ x@(pre)printblk : @(pre)printblk.o
    @multidef def  -DTEST_AMM2 -DTEST_AMMM=1 @^ -DTEST_RANKK -DATL_RKXOVER -DATL_AFFINITY
    @whiledef suff amm2 amm big rk rkX aff
 @(pre)gemmtst_@(suff).o : $(mySRCdir)/gemmtst.c $(INCSdir)/atlas_misc.h \
-                 $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h @(dep)
+                 $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h @(dep)
 	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) -DTRUST_BIG @(def) \
                $(mySRCdir)/gemmtst.c
       @undef def
@@ -7669,7 +7777,7 @@ ATL_Xt@(rt2).o : $(deps) $(mySRCdir)/ATL_Xt@(rt2).c
 @multidef typ DCPLX SCPLX DREAL SREAL
 @whiledef pre z c d s
    @addkeys ptyp=@(pre)
-@(pre)INCdep = $(deps) $(INCAdir)/atlas_@(pre)geamm_sum.h
+@(pre)INCdep = $(deps) $(INCAdir)/atlas_@(pre)amm_sum.h
 
 @declare "@(pre)obj = " y n
    ATL_@(pre)threadMM.o
@@ -7775,7 +7883,6 @@ clean : dclean sclean cclean zclean
 @declare "@(pre)INCdep = " y n
    $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h
    $(INCAdir)/atlas_@(upr)geamm_blk.h 
-   $(INCAdir)/atlas_@(upr)geamm_flag.h 
    $(INCAdir)/atlas_@(upr)geamm_kern.h 
    $(INCAdir)/atlas_@(upr)geamm_perf.h
    $(INCAdir)/atlas_@(pre)geamm_cm2am_a1.h
@@ -7784,7 +7891,6 @@ clean : dclean sclean cclean zclean
 @declare "@(pre)INCSQdep = " y n
    $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h
    $(INCAdir)/atlas_@(upr)sqamm_blk.h 
-   $(INCAdir)/atlas_@(upr)sqamm_flag.h
    $(INCAdir)/atlas_@(upr)sqamm_kern.h
    $(INCAdir)/atlas_@(upr)sqamm_perf.h
    $(INCAdir)/atlas_@(pre)sqamm_cm2am_a1.h
@@ -7793,12 +7899,15 @@ clean : dclean sclean cclean zclean
 
 @declare "@(pre)obj = " y n
    ATL_@(pre)GetAmmmInfo.o ATL_@(pre)GetAmmmInfoSQ.o 
-   ATL_@(pre)GetRankKInfo.o ATL_@(pre)ammmK.o 
+   ATL_@(pre)GetRankKInfo.o  ATL_@(pre)iploops.o
+   ATL_@(pre)ammmK.o ATL_@(pre)ammmM.o ATL_@(pre)ammmN.o 
    ATL_@(pre)ammmKNMK.o ATL_@(pre)ammmKMNK.o ATL_@(pre)ammm_syrk.o
    ATL_@(pre)ammm.o ATL_@(pre)ammm_1b.o
-   ATL_@(pre)ammm_rk2.o ATL_@(pre)ammm_rkK.o ATL_@(pre)ammmNMK.o
-   ATL_@(pre)ammm_IP.o ATL_@(pre)ammm_tN.o ATL_@(pre)ammmMNK.o
-   @ptyp d s `ATL_@(pre)rk4n4.o ATL_@(pre)ammmREC.o ATL_@(pre)ammmNKM.o`
+   ATL_@(pre)ammm_rk2.o ATL_@(pre)aliased_rkK.o ATL_@(pre)ammm_rkK.o
+   ATL_@(pre)ammm_IP.o ATL_@(pre)ammm_tN.o
+   @ptyp d s `ATL_@(pre)rk4n4.o`
+   @skip ATL_@(pre)ammmNMK.o ATL_@(pre)ammmMNK.o
+   @skip ptyp d s `ATL_@(pre)ammmREC.o ATL_@(pre)ammmNKM.o`
 @enddeclare
 
 @(pre)lib : @(pre)lib.grd
@@ -7810,28 +7919,21 @@ clean : dclean sclean cclean zclean
 	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(@(pre)obj)
 	$(RANLIB) $(ATLASlib)
 	touch @(pre)lib.grd
-
-@whiledef rt ammm_IP ammmKNMK ammmKMNK ammm_syrk
+@multidef rt iploops ammm_tN
+@whiledef rt ammm ammm_IP ammmKNMK ammmKMNK ammm_syrk ammm_rkK aliased_rkK
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt).c \
-                    $(INCAdir)/atlas_@(pre)geamm_sum.h
+                    $(INCAdir)/atlas_@(pre)amm_sum.h
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt).c
 @endwhile
 @ptyp z c
-   @whiledef rt ammmK ammm ammm_1b ammmNMK ammm_rk2 ammm_rkK ammm_tN ammmMNK
+   @whiledef rt ammmN ammmM ammmK ammm_1b ammm_rk2
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_c@(rt).c \
-                    $(INCAdir)/atlas_@(pre)geamm_sum.h
+                    $(INCAdir)/atlas_@(pre)amm_sum.h
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_c@(rt).c
    @endwhile
 @ptyp d s
-   @beginskip
-   @whiledef rt GetAmmmInfo
-ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(INCSdir)/atlas_ttypes.h \
-                    $(mySRCdir)/ATL_@(rt).c
-	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt).c
-   @endwhile
-   @endskip
-   @multidef rt rk4n4 ammmREC ammmNKM ammmK
-   @multidef rt ammm ammm_1b ammmNMK ammm_rk2 ammm_rkK ammm_tN ammmMNK
+   @multidef rt rk4n4 ammmREC ammmNKM ammmK ammmM ammmN
+   @multidef rt ammm_1b ammmNMK ammm_rk2 ammmMNK
 @ptyp !
    @whiledef rt GetAmmmInfo GetRankKInfo
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt).c
@@ -7871,7 +7973,7 @@ clean : dclean sclean cclean zclean
 @whiledef pre z c d s
    @addkeys ptyp=@(pre)
 @(pre)INCdep = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h \
-          $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h
+          $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h
 
 @declare "@(pre)obj = " y n
    ATL_@(pre)MBJBmm.o ATL_@(pre)IBNBmm.o ATL_@(pre)IBJBmm.o 
@@ -8836,7 +8938,7 @@ ATL_Xtompsyrk.o : $(deps) $(mySRCdir)/ATL_Xtompsyrk.c
 @multidef typ DCPLX SCPLX DREAL SREAL
 @whiledef pre  z c d s 
    @addkeys ptyp=@(pre)
-@(pre)INCdep = $(deps) $(INCAdir)/atlas_@(pre)geamm_sum.h
+@(pre)INCdep = $(deps) $(INCAdir)/atlas_@(pre)amm_sum.h
 
 @declare "@(pre)obj = " y n
    @whiledef rtt
@@ -8905,7 +9007,7 @@ x@(pre)@(rt)@(suf) : @(pre)@(rt)@(suf).o @(pre)lapack @(pre)tstlib@(suf) @(pre)l
                    $(ATLASlib) $(LIBS)
 
 @(pre)@(rt)@(suf).o : $(mySRCdir)/@(rt).c $(INCSdir)/atlas_misc.h \
-                   $(INCAdir)/atlas_@(pre)geamm_sum.h $(INCSdir)/atlas_lvl3.h 
+                   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATLCINT @(df) -D@(typ) $(mySRCdir)/@(rt).c
       @endwhile
       @multidef rt

@@ -20722,17 +20722,28 @@ void ATL_@(pre)her2k(const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
 #include "atlas_f77.h"
 #include "atlas_level3.h"
 #ifndef ATL_NOAMM
+   #define NOPERF 1
+   #define NOK1RATIO 1
+   #define NOTIME 1
    #if defined(SREAL)
-      #include "atlas_sgeamm_sum.h"
+      #include "atlas_samm_sum.h"
+      #include "atlas_ssqamm_perf.h"
    #elif defined(DREAL)
-      #include "atlas_dgeamm_sum.h"
+      #include "atlas_damm_sum.h"
+      #include "atlas_dsqamm_perf.h"
    #elif defined(QREAL)
-      #include "atlas_qgeamm_sum.h"
+      #include "atlas_qamm_sum.h"
+      #include "atlas_qsqamm_perf.h"
    #elif defined(SCPLX)
-      #include "atlas_sgeamm_sum.h"
+      #include "atlas_camm_sum.h"
+      #include "atlas_csqamm_perf.h"
    #elif defined(DCPLX)
-      #include "atlas_dgeamm_sum.h"
+      #include "atlas_zamm_sum.h"
+      #include "atlas_zsqamm_perf.h"
    #endif
+   #undef NOPERF
+   #undef NOK1RATIO
+   #undef NOTIME
 #endif
 #define CPAT Mjoin(C_ATL_, PRE);
 
@@ -21131,7 +21142,7 @@ double time00(void)
    #endif
 #endif
 
-/* #define TEST_GPMM */
+/* #define TEST_RKKM 1 */
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -21257,23 +21268,7 @@ void matnan(int M, int N, TYPE *C, int ldc, int seed)
 #endif
 
 static int IK0=0, IKN=0, incIK=1, IIK=0;
-#define TEST_AMM2 1
-#if defined(TEST_AMM2)
-   #define TRUST_BLKMAJ 1
-   #define TEST_MM Mjoin(PATL,ammmKNMK)
-   int TEST_MM
-      (enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, ATL_CSZT M, ATL_CSZT N,
-       ATL_CSZT K, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
-       const TYPE *B, ATL_CSZT ldb, const SCALAR beta, TYPE *C, ATL_CSZT ldc);
-#endif
 
-#if defined(TEST_AMMM)
-   #define TRUST_BLKMAJ 1
-   int Mjoin(PATL,ammmNMK)
-      (int IK, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, ATL_CSZT M, ATL_CSZT N,
-       ATL_CSZT K, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
-       const TYPE *B, ATL_CSZT ldb, const SCALAR beta, TYPE *C, ATL_CSZT ldc);
-#endif
 #if defined(TRUST_C)
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(Mjoin(cblas_,PRE),gemm) \
@@ -21299,7 +21294,7 @@ static int IK0=0, IKN=0, incIK=1, IIK=0;
 #elif defined(TRUST_JIT)
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,mmJITcp)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
-#elif (defined(ATL_USEPTHREADS) && !defined(TEST_F77)) || defined(TRUST_BLKMAJ)
+#elif (defined(ATL_USEPTHREADS) && !defined(TEST_F77))
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,gemm)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
 #else
@@ -21314,6 +21309,9 @@ static int IK0=0, IKN=0, incIK=1, IIK=0;
 #elif defined(TEST_AMMREC)
    #define test_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,ammmREC)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
+#elif defined(TEST_RKKM)
+   #define test_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
+      Mjoin(PATL,ammm_rkKm)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
 #elif defined(TEST_AMMNKM)
    #define test_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,ammmNKM)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
@@ -21586,7 +21584,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
                pc = "NaN";
                maxval = D[i];
             }
-            if (eltbad && N < 80 && M < 80)
+            if (eltbad && N < 80 && (M SHIFT) < 80) 
             {
                if (!errBV)
                   errBV = ATL_NewBV((M SHIFT)*N);
@@ -27835,7 +27833,7 @@ void GetFlags(int nargs, char **args, int *M, int *N0, int *NN, int *incN,
    char *in, *out=file;
 
    file[0] = '\0';
-   *M = NB;
+   *M = ATL_sqAMM_66MB;
    *N0 = 100;
    *NN = 2000;
    *incN = 100;
@@ -27888,11 +27886,11 @@ int main(int nargs, char *args[])
       if (n != NN) nn = tloop(1, NB, Mmax(n-incN,0)+k, n, k, alpha);
       else nn = 10000;
 @endskip
-      nn = 3*NB;
+      nn = 3*ATL_sqAMM_66MB;
       fprintf(fpout, "#define TRSM_%c%c%c%c_Xover %d\n", 
               Side, Uplo, Tran, Diag, nn);
    }
-   fprintf(stdout, "\n\nXover point at NB=%d, N=%d\n\n", NB, nn);
+   fprintf(stdout, "\n\nXover point at NB=%d, N=%d\n\n", ATL_sqAMM_66MB, nn);
    return(0);
 }
 
@@ -37410,18 +37408,27 @@ ATL_flagnode_t *GetGccOptFlags(void)
  "-fcrossjumping", "-fno-crossjumping",
  "-fmodulo-sched -fmodulo-sched-allow-regmoves",
  "-fcse-follow-jumps",
+ "-free",
+ "-fira-algorithm=priority", "-fira-algorithm=CB",
+ "-fira-region=all", "-fira-region=mixed", "-fira-region=one",
+ "-fira-hoist-pressure", "-fira-loop-pressure",
  "-fselective-scheduling", "-fselective-scheduling2",
  "-fselective-scheduling -fsel-sched-pipelining",
  "-fselective-scheduling2 -fsel-sched-pipelining",
  "-fstrict-overflow",
  "-fmodulo-sched", "-fno-branch-count-reg", "-fno-move-loop-invariants",
+ "-fdelayed-branch",
  "-fno-peephole -fno-peephole2", "-fno-peephole", "-fno-peephole2",
- "-funsafe-loop-optimizations", "-fomit-frame-pointer", 
+ "-faggressive-loop-optimizations", "-funsafe-loop-optimizations", 
+ "-fomit-frame-pointer", 
  "-foptimize-register-move", "-fno-optimize-register-move",
  "-fprefetch-loop-arrays", "-fno-prefetch-loop-arrays",
  "-frename-registers", "-fno-rename-registers", 
  "-fno-reorder-blocks", "-fno-sched-interblock", "-fno-sched-spec",
  "-fsched-spec-load", "-fsched2-use-superblocks", "-fsched2-use-traces",
+ "-fselective-scheduling -fsel-sched-pipelining", 
+ "-fselective-scheduling -fsel-sched-pipelining -fsel-sched-pipelining-outer-loops", 
+ "-fsel-sched-pipelining-outer-loops",
  "-fsee", "-freschedule-modulo-scheduled-loops", "-fsingle-precision-constant",
  "-fstrict-aliasing", "-funroll-all-loops", "-funroll-loops",
  "-fno-split-ivs-in-unroller", 
@@ -37819,7 +37826,7 @@ ATL_flagnode_t *LinearFlagSearch
          free(mmp->cflags);
       mmp->cflags = DupString(flags);
       mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, mmp->kbB,
-                        0, 0, 0, 1, -1, -1);
+                        1, -1, -1);
       if (verb > 0)
          printf("%s%4d. mf=%.2f, newflags='%s'\n", spc, i, mf, fp->flags);
       if (mf > mfB*mulB)
@@ -37881,7 +37888,7 @@ char *GreedyLinearFlagSearch
             free(mmp->cflags);
          mmp->cflags = flags;
          mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, mmp->kbB,
-                           0, 0, 0, 1, -1, -1);
+                           1, -1, -1);
          if (mf0 == 0.0)
             mf0 = mf;
          if (verb > 0)
@@ -37909,7 +37916,7 @@ char *GreedyLinearFlagSearch
                free(mmp->cflags);
             mmp->cflags = flags;
             mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, mmp->kbB,
-                              0, 0, 0, 1, -1, -1);
+                              1, -1, -1);
             if (verb > 0)
             {
                printf("%s%4d. mf=%.2f, flags='%s", spc, i, mf, fp->flags);
@@ -37946,7 +37953,7 @@ char *GreedyLinearFlagSearch
             free(mmp->cflags);
          mmp->cflags = DupString(flags);
          mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, mmp->kbB,
-                           0, 0, 0, 1, -1, -1);
+                           1, -1, -1);
          if (mf0 == 0.0)
             mf0 = mf;
          if (verb > 0)
@@ -37989,7 +37996,7 @@ char *GreedyLinearFlagSearch
             free(mmp->cflags);
          mmp->cflags = DupString(flags);
          mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, mmp->kbB,
-                           0, 0, 0, 1, -1, -1);
+                           1, -1, -1);
          if (mf0 == 0.0)
             mf0 = mf;
          if (verb > 0)
@@ -38040,7 +38047,7 @@ char *GreedyLinearFlagSearch
          free(mmp->cflags);
       mmp->cflags = DupString(flags);
       mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, mmp->kbB,
-                        0, 0, 0, 1, -1, -1);
+                        1, -1, -1);
       if (mf0 == 0.0)
          mf0 = mf;
       if (verb > 0)
@@ -38138,6 +38145,7 @@ int main(int nargs, char **args)
       fprintf(stderr, "CANNOT READ FILE '%s'!\n", mmfile);
       exit(-1);
    }
+   MMFillInGenStrings(pre, mmp);
    if (verb > 0)
    {
       printf("\nFINDING BEST FLAGS USING MATMUL KERNEL:\n");
