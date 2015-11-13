@@ -14,6 +14,15 @@
    @PRE D `   #define DREAL 1`
    @PRE Z `   #define DCPLX 1`
 #endif
+@ifdef ! TRI
+   @iexp TRI 0
+@endifdef
+@SKIP TRI = 1 means lower triangular C (SYRK)
+@iif TRI = 1
+   @iif mu ! nu
+      @abort "mu (@(mu)) must equal nu (@(nu))!"
+   @endiif
+@endiif
 @ROUT amm
 @beginskip
 Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
@@ -151,6 +160,17 @@ During tuning, think about several regions for prefetch:
 @endiif
 @skip bc = (bc != 0 || (vl < 2) || nu%vl != 0);
 @iexp bc 0 @(bc) ! 2 @(vl) < | @(vl) @(nu) % 0 ! |
+@iif TRI = 1
+   @VEC KDIM
+      @iif ku ! vl
+         @abort "ku (@(ku)) must equal vlen (@(vl))!"
+      @endiif
+   @VEC MDIM
+      @iif ku ! 1
+         @abort "ku must be 1, but it is @(ku)!"
+      @endiif
+   @VEC !
+@endiif
 #ifndef TYPE
    #define TYPE @(typ)
 #endif
@@ -228,7 +248,7 @@ During tuning, think about several regions for prefetch:
 @iif kp ! kk
    @abort "K-peel (@(kp)) must be a multiple of KU=@(ku)!"
 @endiif
-@VEC KVEC
+@VEC KDIM
 @SKIP FOR KVEC, kb = CEIL(kb/vlen)*vlen
 @iif kb ! 0
    @iexp kb @(vl) @(kb) @(vl) -1 + + / @(vl) *
@@ -1131,7 +1151,12 @@ void ATL_USERMM
          @iexp j @(j) 1 +
       @endiwhile
    @endiif
+   @iif TRI = 0
       for (j=0; j < nnus; j++)
+   @endiif
+   @iif TRI = 1
+      for (j=0; j <= i; j++)
+   @endiif
       {
          /* Peel K=0 iteration to avoid zero of rCxx and extra add  */
    @iif NOKLOOP ! 0
@@ -1194,10 +1219,6 @@ KDONE:
       pA = pA0;
    }  /* end of loop over M */
 }
-@ROUT blk2C
-   @define rt0 @ablk2cmat@
-@ROUT C2blk
-   @define rt0 @cmat2ablk@
 @ROUT blk2C C2blk
 #include <stddef.h>
 @ifdef ! cpvl
@@ -1212,38 +1233,9 @@ KDONE:
 #endif
 @SKIP LEGAL: alpha=[1,-1,X], beta=[0,1,-1,X]
 @SKIP if (alpha==1) && (beta==0 || beta==1)) -> char same as #
-@iif @iexp @(alpha) 1 = @(beta) 0 = @(beta) 1 = | &
-@skip   @define rtnm @ATL_@(pre)@(rt0)_@(mu)x@(nu)_a@(alpha)_b@(beta)@
-@endiif
 @ifdef ! rtnm
    @define rtnm @ATL_USERCPMM@
 @endifdef
-@beginskip
-@ifdef ! rtnm
-   @iif alpha = -1
-      @iif @iexp @(beta) 0 = @(beta) 1 |
-         @define rtnm @ATL_@(pre)@(rt0)_@(mu)x@(nu)_an_b@(beta)@
-      @endiif
-      @iif beta = -1
-         @define rtnm @ATL_@(pre)@(rt0)_@(mu)x@(nu)_an_bn@
-      @endiif
-      @ifdef ! rtnm
-         @define rtnm @ATL_@(pre)@(rt0)_@(mu)x@(nu)_an_bX@
-      @endifdef
-   @endiif
-   @iif alpha ! -1
-      @iif @iexp @(beta) 0 = @(beta) 1 |
-         @define rtnm @ATL_@(pre)@(rt0)_@(mu)x@(nu)_aX_b@(beta)@
-      @endiif
-      @iif beta = -1
-         @define rtnm @ATL_@(pre)@(rt0)_@(mu)x@(nu)_aX_bn@
-      @endiif
-      @ifdef ! rtnm
-         @define rtnm @ATL_@(pre)@(rt0)_@(mu)x@(nu)_aX_bX@
-      @endifdef
-   @endiif
-@endifdef
-@endskip
 @PRE S D
 @SKIP blksz = ((mu*nu+vlen-1)/vlen)*vlen
 @iexp bs @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *
@@ -1351,8 +1343,14 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
 {
    const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
+@iif TRI = 1
+   unsigned int pansz = @(bs);
+   const size_t incC0 = (ldc+1)*@(nu);
+@endiif
+@iif TRI = 0
    const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
    const size_t incC = ldc*@(nu) - m;
+@endiif
    unsigned int i, j;
 @ROUT blk2C `   @declare "   @(typ) " n n ";"`
 @ROUT C2blk `   @declare "   const @(typ) " n n ";"`
@@ -1364,11 +1362,22 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
+@iif TRI = 1
+   for (j=0; j < nf; j++)
+@endiif
+@iif TRI = 0
    for (j=nf; j; j--, b += @(bs))
+@endiif
    {
 @ROUT blk2C `      const @(typ) *p = b;`
 @ROUT C2blk `      @(typ) *p = b;`
+@iif TRI = 1
+      unsigned int psz = pansz, incC = incC0 - (mf-j)*@(mu);
+      for (i=j; i < mf; i++, p += psz, psz += @(bs))
+@endiif
+@iif TRI = 0
       for (i=mf; i; i--, p += pansz)
+@endiif
       {
          @callproc doBlock @(mu) @(nu)
       }
@@ -1388,6 +1397,10 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       C@(j) += incC;
       @iexp j @(j) 1 +
    @endiwhile
+@iif TRI = 1
+      pansz += @(bs);
+      b += pansz;
+@endiif
    }
 @iif nu > 1
    switch(nr)
@@ -1700,7 +1713,12 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
 {
    const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
+@iif TRI = 1
+   unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+@endiif
+@iif TRI = 0
    const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+@endiif
    const size_t incC = (ldc*@(nu) - m)<<1, ldc2 = ldc+ldc;
    unsigned int i, j;
    @iif alpX ! 0
@@ -1723,7 +1741,21 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    {
 @ROUT blk2C `      const @(typ) *pr = rC, *pi = iC;`
 @ROUT C2blk `      @(typ) *pr = rC, *pi = iC;`
+@iif TRI = 1
+      if (j != nf)
+      {
+         const unsigned int incCj=(nf-j)*@(mu);
+   @iexp j 0
+   @iwhile j < @(nu)
+         C@(j) += incCj;
+         @iexp j @(j) 1 +
+   @endiwhile
+      }
+      for (i=j; i; i--, pr += pansz, pi += pansz)
+@endiif
+@iif TRI = 0
       for (i=mf; i; i--, pr += pansz, pi += pansz)
+@endiif
       {
          @callproc doBlock @(mu) @(nu)
       }
@@ -1738,6 +1770,9 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @endiwhile
       default:;
       }
+@iif TRI = 1
+      pansz -=  @(bs);
+@endiif
    @iexp j 0
    @iwhile j < @(nu)
       C@(j) += incC;

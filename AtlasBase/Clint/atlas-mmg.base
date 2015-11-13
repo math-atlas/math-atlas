@@ -1,3 +1,6 @@
+@ifdef ! TRI
+   @define TRI @0@
+@endifdef
 @ifdef ! kmaj
    @define kmaj @0@
 @endifdef
@@ -5109,7 +5112,14 @@ int mmtst(void)
  */
    assert(A && B && C && a && b && c);
    for (n=lda*K SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
+@iif TRI = 1
+    for (j=0; j < N; j++)
+       for (i=0; i < K; i++)
+           B[i+j*ldb] = A[j+i*lda];
+@endiif
+@iif TRI = 0
    for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
+@endiif
    for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
 /*
  * To ease debugging, make matrices easily mappable:
@@ -5143,38 +5153,39 @@ int mmtst(void)
       }
    }
    #endif
-@beginskip
-   @iif kmaj < 2
-   Mjoin(PATL,rm2am_a1_@(mu))(K, M, 1.0, A, lda, a);
-   Mjoin(PATL,cm2am_a1_@(nu)@(dsuf))(K, N, 1.0, B, ldb, b);
-   @endiif
-   @iif kmaj > 1
-   Mjoin(PATL,rm2am_a1_@(kmaj)x@(mu))(K, M, 1.0, A, lda, a);
-   Mjoin(PATL,cm2am_a1_@(kmaj)x@(nu)@(dsuf))(K, N, 1.0, B, ldb, b);
-   @endiif
-@endskip
    ATL_rm2am(K, M, 1.0, A, lda, a);
+@iif TRI = 0
    ATL_cm2am(K, N, 1.0, B, ldb, b);
+@endiif
    #if 0
       ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
    #else
 @skip      Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a1_b1)(M, N, rone, C, ldc, rone, c);
-      ATL_C2blk(M, N, rone, C, ldc, rone, c);
+      ATL_C2blk(M, N, rone, C, ldc, 0.0, c);
    #endif
 /*
  * Call test routine, move output to col-major D for comparison with correct C
  */
+@iif TRI = 1
+   ATL_USERMM(MMU/@(mu), NNU/@(nu), KKU, a, a, c, NULL, NULL, NULL);
+@endiif
+@iif TRI = 0
    ATL_USERMM(MMU/@(mu), NNU/@(nu), KKU, a, b, c, NULL, NULL, NULL);
+@endiif
    tst_mm(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 //   printf("c=%e,%e,%e,%e; %e,%e,%e,%e\n", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
 //   printf("C=%e,%e,%e,%e; %e,%e,%e,%e\n", C[0], C[1], C[2], C[3], C[ldc], C[ldc+1], C[ldc+2], C[ldc+3]);
-@skip   Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a1_b0)(M, N, 1.0, c, 0.0, D, ldc);
    ATL_blk2C(M, N, 1.0, c, 0.0, D, ldc);
 
    nerr = 0;
    for (j=0; j < N; j++)
    {
+@iif TRI = 0
       for (i=0; i < M SHIFT; i++)
+@endiif
+@iif TRI = 1
+      for (i=j; i < M SHIFT; i++)
+@endiif
       {
          k = i + j*(ldc SHIFT);
          diff = C[k] - D[k];
