@@ -15135,7 +15135,7 @@ int DoLoopSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails, SLP_VECTOR *vl0,
    INT_BVI iv, livein, liveout, ivins;
    ILIST **ilam;
    INSTQ *upackq;
-   PACK *seedpk, *pk;
+   PACK *seedpk=NULL, *pk;
    SLP_VECTOR *vl, *vlist=NULL, *vlive=NULL;
    LOOPQ *lpq;
    extern LOOPQ *loopq;
@@ -15538,7 +15538,11 @@ int SlpVectorization()
    */
    err = DoLoopSLP(optloop->blocks->blk, optloop->preheader, optloop->posttails, 
               NULL, 1, 0);
-   
+#if 0
+   if (err)
+      fprintf(stderr, "SLP not successful!\n");
+#endif
+
    KillPackTable();
 
 #if 0

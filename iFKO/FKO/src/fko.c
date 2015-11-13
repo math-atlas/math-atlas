@@ -3944,9 +3944,9 @@ int main(int nargs, char **args)
    else if ( (FKO_FLAG & IFF_VECTORIZE) && (VECT_FLAG & VECT_SLP) )
    {
 /*
- *    implementing slp here.. finalize after done.
+ *    apply SLP vectorization method 
  */
-      SlpVectorization();
+      assert(!SlpVectorization());
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {
