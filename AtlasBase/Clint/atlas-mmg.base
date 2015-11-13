@@ -4786,6 +4786,9 @@ int mmtst(void)
    void *va=NULL, *vb=NULL, *vc=NULL;
    TYPE *C, *D, *A, *B, *a, *b, *c;
    TYPE diff, tmp;
+@iif TRI = 1
+   const TYPE mynan=0.0/0.0;
+@endiif
    int i, j, k, n, nerr;
    ATL_CINT M=@(M), N=@(N), K=@(K), lda=M, ldb=K, ldc=M+3;
    ATL_CINT NMU = ((@(M)+@(mu)-1)/@(mu));
@@ -4822,31 +4825,53 @@ int mmtst(void)
  */
    assert(A && B && C && a && b && c);
    for (n=lda*K SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
+@iif TRI = 1
+   for (j=0; j < N; j++)   /* make B = trans(A), so we can test SYRK */
+      for (i=0; i < (K SHIFT); i++)
+          B[i+j*(ldb SHIFT)] = A[j+i*(lda SHIFT)];
+@endiif
+@iif TRI = 0
    for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
+@endiif
    for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
-   @iif kmaj = 0
-   Mjoin(PATL,rm2am_a1_@(mu))(K, M, alpha, A, lda, a+incA, a);
-   Mjoin(PATL,cm2am_a1_@(nu))(K, N, alpha, B, ldb, b+incB, b);
-   @endiif
-   @iif kmaj ! 0
-   Mjoin(PATL,rm2am_a1_@(ku)x@(mu))(K, M, alpha, A, lda, a+incA, a);
-   Mjoin(PATL,cm2am_a1_@(ku)x@(nu))(K, N, alpha, B, ldb, b+incB, b);
-   @endiif
+   ATL_rm2am(K, M, alpha, A, lda, a+incA, a);
+@iif TRI = 0
+   ATL_cm2am(K, N, alpha, B, ldb, b+incB, b);
+@endiif
 @skip   ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
 @skip   Mjoin(PATL,gezero)(M, N, D, ldc);
 /*
  * Call test routine, move output to col-major D for comparison with correct C
  */
+@iif TRI = 1
+   cusermm(M, N, KK, a, a, c);
+@endiif
+@iif TRI = 0
    cusermm(M, N, KK, a, b, c);
+@endiif
    tst_mm(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 //   printf("c=%e,%e,%e,%e; %e,%e,%e,%e\n", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
 //   printf("C=%e,%e,%e,%e; %e,%e,%e,%e\n", C[0], C[1], C[2], C[3], C[ldc], C[ldc+1], C[ldc+2], C[ldc+3]);
-   Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a1_b@(be))(M, N, alpha, c+incC, c, beta, D, ldc);
+   ATL_blk2C(M, N, alpha, c+incC, c, beta, D, ldc);
 
    nerr = 0;
    for (j=0; j < N; j++)
    {
+@iif TRI = 1
+      for (i=0; i < j SHIFT; i++)
+      {
+         diff = C[i + j*(ldc SHIFT)];
+         if (diff != diff)
+         {
+            fprintf(stderr, "C(%d,%d) : expected=NaN, got=%e!\n", i, j, D[k]);
+            nerr++;
+         }
+      }
+      for (; i < M SHIFT; i++)
+@endiif
+@iif TRI = 0
       for (i=0; i < M SHIFT; i++)
+@endiif
       {
          k = i + j*(ldc SHIFT);
          diff = C[k] - D[k];
@@ -5070,6 +5095,9 @@ int mmtst(void)
    void *va=NULL, *vb=NULL, *vc=NULL;
    TYPE *C, *D, *A, *B, *a, *b, *c;
    TYPE diff, tmp;
+@iif TRI = 1
+   const TYPE mynan = 0.0/0.0;
+@endiif
    int i, j, k, n, nerr;
    ATL_CINT M=@(M), N=@(N), K=@(K), lda=M, ldb=K, ldc=M+3;
    ATL_CINT nmuC = (@(M)+@(mu)-1)/@(mu), nnuC = (@(N)+@(nu)-1)/@(nu);
@@ -5157,12 +5185,27 @@ int mmtst(void)
 @iif TRI = 0
    ATL_cm2am(K, N, 1.0, B, ldb, b);
 @endiif
+@iif TRI = 0
    #if 0
       ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
    #else
-@skip      Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a1_b1)(M, N, rone, C, ldc, rone, c);
       ATL_C2blk(M, N, rone, C, ldc, 0.0, c);
    #endif
+@endiif
+@iif TRI = 1
+/* 
+ * Put NaN's above diag of C, so we are sure these vals not used in computation
+ */
+   for (j=0; j < N; j++)
+   {
+      TYPE *Cc=C+j*ldc, *Dc=D+j*ldc;
+      for (i=0; i < (j SHIFT); i++)
+         Dc[i] = mynan;
+      for (; i < (M SHIFT); i++)
+         Dc[i] = Cc[i];
+      ATL_C2blk(M, N, rone, D, ldc, 0.0, c);
+   }
+@endiif
 /*
  * Call test routine, move output to col-major D for comparison with correct C
  */
@@ -5184,7 +5227,16 @@ int mmtst(void)
       for (i=0; i < M SHIFT; i++)
 @endiif
 @iif TRI = 1
-      for (i=j; i < M SHIFT; i++)
+      for(i=0; i < j SHIFT; i++)
+      {
+         diff = C[i + j*(ldc SHIFT)];
+         if (diff != diff)
+         {
+            fprintf(stderr, "C(%d,%d) : expected=NaN, got=%e!\n", i, j, D[k]);
+            nerr++;
+         }
+      }
+      for (; i < M SHIFT; i++)
 @endiif
       {
          k = i + j*(ldc SHIFT);
