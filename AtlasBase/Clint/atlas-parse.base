@@ -78,10 +78,18 @@ struct MMstg
    char *szfunc;
 };
 
+#define uchar unsigned char
+#define uint  unsigned int
 typedef struct MMNode ATL_mmnode_t;
 struct MMNode
 {
+   ATL_mmnode_t *next;
    double mflop[8];             /* 1st entry perf using mbB, nbB, kbB */
+   char *rout, *auth, *comp, *cflags;
+   char *str;                   /* tmp string used in generation */
+   char *genstr;                /* system(genstr) will generate gened kernel */
+   char *exflags;               /* extra flags to pass test/time call */
+   char *moves;                 /* -DMove[A,B,C] to use, NULL default */
    int ID, mu, nu, ku;          /* ID, and unrolling on each loop */
    int kbmin, kbmax;            /* min/max KB this kernel can handle */
    int SSE;                     /* 0: no SSE, 1: SSE1 req, 2: SSE2 req, etc */
@@ -96,14 +104,11 @@ struct MMNode
    int stgA, stgB, stgC;        /* storage ID, 0: access major */
    enum ATLAS_TRANS TA, TB;
    int asmbits;   /* bitfield indicating which assembly(ies) is required */
-   char *rout, *auth, *comp, *cflags;
-   char *str;                   /* tmp string used in generation */
-   char *genstr;                /* system(genstr) will generate gened kernel */
-   char *exflags;               /* extra flags to pass test/time call */
-   char *moves;                 /* -DMove[A,B,C] to use, NULL default */
-   unsigned int flag;
-   ATL_mmnode_t *next;
+   uint flag;
+   uchar blask;   /* 0:ammm, 1:syrk, 2:symm, 3:trmm */
 };
+#undef uchar
+#undef uint
 
 @ROUT r1read
 #ifndef ATLAS_R1PARSE_H
@@ -1634,6 +1639,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @endwhile
 @ROUT mmread 
+@multidef jj blask
 @whiledef jj mu nu ku kbmin kbmax pref vlen ivar pfLS szExtra stgA stgB stgC
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
@@ -1785,7 +1791,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @ROUT mmread 
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "OPMV=%d ", ATL_MMF_MVGET(np->flag));
-@whiledef kw ivar kbmin kbmax pref pfLS vlen
+@whiledef kw ivar kbmin kbmax pref pfLS vlen blask
    if (np->@(kw))
    {
       if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
@@ -3354,24 +3360,17 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 /* procedure @(ip) */
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
-   return(GetMMFilename(pre, "amm", mp));
+   char *nm="amm";
+   if (mp->blask == 1)
+      nm = "syrk";
+   else if (mp->blask == 2)
+      nm = "symm";
+   else if (mp->blask == 2)
+      nm = "symm";
+   else if (mp->blask == 3)
+      nm = "trmm";
+   return(GetMMFilename(pre, nm, mp));
 }
-@beginskip
-char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
-{
-   char *rout;
-   int KB=0;
-   rout = malloc(64);
-   assert(rout);
-   if ((mp->flag) & ((1<<MMF_KRUNTIME)|(1<<MMF_KUISKB)))
-      KB = (kb) ? kb : mp->kbB;
-   /* ATL_<pre>amm<kb>_<vlen>[k,m]_<mu>x<nu>x<ku>_pf<pf>x<pfLS>_<flag>.c */
-   sprintf(rout, "ATL_%camm%d_%d%c_%dx%dx%d_pf%xx%d_%x.c", pre, KB, mp->vlen, 
-           FLAG_IS_SET(mp->flag,MMF_KVEC)?'k':'m', mp->mu, mp->nu, mp->ku,
-           mp->pref, mp->pfLS, mp->flag);
-   return(rout);
-}
-@endskip
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -3381,10 +3380,10 @@ char *MMGetGenString
    ATL_mmnode_t *mp             /* mmkern ptr */
 )
 {
-   char *frm="make gen_amm pre=%c rt=%s vec=%s vlen=%d mu=%d nu=%d ku=%d KB=%d"
-             " bcast=%d pf=%d pfLS=%d";
+   char *frm="make gen_%s pre=%c rt=%s vec=%s vlen=%d mu=%d nu=%d ku=%d"
+             " KB=%d bcast=%d pf=%d pfLS=%d";
    char *vec="mdim";
-   char *gs;
+   char *gs, *sp;
    int len;
    len = strlen(frm) + strlen(mp->rout) + 4;
    gs = malloc(len);
@@ -3398,7 +3397,16 @@ char *MMGetGenString
    }
    else 
       assert(mp->mu % mp->vlen == 0);
-   sprintf(gs, frm, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, mp->ku,
+   if (mp->blask == 1) /* 0:ammm, 1:syrk, 2:symm, 3:trmm */
+      sp = "amsyrk";
+   else if (mp->blask == 2)
+      sp = "amsymm";
+   else if (mp->blask == 3)
+      sp = "amtrmm";
+   else
+      sp = "amm";
+
+   sprintf(gs, frm, sp, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, mp->ku,
            FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0:mp->kbB, 
            !FLAG_IS_SET(mp->flag, MMF_NOBCAST), mp->pref, mp->pfLS);
    return(gs);
@@ -3546,12 +3554,26 @@ char *MMGetTestString
 {
    int i, k, Dd, Ud, Vd;
    int len;
-   char *ln;
+   char *ln, *nm;
 /*
  * Horrific code so we don't have to rely on snprintf, which some ancient
  * compiler may lack.  The len adjustments should be >= the following
  * sprintf calls (in same order, so they can be adjusted together)
  */
+   switch(mp->blask)
+   {
+   case 1:
+      nm = "syrk";
+      break;
+   case 2:
+      nm = "symm";
+      break;
+   case 3:
+      nm = "trmm";
+      break;
+   default:
+      nm = "ammm";
+   }
    len = 22 + 21;                              /* begin & end */
    len += strlen(mp->rout);
    if (mp->ID > 0)
@@ -3571,7 +3593,7 @@ char *MMGetTestString
    ln = malloc(len);
    assert(ln);
 
-   i = sprintf(ln, "make %cammmtst mmrout=", pre);
+   i = sprintf(ln, "make %c%stst mmrout=", pre, nm);
    if (mp->ID > 0)
       i += sprintf(ln+i, "AMMCASES/%s ", mp->rout);
    else
@@ -3955,6 +3977,27 @@ double TimeMMKernel
       "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
               pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, KU, 
               mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
+      if (mmp->blask == 1)
+      {
+         fnam[5] = 's';
+         fnam[6] = 'y';
+         fnam[7] = 'r';
+         fnam[8] = 'k';
+      }
+      else if (mmp->blask == 2)
+      {
+         fnam[5] = 's';
+         fnam[6] = 'y';
+         fnam[7] = 'm';
+         fnam[8] = 'm';
+      }
+      else if (mmp->blask == 3)
+      {
+         fnam[5] = 't';
+         fnam[6] = 'r';
+         fnam[7] = 'm';
+         fnam[8] = 'm';
+      }
    }
 /* 
  * If we actually need to do timing, must also construct timer call
@@ -3968,8 +4011,15 @@ double TimeMMKernel
       #define RESACT 2   /* want average frm ReadResultsFile for parallel */
       if (DOTIME)
       {
-         i = sprintf(ln, "make x%cammtime_pt mb=%d nb=%d kb=%d",
-                     pre, mb, nb, KB);
+         char *nm="amm";
+         if (mmp->blask == 1)
+            nm = "syk";
+         else if (mmp->blask == 2)
+            nm = "sym";
+         else if (mmp->blask == 3)
+            nm = "trm";
+         i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
+                     pre, nm, mb, nb, KB);
          if (SERIAL)
             i += sprintf(ln+i, " NPROC=1");
          if (mmp->genstr)

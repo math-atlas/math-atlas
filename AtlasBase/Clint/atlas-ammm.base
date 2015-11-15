@@ -10976,6 +10976,94 @@ int UseBcast(int flg, int verb, char pre, int kb, int nreg, int VL)
    return(1);
 }
 
+ATL_mmnode_t *DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
+{
+   ATL_mmnode_t *pM, *pB, *pK, *mp;
+   double mfB = 0.0;
+   int i, j, uB=VL, bcB=1, kvecB=0;
+   const char *frm="   %c%c %4d %4d %3d %9.0f\n";
+
+   pM = MMGetNodeGEN(pre, 0, 0, VL, 1, 1, VL, 0, 0, 0, DupString("ATL_tmp.c"));
+   pB = MMGetNodeGEN(pre, 1, 0, VL, 1, 1, VL, 0, 0, 0, DupString("ATL_tmp.c"));
+   pK = MMGetNodeGEN(pre, 0, 0, 1, 1, VL, VL, 1, 0, 0, DupString("ATL_tmp.c"));
+   pM->blask = pB->blask = pK->blask = 1;
+   pK->next = pM;
+   pM->next = pB;
+
+   pM->ku = pB->ku = 1;
+   pM->kbB = pB->kbB = nb;
+   pK->ku = VL;
+   pK->kbB = ((nb+VL-1)/VL)*VL;
+   free(pM->genstr); free(pB->genstr); free(pK->genstr);
+
+   printf("Full search for SYRK kernel for nb=%d, NREG=%d, VLEN=%d\n",
+          nb, nreg, VL);
+   printf("   VD   NB   KB  NU      MFLOP\n");
+   printf("   ==  ===  ===  ==  =========\n");
+   for (i=1; i <= nreg; i++)
+   {
+      for (j=1; j <= nreg; j++)
+      {
+         if (i*j+1 > nreg)
+            continue;
+         if (i*VL == j) /* legal M-vectorized SYRK kernel */
+         {
+            const int b = (nb > j) ? (nb/j)*j : j;
+            double mf;
+
+            pB->mu = pB->nu = pM->mu = pM->nu = j;
+            pB->mbB = pB->nbB = pM->mbB = pM->nbB = b;
+            pM->genstr = MMGetGenString(pre, pM);
+            pB->genstr = MMGetGenString(pre, pB);
+            mf = TimeMMKernel(vrb, 0, pM, pre, b, b, nb, 1, 0, -1);
+            assert(!MMKernelFailsTest(pre, b, b, nb, 1, pM));
+            printf(frm, 'M', 'b', b, nb, j, mf);
+            if (mf > mfB)
+            {
+               mfB = mf;
+               uB = j;
+               kvecB = 0;
+               bcB = 1;
+            }
+            mf = TimeMMKernel(vrb, 0, pB, pre, b, b, nb, 1, 0, -1);
+            assert(!MMKernelFailsTest(pre, b, b, nb, 1, pB));
+            printf(frm, 'M', 's', b, nb, j, mf);
+            if (mf > mfB)
+            {
+               mfB = mf;
+               uB = j;
+               kvecB = 0;
+               bcB = 0;
+            }
+            free(pM->genstr);
+            free(pB->genstr);
+         }
+         if (i == j)    /* legal k-vectorized SYRK kernel */
+         {
+            const int b = (nb > j) ? (nb/j)*j : j;
+            double mf;
+
+            pK->mbB = pK->nbB = b;
+            pK->mu = pK->nu = j;
+            pK->genstr = MMGetGenString(pre, pK);
+            mf = TimeMMKernel(vrb, 0, pK, pre, b, b, pK->kbB, 1, 0, -1);
+            assert(!MMKernelFailsTest(pre, b, b, pK->kbB, 1, pK));
+            printf(frm, 'K', ' ', b, nb, j, mf);
+            if (mf > mfB)
+            {
+               mfB = mf;
+               uB = j;
+               kvecB = VL;
+               bcB = 0;
+            }
+            free(pK->genstr);
+         }
+      }
+   }
+   pM->genstr = pK->genstr = pB->genstr = NULL;
+   KillAllMMNodes(pK);
+   printf("Done.\n");
+}
 ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb, 
                            int VL, int KVEC)
 {
@@ -12434,6 +12522,7 @@ int main(int nargs, char **args)
    FindInfo(flg, verb, upr, NB, &nreg, &VLEN);
    DoBlock(pre, flg, verb);
 @skip   DoSquare(flg, verb, pre, nreg, VLEN);
+   DoSyrk(flg, verb, pre, nreg, NB, VLEN);
    return(0);
 }
 @ROUT ATL_ammmABC
