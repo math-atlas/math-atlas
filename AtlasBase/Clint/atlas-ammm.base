@@ -10976,11 +10976,11 @@ int UseBcast(int flg, int verb, char pre, int kb, int nreg, int VL)
    return(1);
 }
 
-ATL_mmnode_t *DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
+ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
 {
    ATL_mmnode_t *pM, *pB, *pK, *mp;
    double mfB = 0.0;
-   int i, j, uB=VL, bcB=1, kvecB=0;
+   int i, j, uB=VL, bcB=1, kvecB=0, kbB=0;
    const char *frm="   %c%c %4d %4d %3d %9.0f\n";
 
    pM = MMGetNodeGEN(pre, 0, 0, VL, 1, 1, VL, 0, 0, 0, DupString("ATL_tmp.c"));
@@ -11004,7 +11004,7 @@ ATL_mmnode_t *DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
    {
       for (j=1; j <= nreg; j++)
       {
-         if (i*j+1 > nreg)
+         if (i*j+1 > nreg || j > nb)
             continue;
          if (i*VL == j) /* legal M-vectorized SYRK kernel */
          {
@@ -11024,6 +11024,7 @@ ATL_mmnode_t *DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
                uB = j;
                kvecB = 0;
                bcB = 1;
+               kbB = nb;
             }
             mf = TimeMMKernel(vrb, 0, pB, pre, b, b, nb, 1, 0, -1);
             assert(!MMKernelFailsTest(pre, b, b, nb, 1, pB));
@@ -11034,6 +11035,7 @@ ATL_mmnode_t *DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
                uB = j;
                kvecB = 0;
                bcB = 0;
+               kbB = nb;
             }
             free(pM->genstr);
             free(pB->genstr);
@@ -11055,6 +11057,7 @@ ATL_mmnode_t *DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
                uB = j;
                kvecB = VL;
                bcB = 0;
+               kbB = pK->kbB;
             }
             free(pK->genstr);
          }
@@ -11063,7 +11066,33 @@ ATL_mmnode_t *DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
    pM->genstr = pK->genstr = pB->genstr = NULL;
    KillAllMMNodes(pK);
    printf("Done.\n");
+   pK = MMGetNodeGEN(pre, bcB, 0, uB, uB, kvecB ? kvecB:1, VL, kvecB, 
+                     0, 0, NULL);
+   pK->blask = 1;
+   pK->mflop[0] = mfB;
+   pK->mbB = pK->nbB = nb;
+   pK->kbB = kbB;
+   return(pK);
 }
+ATL_mmnode_t *GetSyrkCases(int flg, int vrb, char pre, int nreg, int nb, int VL)
+{
+   ATL_mmnode_t *mb, *mp, *mp4;
+
+   mb = TimeMMFileWithPath(pre, "res", "gAMSYRKU.sum", 0, vrb, 0, 1, 0, -1);
+   if (mb)
+      return(mb);
+/*
+ * Find candidate kernels for large and small problems
+ */
+   mb = DoSyrkMUNU(flg, vrb, pre, nreg, nb, VL);
+   mp = mb->next = DoSyrkMUNU(flg, vrb, pre, nreg, 16, Mmin(VL,16));
+   mp->next = DoSyrkMUNU(flg, vrb, pre, nreg, 8, Mmin(VL,8));
+   mp = mp->next;
+   mp->next = DoSyrkMUNU(flg, vrb, pre, nreg, 4, Mmin(VL,4));
+   WriteRefreshedMMFileWithPath(pre, "res", "gAMSYRKU.sum", mb);
+   return(mb);
+}
+
 ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb, 
                            int VL, int KVEC)
 {
@@ -12450,6 +12479,29 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
    printf("DONE  PREFETCH TUNING FOR ALL CACHE CONTEXTS\n\n");
 }
 
+void FixContextMflop(ATL_mmnode_t *mm3)
+/*
+ * Put all context mflop back to ->mflop[0]
+ */
+{
+   ATL_mmnode_t *mp;
+
+   mm3->mflop[0] = mm3->mflop[1]; mm3->mflop[1] = 0.0;
+   mp = mm3->next;
+   mp->mflop[0] = mp->mflop[2]; mp->mflop[2] = 0.0;
+   mp = mp->next;
+   mp->mflop[0] = mp->mflop[3]; mp->mflop[3] = 0.0;
+   mp = mp->next;
+   if (mp)
+   {
+      mp->mflop[0] = mp->mflop[4]; mp->mflop[4] = 0.0;
+      mp = mp->next;
+      if (mp)
+      {
+         mp->mflop[0] = mp->mflop[5]; mp->mflop[5] = 0.0;
+      }
+   }
+}
 void DoBlock(char pre, int flg, int verb)
 {
    int L1ELTS;
@@ -12482,29 +12534,33 @@ void DoBlock(char pre, int flg, int verb)
  */
    mm3 = FindBestCacheBudgetCases(verb, pre, L1ELTS, mmb);
    KillAllMMNodes(mmb);
-/*
- * Put all context mflop back to ->mflop[0]
- */
-   mm3->mflop[0] = mm3->mflop[1]; mm3->mflop[1] = 0.0;
-   mp = mm3->next;
-   mp->mflop[0] = mp->mflop[2]; mp->mflop[2] = 0.0;
-   mp = mp->next;
-   mp->mflop[0] = mp->mflop[3]; mp->mflop[3] = 0.0;
-   mp = mp->next;
-   if (mp)
-   {
-      mp->mflop[0] = mp->mflop[4]; mp->mflop[4] = 0.0;
-      mp = mp->next;
-      if (mp)
-      {
-         mp->mflop[0] = mp->mflop[5]; mp->mflop[5] = 0.0;
-      }
-   }
+   FixContextMflop(mm3);
    mmb = mm3;
    DoKUs(pre, flg, verb, mmb);   /* find best ku */
    DoPref(pre, flg, verb, mmb);  /* find best prefetch patterns */
    WriteRefreshedMMFileWithPath(pre, "res", "gAMMRES.sum", mmb);
    KillAllMMNodes(mmb);
+}
+
+void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
+{
+   ATL_mmnode_t *mb, *mp, *mB;
+   int L1ELTS, i, maxNB;
+   char upr = (pre == 'c' || pre == 's') ? 's' : 'd';
+
+   L1ELTS = GetL1CacheElts(upr);
+   mB = GetSyrkCases(flg, vrb, pre, nreg, nb, VL);
+   mb = FindBestCacheBudgetCases(vrb, pre, L1ELTS, mB);
+   mb = AddUniqueMMKernsToList(mb, mB);
+   KillAllMMNodes(mB);
+   GetIntMaxMinAtOff(mb, GetOffset(mb, &mb->next), GetOffset(mb, &mb->nbB),
+                     &maxNB, &i);
+   printf("TUNING SYRK KERN UP TO: %d:\n", maxNB);
+   for (i=4; i <= maxNB; i++)
+   {
+   }
+   WriteRefreshedMMFileWithPath(pre, "res", "gAMSYRK.sum", mb);
+   KillAllMMNodes(mb);
 }
 
 int main(int nargs, char **args)
