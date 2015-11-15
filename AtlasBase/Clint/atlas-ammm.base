@@ -25670,12 +25670,122 @@ void GenCpyC(FILE *fp, char pre, char *outd, char *cn, char dir, char *type,
    KillAllCopyNodes(cb);
 }
 
+void PrintDiv(FILE *fp, char *exp, int v)
+/* 
+ * Prints either exp/v or exp>>lg2(v), dep on v being power of 2 or not 
+ * caller must put parens where appropriate (if exp is not a simple variable
+ * name, it must have parens to produce the right answer!).
+ */
+{
+   int p;
+   assert(v > 0);  /* 0 cannot be supported, no need for neg now */
+   if (v == 1)
+      fprintf(fp, "%s", exp);
+   for (p=1; (1<<p) < v; p++);
+   if (v == (1<<p))
+      fprintf(fp, "%s>>%d", exp, p);
+   else
+      fprintf(fp, "%s/%d", exp, v);
+}
+void PrintCeil(FILE *fp, char *exp, int v)
+/* 
+ * Prints either ((exp+v-1)/v)*v or same things wt shifts if power of 2.
+ */
+{
+   int p;
+   assert(v > 0);  /* 0 cannot be supported, no need for neg now */
+   if (v == 1)
+      fprintf(fp, "%s", exp);
+   for (p=1; (1<<p) < v; p++);
+   if (v == (1<<p))
+      fprintf(fp, "((%s+%d)>>%d)", exp, v-1, p);
+   else
+      fprintf(fp, "((%s+%d)/%d)", exp, v-1, v);
+}
+void PrintCeilMul(FILE *fp, char *exp, int v)
+{
+   int p;
+   assert(v > 0);  /* 0 cannot be supported, no need for neg now */
+   if (v == 1)
+      fprintf(fp, "%s", exp);
+   for (p=1; (1<<p) < v; p++);
+   if (v == (1<<p))
+      fprintf(fp, "(((%s+%d)>>%d)<<%d)", exp, v-1, p, p);
+   else
+      fprintf(fp, "(((%s+%d)/%d)*%d)", exp, v-1, v, v);
+}
+
 void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
 {
+   ATL_mmnode_t *mp;
    FILE *fp;
-   int ib;
+   int ib, NEEDSZF=0;
    char rt[16];
    char bets[4] = {'0', '1', 'n', 'X'};
+
+/*
+ * Create atlas_<pre><cn>szC.h if necessary
+ */
+   for (mp=mb; mp; mp = mp->next)
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC) && ib == -1 &&
+          (mp->mu*mp->nu) % mp->vlen != 0)
+         break;
+   if (mp)
+   {
+      ATL_mmcp_t *cb, *ucb, *cp;
+      int n;
+      NEEDSZF=1;
+      fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "szC", mb);
+      cb = GetMMCopyFromMMNodes(MMCopyEncode(pre, dir, 'c', 'n'), mb);
+      assert(cb);
+      ucb = AddUniqueCopyNode(NULL, cb);
+      KillAllCopyNodes(cb);
+/*
+ *    Generate needed funcs for size query
+ */
+      for (cp=ucb; cp; cp = cp->next)
+      {
+         const unsigned int mu=cp->mu, nu=cp->nu, kvec=cp->kvec, b = mu*nu;
+         const unsigned int B = (kvec > 1) ? ((b+kvec-1)/kvec)*kvec : 0;
+         fprintf(fp, "#define uint unsigned int\n");
+         if (b != B)
+         {
+            assert(!cp->ID);
+            fprintf(fp, "static uint ATL_szC_%dx%d(uint M, uint N, "
+                        "uint mu, uint nu, uint vlen)", mu, nu);
+            fprintf(fp, "\n{\n");
+            fprintf(fp, "   return(");
+            PrintCeilMul(fp, "M", mu);
+            fprintf(fp, "*");
+            PrintCeilMul(fp, "N", nu);
+            fprintf(fp, "*");
+            fprintf(fp, "%d);\n", B);
+            fprintf(fp, "}\n");
+         }
+         fprintf(fp, "typedef uint (*szC_t)(uint,uint,uint,uint,uint);\n");
+         fprintf(fp, "#undef uint\n");
+         for (n=0,cp=cb; cp; n++, cp = cp->next);
+         fprintf(fp, "static szC_t ATL_AMM_SZCW[%d] =\n{\n", n);
+         for (cp=cb,n=0; cp; cp = cp->next,n++)
+         {
+            const unsigned int mu=cp->mu, nu=cp->nu, kvec=cp->kvec, b = mu*nu;
+            const unsigned int B = (kvec > 1) ? ((b+kvec-1)/kvec)*kvec : 0;
+            fprintf(fp, "/* IDX=%d */ ", n);
+            if (b != B)
+               fprintf(fp, "ATL_szC_%dx%d", mu, nu);
+            else
+               fprintf(fp, "NULL"); 
+            if (cp->next)
+               fprintf(fp, ",\n");
+            else
+               fprintf(fp, "\n");
+         }
+      }
+      KillAllCopyNodes(cb);
+      CloseGenHeader(fp);
+   }
+#if 0
+#endif
 
    if (dir == 'T')
       strcpy(rt, "cmat2ablk");
@@ -25683,6 +25793,12 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
       strcpy (rt, "ablk2cmat");
 
    fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, rt, mb);
+   if(NEEDSZF)
+   {
+      fprintf(fp, "#ifndef NOSZC\n");
+      fprintf(fp, "   #include \"atlas_%c%sszC.h\"\n", pre, cn);
+      fprintf(fp, "#endif\n");
+   }
    rt[9] = '_'; rt[10] = 't'; rt[11] = '\0';
 @skip   strcpy(rt, dir == 'T' ? "cmat2ablk_t" : "ablk2cmat_t");
    for (ib=0; ib < 4; ib++)
