@@ -11023,7 +11023,7 @@ ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
                mfB = mf;
                uB = j;
                kvecB = 0;
-               bcB = 1;
+               bcB = 0;
                kbB = nb;
             }
             mf = TimeMMKernel(vrb, 0, pB, pre, b, b, nb, 1, 0, -1);
@@ -11034,7 +11034,7 @@ ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
                mfB = mf;
                uB = j;
                kvecB = 0;
-               bcB = 0;
+               bcB = 1;
                kbB = nb;
             }
             free(pM->genstr);
@@ -11056,7 +11056,7 @@ ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
                mfB = mf;
                uB = j;
                kvecB = VL;
-               bcB = 0;
+               bcB = 1;
                kbB = pK->kbB;
             }
             free(pK->genstr);
@@ -11067,11 +11067,12 @@ ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
    KillAllMMNodes(pK);
    printf("Done.\n");
    pK = MMGetNodeGEN(pre, bcB, 0, uB, uB, kvecB ? kvecB:1, VL, kvecB, 
-                     0, 0, NULL);
+                      0, 0, NULL);
    pK->blask = 1;
    pK->mflop[0] = mfB;
    pK->mbB = pK->nbB = nb;
    pK->kbB = kbB;
+   pK->blask = 1;
    return(pK);
 }
 ATL_mmnode_t *GetSyrkCases(int flg, int vrb, char pre, int nreg, int nb, int VL)
@@ -12567,7 +12568,9 @@ void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp,
    const int thsA[3] = {8|8192, 8, 8|2048};
    const int thsC[3] = {1|256, 1, 1|32};
 @skip   const int nxtA[3] = {2|512, 2, 2|64};
-   printf("PREFETCH TUNING NB=%d, KB=%d:\n", nb, kb);
+   printf("PREFETCH TUNING NB=%d, KB=%d, U=%d, KVEC=%d, SPLAT=%d:\n", nb, kb, 
+          mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
+          FLAG_IS_SET(mp->flag, MMF_NOBCAST));
    mp->pref = 0; mp->pfLS=64;
    mf0 = mfB = TimeMMKernel(vrb, 0, mp, pre, nb, nb, kb, 1, 0, -1);
    mp->mflop[0] = mf0;
@@ -12634,18 +12637,42 @@ double TimeSyrkKBs(int flg, int vrb, char pre, ATL_mmnode_t *mp, int nb)
    return(mf0);
 }
 
-int BigSyrkXover(int flg, int vrb, char pre, ATL_mmnode_t *ms, 
-                 ATL_mmnode_t mSQ)
+int SyrkXoverUp(int flg, int vrb, char pre, ATL_mmnode_t *ms,/* syrk kerns */
+                ATL_mmnode_t *mg)  /* gemm largest kb */
 {
-   assert(0);
-   return(0);
+   const double mfG = mg->mflop[0];
+   double mfS=ms->mflop[0], mfR; /* MFLOP for SYRK & recursion */
+   const unsigned int nuS = ms->nu, kuS=ms->ku, NB=ms->nbB;
+   int nb, incb;
+
+   incb = Mylcm(nuS,kuS);
+   nb = NB;
+   printf("ESTIMATING SYRK RECURSIVE STOPPING POINT BY INCREASING N:\n");
+   while (1)
+   {
+      int nbn = nb+incb, nbS, nbG;
+      double mfR, mfn;            /* mflop for recursion & syrk(N/2) */
+      if (nbn > 512)
+         break;
+      mfn = TimeSyrkKBs(flg, vrb, pre, ms, nbn);
+      mfR = 0.5*(mfS + mg->mflop[0]);
+      printf("   SYRK-%d = %.0f, GEMM/SYRK-%d = %.0f (S:%.0f,G:%.0f)\n",
+             nbn, mfn, nb, mfR, mfS, mfG);
+      if (mfR > mfn)
+         break;
+      mfS = mfn;
+      nb = nbn;
+   }
+   printf("STOPPING POINT N = %d\n", nb);
+   return(nb);
 }
 int SyrkXover(int flg, int vrb, char pre, ATL_mmnode_t *ms,/* syrk kerns */
               ATL_mmnode_t *mG)  /* gemm kernels */
 {
    ATL_mmnode_t *mg=mG, *mp;
-   double mfS=ms->mflop[0], mfR; /* MFLOP for SYRK & recursion */
-   const unsigned int nuS = ms->nu, kuS=ms->ku;
+   const double mf0 = ms->mflop[0];
+   double mfS=mf0, mfR; /* MFLOP for SYRK & recursion */
+   const unsigned int nuS = ms->nu, kuS=ms->ku, NB=ms->nbB;
    int nb;
 /*
  * We are using the SYRK kernel when we stop recurring on SYRK.  In each
@@ -12673,7 +12700,7 @@ int SyrkXover(int flg, int vrb, char pre, ATL_mmnode_t *ms,/* syrk kerns */
  * and err on the side of stopping the recursion.
  */
  
-   nb = ms->nbB;
+   nb = NB;
    mg = mG;
    printf("ESTIMATING SYRK RECURSIVE STOPPING POINT:\n");
    while (1)
@@ -12697,11 +12724,15 @@ int SyrkXover(int flg, int vrb, char pre, ATL_mmnode_t *ms,/* syrk kerns */
       mfS = mfs;
       nb = nb2;
    }
-   if (mg == mG)  /* need to handle this by trying larger! */
+   ms->mbB = ms->nbB = ((nb+nuS-1)/nuS)*nuS;
+   ms->kbB = ((nb+kuS-1)/kuS)*kuS;
+   if (nb == NB)
    {
-      printf("STOPPED AT FIRST ONE!\n");
+      ms->mflop[0] = mf0;
+      nb = SyrkXoverUp(flg, vrb, pre, ms, mG);
    }
-   printf("STOPPING POINT N = %d\n", nb);
+   else
+      printf("STOPPING POINT N = %d\n", nb);
    return(nb);
 }
 
@@ -12713,22 +12744,12 @@ void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
    double mf0, mfB;
 
    
-   mSQ = ReadMMFileWithPath(upr, "res", "sqAMMRES.sum");
+   mSQ = TimeMMFileWithPath(pre, "res", "sqAMMRES.sum", 0, vrb, 0, 1, 0, -1);
    if (!mSQ)
       return;
    mSQ = ReverseMMQ(mSQ);  /* sorted from large to small NB */
    mb = DoSyrkMUNU(flg, vrb, pre, nreg, nb, VL);  /* asymptotic kern */
    mp = mb;
-@beginskip
-/*
- * mB: asymptotic kern, next: nb=kb=16, next: nb=kb=8: next nb=kb=4
- */
-   mB = GetSyrkCases(flg, vrb, pre, nreg, nb, VL);
-/*
- * For large case, find our best prefetch strategy 
- */
-   mp = mB;  /* large case */
-@endskip
    nu = mp->nu;
    ku = mp->ku;
    mp->nbB = mp->mbB = nb = (mSQ->nbB / nu)*nu;
