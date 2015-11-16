@@ -12253,7 +12253,7 @@ int TryPref(char pre, int verb, ATL_mmnode_t *mp, int ibet, int imf,
    mp->rout = MMGetGenName(pre, mp->kbB, mp);
    mp->genstr = MMGetGenString(pre, mp);
    mfN = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, ibet, 0, -1);
-   printf("      old=(%d,%d,%.2f), new=(%d,%d,%.2f), spdup=%.3f\n", 
+   printf("      old=(%d,%d,%.0f), new=(%d,%d,%.0f), spdup=%.3f\n", 
           ipf0, pfLS0, mf0, mp->pref, mp->pfLS, mfN, mfN/mf0);
    if (mfN > mf0)  /* new settings win */
    {
@@ -12542,25 +12542,204 @@ void DoBlock(char pre, int flg, int verb)
    KillAllMMNodes(mmb);
 }
 
+int getSzC(ATL_mmnode_t *mp, int nb)
+{
+   const int nu = mp->nu, nnu = (nb+nu-1)/nu;
+   const int vlen=mp->vlen, nvec=(nu*nu+vlen-1)/vlen, blksz=nvec*vlen;
+   return(nnu*nnu*blksz);
+}
+int getSzA(ATL_mmnode_t *mp, int nb, int kb)
+{
+   const int nu = mp->nu, nnu = (nb+nu-1)/nu, ku=mp->ku, nku=(kb+ku-1)/ku;
+   return(nnu*nku*nu*ku);
+}
+
+void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp, 
+                    int nb, int kb)
+/* 
+ * This kernel is designed to do an inner-product syrk.  This means we actually
+ * reuse workspace for both A & C all the time, so it doesn't make sense to
+ * prefetch anything from outside the block.
+ */
+{
+   double mf0, mfB;
+   int i, ipf, ils;
+   const int thsA[3] = {8|8192, 8, 8|2048};
+   const int thsC[3] = {1|256, 1, 1|32};
+@skip   const int nxtA[3] = {2|512, 2, 2|64};
+   printf("PREFETCH TUNING NB=%d, KB=%d:\n", nb, kb);
+   mp->pref = 0; mp->pfLS=64;
+   mf0 = mfB = TimeMMKernel(vrb, 0, mp, pre, nb, nb, kb, 1, 0, -1);
+   mp->mflop[0] = mf0;
+   printf("   No prefetch, MFLOP=%.0f\n", mf0);
+   printf("   TRY PREFETCH A:\n");
+/*
+ * Try K-loop A/At pref for LS=64 & 128, since it's N^3 cost
+ */
+   for (i=0; i < 3; i++)
+   {
+      TryPref(pre, vrb, mp, 1, 0, thsA[i], 64);
+      TryPref(pre, vrb, mp, 1, 0, thsA[i], 128);
+   }
+/*
+ * Now try C prefetch (N^2 cost)
+ */
+  printf("   TRY PREFETCH C:\n");
+  ipf = mp->pref;
+  ils = mp->pfLS;
+  for (i=0; i < 3; i++)
+     TryPref(pre, vrb, mp, 1, 0, ipf|thsC[i], ils);
+  printf("DONE PREFETCH=(%d,%d), FINAL MFLOP=%.0f, SPEEDUP=%.3f\n",
+         mp->pref, mp->pfLS, mp->mflop[0], mp->mflop[0] / mf0);
+}
+double TimeSyrkKBs(int flg, int vrb, char pre, ATL_mmnode_t *mp, int nb)
+{
+   const unsigned int ku=mp->ku, kb=(nb+ku-1)/ku;
+   unsigned int KB, sz;
+   static int l1elts=0;
+   double mf0, mf=0.0;
+
+   if (l1elts == 0)
+      l1elts = GetL1CacheElts((pre=='c' || pre=='s') ? 's':'d');
+
+   mf0 = TimeMMKernel(vrb, 0, mp, pre, nb, nb, kb, 1, 0, -1);
+/*
+ * For problems that fit entirely in L1 (including A you're copying from),
+ * find a large KB that fills L1.  This will reduce the N^2 costs, which
+ * are important for these small problems.  We can do this, since this
+ * kernel is intended for inner product (large K, small N).
+ */
+   KB = kb;
+   do
+   {
+      KB += ku;
+      sz = (getSzA(mp, nb, KB)<<1)+getSzC(mp, nb);
+   }
+   while (l1elts > sz);
+   KB -= ku;
+   if (KB > kb)
+      mf = TimeMMKernel(vrb, 0, mp, pre, nb, nb, KB, 1, 0, -1);
+
+   if (mf0 > mf)
+   {
+      mp->mflop[0] = mf0;
+      mp->kbB = kb;
+   }
+   else
+   {
+      mp->mflop[0] = mf;
+      mp->kbB = KB;
+      mf0 = mf;
+   }
+   return(mf0);
+}
+
+int BigSyrkXover(int flg, int vrb, char pre, ATL_mmnode_t *ms, 
+                 ATL_mmnode_t mSQ)
+{
+   assert(0);
+   return(0);
+}
+int SyrkXover(int flg, int vrb, char pre, ATL_mmnode_t *ms,/* syrk kerns */
+              ATL_mmnode_t *mG)  /* gemm kernels */
+{
+   ATL_mmnode_t *mg=mG, *mp;
+   double mfS=ms->mflop[0], mfR; /* MFLOP for SYRK & recursion */
+   const unsigned int nuS = ms->nu, kuS=ms->ku;
+   int nb;
+/*
+ * We are using the SYRK kernel when we stop recurring on SYRK.  In each
+ * recursion, we divide C into hi&low triangles (SYRK) and a square GEMM.  
+ * During recursion, each SYRK is again divided to continue to use GEMM.
+ * When we stop the recursion, we call the SYRK kernel we are tuning here
+ * for the high & low triangles, and then unwind all the GEMM calls.
+ * We note that SYRK has roughly half the flops as GEMM, but during the
+ * recursion we make two SYRK calls, so at the stopping point, we can
+ * simply average the MFLOP rate of SYRK & GEMM to estimate the MFLOP rate
+ * the non-recursive call would get.
+ *
+ * We want to estimate where we should stop our recursion based on kernel
+ * timings.  At each candidate N, we can make one SYRK call, or recur.
+ * If we assume this is the stopping point, then its MFLOP rate is
+ * that of a single syrk call.  If we assume the N/2 (next candidate N)
+ * is the stopping point, its mflop rate is (syrkMF(N/2)+gemmMF(N/2)).
+ * So, we have reached the estimated crossover point when 
+ * syrkMF(N) >= syrkMF(N/2)+gemmMF(N/2).
+ *
+ * This code attempts to find this point.  Note that this is a very rough
+ * estimation, since the kernel timer doesn't include cpy of A, which is
+ * an important part of inner product.  SYRK has to copy only A, whereas
+ * GEMM needs both A & B, so we should give SYRK the benefit of the doubt,
+ * and err on the side of stopping the recursion.
+ */
+ 
+   nb = ms->nbB;
+   mg = mG;
+   printf("ESTIMATING SYRK RECURSIVE STOPPING POINT:\n");
+   while (1)
+   {
+      int nb2 = nb>>1, nbS, nbG;
+      double mfR, mfs;            /* mflop for recursion & syrk(N/2) */
+      if (nb2 < nuS)
+         break;
+      for (; mg; mg=mg->next)     /* find gemm used by nb/2 */
+         if (mg->nbB <= nb2)
+            break;
+      if (!mg)
+         break;
+      nbS = (nb2/nuS)*nuS;       /* basic syrk perf estimate */
+      mfs = TimeSyrkKBs(flg, vrb, pre, ms, nbS);
+      mfR = 0.5*(mfs + mg->mflop[0]);
+      printf("   N=%3d (S:%d,G:%d), SYRK=%.0f, RECUR=%.0f (S:%.0f,G:%.0f)\n", 
+             nb, nbS, mg->nbB, mfS, mfR, mfs, mg->mflop[0]);
+      if (mfR < mfS)
+         break;
+      mfS = mfs;
+      nb = nb2;
+   }
+   if (mg == mG)  /* need to handle this by trying larger! */
+   {
+      printf("STOPPED AT FIRST ONE!\n");
+   }
+   printf("STOPPING POINT N = %d\n", nb);
+   return(nb);
+}
+
 void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
 {
-   ATL_mmnode_t *mb, *mp, *mB;
-   int L1ELTS, i, maxNB;
+   ATL_mmnode_t *mb, *mSQ, *mp;
+   int L1ELTS, i, maxNB, nu, ku, kb;
    char upr = (pre == 'c' || pre == 's') ? 's' : 'd';
+   double mf0, mfB;
 
-   L1ELTS = GetL1CacheElts(upr);
+   
+   mSQ = ReadMMFileWithPath(upr, "res", "sqAMMRES.sum");
+   if (!mSQ)
+      return;
+   mSQ = ReverseMMQ(mSQ);  /* sorted from large to small NB */
+   mb = DoSyrkMUNU(flg, vrb, pre, nreg, nb, VL);  /* asymptotic kern */
+   mp = mb;
+@beginskip
+/*
+ * mB: asymptotic kern, next: nb=kb=16, next: nb=kb=8: next nb=kb=4
+ */
    mB = GetSyrkCases(flg, vrb, pre, nreg, nb, VL);
-   mb = FindBestCacheBudgetCases(vrb, pre, L1ELTS, mB);
-   mb = AddUniqueMMKernsToList(mb, mB);
-   KillAllMMNodes(mB);
-   GetIntMaxMinAtOff(mb, GetOffset(mb, &mb->next), GetOffset(mb, &mb->nbB),
-                     &maxNB, &i);
-   printf("TUNING SYRK KERN UP TO: %d:\n", maxNB);
-   for (i=4; i <= maxNB; i++)
-   {
-   }
-   WriteRefreshedMMFileWithPath(pre, "res", "gAMSYRK.sum", mb);
-   KillAllMMNodes(mb);
+/*
+ * For large case, find our best prefetch strategy 
+ */
+   mp = mB;  /* large case */
+@endskip
+   nu = mp->nu;
+   ku = mp->ku;
+   mp->nbB = mp->mbB = nb = (mSQ->nbB / nu)*nu;
+   mp->kbB = kb = (mSQ->nbB / ku)*ku;
+   assert(nb && kb);
+   TryAllSyrkPref(flg, vrb, pre, mp, nb, kb);
+   maxNB = SyrkXover(flg, vrb, pre, mp, mSQ);
+
+@skip   KillAllMMNodes(mB);
+   KillMMNode(mb);
+   KillAllMMNodes(mSQ);
 }
 
 int main(int nargs, char **args)
