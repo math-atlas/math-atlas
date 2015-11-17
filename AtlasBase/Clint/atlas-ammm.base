@@ -15816,6 +15816,44 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             /*{s7a-d,s6a-d,s5a-d,s4a-d,s3a-d,s2a-d,s1a-d,s0a-d}*/\
          ATL_vadd(s0_, s0_, s1_); \
       }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      { \
+         s0_ = _mm256_hadd_ps(s0_, s1_); \
+            /*{s1gh,s1ef,s0gh,s0ef,s1cd,s1ab,s0cd,s0ab}*/\
+         s2_ = _mm256_hadd_ps(s2_, s3_); \
+            /*{s3gh,s3ef,s2gh,s2ef,s3cd,s3ab,s2cd,s2ab}*/\
+         s0_ = _mm256_hadd_ps(s0_, s2_); \
+            /*{s3e-h,s2e-h,s1e-h,s0e-g,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         s1_ = _mm256_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s3e-h,s2e-h,s1e-h,s0e-g,s3e-h,s2e-h,s1e-h,s0e-g}*/\
+         s0_ = _mm256_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s3a-d,s2a-d,s1a-d,s0a-d,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_ = _mm256_hadd_ps(s0_, s1_); \
+            /*{s1gh,s1ef,s0gh,s0ef,s1cd,s1ab,s0cd,s0ab}*/\
+         s0_ = _mm256_hadd_ps(s0_, s0_); \
+            /*{s1e-h,s0e-h,s1e-h,s0e-g,s1a-d,s0a-d,s1a-d,s0a-d}*/\
+         s1_ = _mm256_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s1e-h,s0e-h,s1e-h,s0e-g,s1e-h,s0e-h,s1e-h,s0e-g}*/\
+         s0_ = _mm256_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum1(s0_) \
+      {  ATL_VTYPE t1_; \
+         s0_ = _mm256_hadd_ps(s0_, s0_); \
+            /*{s0gh,s0ef,s0gh,s0ef,s0cd,s0ab,s0cd,s0ab}*/\
+         s0_ = _mm256_hadd_ps(s0_, s0_); \
+            /*{s0e-h,s0e-h,s0e-h,s0e-g,s0a-d,s0a-d,s0a-d,s0a-d}*/\
+         t1_ = _mm256_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s0e-h,s0e-h,s0e-h,s0e-g,s0e-h,s0e-h,s0e-h,s0e-g}*/\
+         s0_ = _mm256_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, t1_); \
+      }
       #define ATL_vsplat0(d_, s_) \
       { \
          d_ = _mm256_shuffle_ps(s_, s_, 0); \
@@ -15895,6 +15933,18 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          s0_ = _mm256_permute2f128_pd(s0_, s2_,0x20);/*{s3ab,s2ab,s1ab,s0ab}*/ \
          ATL_vadd(s0_, s0_, s1_); \
       }
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_ = _mm256_hadd_pd(s0_, s1_); /*{s1cd,s0cd,s1ab,s0ab}*/ \
+         s1_ = _mm256_permute2f128_pd(s0_, s1_,0x31);/*{s3cd,s2cd,s1cd,s0cd}*/ \
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum1(s0_) \
+      { ATL_VTYPE s1_; \
+         s0_ = _mm256_hadd_pd(s0_, s0_); /*{s0cd,s0cd,s0ab,s0ab}*/ \
+         s1_ = _mm256_permute2f128_pd(s0_, s1_,0x31);/*{s0cd,s0cd,s0cd,s0cd}*/ \
+         ATL_vadd(s0_, s0_, s1_); \
+      }
       #define ATL_vsplat0(d_, s_) \
       { \
          d_ = _mm256_unpacklo_pd(s_, s_); \
@@ -15943,6 +15993,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #ifdef ATL_SSE3
       #define ATL_vrsum1(d_, s_) d_ = _mm_cvtsd_f64(_mm_hadd_pd(s_, s_))
       #define ATL_vvrsum2(s0_, s1_) s0_ = _mm_hadd_pd(s0_, s1_)
+      #define ATL_vvrsum1(s0_) s0_ = _mm_hadd_pd(s0_, s0_)
       #define ATL_vsplat0(d_, s_) d_ = _mm_movedup_pd(s_)
       #define ATL_vsplat1(d_, s_) d_ = (ATL_VTYPE) \
          _mm_shuffle_epi32((__m128i)(s_), 0xEE)
@@ -15954,6 +16005,13 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          __m128d t0_; \
          t0_ = _mm_unpackhi_pd(s0_, s1_); \
          s0_ = _mm_unpacklo_pd(s0_, s1_); \
+         ATL_vadd(s0_, s0_, t0_); \
+      }
+      #define ATL_vvrsum1(s0_) \
+      { \
+         __m128d t0_; \
+         t0_ = _mm_unpackhi_pd(s0_, s0_); \
+         s0_ = _mm_unpacklo_pd(s0_, s0_); \
          ATL_vadd(s0_, s0_, t0_); \
       }
       #define ATL_vsplat0(d_, s_) d_ = (ATL_VTYPE) \
@@ -16002,6 +16060,16 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          s2_ = _mm_hadd_ps(s2_, s3_); /*{s3cd,s3ab,s2cd,s2ab}*/ \
          s0_ = _mm_hadd_ps(s0_, s2_); /*{s3a-d,s2a-d,s1a-d,s0a-d}*/ \
       }
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_ = _mm_hadd_ps(s0_, s1_); /*{s1cd,s1ab,s0cd,s0ab}*/ \
+         s0_ = _mm_hadd_ps(s0_, s0_); /*{s1a-d,s0a-d,s1a-d,s0a-d}*/ \
+      }
+      #define ATL_vvrsum1(s0_) \
+      { \
+         s0_ = _mm_hadd_ps(s0_, s0_); /*{s0cd,s0ab,s0cd,s0ab}*/ \
+         s0_ = _mm_hadd_ps(s0_, s0_); /*{s0a-d,s0a-d,s0a-d,s0a-d}*/ \
+      }
    #else
       #define ATL_vrsum1(d_, s_) \
       { \
@@ -16023,6 +16091,26 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          t0_ = _mm_shuffle_ps(s0_,s2_,0xEE); /*{s3bd, s2bd, s1bd, s0bd}*/\
          s0_ = _mm_shuffle_ps(s0_,s2_,0x44); /*{s3ac, s2ac, s1ac, s0ac}*/\
          ATL_vadd(s0_,s0_,t0_);              /*{s3a-d,s2a-d,s1a-d,s0a-d}*/\
+      }
+      #define ATL_vvrsum2(s0_, s1_) \
+      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+         ATL_VTYPE t0_; \
+         t0_ = _mm_unpackhi_ps(s0_,s1_);     /*{s1d,  s0d,  s1c,  s0c}*/\
+         s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{s1b,  s0b,  s1a,  s0a}*/\
+         ATL_vadd(s0_, s0_, t0_);            /*{s1bd, s0bd, s1ac, s0ac}*/\
+         t0_ = _mm_shuffle_ps(s0_,s0_,0xEE); /*{s1bd, s0bd, s1bd, s0bd}*/\
+         s0_ = _mm_shuffle_ps(s0_,s0_,0x44); /*{s1ac, s0ac, s1ac, s0ac}*/\
+         ATL_vadd(s0_,s0_,t0_);              /*{s1a-d,s0a-d,s1a-d,s0a-d}*/\
+      }
+      #define ATL_vvrsum1(s0_) \
+      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+         ATL_VTYPE t0_; \
+         t0_ = _mm_unpackhi_ps(s0_,s0_);     /*{s0d,  s0d,  s0c,  s0c}*/\
+         s0_ = _mm_unpacklo_ps(s0_,s0_);     /*{s0b,  s0b,  s0a,  s0a}*/\
+         ATL_vadd(s0_, s0_, t0_);            /*{s0bd, s0bd, s0ac, s0ac}*/\
+         t0_ = _mm_shuffle_ps(s0_,s0_,0xEE); /*{s0bd, s0bd, s0bd, s0bd}*/\
+         s0_ = _mm_shuffle_ps(s0_,s0_,0x44); /*{s0ac, s0ac, s0ac, s0ac}*/\
+         ATL_vadd(s0_,s0_,t0_);              /*{s0a-d,s0a-d,s0a-d,s0a-d}*/\
       }
    #endif
 #elif ATL_VLEN > 1  /* use gnuvec when atlas knows no VEC ISA */
@@ -16204,9 +16292,48 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @undef at
    @undef i
 @ENDPROC
+/* 
+ * If it isn't already defined (fast system-specific version), define vvrsumX
+ * This may be horribly slow or great, depending on how smart the compiler is.
+ */
+#if ATL_VLEN == 2
+   #ifndef ATL_vvrsum2
+      #define ATL_vvrsum2(s0_) s0_[0] += s0_[1]
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_[0] += s0_[1]; \
+         s0_[1] = s1_[0] + s1_[1]; \
+      }
+   #endif
+#endif
+@iexp vl 2 2 +
+@iwhile vl < 64
+#if ATL_VLEN == @(vl)
+   @iexp n 1
+   @iexp kk @(vl) 1 +
+   @iwhile n < kk
+   @CALLPROC arglst @(n) s _
+   #ifndef ATL_vvrsum@(n)
+      #define ATL_vvrsum@(n)(@(arglst))\
+   @undef arglst
+      { \
+      @iexp i 0 0 +
+      @iwhile i < @(n)
+         @CALLPROC addarr @(vl) s@(i)_
+         s0_[@(i)] = @(addarr); \
+         @undef addarr
+         @iexp i @(i) 1 +
+      @endiwhile
+      }
+   #endif
+      @iexp n @(n) @(n) +
+   @endiwhile
+#endif
+   @iexp vl @(vl) @(vl) +
+@endiwhile
 /*
- * If it isn't defined already (fast sys-spec vers), define vvrsumVL & 
- * vsplatI (0 <= I < VL) using vector indexing.  
+ * If it isn't defined already (fast sys-spec vers), define 
+ *    vsplatI (0 <= I < VL) using vector indexing.  
  * This may be horribly slow or great, depending on how smart the compiler is.
  */
 #if ATL_VLEN == 2
@@ -16215,13 +16342,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #endif
    #ifndef ATL_vsplat1
    #define ATL_vsplat1(d_, s_) d_[0] = d_[1] = s_[1]
-   #endif
-   #ifndef ATL_vvrsum2
-   #define ATL_vvrsum2(s0_, s1_) \
-   { \
-      s0_[0] += s0_[1]; \
-      s0_[1] = s1_[0] + s1_[1]; \
-   }
    #endif
 @iexp vl 2 2 +
 @iwhile vl < 64
@@ -16235,6 +16355,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       @iexp k @(k) 1 +
    #endif
    @endiwhile
+@beginskip
    @CALLPROC arglst @(vl) s _
    #ifndef ATL_vvrsum@(vl)
    #define ATL_vvrsum@(vl)(@(arglst))\
@@ -16249,6 +16370,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @endiwhile
    }
    #endif
+@endskip
    @iexp vl @(vl) @(vl) +
 @endiwhile
 #endif

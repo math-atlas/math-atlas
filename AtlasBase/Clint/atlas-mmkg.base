@@ -359,6 +359,46 @@ During tuning, think about several regions for prefetch:
       @endindent
       @ENDPROC
    @endiif
+@VEC KDIM
+@BEGINSKIP
+ARGS:
+   nv : vvrsum # to use
+   nr : actual number of registers remaining to be summed
+   ir : base register number (0 <= ir < mu*nu)
+ASSUMES: mu, nu, exreg
+@ENDSKIP
+   @BEGINPROC vvrsum nv nr ir
+      @define k @0@
+      @define kl @0@
+      @define i @0@
+      @define j @0@
+      @declare "   ATL_vvrsum@(nv)(" y n ");"
+         @iexp kl @(ir) @(nr) +
+         @iexp k @(ir)
+         @iwhile k < kl
+            @iexp j @(mu) @(k) /
+            @iexp i @(mu) @(k) %
+               rC@(i)_@(j)
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iif nr < nv
+            @iexp kl @(ir) @(nv) +
+            @iwhile k < kl
+               @(exreg)
+            @iexp k @(k) 1 +
+         @endiwhile
+         @endiif
+      @enddeclare
+      @iexp j @(mu) @(ir) /
+      @iexp i @(mu) @(ir) %
+      @iexp kk @(j) @(mu) *
+      @iexp kk @(kk) @(i) +
+   ATL_vbeta(pC+@(kk), rC@(i)_@(j));
+      @undef i
+      @undef j
+      @undef k
+      @undef kl
+   @ENDPROC
 @VEC KDIM NO
    @BEGINPROC ldB spc d i_
    @beginindent 1 @(spc)
@@ -422,47 +462,50 @@ During tuning, think about several regions for prefetch:
       @define k @dum@
       @define i @dum@
       @define j @dum@
-      @define ii @dum@
-      @define jj @dum@
       @define kk @dum@
       @define nn @dum@
       @define nf @dum@
-   @beginindent 1 @(spc)
-      @iexp kN @(mu) @(nu) *
-      @iexp k 0
-      @iwhile k < kN
-         @iexp j @(mu) @(k) /
-         @iexp i @(mu) @(k) %
-         @iexp nn @(k) @(vl) +
-         @iexp nf @(nn)
-         @iif nf > kN
-            @iexp nf @(kN)
+      @define nr @dum@
+      @define ll @dum@
+      @define vl2 @dum@
+      @beginindent 1 @(spc)
+         @iexp nf @(vl) @(mu) @(nu) * / @(vl) *
+         @iexp nr @(nf) @(mu) @(nu) * -
+         @iexp k 0
+         @iwhile k < nf
+            @callproc vvrsum @(vl) @(vl) @(k)
+            @iexp k @(k) @(vl) +
+         @endiwhile
+         @iif nr = 1
+            @callproc vvrsum 1 1 @(k)
          @endiif
-         @declare "   ATL_vvrsum@(vl)(" y n ");"
-            @iwhile k < @(nf)
-               @iexp jj @(mu) @(k) /
-               @iexp ii @(mu) @(k) %
-               rC@(ii)_@(jj)
-               @iexp k @(k) 1 +
+         @iif nr > 1
+            @iexp ll @(vl)
+            @iwhile nr > 0
+               @iexp vl2 2 @(ll) /
+            @print nr=@(nr) ll=@(ll) vl2=@(vl2)
+               @iif nr > vl2
+                  @callproc vvrsum @(ll) @(nr) @(k)
+                  @iexp nr 0
+               @endiif
+               @iif nr } vl2
+                  @callproc vvrsum @(vl2) @(vl2) @(k)
+                  @iexp nr @(vl2) @(nr) -
+                  @iexp k @(k) @(vl2) +
+               @endiif
+               @iexp ll @(vl2)
             @endiwhile
-            @iwhile k < @(nn)
-               @(exreg)
-               @iexp k @(k) 1 +
-            @endiwhile
-         @enddeclare
-         @iexp kk @(j) @(mu) *
-         @iexp kk @(kk) @(i) +
-   ATL_vbeta(pC+@(kk), rC@(i)_@(j));
-      @endiwhile
-   @endindent
+         @endiif
+      @endindent
       @undef k
       @undef i
       @undef j
-      @undef ii
-      @undef jj
       @undef kk
       @undef nn
       @undef nf
+      @undef nr
+      @undef ll
+      @undef vl2
    @ENDPROC
 @VEC KDIM
    @iexp incAk @(mu) @(ku) *
