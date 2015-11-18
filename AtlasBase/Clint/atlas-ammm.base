@@ -5768,9 +5768,7 @@ double TimeMMKernel_KB
 {
    double mf;
    const int kb0 = mmp->kbB;
-   if (mmp->kbmax && kb > mmp->kbmax)
-      return(0.0);
-   if (mmp->kbmin && kb < mmp->kbmin)
+   if (mmp->ID && mmp->kbmax && kb > mmp->kbmax)  /* genned codes can adapt */
       return(0.0);
    mmp->mbB = mb;
    mmp->nbB = nb;
@@ -5786,8 +5784,8 @@ double TimeMMKernel_KB
       if (mmp->rout)
          free(mmp->rout);
       if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
-         mmp->ku = kb;
-      mmp->rout = MMGetGenName(pre, kb, mmp);
+         mmp->kbmax = mmp->kbmin = mmp->ku = kb;
+      mmp->rout = DupString("ATL_tmp.c");
       mmp->genstr = MMGetGenString(pre, mmp);
    }
    mf = TimeMMKernel(verb, FORCETIME, mmp, pre, mb, nb, kb, beta, mflop,cflush);
@@ -6023,7 +6021,7 @@ ATL_mmnode_t *GetGenKernForNB(char pre, int nb)
       else
          mp = CloneMMNode(pK);
       if (FLAG_IS_SET(mp->flag,MMF_KUISKB))
-         mp->ku = mp->kbB = nb;
+         mp->kbmax = mp->kbmin = mp->ku = mp->kbB = nb;
       else if (nb%(mp->ku))
          mp->ku = (pM) ? 1 : mp->vlen;
       mp->mbB = mp->nbB = mp->kbB = nb;
@@ -6425,14 +6423,20 @@ ATL_mmnode_t *BestForThisNB
    {
       const int kb0 = mmp->kbB, ku0 = mmp->ku;
       char *gs0=mmp->genstr;
-      int kb;
+      int kb, kbOK;
 /*
  *    Choose kb, if forced only kb will do, so skip if kernel can't do it
  */
-      if ((mmp->kbmin && nb < mmp->kbmin) ||
-          (mmp->kbmax && nb > mmp->kbmax) ||
-          ((nb/mmp->mu)*mmp->mu != nb) || ((nb/mmp->nu)*mmp->nu != nb) ||
-          ((nb/mmp->ku)*mmp->ku != nb) || (nb == pnb) || (nb == nnb))
+      if (!mmp->ID)  /* generated codes can be adapted */
+         kbOK = 1;
+      else
+      {
+         kbOK = (mmp->kbmin) ? (nb >= mmp->kbmin) : 1;
+         if (kbOK && mmp->kbmax)
+            kbOK = nb <= mmp->kbmax;
+      }
+      if (!kbOK || ((nb/mmp->mu)*mmp->mu != nb) || ((nb/mmp->nu)*mmp->nu != nb)
+          || ((nb/mmp->ku)*mmp->ku != nb) || (nb == pnb) || (nb == nnb))
       {
          
          printf("   %d. %s: SKIPPED, bad NB\n", mmp->ID, mmp->rout);
@@ -6444,7 +6448,7 @@ ATL_mmnode_t *BestForThisNB
       if (mmp->ID == 0)
       {
          if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
-             mmp->ku = mmp->kbB = nb;
+             mmp->kbmax = mmp->kbmin = mmp->ku = mmp->kbB = nb;
          if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
              mmp->kbB = nb;
          mmp->genstr = MMGetGenString(pre, mmp);
@@ -6485,7 +6489,7 @@ ATL_mmnode_t *BestForThisNB
             free(mmB->rout);
          mmB->mbB = mmB->nbB = mmB->kbB = nb;
          if (FLAG_IS_SET(mmB->flag, MMF_KUISKB))
-             mmB->ku = nb;
+             mmB->kbmin = mmB->kbmax = mmB->ku = nb;
          mmB->rout = MMGetGenName(pre, nb, mmB);
          mmB->genstr = MMGetGenString(pre, mmB);
       }
@@ -7207,7 +7211,7 @@ ATL_mmnode_t *GetWorkingUserCases(int verb, char pre)
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
       if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
-         mmp->mbB = mmp->nbB = mmp->kbB = mmp->ku;
+         mmp->kbmin = mmp->kbmax = mmp->mbB = mmp->nbB = mmp->kbB = mmp->ku;
       else
       {
          int m = Mylcm(mmp->mu, mmp->nu);
@@ -8614,7 +8618,7 @@ double CacheRatio_ws(size_t CS, size_t mb, size_t nb, size_t kb,
 typedef void (*BudgetFunc_t)(double, size_t, size_t, size_t, size_t, 
                              size_t*, size_t*, size_t*);
 
-#define MAXNB 512
+#define MAXNB 360
 void GetBlkFromBudget_allP(char extra, double thresh, size_t CS, 
                            size_t mu, size_t nu, size_t ku,
                            size_t *MB, size_t *NB, size_t *KB)
@@ -8761,8 +8765,11 @@ ATL_mmnode_t *FindBestCacheBudgetCase
           imf, CS*thresh);
    for (mp=mmb; mp; mp = mp->next)
    {
-      size_t mb, nb, kb;
-      GetBlocking(thresh, CS, mp->mu, mp->nu, mp->ku, &mb, &nb, &kb);
+      size_t mb, nb, kb, ku=mp->ku;
+      if (!mp->ID && FLAG_IS_SET(mp->flag, MMF_KUISKB))
+         ku = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 1;
+
+      GetBlocking(thresh, CS, mp->mu, mp->nu, ku, &mb, &nb, &kb);
       p = CloneMMNode(mp);  /* can't use mp, since may switch KRUNTIME */
       mf = TimeMMKernel_KB(verb, 0, p, pre, mb, nb, kb, 1, 0, -1);
 @ROUT gmmsearch
@@ -9964,9 +9971,11 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
 int KernHandlesThisKB(ATL_mmnode_t *mp, int kb)
 {
    int ku;
-   if (kb < mp->kbmin)
+   if (!mp->ID)  /* genned codes can be adapted to any kb */
+      return(1);
+   if (mp->ID && mp->kbmax && kb > mp->kbmax) /* genned kerns can adapt */
       return(0);
-   if (mp->kbmax && kb > mp->kbmax)
+   if (kb < mp->kbmin)
       return(0);
    ku = mp->ku;
    if ((kb/ku)*ku != kb)
@@ -10015,6 +10024,13 @@ ATL_mmnode_t *BestKernForKB(int verb, char pre, ATL_mmnode_t *mmb, int KB)
       {
          printf("      %d-%s: skipped, cannot handle KB=%d\n", ID, rt, KB);
          continue;
+      }
+      if (!mp->ID && FLAG_IS_SET(mp->flag, MMF_KUISKB))
+      {
+         mp->kbmax = mp->kbmin = mp->ku = mp->kbB = KB;
+         if (mp->genstr);
+            free(mp->genstr);
+         mp->genstr = MMGetGenString(pre, mp);
       }
       mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, KB, 0,  0, -1);
       if (mf > mfB)
@@ -12776,8 +12792,9 @@ int main(int nargs, char **args)
    if (TEST)
       return(CountFails(TEST, flg, verb, pre, NB, nreg, VLEN));
    FindInfo(flg, verb, upr, NB, &nreg, &VLEN);
+   if (flg&4)     /* If I just wanted nreg calc */
+      return(0);  /* then I'm done */
    DoBlock(pre, flg, verb);
-@skip   DoSquare(flg, verb, pre, nreg, VLEN);
    DoSyrk(flg, verb, pre, nreg, NB, VLEN);
    return(0);
 }
