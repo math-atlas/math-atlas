@@ -11748,6 +11748,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "        1: test all generated kernels\n");
    fprintf(stderr, "        2: do full MUxNU search\n");
    fprintf(stderr, "        4: print # of regs to res/<pre>nreg\n");
+   fprintf(stderr, "        8: pref tune & time kerns in time.sum & exit\n");
    fprintf(stderr, "      DEFAULT: all bits unset\n");
    exit(ierr ? ierr : -1);
 }
@@ -12779,6 +12780,68 @@ void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
    KillAllMMNodes(mSQ);
 }
 
+void DoPrefOnList(int flg, int vrb, char pre, int maxB)
+{
+   ATL_mmnode_t *mb, *mp, *pb;
+   int b, binc;
+   FILE *fp;
+
+   mb = ReadMMFile("time.sum");
+   if (!mb)
+   {
+      fprintf(stderr, "No files in time.sum, exiting!\n");
+      remove("NB-pref.txt");
+      return;
+   }
+   binc = Mylcm(mb->mu, mb->nu);
+   for (mp=mb->next; mp; mp = mp->next)
+   {
+      binc = Mylcm(binc, mp->mu);
+      binc = Mylcm(binc, mp->nu);
+   }
+   fp = fopen("NB-pref.txt", "w");
+   assert(fp);
+   fprintf(fp, "      ");
+   for (mp=mb; mp->next; mp = mp->next)
+      fprintf(fp, "-----------");
+   fprintf(fp, "---------  ");
+   for (mp=mb; mp->next; mp = mp->next)
+      fprintf(fp, "-----------");
+   fprintf(fp, "---------\n");
+   fprintf(fp, "  NB");
+   for (mp=mb; mp; mp = mp->next)
+      fprintf(fp, "   %c%c:%2dx%2d", FLAG_IS_SET(mp->flag, MMF_KVEC) ? 'K':'M', 
+              FLAG_IS_SET(mp->flag,MMF_NOBCAST)?'s':'b', mp->mu, mp->nu);
+   for (mp=mb; mp; mp = mp->next)
+      fprintf(fp, "  PREF %c%2dx%2d", 
+              FLAG_IS_SET(mp->flag, MMF_KVEC) ? 'K':'M', mp->mu, mp->nu);
+   fprintf(fp, "\n====");
+   for (mp=mb; mp; mp = mp->next)
+      fprintf(fp, "  =========");
+   for (mp=mb; mp; mp = mp->next)
+      fprintf(fp, "  ==== ======");
+   fprintf(fp, "\n");
+   fflush(fp);
+   for (b=binc; b <= maxB; b += binc)
+   {
+      fprintf(fp, "%4d", b);
+      for (mp=mb; mp; mp = mp->next)
+      {
+         double mf;
+         mp->pref = 0;
+         mp->nbB = mp->mbB = mp->kbB = b;
+         mf = TimeMMKernel(vrb, 0, mp, pre, b, b, b, 1, 0, -1);
+         mp->mflop[0] = mf;
+         fprintf(fp, "     %6.0f", mf);
+      }
+      DoPref(pre, flg, vrb, mb);
+      for (mp=mb; mp; mp = mp->next)
+         fprintf(fp, "  %4.4x %6.0f", mp->pref, mp->mflop[0]);
+      fprintf(fp, "\n");
+      fflush(fp);
+   }
+   fclose(fp);
+}
 int main(int nargs, char **args)
 {
    int flg, verb, nreg, VLEN, NB, TEST;
@@ -12791,6 +12854,11 @@ int main(int nargs, char **args)
       upr = 's';
    if (TEST)
       return(CountFails(TEST, flg, verb, pre, NB, nreg, VLEN));
+   if (flg&8)
+   {
+      DoPrefOnList(flg, verb, pre, NB);
+      return(0);
+   }
    FindInfo(flg, verb, upr, NB, &nreg, &VLEN);
    if (flg&4)     /* If I just wanted nreg calc */
       return(0);  /* then I'm done */
