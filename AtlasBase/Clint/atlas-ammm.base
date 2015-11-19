@@ -12249,7 +12249,7 @@ int TryKU(char pre, int verb, ATL_mmnode_t *mp, int imf, int ku)
    }
 }
 
-int TryPref(char pre, int verb, ATL_mmnode_t *mp, int ibet, int imf, 
+int TryPref(char pre, int verb, int vrb, ATL_mmnode_t *mp, int ibet, int imf, 
             int ipf, int pfLS)
 /*
  * Times mmb with present prefetch setting, and (ipf,pfLS), and returns
@@ -12264,16 +12264,18 @@ int TryPref(char pre, int verb, ATL_mmnode_t *mp, int ibet, int imf,
 
    if (mp->pref == ipf && mp->pfLS == pfLS)
    {
-      printf("      pref settings unchanged!\n");
+      if (vrb)
+         printf("      pref settings unchanged!\n");
       return(0);
    }
    mp->pref = ipf;
    mp->pfLS = pfLS;
-   mp->rout = MMGetGenName(pre, mp->kbB, mp);
+   mp->rout = DupString("ATL_tmp.c");
    mp->genstr = MMGetGenString(pre, mp);
    mfN = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, ibet, 0, -1);
-   printf("      old=(%d,%d,%.0f), new=(%d,%d,%.0f), spdup=%.3f\n", 
-          ipf0, pfLS0, mf0, mp->pref, mp->pfLS, mfN, mfN/mf0);
+   if (vrb)
+      printf("      old=(%d,%d,%.0f), new=(%d,%d,%.0f), spdup=%.3f\n", 
+             ipf0, pfLS0, mf0, mp->pref, mp->pfLS, mfN, mfN/mf0);
    if (mfN > mf0)  /* new settings win */
    {
       if (gs0)
@@ -12400,6 +12402,104 @@ void PrintPref(FILE *fp, int ipf)
 }
 @ROUT gmmsearch
 
+void DoPref1(char pre, int flg, int verb, int vrb0, ATL_mmnode_t *mmb)
+/*
+ * Given routs times with no prefetch (mflop stored at imf), try various
+ * prefetch strategies, and return the best
+ */
+{
+   ATL_mmnode_t *mp;
+                    /* Lx(A)  ; Lx(B),   Lx(A&B)       2(A),x(B),  x(A),2(B) */
+   const int ipfs[11]={2|512, 4|1024, 2|4|512|1024, 2|4|1024, 2|512|4,
+                  /*L2(A); L2(B);L2(A&B);1(A),2(B);2(A)1(B),    L1(A&B) */
+                        2,     4, 2|4,   2|64|4,   2|4|128, 2|64|4|128};
+   int k, n, vrb=(vrb0 > 1);
+
+/*
+ * First, try A/B prefetch, since they are N^3
+ */
+   for (n=0,mp=mmb; mp; n++,mp = mp->next);
+   if (vrb0)
+      printf("PREFETCH TUNING FOR ALL %d KERNELS\n", n);
+   for (k=0,mp=mmb; mp; k++,mp = mp->next)
+   {
+      const int ipf=mp->pref;
+      int npf, i;
+      double mf0=mp->mflop[0];
+      mp->mflop[1] = mf0;
+      npf = 11;     /* try all cases */
+      if (vrb)
+         printf("TUNING A/B PREFETCH FOR KERN %d of %d\n", k+1, n);
+/*
+ *    First, try only next-block prefetch
+ */
+      for (i=0; i < npf; i++)
+         TryPref(pre, verb, vrb, mp, 1, 0, ipf|ipfs[i], 64);
+/*
+ *    Now let's try K-loop prefetch, both in addition to prior setting and
+ *    w/o other prefetch
+ */
+      for (i=0; i < npf; i++)
+      {
+         const int kpf = mp->pref;
+         const double kmf = mp->mflop[0];
+         int pf;
+
+         mp->mflop[0] = mf0;
+         mp->pref = ipf;
+/*
+ *       Try fetching next B working set to L1, L2, & L3
+ */
+         TryPref(pre, verb, vrb, mp, 1, 0, ipf|16|4096, 64);
+         TryPref(pre, verb, vrb, mp, 1, 0, ipf|16, 64);
+         TryPref(pre, verb, vrb, mp, 1, 0, ipf|16|16384, 64);
+         pf = mp->pref;
+/*
+ *       Using B setting, try A working set prefetch.  Not as likely to help,
+ *       since we prefetch same set MB/mu times for 1 use.
+ */
+         TryPref(pre, verb, vrb, mp, 1, 0, pf|16|4096, 64);
+         TryPref(pre, verb, vrb, mp, 1, 0, pf|16, 64);
+         TryPref(pre, verb, vrb, mp, 1, 0, pf|16|16384, 64);
+/*
+ *       Now try combining best-found with above
+ */
+         pf = mp->pref;
+         if (pf != kpf && kpf)
+            TryPref(pre, verb, vrb, mp, 1, 0, pf|kpf, 64);
+         if (mp->mflop[0] < kmf*1.005) /* if new settings (pen expen k-pref) */
+         {                              /* slower M/N fetch alone, revert */
+            mp->pref = kpf;
+            mp->mflop[0] = kmf;
+         }
+         if (vrb)
+            printf("   A/B PREFETCH FOR %d SPEEDUP=%.3f\n", 
+                   k+1,mp->mflop[0]/mf0);
+      }
+      {
+         const int ipf=mp->pref;
+         double mf0=mp->mflop[0];
+         if (vrb)
+            printf("   TUNING C PREFETCH FOR %d\n", k+1);
+         TryPref(pre, verb, vrb, mp, 1, 0, ipf|1, 64);
+         TryPref(pre, verb, vrb, mp, 1, 0, ipf|1|32, 64);
+         TryPref(pre, verb, vrb, mp, 1, 0, ipf|1|256, 64);
+         if (vrb)
+            printf("   C PREFETCH FOR %d SPEEDUP=%.3f\n", k+1, 
+                   mp->mflop[0]/mf0);
+      }
+      if (vrb0)
+      {
+         printf("   PREF:");
+         PrintPref(stdout, mp->pref);
+         printf("; SPD=%.2f\n", mp->mflop[0] / mp->mflop[1]);
+      }
+      mp->mflop[1] = 0.0;
+   }
+   if (vrb0)
+      printf("DONE  PREFETCH TUNING FOR ALL %d KERNELS\n\n", n);
+}
+
 void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
 /*
  * Given routs times with no prefetch (mflop stored at imf), try various
@@ -12436,7 +12536,7 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
  *    First, try only next-block prefetch
  */
       for (i=0; i < npf; i++)
-         TryPref(pre, verb, mp, 1, 0, ipf|ipfs[i], 64);
+         TryPref(pre, verb, 1, mp, 1, 0, ipf|ipfs[i], 64);
 /*
  *    Now let's try K-loop prefetch, both in addition to prior setting and
  *    w/o other prefetch
@@ -12452,24 +12552,24 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
 /*
  *       Try fetching next B working set to L1, L2, & L3
  */
-         TryPref(pre, verb, mp, 1, 0, ipf|16|4096, 64);
-         TryPref(pre, verb, mp, 1, 0, ipf|16, 64);
-         TryPref(pre, verb, mp, 1, 0, ipf|16|16384, 64);
+         TryPref(pre, verb, 1, mp, 1, 0, ipf|16|4096, 64);
+         TryPref(pre, verb, 1, mp, 1, 0, ipf|16, 64);
+         TryPref(pre, verb, 1, mp, 1, 0, ipf|16|16384, 64);
          pf = mp->pref;
 /*
  *       Using B setting, try A working set prefetch.  Not as likely to help,
  *       since we prefetch same set MB/mu times for 1 use.
  */
-         TryPref(pre, verb, mp, 1, 0, pf|16|4096, 64);
-         TryPref(pre, verb, mp, 1, 0, pf|16, 64);
-         TryPref(pre, verb, mp, 1, 0, pf|16|16384, 64);
+         TryPref(pre, verb, 1, mp, 1, 0, pf|16|4096, 64);
+         TryPref(pre, verb, 1, mp, 1, 0, pf|16, 64);
+         TryPref(pre, verb, 1, mp, 1, 0, pf|16|16384, 64);
 /*
  *       Now try combining best-found with above
  */
          pf = mp->pref;
          if (pf != kpf && kpf)
-            TryPref(pre, verb, mp, 1, 0, pf|kpf, 64);
-         if (mp->mflop[i] < kmf*1.005) /* if new settings (pen expen k-pref) */
+            TryPref(pre, verb, 1, mp, 1, 0, pf|kpf, 64);
+         if (mp->mflop[0] < kmf*1.005) /* if new settings (pen expen k-pref) */
          {                              /* slower M/N fetch alone, revert */
             mp->pref = kpf;
             mp->mflop[0] = kmf;
@@ -12486,9 +12586,9 @@ void DoPref(char pre, int flg, int verb, ATL_mmnode_t *mmb)
       const int ipf=mp->pref;
       double mf0=mp->mflop[0];
       printf("   TUNING C PREFETCH FOR %s\n", ctxt[k]);
-      TryPref(pre, verb, mp, 1, 0, ipf|1, 64);
-      TryPref(pre, verb, mp, 1, 0, ipf|1|32, 64);
-      TryPref(pre, verb, mp, 1, 0, ipf|1|256, 64);
+      TryPref(pre, verb, 1, mp, 1, 0, ipf|1, 64);
+      TryPref(pre, verb, 1, mp, 1, 0, ipf|1|32, 64);
+      TryPref(pre, verb, 1, mp, 1, 0, ipf|1|256, 64);
       printf("   C PREFETCH FOR %s SPEEDUP=%.3f\n", ctxt[k], mp->mflop[0]/mf0);
       printf("   PREF:");
       PrintPref(stdout, mp->pref);
@@ -12599,8 +12699,8 @@ void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp,
  */
    for (i=0; i < 3; i++)
    {
-      TryPref(pre, vrb, mp, 1, 0, thsA[i], 64);
-      TryPref(pre, vrb, mp, 1, 0, thsA[i], 128);
+      TryPref(pre, vrb, 1, mp, 1, 0, thsA[i], 64);
+      TryPref(pre, vrb, 1, mp, 1, 0, thsA[i], 128);
    }
 /*
  * Now try C prefetch (N^2 cost)
@@ -12609,7 +12709,7 @@ void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp,
   ipf = mp->pref;
   ils = mp->pfLS;
   for (i=0; i < 3; i++)
-     TryPref(pre, vrb, mp, 1, 0, ipf|thsC[i], ils);
+     TryPref(pre, vrb, 1, mp, 1, 0, ipf|thsC[i], ils);
   printf("DONE PREFETCH=(%d,%d), FINAL MFLOP=%.0f, SPEEDUP=%.3f\n",
          mp->pref, mp->pfLS, mp->mflop[0], mp->mflop[0] / mf0);
 }
@@ -12831,11 +12931,14 @@ void DoPrefOnList(int flg, int vrb, char pre, int maxB)
          double mf;
          mp->pref = 0;
          mp->nbB = mp->mbB = mp->kbB = b;
+         if (mp->genstr)
+            free(mp->genstr);
+         mp->genstr = NULL;
          mf = TimeMMKernel(vrb, 0, mp, pre, b, b, b, 1, 0, -1);
          mp->mflop[0] = mf;
          fprintf(fp, "     %6.0f", mf);
       }
-      DoPref(pre, flg, vrb, mb);
+      DoPref1(pre, flg, vrb, 1, mb);
       for (mp=mb; mp; mp = mp->next)
          fprintf(fp, "  %4.4x %6.0f", mp->pref, mp->mflop[0]);
       fprintf(fp, "\n");
