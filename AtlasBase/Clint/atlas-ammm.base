@@ -11749,6 +11749,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "        2: do full MUxNU search\n");
    fprintf(stderr, "        4: print # of regs to res/<pre>nreg\n");
    fprintf(stderr, "        8: pref tune & time kerns in time.sum & exit\n");
+   fprintf(stderr, "       16: create [d,s]flops.frc and return\n");
    fprintf(stderr, "      DEFAULT: all bits unset\n");
    exit(ierr ? ierr : -1);
 }
@@ -12842,6 +12843,64 @@ void DoPrefOnList(int flg, int vrb, char pre, int maxB)
    }
    fclose(fp);
 }
+
+void SetFlops(int flg, int verb, char pre, int VL)
+/* 
+ * This search finds a decent generated kernel, and uses it to find the
+ * number of flops that must be forced to get 
+ * 1:  each problem above .25 sec?
+ * 2:  10 timings withing 2% of each other?
+ * which should be enough to avoid huge timing error bars
+ */
+{
+   ATL_mmnode_t *mp;
+   FILE *fp;
+   char *rt;
+   char fn[16];
+   int b, i;
+   int muB, nuB, kvecB;
+   double mfB, mf;
+
+   if (VL < 1)
+      VL = GetNativeVLEN(pre);
+   rt = DupString("ATL_tmp.c");
+/*
+ * Get square blocking factor that fills cache with one block
+ */
+   i = GetL1CacheElts(pre);
+   for (b=4; b*b <= i; b += 4);
+   b -= 4;
+   
+   mp = MMGetNodeGEN(pre, 0, 0, 1, 1, VL, VL, 1, 0, 0, rt);
+   mp->ku = 1;
+   mp->flag &= ~( (1<<MMF_MVA)|(1<<MMF_MVB)|(1<<MMF_MVC) ); /* no cache flush */
+   printf("SCOPING FOR A DECENT SQUARE REGISTER BLOCKING\n");
+   printf("     B   U  Mb MFLOP  Ms MFLOP  K  MFLOP\n");
+   printf("   ===  ==  ========  ========  ========\n");
+   i = ((b+5)/6)*6;
+   i = MMTimeAllVecGen(verb, 1, mp, pre, i, i, i, 0, 0, -1);
+   printf("%6d %3d %9.0f %9.0f %9.0f\n", i, 1, 
+          mp->mflop[0],mp->mflop[1],mp->mflop[2]);
+   fflush(stdout);
+   mfB = mp->mflop[i];
+   muB = nuB = 1;
+   kvecB = (i == 2) ? 1 : 0;
+   for (i=2; i*i <= 64; i++)
+   {
+      int B = (b > i) ? (b/i)*i : i, iB; 
+      mp->mu = mp->nu = i;
+      iB = MMTimeAllVecGen(verb, 1, mp, pre, B, B, B, 0, 0, -1);
+      printf("%6d %3d %9.0f %9.0f %9.0f\n", B, i, 
+             mp->mflop[0],mp->mflop[1],mp->mflop[2]);
+      fflush(stdout);
+   }
+
+#if 0
+   sprintf(fn, "%cmflops.frc", pre);
+   fp = fopen(fn, "w");
+   fclose(fp);
+#endif
+}
 int main(int nargs, char **args)
 {
    int flg, verb, nreg, VLEN, NB, TEST;
@@ -12857,6 +12916,11 @@ int main(int nargs, char **args)
    if (flg&8)
    {
       DoPrefOnList(flg, verb, pre, NB);
+      return(0);
+   }
+   if (flg&16)
+   {
+      SetFlops(flg, verb, upr, VLEN);
       return(0);
    }
    FindInfo(flg, verb, upr, NB, &nreg, &VLEN);

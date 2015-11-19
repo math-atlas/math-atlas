@@ -3358,6 +3358,26 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 @ROUT atlas_mmtesttime.h
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+double MMMflop2Time(char pre, int M, int N, int K, double mf)
+/*
+ * Translates mf back into time, assuming gemm timing of M,N,K
+ */
+{
+   return((((2.0*M)*N)*K) / (1000000.0*mf));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+double MMTime2Mflop(char pre, int M, int N, int K, double time)
+/*
+ * Translates mf back into time, assuming gemm timing of M,N,K
+ */
+{
+   return((((2.0*M)*N)*K) / (1000000.0*time));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
    char *nm="amm";
@@ -4175,6 +4195,103 @@ double TimeMMKernel
    return(*((double*)ReadResultsFile(RESACT, 0, fnam)));
    #undef RESACT
 }  /* end TimeMMKernel */
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip), times all 3 vectorization schemes */
+int MMTimeAllVecGen
+(
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int flag,                    /* 1: ignore any prior output file */
+   ATL_mmnode_t *mp,            /* ptr to mmkern struct */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int mb, int nb, int kb,      /* dimensions to time */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >=0: size of cache flush, else ignored */
+)
+/*
+ * Times all 3 generator-provided vectorization schemes.
+ * RETURNS: index of best-performing variant (0-2)
+ *
+ * OVERWRITES:
+ *   ->mflop[0] : time for M-vec wt bcast
+ *   ->mflop[1] : 0 if nu not a multiple of vlen, else time for M-vec wt splat
+ *   ->mflop[2] : time for K-vec
+ *
+ * NOTE: mu & nu should be the number of vec regs to use (eg., for M-vec, 
+ *       actual M unrolling will be mp->mu * mp->vlen).
+ */
+{
+   char *gs0=mp->genstr, *rt0=mp->rout;
+   int flg0=mp->flag, mb0=mp->mbB, nb0=mp->nbB, mu0=mp->mu;
+   int kb0=mp->kbB, ku0=mp->ku, kbmax0=mp->kbmax, kbmin0=mp->kbmin;
+   int iB=0;
+   double mfB;
+
+   if (!rt0)
+      mp->rout = DupString("ATL_tmp.c");
+   if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
+      mp->kbmax = mp->kbmin = mp->ku = mp->kbB = kb;
+   mp->kbB = kb;  mp->nbB = nb;  mp->mbB = mb;  /* override blking factor */
+/*
+ * Try M-vectorized using broadcast
+ */
+   mp->flag &= ~(1<<MMF_KVEC);    /* ask for M-vectorized kernel */
+   mp->flag &= ~(1<<MMF_NOBCAST); /* clear bcast bit */
+   mp->mu = mu0 * mp->vlen; 
+   mp->genstr = MMGetGenString(pre, mp);
+   mfB = TimeMMKernel(verb, flag, mp, pre, mb, nb, kb, beta, mflop, cflush);
+   mp->mflop[0] = mfB;
+   free(mp->genstr);
+/*
+ * If legal, try M-vec with splat
+ */
+   if (mp->nu % mp->vlen == 0)
+   {
+      mp->flag |= (1<<MMF_NOBCAST);
+      mp->genstr = MMGetGenString(pre, mp);
+      mp->mflop[1] = TimeMMKernel(verb, flag, mp, pre, mb, nb, kb, beta, mflop, 
+                                  cflush);
+      free(mp->genstr);
+      if (mp->mflop[1] > mfB)
+      {
+         iB = 1;
+         mfB = mp->mflop[1];
+      }
+      mp->flag &= ~(1<<MMF_NOBCAST); /* clear bcast bit */
+   }
+   else
+      mp->mflop[1] = 0;
+/*
+ * Try K-vectorized
+ */
+   mp->mu = mu0;
+   if (mu0*mp->nu % mp->vlen == 0)
+   {
+   mp->flag |= (1<<MMF_KVEC);    /* ask for K-vectorized kernel */
+   mp->ku = ((mp->ku+mp->vlen-1)/mp->vlen)*mp->vlen;
+   mp->genstr = MMGetGenString(pre, mp);
+   mp->mflop[2] = TimeMMKernel(verb, flag, mp, pre, mb, nb, kb, beta, mflop, 
+                               cflush);
+   free(mp->genstr);
+   if (mp->mflop[2] > mfB)
+      iB = 2;
+   }
+   else
+      mp->mflop[2] = 0;
+/*
+ * Restore changed mp-> values & return
+ */
+   if (!rt0)
+   {
+      free(mp->rout);
+      mp->rout = NULL;
+   }
+   mp->genstr = gs0;
+   mp->mbB = mb0; mp->nbB = nb0; mp->kbB = kb0;
+   mp->kbmin = kbmin0; mp->kbmax = kbmax0; mp->ku = ku0;
+   return(iB);
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
