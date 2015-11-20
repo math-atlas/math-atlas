@@ -12945,6 +12945,7 @@ void DoPrefOnList(int flg, int vrb, char pre, int maxB)
       fflush(fp);
    }
    fclose(fp);
+   KillAllMMNodes(mb);  /* done with these! */
 }
 
 void SetFlops(int flg, int verb, char pre, int VL)
@@ -12961,8 +12962,10 @@ void SetFlops(int flg, int verb, char pre, int VL)
    char *rt;
    char fn[16];
    int b, i;
-   int muB, nuB, kvecB;
-   double mfB, mf;
+   int muB, nuB, kvecB, bB, bcB;
+   #define TOL .015
+   const double mbig=(1.0+TOL), msml=(1.0-TOL);
+   double mfB, mf, mul, nmf, tim;
 
    if (VL < 1)
       VL = GetNativeVLEN(pre);
@@ -12980,29 +12983,102 @@ void SetFlops(int flg, int verb, char pre, int VL)
    printf("SCOPING FOR A DECENT SQUARE REGISTER BLOCKING\n");
    printf("     B   U  Mb MFLOP  Ms MFLOP  K  MFLOP\n");
    printf("   ===  ==  ========  ========  ========\n");
-   i = ((b+5)/6)*6;
-   i = MMTimeAllVecGen(verb, 1, mp, pre, i, i, i, 0, 0, -1);
+   bB = ((b+5)/6)*6;
+   i = MMTimeAllVecGen(verb, 1, mp, pre, bB, bB, bB, 0, 0, 0);
    printf("%6d %3d %9.0f %9.0f %9.0f\n", i, 1, 
           mp->mflop[0],mp->mflop[1],mp->mflop[2]);
    fflush(stdout);
    mfB = mp->mflop[i];
    muB = nuB = 1;
    kvecB = (i == 2) ? 1 : 0;
+   bcB = (i != 1);
    for (i=2; i*i <= 64; i++)
    {
       int B = (b > i) ? (b/i)*i : i, iB; 
       mp->mu = mp->nu = i;
-      iB = MMTimeAllVecGen(verb, 1, mp, pre, B, B, B, 0, 0, -1);
+      iB = MMTimeAllVecGen(verb, 1, mp, pre, B, B, B, 0, 0, 0);
       printf("%6d %3d %9.0f %9.0f %9.0f\n", B, i, 
              mp->mflop[0],mp->mflop[1],mp->mflop[2]);
+      if (mp->mflop[iB] > mfB)
+      {
+         mfB = mp->mflop[iB];
+         muB = nuB = i;
+         bB = B;
+         bcB = (iB != 1);
+         kvecB = (iB == 2) ? 1 : 0;
+         
+      }
       fflush(stdout);
    }
+   if (mp->genstr)
+      free(mp->genstr);
+   mp->genstr = NULL;
+/*
+ * Now, pump up mflop until the run takes 3 seconds or we can get 8 timings
+ * in a row that are within 1.5% of each other
+ */
+  mp->mflop[0] = mfB;
+  mp->mflop[1] = mp->mflop[2] = 0.0;
+  mp->nu = nuB;
+  mp->mbB = mp->nbB = mp->kbB = bB;
+  if (kvecB)
+  {
+     mp->ku = VL;
+     mp->mu = muB;
+     mp->flag |= (1<<MMF_KVEC);
+     mp->flag &= ~(1<<MMF_NOBCAST);
+  }
+  else
+  {
+     mp->ku = 1;
+     mp->mu = muB * VL;
+     mp->flag &= ~(1<<MMF_KVEC);
+     if (bcB) 
+        mp->flag &= ~(1<<MMF_NOBCAST);
+     else
+        mp->flag |= (1<<MMF_NOBCAST);
+  }
+/*
+ * aim for a run that should take .08 sec if above timing was good
+ *    (seconds / mflop) * nmfl = .08 -> nmflop = .08*mfB;
+ */
+  nmf = .08*mfB;
+  if (nmf < 1.0)
+     nmf = 1.0;
+  while(1)
+  {
+     double mf0;
+     int inmf = (int) nmf;
+     tim = 1.0/(nmf*mfB);
+     fprintf(stderr, "nmf=%d, pred time = %e seconds\n", inmf, 
+             1.0/(nmf*mfB));
+     if (tim >= 2.0)
+        break;
+     mf0 = TimeMMKernel(verb, 1, mp, pre, bB, bB, bB, 1, nmf, 0);
+     printf("mf=%.0f:", mf0);
+     for (i=0; i < 7; i++)
+     {
+        double spdup;
+        mf = TimeMMKernel(verb, 1, mp, pre, bB, bB, bB, 1, mul, 0);
+        spdup = mf*mf0;
+        printf(" %.4f%c", mf/mf0, i==6?'.':',');
+        if (mf > mf0*mbig || mf < mf0*msml)
+           break;
+     }
+     printf("\n");
+     fflush(stdout);
+     if (i == 7)
+        break;
+     nmf *= 2.0;
+  }
+  printf("Final timing interval: %e seconds, nmflops=%.0f\n", tim, nmf);
 
 #if 0
    sprintf(fn, "%cmflops.frc", pre);
    fp = fopen(fn, "w");
    fclose(fp);
 #endif
+   KillMMNode(mp);
 }
 int main(int nargs, char **args)
 {
