@@ -1324,6 +1324,14 @@ EXTMAC *FindMac(char *handle)
    return(ptr);
 }
 
+int CountMacros(void)
+{
+   EXTMAC *p;
+   int i;
+   for (i=0,p=MacroBase; p; i++,p = p->next);
+   return(i);
+}
+
 /************************************************************************/
 /*   The routines push_macro & pop_macro are the heart of extract's     */
 /*   macro substitution utility.  A macro is defined by:                */
@@ -3311,7 +3319,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Pop MyMacBeg
  */
-   sprintf(line, "__MyMacBeg__%p", &EE);
+   sprintf(line, "@__MyMacBeg__%p", &EE);
    PopMacro2(&EE, line);
 
 /*
@@ -3505,7 +3513,6 @@ void HandleProcCall0(EXTENV *EE, EXTPROC *basep, char *ln)
       wp->next = GetWord(dp->word);
       wp = wp->next;
    }
-   KillWords(wbase);
    Extract(EE, ew);
 }
 
@@ -3537,6 +3544,12 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
 
    switch(i)
    {
+   case 4:  /* alias for @skip does not work in middle of line! */
+      if (WstrcmpN(tline, "@// ", 3))
+      {
+         if ( !Use[EC_Skip] ) return(0);
+      }
+      break;
    case 5:
       if (WstrcmpN(tline, "@iif ", 4))
       {
@@ -3717,6 +3730,7 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
       }
       else if (WstrcmpN(tline, "@callproc ", 10))
       {
+         int nmac;
          if (!Use[EC_Proc]) return(0);
          HandleProcCall(EE, tline);
       }
@@ -3799,6 +3813,11 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
          if ( Use[EC_Dec] ) ExtWarn(EE, "unmatched @enddeclare");
          else return(0);
       }
+      if (WstrcmpN(tline, "@print@nmac ", 12))
+      {
+         fprintf(Warn, "%d:%s", CountMacros(), tline+12);
+         return(0);
+      }
       else if (WstrcmpN(tline, "@endextract ", 12))
       {
          if ( Use[EC_EndExt] ) ExtDone = 1;
@@ -3820,6 +3839,19 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
          else return(0);
       }
       else DONE = 0;
+      break;
+   case 15:
+      if (WstrcmpN(tline, "@print@allmacs ", 15))
+      {
+         int i;
+         EXTMAC *p;
+         for (i=0, p=MacroBase; p; i++,p=p->next)
+         {
+            fprintf(Warn, "'%10s' -> '%s'\n", p->Handle, p->Sub);
+         }
+         fprintf(Warn, "Done %d macros.\n\n", i);
+         return(0);
+      }
       break;
    default:
       DONE = 0;
