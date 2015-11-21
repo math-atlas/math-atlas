@@ -3513,6 +3513,7 @@ void HandleProcCall0(EXTENV *EE, EXTPROC *basep, char *ln)
       wp->next = GetWord(dp->word);
       wp = wp->next;
    }
+   KillWords(wbase);
    Extract(EE, ew);
 }
 
