@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  10/17/15.                           */
+/*  Last modified by the author on  11/20/15.                           */
 /************************************************************************/
 
 #include <stdio.h>
@@ -3550,6 +3550,7 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
       {
          if ( !Use[EC_Skip] ) return(0);
       }
+      else DONE = 0;
       break;
    case 5:
       if (WstrcmpN(tline, "@iif ", 4))
@@ -3731,7 +3732,6 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
       }
       else if (WstrcmpN(tline, "@callproc ", 10))
       {
-         int nmac;
          if (!Use[EC_Proc]) return(0);
          HandleProcCall(EE, tline);
       }
@@ -3816,8 +3816,10 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
       }
       if (WstrcmpN(tline, "@print@nmac ", 12))
       {
-         fprintf(Warn, "%d:%s", CountMacros(), tline+12);
-         return(0);
+         if (Use[EC_Print])
+            fprintf(Warn, "%d:%s", CountMacros(), tline+12);
+         else
+            return(0);
       }
       else if (WstrcmpN(tline, "@endextract ", 12))
       {
@@ -3844,15 +3846,20 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
    case 15:
       if (WstrcmpN(tline, "@print@allmacs ", 15))
       {
-         int i;
-         EXTMAC *p;
-         for (i=0, p=MacroBase; p; i++,p=p->next)
+         if (Use[EC_Print])
          {
-            fprintf(Warn, "'%10s' -> '%s'\n", p->Handle, p->Sub);
+            int i;
+            EXTMAC *p;
+            for (i=0, p=MacroBase; p; i++,p=p->next)
+            {
+               fprintf(Warn, "'%10s' -> '%s'\n", p->Handle, p->Sub);
+            }
+            fprintf(Warn, "Done %d macros.\n\n", i);
          }
-         fprintf(Warn, "Done %d macros.\n\n", i);
-         return(0);
+         else
+            return(0);
       }
+      else DONE = 0;
       break;
    default:
       DONE = 0;
