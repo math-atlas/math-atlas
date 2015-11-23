@@ -2264,12 +2264,6 @@ KB=0
 M = $(mb)
 N = $(nb)
 K = $(kb)
-lda = $(kb)
-ldb = $(kb)
-ldc = 0
-lda2 = $(lda)
-ldb2 = $(ldb)
-ldc2 = $(ldc)
 csA = 1
 csB = 1
 csC = 1
@@ -2279,7 +2273,6 @@ betan=$(beta)
 loopO = JIK
 F0 = 16
 FN = 0
-moves = -DMoveA -DMoveB             # serial timer takes this form
 kmoves = -DATL_MOVEA -DATL_MOVEB    # ammm kernels take this form
 cleanup = 0
 casnam =
@@ -2290,8 +2283,6 @@ pf=0      # bitpattern controlling prefetch, see atlas-mmkg.base for details
 pfLS=64   # prefetch line size in bytes 
 pfA = 0
 dupB=1
-flagfile=ignore
-srchflags=
 nreg=0
 kmaj=0
 mvA=1
@@ -2305,28 +2296,17 @@ cpvlen=1
 @(iv)=0
 @endwhile
 FMF=750.0
+FMFS=-R $(FMF)
 NRF=-1  # change to -2 to get unconstrained MB
-casarg = pre=$(pre) ta=$(ta) tb=$(tb) muladd=$(muladd) lat=$(lat) \
-         loopO=$(loopO) M=$(M) N=$(N) K=$(K) mb=$(mb) nb=$(nb) kb=$(kb) \
-         mu=$(mu) nu=$(nu) ku=$(ku) lda=$(lda) ldb=$(ldb) ldc=$(ldc) \
-         lda2=$(lda2) ldb2=$(ldb2) ldc2=$(ldc2) pfA=$(pfA) dupB=$(dupB) \
-         csA=$(csA) csB=$(csB) csC=$(csC) alpha=$(alpha) beta=$(beta) \
-         kmaj=$(kmaj) moves="$(moves)" cleanup=$(cleanup) mmrout="$(mmrout)" \
-         SMC="$(SMC)" SMCFLAGS="$(SMCFLAGS)" DMC="$(DMC)" DMCFLAGS="$(DMCFLAGS)"
-EXTSEARCHES = -e res/$(pre)MMKSSE.sum
-
+@BEGINSKIP
 RunMMDef : xmmsearch
 	./xmmsearch -p $(pre) -r $(nreg)
 RunUMMSearch : xummsearch
 	./xummsearch -p $(pre) -n $(nb) $(EXTSEARCHES)
 RunUMMClean : xummsearch
 	./xummsearch -p $(pre) -n $(nb) -C $(which)
-$(BINdir)/xextract :
-	cd $(BINdir) ; $(MAKE) xextract
 $(BINdir)/xsubstr:
 	cd $(BINdir) ; $(MAKE) xsubstr
-res/goodgcc.txt :
-	echo "'$(GOODGCC)'" > res/goodgcc.txt
 $(flagfile) : xuserflag $(BINdir)/xsubstr $(mySRCdir)/CASES/$(flagfile)
 	- rm -f ATL_tMpFiLe
 	$(BINdir)/xsubstr -o ATL_tMpFiLe -i $(mySRCdir)/CASES/$(flagfile) \
@@ -2348,6 +2328,7 @@ x@(rout) : $(INCAdir)/atlas_type.h @(rout).o @(dep) $(parsedeps)
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/@(rout).c
   @undef dep
 @endwhile
+@ENDSKIP
 
 DoSzBlk :
 	rm -f szblk.c xszblk
@@ -2357,6 +2338,20 @@ DoSzBlk :
 	$(XCC) $(XCCFLAGS) -o xszblk szblk.c
 	./xszblk $(mb) $(nb) $(mu) $(nu) $(vlen)
 
+res/L1CacheSize :
+	$(MAKE) RunL1
+
+res/$(pre)MULADD : $(SYSdir)/res/$(pre)MULADD 
+RunFindCE :
+	$(MAKE) dRunFindCE
+
+res/atlas_cacheedge.h :
+	$(MAKE) $(pre)RunFindCE
+
+res/goodgcc.txt :
+	echo "'$(GOODGCC)'" > res/goodgcc.txt
+$(BINdir)/xextract :
+	cd $(BINdir) ; $(MAKE) xextract
 @whiledef pre z c
    @whiledef rt am2cm am2rm cm2am rm2am
 ATL_@(pre)@(rt)_a$(al)_$(UR).c : $(basf) force_build
@@ -2500,6 +2495,7 @@ gen_amm_gvec: $(BINdir)/xextract force_build
 gen_amm_scalar : $(BINdir)/xextract force_build
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def kb "${kb}" -o $(rt) \
                 -def kmaj "${kmaj}" rout=ATL_mm${kmaj}_${mu}x${nu}_1 
+@beginskip
 SSEGENOUTDIR :
 	mkdir SSEGENOUTDIR
 xmmgen_sse : $(mySRCdir)/mmgen_sse.c
@@ -2511,7 +2507,6 @@ xmmksearch_sse : xmmgen_sse @(rout).o SSEGENOUTDIR
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/@(rout).c
 @skip $(pre)vMMRES : xvnbmmsearch $(pre)cases.vnb
 @skip 	./xvnbmmsearch -p $(pre)
-@beginskip
 $(GMMdir)/../kbmm/KBMMS :
 	mkdir $(GMMdir)/../kbmm/KBMMS
 vinstall : xemit_vkb $(GMMdir)/../kbmm/KBMMS
@@ -2529,16 +2524,10 @@ xvnbmmsearch : $(INCAdir)/atlas_type.h vnbmmsearch.o
 	$(XCC) $(XCCFLAGS) -o $@ vnbmmsearch.o
 vnbmmsearch.o : $(mySRCdir)/vnbmmsearch.c $(INCSdir)/atlas_vnbcase.h
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/vnbmmsearch.c
-@endskip
 xmmsearch_sse : $(INCAdir)/atlas_type.h $(INCSdir)/atlas_mmtesttime.h \
                 $(INCSdir)/atlas_mmparse.h $(INCSdir)/atlas_genpars.h \
                 mmsearch_sse.c
 	$(XCC) $(XCCFLAGS) -o $@ mmsearch_sse.c
-
-res/L1CacheSize :
-	$(MAKE) RunL1
-
-res/$(pre)MULADD : $(SYSdir)/res/$(pre)MULADD 
 
 @whiledef TT NN NT TN TT
 res/$(pre)best@(TT)_$(bnb)x$(bnb)x$(bnb) : xmmsearch xemit_mm 
@@ -2562,45 +2551,20 @@ res/$(pre)NCNB  : xmmsearch xemit_mm
 res/$(pre)Xover.h :
 	$(MAKE) $(pre)Run_tfc pre=$(pre)
 
-RunFindCE :
-	$(MAKE) dRunFindCE
-
-res/atlas_cacheedge.h :
-	$(MAKE) $(pre)RunFindCE
-
-@beginskip
 RunTXover : x$(pre)txover
 	$(ATLRUN) $(MMTdir) x$(pre)txover -o res/atlas_$(pre)tXover_$(NPROC)p.h
 	cp -f res/atlas_$(pre)tXover_$(NPROC)p.h $(INCAdir)/.
 res/atlas_$(pre)tXover_$(NPROC)p.h : 
 	$(MAKE) RunTXover pre=$(pre)
-@endskip
-	
-res/atlas_zdNKB.h :
-	$(MAKE) zdRunFindCE
-res/atlas_csNKB.h :
-	$(MAKE) csRunFindCE
-
 xemit_vkb  : emit_vKB.o
 	$(XCC) $(XCCFLAGS) -o xemit_vkb emit_vKB.o
 
 xemit_mm  : emit_mm.o
 	$(XCC) $(XCCFLAGS) -o xemit_mm emit_mm.o
-
-xemit_reg : emit_reg.o
-	$(XCC) $(XCCFLAGS) -o xemit_reg emit_reg.o
-
-xemit_cmm : emit_cmm.o
-	$(XCC) $(XCCFLAGS) -o xemit_cmm emit_cmm.o
-
 xemit_fmm : emit_fmm.o
 	$(XCC) $(XCCFLAGS) -o xemit_fmm emit_fmm.o
 xhcsearch : hcsearch.o
 	$(XCC) $(XCCFLAGS) -o xhcsearch hcsearch.o
-
-$(BLDdir)/src/threads/lapack/amm/sumd :
-	mkdir $(BLDdir)/src/threads/lapack/amm/sumd
-
 RunHCtest : xhcsearch
 	rm -f $(INCAdir)/$(pre)mmcase.h
 	touch $(INCAdir)/$(pre)mmcase.h
@@ -2613,6 +2577,24 @@ $(pre)killNC :
 	rm -f res/$(pre)best*
 $(pre)killMM : $(pre)killclean $(pre)killNC
 	rm -f res/$(pre)MMRES res/$(pre)*MMRES.sum res/$(pre)*NB
+@ENDSKIP
+	
+res/atlas_zdNKB.h :
+	$(MAKE) zdRunFindCE
+res/atlas_csNKB.h :
+	$(MAKE) csRunFindCE
+
+
+xemit_reg : emit_reg.o
+	$(XCC) $(XCCFLAGS) -o xemit_reg emit_reg.o
+
+xemit_cmm : emit_cmm.o
+	$(XCC) $(XCCFLAGS) -o xemit_cmm emit_cmm.o
+
+
+$(BLDdir)/src/threads/lapack/amm/sumd :
+	mkdir $(BLDdir)/src/threads/lapack/amm/sumd
+
 xvmmf_gccsub : $(mySRCdir)/vmmf_gccsub.c
 	$(XCC) $(XCCFLAGS) -o xvmmf_gccsub $(mySRCdir)/vmmf_gccsub.c
 
@@ -2620,21 +2602,14 @@ xvmmf_gccsub : $(mySRCdir)/vmmf_gccsub.c
 @multidef typ DCPLX SCPLX DREAL SREAL
 @whiledef pre z c d s
    @addkeys ptyp=@(pre)
-res/@(pre)MMKSSE.sum : xmmksearch_sse force_build
-	./xmmksearch_sse -p @(pre)
-res/@(pre)vMMRES : res/@(pre)vgMMRES xvnbmmsearch @(pre)cases.vnb
-	./xvnbmmsearch -p @(pre)
-res/@(pre)vgMMRES : res/@(pre)gMMRES
-	$(MAKE) xmm_old2new
-	./xmm_old2new -i res/@(pre)gMMRES -o res/@(pre)vgMMRES
-
-@(pre)cases.vnb : $(mySRCdir)/CASES/@(pre)cases.vnb xvmmf_gccsub
-	cp $(mySRCdir)/CASES/@(pre)cases.vnb @(pre)cases.vnb
-	./xvmmf_gccsub 'gcc' '$(GOODGCC)' @(pre)cases.vnb
+@BEGINSKIP
 @(pre)cases.dsc: xuserindex $(mySRCdir)/CASES/@(pre)cases.0 $(mySRCdir)/CASES/@(pre)cases.SSE \
                  $(mySRCdir)/CASES/@(pre)cases.3DN $(mySRCdir)/CASES/@(pre)cases.flg 
 	./xuserindex -p @(pre)
-res/@(pre)nreg : xgmmsearch
+@ENDSKIP
+@(pre)mflops.frc : xgmmsearch
+	./xgmmsearch -p @(pre) -f 16
+res/@(pre)nreg : xgmmsearch @(pre)mflops.frc
 	./xgmmsearch -p @(pre) -f 4
 @(pre)Run_tfc : @(pre)tfc
 	$(ATLRUN) $(MMTdir) x@(pre)tfc
@@ -2642,7 +2617,6 @@ res/@(pre)nreg : xgmmsearch
 
 @(pre)tfc :
 	$(MAKE) x@(pre)tfc pre=@(pre) typ=@(typ)
-
 
 @whiledef rt geAMMRES.sum sqAMMRES.sum rkAMMRES.sum geAMMKCLEAN.sum sqAMMKCLEAN.sum
 res/@(pre)@(rt) : xammsearch
@@ -2717,60 +2691,10 @@ res/atlas_@(pre)amm_sum.h :
 	$(MAKE) @(upr)install_amm
    @ptyp !
    @killkeys ptyp
-@beginskip
-@(pre)install : xemit_mm res/@(pre)MMRES.sum $(BINdir)/xccobj \
-                res/@(pre)CleanM res/@(pre)CleanN res/@(pre)CleanK \
-                res/@(pre)uCleanMF res/@(pre)uCleanNF res/@(pre)uCleanKF 
-	./xemit_mm  -p @(pre) -R -2
-	mv -f @(pre)mm.h $(INCAdir)/.
-	mv -f atlas_@(pre)NCmm.h $(INCAdir)/.
-	cd $(GMMdir)/KERNEL ; rm -f ATL_@(pre)*.o
-	cd $(GMMdir)/KERNEL ; rm -f ATL_@(pre)*
-	cd $(GMMdir)/KERNEL ; rm -f @(pre)Makefile xccobj
-	cd KERNEL ; mv -f ATL_@(pre)*.c $(GMMdir)/KERNEL/.
-	mv -f KERNEL/@(pre)Makefile $(GMMdir)/KERNEL/.
-	if [ -s "xccobj.exe" ] ; then \
-	   cp -f xccobj.exe $(GMMdir)/. ; \
-	elif [ -s "xccobj" ]; then \
-           cp -f xccobj $(GMMdir)/. ; \
-        fi
-@skip	$(MAKE) res/atlas_cacheedge.h
-@skip	$(MAKE) res/@(pre)Xover.h pre=@(pre)
-	$(MAKE) @(pre)mmlib
-	touch @(pre)install
-
-res/@(pre)MMRES.sum :
-	$(MAKE) xmmsearch
-	./xmmsearch -p @(pre)
-@whiledef rout CleanM CleanN CleanK uCleanMF uCleanNF uCleanKF
-res/@(pre)@(rout) :
-	$(MAKE) xmmcuncpsearch
-	./xmmcuncpsearch -p @(pre) -R -3
-@endwhile
-@endskip
-
 @(pre)RunFindCE : x@(pre)findCE
 	$(ATLRUN) $(MMTdir) x@(pre)findCE -f res/atlas_cacheedge.h
 	cp -f res/atlas_cacheedge.h $(INCAdir)/atlas_cacheedge.h
-@(pre)ssegenf = CASES/@(pre)genmm_sse.c
-@(pre)gensseK : xmmgen_sse
-	rm -f ssegen_b0.c ssegen_b1.c ssegen_bX.c $(@(pre)ssegenf)
-	./xmmgen_sse -p @(pre) -m $(mu) -n $(nu) -k $(ku) -M $(MB) -N $(NB) \
-                      -K $(KB) -lda $(lda) -ldb $(ldb) -ldc $(ldc) \
-                      $(ssegenflags) -beta 0 -f ssegen_b0.c
-	./xmmgen_sse -p @(pre) -m $(mu) -n $(nu) -k $(ku) -M $(MB) -N $(NB) \
-                   -K $(KB) -lda $(lda) -ldb $(ldb) -ldc $(ldc) \
-                   $(ssegenflags) -beta 1 -f ssegen_b1.c
-	./xmmgen_sse -p @(pre) -m $(mu) -n $(nu) -k $(ku) -M $(MB) -N $(NB) \
-                   -K $(KB) -lda $(lda) -ldb $(ldb) -ldc $(ldc) \
-                   $(ssegenflags) -beta 8 -f ssegen_bX.c
-	echo "#ifdef BETA0" > $(@(pre)ssegenf)
-	cat ssegen_b0.c >> $(@(pre)ssegenf)
-	echo "#elif defined(BETAX)" >> $(@(pre)ssegenf)
-	cat ssegen_bX.c >> $(@(pre)ssegenf)
-	echo "#else" >> $(@(pre)ssegenf)
-	cat ssegen_b1.c >> $(@(pre)ssegenf)
-	echo "#endif" >> $(@(pre)ssegenf)
+
    @undef typ
    @undef upr
 @endwhile
@@ -2822,16 +2746,6 @@ peaktim.o : $(mySRCdir)/peaktim.c
 @(pre)mmlib:
 	cd $(AMMdir) ; $(MAKE) @(pre)lib
 
-@skip $(MMTdir)/res/@(pre)vMMRES :
-@(pre)standard : force_build
-	$(MAKE) @(pre)ready $(@(pre)ATLres)
-	$(MAKE) @(pre)install
-
-res/@(pre)gMMRES.sum : xgmmsearch
-	./xgmmsearch -p @(pre) $(srchflags)
-res/@(pre)guMMRES.sum : xgmmsearch
-	./xgmmsearch -p @(pre) -b $(nb) -o res/@(pre)guMMRES.sum
-
 @(pre)findCE.o : $(mySRCdir)/findCE.c
 	$(KC) $(KCFLAGS) -c -D@(typ) -o $@ $(mySRCdir)/findCE.c
 @(pre)tfindCE.o : $(mySRCdir)/findCE.c
@@ -2861,13 +2775,13 @@ x@(pre)findCE : $(INCAdir)/atlas_type.h $(L3INCdep) @(pre)mmlib \
 	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)findCE.o \
                    $(GMMdir)/ATL_@(pre)FindCE_mm.o $(ATLASlib) $(LIBS)
 
-@beginskip
+@BEGINSKIP
 x@(pre)txover : force_build @(pre)txover.o
 	cd $(BLDdir)/src/threads/blas/level3 ; $(MAKE) ATL_@(pre)tgemm_p.o @(pre)lib
 	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)txover.o \
               $(BLDdir)/src/threads/blas/level3/ATL_@(pre)tgemm_p.o \
               $(TESTlib) $(ATLASlib) $(LIBS)
-@endskip
+@ENDSKIP
 x@(pre)tfc : $(INCAdir)/atlas_type.h $(L3INCdep) \
              $(pre)tfc.o @(pre)mmlib
 	cd $(GMMdir) ; $(MAKE) ATL_@(pre)big_mm.o ATL_@(pre)small_mm.o \
@@ -2922,7 +2836,7 @@ x@(pre)trstime_pt : @(pre)trstime_pt.o $(L3Bdir)/kernel/@(trsm)
            $(SYSdir)/time.o $(L3Bdir)/kernel/@(trsm) $(ATLASlib) $(LIBS)
 @(pre)trsmKtime : x@(pre)trstime_pt
 	$(ATLRUN) $(MMTdir) x@(pre)trstime_pt -p $(NPROC) $(TIDLIST) \
-           -m $(mb) -n $(nb) -k $(mb) -um 1 -un 1 -uk 1 -R $(FMF) \
+           -m $(mb) -n $(nb) -k $(mb) -um 1 -un 1 -uk 1 $(FMFS) \
            -Ma 0 -Mb 0 -Mc 1 $(outF)
 
 @skip @(pre)txover.o : $(mySRCdir)/txover.c
@@ -2956,10 +2870,11 @@ x@(pre)@(kn)time_pt : $(SYSdir)/time.o force_build
            @(pre)ammmKT.o $(SYSdir)/time.o $(LIBS)
 @ptyp !
 	$(ATLRUN) $(MMTdir) x@(pre)@(kn)time_pt -p $(NPROC) $(TIDLIST) \
-           -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) -R $(FMF) \
+           -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) $(FMFS) \
            -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF)
    @undef kr
 @endwhile
+@BEGINSKIP
 @(pre)mmtime_pt.o : $(mySRCdir)/mmtime_pt.c
 	$(KC) $(KCFLAGS) -c -D@(typ) -o @(pre)mmtime_pt.o \
                $(mySRCdir)/mmtime_pt.c
@@ -2975,102 +2890,11 @@ x@(pre)mmtime_pt : force_build
 	@(MCC) @(MMFLAGS) -DATL_BETA=$(beta) -c @(pre)mm.c 
 	$(CLINKER) $(CLINKFLAGS) -o x@(pre)mmtime_pt @(pre)mmtime_pt.o \
            @(pre)mm.o $(SYSdir)/time.o $(ATLASlib) $(LIBS)
-
-	
-@multidef sdef @^ -DATL_NEWTIME=1
-@whiledef ss 0 N0
-@(pre)mmcase@(ss): $(SYSdir)/time.o $(INCAdir)/atlas_type.h xccobj \
-       $(INCAdir)/atlas_@(pre)sysinfo.h
-	rm -f @(pre)fc.o @(pre)mm.o
-	$(KC) $(KCFLAGS) -D@(pre)REAL -DtranA$(ta) -DtranB$(tb) \
-              -DMULADD=$(muladd) -DLAT=$(lat) -D$(loopO) \
-              -DMB=$(M) -DNB=$(N) -DKB=$(K) \
-              -DMB0=$(mb) -DNB0=$(nb) -DKB0=$(kb) \
-              -DKU=$(ku) -DNU=$(nu) -DMU=$(mu) \
-              -DLDA=$(lda) -DLDB=$(ldb) -DLDC=$(ldc) \
-              -DLDA2=$(lda2) -DLDB2=$(ldb2) -DLDC2=$(ldc2) \
-              -DcsA=$(csA) -DcsB=$(csB) -DcsC=$(csC) \
-              -DALPHA=$(alpha) -DBETA=$(beta) $(moves) \
-              -DPREFA=$(pfA) -DCLEANUP=$(cleanup) -DDUPB=$(dupB) @(sdef) \
-              -o @(pre)fc.o -c $(mySRCdir)/fc.c
-	@(MCC) @(MMFLAGS) -DATL_BETA=$(beta) -c @(pre)mm.c 
-@skip           -DATL_USERMM=ATL_@(pre)JIK$(nb)x$(nb)x$(nb)TN$(nb)x$(nb)x0_a1_b1
-	$(CLINKER) $(CLINKFLAGS) -o x@(pre)fc @(pre)fc.o @(pre)mm.o \
-                                    $(SYSdir)/time.o $(mmlib)
-	$(ATLRUN) $(MMTdir) x@(pre)fc $(casnam)
-   @undef sdef
-@endwhile
-
-   @undef MCC
-   @undef MMFLAGS
-   @undef upr
-   @undef typ
+@ENDSKIP
    @undef utp
-   @killkeys ptyp
-@endwhile
-
-
-mmcugen  : xemit_mm
-	rm -f KERNEL/$(pre)Makefile KERNEL/ATL_$(pre)pKB*.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku0) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -b $(beta) -a $(alpha) -Z 1 -C $(cleanup) -R -3
-
-@define ss @@
-@whiledef ss N
-mmucase@(ss) : xemit_mm auxlib xccobj
-	rm -f $(pre)mm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b $(beta) -a $(alpha) -Z 1 -C $(cleanup)\
-        -R -3            > $(pre)mm.c
-	cat $(mmrout) >> $(pre)mm.c
-	$(MAKE) $(pre)mmcase@(ss)0 $(casarg) casnam=$(casnam) mmlib="$(ATLASlib) \
-                $(LIBS)"
-@endwhile
-
-@multidef upr d s
-@whiledef pre z c
-   @define MCC @$(@up@(upr)MC)@
-   @define MMFLAGS @$(CDEFS) $(@up@(upr)MCFLAGS)@
-@(pre)BuildCobjs: xemit_mm
-	rm -f @(pre)mm_b[1,0,X].[o,c]
-	./xemit_mm -p @(pre) -b 0 -M $(mb) -N $(nb) -K $(kb) -R -3 \
-                   -lda $(lda) -ldb $(ldb) -ldc $(ldc) > @(pre)mm_b0.c
-	cat $(mmrout) >> @(pre)mm_b0.c
-	./xemit_mm -p @(pre) -b 1 -M $(mb) -N $(nb) -K $(kb) -R -3 \
-                   -lda $(lda) -ldb $(ldb) -ldc $(ldc) > @(pre)mm_b1.c
-	cat $(mmrout) >> @(pre)mm_b1.c
-	./xemit_mm -p @(pre) -b 8 -M $(mb) -N $(nb) -K $(kb) -R -3 \
-                   -lda $(lda) -ldb $(ldb) -ldc $(ldc) > @(pre)mm_bX.c
-	cat $(mmrout) >> @(pre)mm_bX.c
-	@(MCC) @(MMFLAGS) -DATL_BETA=1 -c @(pre)mm_b1.c 
-	@(MCC) @(MMFLAGS) -DATL_BETA=0 -c @(pre)mm_b0.c 
-	@(MCC) @(MMFLAGS) -DATL_BETA=8 -c @(pre)mm_bX.c 
-@(upr)mmutstcase1: auxlib xccobj
-	rm -f @(upr)mm.[o,c]
-	./xemit_mm -p @(upr) -b $(beta) -M $(mb) -N $(nb) -K $(kb) -R -3 \
-                   -lda $(lda) -ldb $(ldb) -ldc $(ldc) > @(upr)mm.c
-	cat $(mmrout) >> @(upr)mm.c
-	@(MCC) @(MMFLAGS) -DATL_BETA=$(beta) -c @(upr)mm.c
-	$(MAKE) mmtstcase0 $(casarg) mmobjs=@(upr)mm.o \
-                mmlib="$(ATLASlib) $(LIBS)"
-@(upr)mmtstcase : xemit_mm $(INCAdir)/atlas_type.h xccobj
-	rm -f @(upr)mm.c
-	./xemit_mm -p @(upr) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b $(beta) -a $(alpha) -Z 1 \
-        -C $(cleanup) -pfA $(pfA) > @(upr)mm.c
-	@(MCC) -DATL_BETA=$(beta) @(MMFLAGS) -c @(upr)mm.c
-	$(MAKE) mmtstcase0 $(casarg) mmobjs=@(upr)mm.o
+   @undef typ
    @undef upr
-   @undef MCC
-   @undef MMFLAGS
 @endwhile
-BuildCobjs : $(pre)BuildCobjs
 
 cwrk3=0
 @multidef typ DCPLX SCPLX
@@ -3140,33 +2964,9 @@ cwrk3=0
    @undef upr
    @undef typ
 @endwhile
-cmmucase : xemit_mm $(SYSdir)/time.o $(INCAdir)/atlas_type.h \
-           $(INCAdir)/atlas_$(pre)sysinfo.h auxlib xccobj
-	rm -f $(pre)fc.o 
-	$(MAKE) $(pre)BuildCobjs pre=$(pre) mb=$(mb) nb=$(nb) kb=$(kb) \
-                lda=$(lda) ldb=$(ldb) ldc=$(ldc) $(casarg)
-	$(KC) $(KCFLAGS) -D$(pre)REAL -DtranA$(ta) -DtranB$(tb) \
-              -DMULADD=$(muladd) -DLAT=$(lat) -D$(loopO) \
-              -DMB=$(M) -DNB=$(N) -DKB=$(K) \
-              -DMB0=$(mb) -DNB0=$(nb) -DKB0=$(kb) \
-              -DKU=$(ku) -DNU=$(nu) -DMU=$(mu) \
-              -DLDA=$(lda) -DLDB=$(ldb) -DLDC=$(ldc) \
-              -DcsA=$(csA) -DcsB=$(csB) -DcsC=$(csC) \
-              -DALPHA=$(alpha) -DBETA=$(beta) $(moves) \
-              -DPREFA=$(pfA) -DCLEANUP=$(cleanup) \
-              -o $(pre)fc.o -c $(mySRCdir)/fc.c
-	$(CLINKER) $(CLINKFLAGS) -o x$(pre)fc $(pre)fc.o $(pre)mm_b0.o \
-                   $(pre)mm_b1.o $(pre)mm_bX.o $(SYSdir)/time.o \
-                   $(ATLASlib) $(LIBS)
-	$(ATLRUN) $(MMTdir) x$(pre)fc $(casnam)
 
-ummcaseN: xccobj
-	$(MAKE) mmucaseN $(casarg) casnam=res/ignore
-ummcase: xccobj
-	$(MAKE) mmucase $(casarg) casnam=res/ignore
-
+@BEGINSKIP
 mmutstcase : $(pre)mmutstcase1
-
 cmmutstcase: auxlib xccobj
 	rm -f $(pre)mm.c
 	$(MAKE) BuildCobjs pre=$(pre) mb=$(mb) nb=$(nb) kb=$(kb) \
@@ -3176,40 +2976,6 @@ cmmutstcase: auxlib xccobj
 	$(MAKE) mmtstcase0 $(casarg) csC=2 \
                 mmobjs="$(pre)mm_b0.o $(pre)mm_b1.o $(pre)mm_bX.o" \
                 mmlib="$(ATLASlib) $(LIBS)"
-
-#
-# This target allows the code generator to fake being a user-contributed kernel
-# by packing all BETA cases in one file
-#
-mmgencase : xemit_mm xccobj
-	rm -f $(pre)gmm.c
-	echo "#ifdef BETA0" >> $(pre)gmm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b 0 -a $(alpha) -Z 0 \
-        -C $(cleanup) -pfA $(pfA) >> $(pre)gmm.c
-	echo "#elif defined(BETAX)" >> $(pre)gmm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b 8 -a $(alpha) -Z 0 \
-        -C $(cleanup) -pfA $(pfA) >> $(pre)gmm.c
-	echo "#else" >> $(pre)gmm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b 1 -a $(alpha) -Z 0 \
-        -C $(cleanup) -pfA $(pfA) >> $(pre)gmm.c
-	echo "#endif" >> $(pre)gmm.c
-mmcase : xemit_mm xccobj
-	rm -f $(pre)mm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b $(beta) -a $(alpha) -Z 1 \
-        -C $(cleanup) -pfA $(pfA) > $(pre)mm.c
-	$(MAKE) $(pre)mmcase0 $(casarg) casnam=$(casnam)
 
 mmtstcase : $(pre)mmtstcase
 
@@ -3229,18 +2995,6 @@ mmtstcase0: $(SYSdir)/time.o $(INCAdir)/atlas_type.h auxlib xccobj
                    $(mmlib)
 	$(ATLRUN) $(MMTdir) x$(pre)mmtst
 
-NCemit : xemit_mm
-	rm -f $(mmnam)
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -b $(beta) -a $(alpha) -Z 0 -C $(cleanup) \
-                    > $(mmnam)
-NCready :  xemit_mm $(INCAdir)/atlas_type.h
-@skip	rm -f ATL_$(pre)NCmm[T,N][T,N]_a[1,X]_b[0,1,X].c \
-@skip              ATL_$(pre)NCCUmm[T,N][T,N].c ATL_$(pre)NCCUmm[T,N][T,N]_K.c
-	rm -f atlas_$(pre)NCmm.h
-	./xemit_mm -p $(pre) -N $(nb) -R -2 > atlas_$(pre)NCmm.h
 @whiledef ta T N
    @whiledef tb T N
       @multidef bnam bX b1 b0
@@ -3270,6 +3024,7 @@ NCready :  xemit_mm $(INCAdir)/atlas_type.h
 @skip                   -a 1 12 -b 1 12 > ATL_$(pre)NCCUmm@(ta)@(tb).c
    @endwhile
 @endwhile
+@ENDSKIP
 
 $(BINdir)/xccobj :
 	cd $(BINdir) ; $(MAKE) xccobj
@@ -3282,9 +3037,9 @@ auxlib :
 	touch auxlib
 force_build :
 
+@beginskip
 install :
 	$(MAKE) $(pre)install
-@beginskip
 dNCinstall :
 	$(MAKE) NCinstall pre=d
 sNCinstall :
@@ -3297,10 +3052,6 @@ NCinstall:
 	mv -f ATL_$(pre)NCmm[T,N][T,N]_a[1,X]_b[0,1,X].c \
               ATL_$(pre)NCCUmm[T,N][T,N].c ATL_$(pre)NCCUmm[T,N][T,N]_K.c \
               $(GMMdir)/.
-@endskip
-
-GetSysSum.o : $(mySRCdir)/GetSysSum.c
-	$(KC) -c $(KCFLAGS) $(mySRCdir)/GetSysSum.c
 
 emit_vKB.o : $(mySRCdir)/emit_vKB.c $(INCSdir)/atlas_vnbcase.h
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/emit_vKB.c
@@ -3317,9 +3068,12 @@ emit_cmm.o : $(mySRCdir)/emit_cmm.c
 emit_fmm.o : $(mySRCdir)/emit_fmm.c
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/emit_fmm.c
 
-
 hcsearch.o : $(L3INCdep) $(mySRCdir)/hcsearch.c
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/hcsearch.c
+@endskip
+
+GetSysSum.o : $(mySRCdir)/GetSysSum.c
+	$(KC) -c $(KCFLAGS) $(mySRCdir)/GetSysSum.c
 
 gemmtst.o : $(mySRCdir)/gemmtst.c $(INCSdir)/atlas_misc.h \
             $(INCSdir)/atlas_lvl3.h $(INCSdir)/atlas_tst.h $(INCSdir)/cblas.h

@@ -35696,29 +35696,18 @@ double GetKmmMflop
    szB = ATL_getszB(kb, nb, ku, nu, vlen);
    szC = ATL_getszC(mb, nb, mu, nu, vlen);
 /*
- * Compute number of sets using actual sizes
- */
-   if (FLSIZE && !NOMOVE)
-   {
-      size_t szb;
-      setsz = getSetSz(movA, movB, movC, szA, szB, szC, NULL);
-      nsets = (ATL_DivBySize(FLSIZE)+setsz-1) / setsz;
-   }
-   else
-      movA = movB = movC = nsets = 0;
-/*
- * Now, round up sizes so that alignment works when we make them contiguous
- */
-   tsz = ATL_DivBySize(ATL_Cachelen);
-   szA = ((szA+tsz-1)/tsz)*tsz;
-   szB = ((szB+tsz-1)/tsz)*tsz;
-   szC = ((szC+tsz-1)/tsz)*tsz;
-/*
- * Now compute the setsz & extra using actual increments
+ * Compute the setsz & extra 
+ * setsz: size of moving mats, extra: size of stationary mats
  */
    setsz = getSetSz(movA, movB, movC, szA, szB, szC, &extra);
+   if (!NOMOVE && FLSIZE)
+      nsets = (ATL_DivBySize(FLSIZE)+setsz-1) / setsz;
+   else
+      movA = movB = movC = nsets = 0;
    extra += (mu+mu)*nu;
-   tsz = nsets*setsz+extra;
+   tsz = ATL_Cachelen << 1;
+   tsz = ATL_DivBySize(tsz);
+   tsz += nsets*setsz+extra;
    vp = malloc(ATL_Cachelen + ATL_MulBySize(tsz));
    assert(vp);
    sp = ATL_AlignPtr(vp);
@@ -35726,25 +35715,29 @@ double GetKmmMflop
    if (movA)
    {
       A = sp;
-      sp += szA * nsets;
       incA = szA SHIFT;
+      sp += incA * nsets;
+      sp = ATL_AlignPtr(sp);
    }
    else
    {
       A = ep;
-      ep += szA;
+      ep += szA SHIFT;
+      ep = ATL_AlignPtr(ep);
       incA = 0;
    }
    if (movB)
    {
       B = sp;
-      sp += szB * nsets;
       incB = szB SHIFT;
+      sp += incB * nsets;
+      sp = ATL_AlignPtr(sp);
    }
    else
    {
       B = ep;
-      ep += szB;
+      ep += szB SHIFT;
+      ep = ATL_AlignPtr(ep);
       incB = 0;
    }
    if (movC)
@@ -35757,8 +35750,9 @@ double GetKmmMflop
       C = ep;
       incC = 0;
    }
+   sp = ATL_AlignPtr(vp);
    for (i=0; i < tsz; i++) 
-      A[i] = dumb_prand(&seed);
+      sp[i] = dumb_prand(&seed);
 
    a = A; b = B; c = C;
    t0 = ATL_walltime();
@@ -35850,6 +35844,7 @@ double *TimeOnCores(struct kmm_struct *kb)
    p = kb->p;
    kb->iam = 0;
    TimeOnCore(kb);
+   free(kb->pids);
    mflops[0] = kb->mf;
    return(mflops);
 }
@@ -35940,9 +35935,10 @@ void PrintUsage(char *name, int iarg, char *arg)
 
 struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
 {
+   FILE *fp;
    struct kmm_struct *kp;
    double mflops=750.0;
-   int i, j;
+   int i, j, IGMF=0;  /* ignore mflops.frc file? */
    
    *fpout = NULL;
    kp = malloc(sizeof(struct kmm_struct));
@@ -35996,6 +35992,8 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
             kp->mu = j;
          break;
       case 'R':
+         if (args[i][2] == 'f')
+            IGMF=1;
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
          mflops = atof(args[i]);
@@ -36066,6 +36064,23 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
          break;
       default:
          PrintUsage(args[0], i, args[i]);
+      }
+   }
+/*
+ * If there is a tuned <upr>mflops.frc file, use this in preference to the
+ * commandline argument unless the -Rf override flag was used
+ */
+   if (!IGMF)
+   {
+      char fn[16] = {'s', 'm', 'f', 'o', 'p', 's', '.', 'f', 'r', 'c', '\0'};
+      #if defined(DREAL) || defined(DCPLX)
+         fn[0] = 'd';
+      #endif
+      fp = fopen(fn, "r");
+      if (fp)
+      {
+         assert(fscanf(fp, "%le", &mflops) == 1);
+         fclose(fp);
       }
    }
    if (!kp->reps)
