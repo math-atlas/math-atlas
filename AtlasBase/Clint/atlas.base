@@ -35855,18 +35855,24 @@ double *TimeOnCores(struct kmm_struct *kb)
    pthread_t *threads;
    pthread_attr_t *attr;
 @skip   unsigned long long cpuset;
-   cpu_set_t cpuset;
+   cpu_set_t *cpuset;
    double *mflops;
    int i, p;
    unsigned char *chkin;
 
    p = kb->p;
+/*
+ * On PowerPC Linux, pthread_attr_setaffinity_np sometimes attempts to 
+ * realloc the cpuset variable, so it must be malloced not taken from
+ * the stack.  This is crazy behaviour, but it is what happens.
+ */
+   cpuset = malloc(sizeof(cpu_set_t));
    kp = malloc(sizeof(struct kmm_struct)*p);
    threads = malloc(sizeof(pthread_t)*p);
    attr = malloc(sizeof(pthread_attr_t)*p);
    mflops = malloc(sizeof(double)*p);
    chkin = malloc(sizeof(char)*p);
-   assert(kp && threads && attr && mflops && chkin);
+   assert(cpuset && kp && threads && attr && mflops && chkin);
    for (i=0; i < p; i++)   /* init chkin to 0 before starting any threads */
       chkin[i] = 0;        /* when all entries non-zero, all thrds started */
    for (i=0; i < p; i++)
@@ -35874,13 +35880,9 @@ double *TimeOnCores(struct kmm_struct *kb)
       memcpy(kp+i, kb, sizeof(struct kmm_struct));
       kp[i].chkin = (volatile char*)chkin;
       kp[i].iam = i;
-@beginskip
-      cpuset = (((long long)1)<<(kp->pids[i]));
-      pthread_attr_setaffinity_np(attr+i, sizeof(cpuset), &cpuset);
-@endskip
-      CPU_ZERO(&cpuset);
-      CPU_SET(kp->pids[i], &cpuset);
-      assert(!pthread_attr_setaffinity_np(attr+i, sizeof(cpuset), &cpuset));
+      CPU_ZERO(cpuset);
+      CPU_SET(kp->pids[i], cpuset);
+      assert(!pthread_attr_setaffinity_np(attr+i, sizeof(cpuset), cpuset));
       pthread_create(threads+i, attr+i, TimeOnCore, kp+i);
    }
    for (i=0; i < p; i++)
