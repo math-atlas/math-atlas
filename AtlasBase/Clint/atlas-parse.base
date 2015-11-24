@@ -2643,7 +2643,11 @@ static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
    char *name;
 
    if (mp->ID)
+#ifdef ATL_GENERATE  /* generators get real name */
       kb = 0;
+#else  /* tuners get default name */
+      return(DupString("ATL_tmp.c"));
+#endif
    else if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
       kb = mp->kbB;
    else if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
@@ -3380,6 +3384,7 @@ double MMTime2Mflop(char pre, int M, int N, int K, double time)
 /* procedure @(ip) */
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
+#ifdef ATL_GENERATE  /* generating funcs get unique name */
    char *nm="amm";
    if (mp->blask == 1)
       nm = "syrk";
@@ -3390,6 +3395,9 @@ char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
    else if (mp->blask == 3)
       nm = "trmm";
    return(GetMMFilename(pre, nm, mp));
+#else                       /* tuning gets default name that is overwritten */
+   return(DupString("ATL_tmp.c")); /* avoids cluttering dir wt unused files */
+#endif
 }
 
 @iexp ip @(ip) 1 +
@@ -3406,6 +3414,7 @@ char *MMGetGenString
    char *gs, *sp;
    int len;
    int ku=FLAG_IS_SET(mp->flag, MMF_KUISKB) ? mp->kbB : mp->ku;
+   int kb;
 
    len = strlen(frm) + strlen(mp->rout) + 4;
    gs = malloc(len);
@@ -3429,8 +3438,13 @@ char *MMGetGenString
    else
       sp = "amm";
 
-   sprintf(gs, frm, sp, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, ku,
-           FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0:mp->kbB, 
+   if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      kb = 0;
+   else if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      kb = ((mp->kbB+mp->vlen-1)/mp->vlen)*mp->vlen;
+   else
+      kb = mp->kbB;
+   sprintf(gs, frm, sp, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, ku, kb,
            !FLAG_IS_SET(mp->flag, MMF_NOBCAST), mp->pref, mp->pfLS);
    return(gs);
 }
@@ -4539,6 +4553,7 @@ double TimeTSKernel
 /*
  * This file contains helper functions for code generation
  */
+#define ATL_GENERATE 1
 #include "atlas_mmparse.h"
 #include "atlas_mmtesttime.h"
 
