@@ -620,6 +620,7 @@ struct rkinfo
    size_t incBn, incBnS;       /* incB in N loop lrg & small blks */
    ATL_UINT inca, incaS;       /* mb*kb for large & small blks */
    ushort mb, nb, kb;          /* blk fact, always mul of unrolling */
+   ushort KB;                  /* ((kb+ku-1)/vl)*vl if kvec, else kb */
    ushort nmu, nnu;            /* # of unrollings for M/N big blk */
    short idx;                  /* kern array index */
    uchar mu, nu, ku;           /* M/N/K unrollings used by kern */
@@ -15093,7 +15094,10 @@ int Mjoin(PATL,ammm_IP)
       }
       else
    #endif
+      if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
          amm = (bK == K) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+      else
+         amm = (K == mminfo.kb) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
 /*
  * Force rank-K code to handle this case if we would have to use K-cleanup
  * code with unknown performance
@@ -15174,7 +15178,10 @@ int Mjoin(PATL,ammm_IP)
       }
       else
    #endif
+      if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
          amm = (bK == K) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+      else
+         amm = (K == mminfo.kb) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
 /*
  * Force rank-K code to handle this case if we would have to use K-cleanup
  * code with unknown performance
@@ -22156,7 +22163,7 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    {
       if (ATL_AMM_KMAJOR(idx))
       {
-         KB0 = (kb0+ku-1)/ku;
+         KB0 = ((kb0+ku-1)/ku)*ku;
          if (KB0 != kb)
          {
             if (ATL_AMM_KRUNTIME(idx))
@@ -22617,6 +22624,7 @@ static INLINE int ATL_ComputeB   /* RETURNS: selected blocking */
    return(nb);
 }
 
+#include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
 void Mjoin(PATL,GetRKInfo)
 (
    rkinfo_t *out,           /* what to use for K-cleanup */
@@ -26380,8 +26388,10 @@ void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
       KUs[i] = mp->ku;
       KUs[i+n] = mp->kbmin;
       KUs[i+n+n] = mp->kbmax;
-      if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      if (FLAG_IS_SET(mp->flag,MMF_KUISKB))
          mp->kbmin = mp->kbmax = mp->ku = mp->kbB;
+      else if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+         mp->kbmin = mp->kbmax = mp->kbB;
    }
    @multidef st KBMAXs KBMINs KUs NUs MUs KBs NBs MBs
    @whiledef iv kbmax  kbmin  ku  nu  mu  kbB nbB mbB
