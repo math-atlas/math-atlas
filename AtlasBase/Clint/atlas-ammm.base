@@ -9994,17 +9994,37 @@ int KernHandlesThisKB(ATL_mmnode_t *mp, int kb)
    int ku;
    if (!mp->ID)  /* genned kernel handles all K (kvec needs padding) */
       return(1);
-   if (mp->kbmax && kb > mp->kbmax) /* genned kerns can adapt */
+   if (mp->kbmax && kb > mp->kbmax)
       return(0);
-   if (kb < mp->kbmin)
-      return(0);
-   ku = mp->ku;
-   if ((kb/ku)*ku != kb)
+/*
+ * KVEC kerns can always handle problems within vlen-1 less than their kb
+ * due to padding in copy routines.
+ */
+   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
    {
-      if (mp->ID)
+      int KB;
+      if (mp->kbmin)
+      {
+         KB = (mp->kbmin / mp->vlen)*mp->vlen;
+         if (KB < mp->kbmin)
+            return(0);
+      }
+      KB = ((kb+mp->vlen-1)/mp->vlen)*mp->vlen;
+      if ((KB/ku)*ku != kb)
          return(0);
-      else if (!FLAG_IS_SET(mp->flag, MMF_KUISKB))
-         return(0);  /* genned codes can adjust fully-unrolled loop */
+   }
+   else
+   {
+      if (kb < mp->kbmin)
+         return(0);
+      ku = mp->ku;
+      if ((kb/ku)*ku != kb)
+      {
+         if (mp->ID)
+            return(0);
+         else if (!FLAG_IS_SET(mp->flag, MMF_KUISKB))
+            return(0);  /* genned codes can adjust fully-unrolled loop */
+      }
    }
    return(1);
 }
@@ -10025,6 +10045,7 @@ ATL_mmnode_t *BestKernForKB(int verb, char pre, ATL_mmnode_t *mmb, int KB)
    {
       const int mu=mp->mu, nu=mp->nu, ku=mp->ku, ID=mp->ID;
       const int mb=((KB+mu-1)/mu)*mu, nb=((KB+nu-1)/nu)*nu;
+      int kb=KB;
       const char *rt=mp->rout;
       double mf;
 
@@ -10040,9 +10061,13 @@ ATL_mmnode_t *BestKernForKB(int verb, char pre, ATL_mmnode_t *mmb, int KB)
          }
          continue;
       }
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+         kb = ((KB+mp->vlen-1)/mp->vlen)*mp->vlen;
       if (!mp->ID && FLAG_IS_SET(mp->flag, MMF_KUISKB))
       {
-         mp->kbmax = mp->kbmin = mp->ku = mp->kbB = KB;
+         mp->kbmin = kb-mp->vlen+1;
+         mp->kbmax = mp->ku = kb;
+         mp->kbB = KB;
          if (mp->genstr);
             free(mp->genstr);
          mp->genstr = MMGetGenString(pre, mp);
