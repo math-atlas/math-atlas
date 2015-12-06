@@ -734,6 +734,14 @@ int Mjoin(PATL,ammmNMK)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, 
     const SCALAR,const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,
     TYPE*,ATL_CSZT);
+void Mjoin(PATL,syrk_IP)
+   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
+    const SCALAR, const TYPE*, ATL_CSZT, const SCALAR, TYPE*,ATL_CSZT);
+#ifdef TCPLX
+void Mjoin(PATL,herk_IP)
+   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
+    const TYPE, const TYPE*, ATL_CSZT, const TYPE, TYPE*,ATL_CSZT);
+#endif
 /*
  * Functions for testing Info return flag
  */
@@ -27365,9 +27373,185 @@ int main(int nargs, char **args)
 @ROUT ATL_syrk_IP
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2015 
 #include "atlas_misc.h"
+#include "atlas_level1.h"
+#include "atlas_level2.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+
+static INLINE void ATL_syr1
+(
+   const enum ATLAS_UPLO Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CSZT N,
+#ifdef Conj_
+   const TYPE ralpha,
+#else
+   const SCALAR alpha,
+#endif
+   const TYPE *A,
+   ATL_CSZT lda,
+#ifdef Conj_
+   const TYPE rbeta,
+#else
+   const SCALAR beta,
+#endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+/*
+ * First, see if we can simply call the Level-2 BLAS
+ */
+   #ifdef Conj_
+      TYPE *c=C+1;
+   #endif
+   #ifndef TCPLX
+      if (beta == 1.0)
+      {
+         Mjoin(PATL,syr)(Uplo, N, alpha, A, TA==AtlasNoTrans?1:lda, C, ldc);
+         return;
+      }
+   #endif
+   {
+      size_t k;
+      TYPE *X=(TYPE*)A;
+      void *vp=NULL;
+      #ifdef Conj_
+         const TYPE beta[2] = {rbeta, ATL_rzero};
+      #endif
+/*
+ *    Copy A if it's a row so it is contiguous for all N axpby calls
+ */
+      #ifdef Conj_
+      if (TA == AtlasConjTrans)
+      #else
+      if (TA == AtlasTrans)
+      #endif
+      {
+         vp = malloc(ATL_MulBySize(N)+ATL_Cachelen);
+         ATL_assert(vp);
+         X = ATL_AlignPtr(vp);
+         #ifdef Conj_
+            Mjoin(PATL,copyConj)(N, A, lda, X, 1);
+         #else
+            Mjoin(PATL,copy)(N, A, lda, X, 1);
+         #endif
+      }
+      #ifdef Conj_
+         if (rbeta == 1.0)
+         {
+            Mjoin(PATL,her)(Uplo, N, ralpha, X, 1, C, ldc);
+            if (vp)
+               free(vp);
+            return;
+         }
+      #endif  /* NO syr for complex, so cplx SYR has to use axpy-based code */
+      #ifdef TCPLX
+         if (Uplo == AtlasUpper)
+         {
+            size_t ldc2 = ldc+ldc;
+            #ifndef Conj_
+               const register TYPE ra=(*alpha), ia=alpha[1];
+            #endif
+            for (k=0; k < N; k++, C += ldc2)
+            {
+               size_t k2=k+k;
+               #ifndef Conj_
+                  const register TYPE rx=X[k2], ix=X[k2+1];
+               #endif
+               TYPE scal[2];
+               #ifdef Conj_
+                  scal[0] = ralpha*X[k2];
+                  scal[1] = -ralpha*X[k2+1];
+               #else
+                  scal[0] = ra*rx - ia*ix;
+                  scal[1] = ra*ix + ia*rx;
+               #endif
+               Mjoin(PATL,axpby)(k+1, scal, X, 1, beta, C, 1);
+            }
+         }
+         else   /* Uplo == AtlasLower */
+         {
+            size_t ldcp1 = (ldc+1)SHIFT;
+            #ifndef Conj_
+               const register TYPE ra=(*alpha), ia=alpha[1];
+            #endif
+            for (k=0; k < N; k++, C += ldcp1, X += 2)
+            {
+               #ifndef Conj_
+                  const register TYPE rx=*X, ix=X[1];
+               #endif
+               TYPE scal[2];
+               #ifdef Conj_
+                  scal[0] = ralpha* *X;
+                  scal[1] = ralpha * (-X[1]);
+               #else
+                  scal[0] = ra*rx - ia*ix;
+                  scal[1] = ra*ix + ia*rx;
+               #endif
+               Mjoin(PATL,axpby)(N-k, scal, X, 1, beta, C, 1);
+            }
+         }
+      #else  /* real with beta != 1.0 */
+         if (Uplo == AtlasUpper)
+         {
+            for (k=0; k < N; k++, C += ldc)
+               Mjoin(PATL,axpby)(k+1, X[k]*alpha,  X, 1, beta, C, 1);
+         }
+         else   /* Uplo == AtlasLower */
+         {
+            for (k=0; k < N; k++, C += (ldc+1), X++)
+               Mjoin(PATL,axpby)(N-k, (*X)*alpha,  X, 1, beta, C, 1);
+         }
+      #endif
+      if (vp)
+         free(vp);
+      @beginskip
+         {
+            size_t n=N;
+            TYPE zero[2] = {ATL_rzero, ATL_rzero;
+            else
+               vp = NULL;
+            if (Uplo == Upper)
+            {
+               if (SCALAR_IS_ONE(alpha))
+               {
+                  for (k=0; k < N; k++, B += incB, C += ldc2)
+                     Mjoin(PATL,axpby)(M, X+k+k,  X, 1, beta, C, 1);
+               }
+               else if (SCALAR_IS_NONE(alpha))
+               {
+                  for (k=0; k < N; k++, B += incB, C += ldc2)
+                  {
+                     const TYPE scal[2] = {-X[k+k], -X[k+k+1]};
+                     Mjoin(PATL,axpby)(M, scal,  X, 1, beta, C, 1);
+                  }
+               }
+               else  /* alpha should be multiplied */
+               {
+                  const register TYPE ralp=*alpha, ialp=alpha[1];
+                  for (k=0; k < N; k++, B += incB, C += ldc2)
+                  {
+                     TYPE scal[2];
+                     const register TYPE rx=X[k+k], ix=X[k+k+1];
+                     scal[0] = rx*ralp - ix*ialp;
+                     scal[1] = rx*ialp + ix*ralp;
+                     Mjoin(PATL,axpby)(M, scal,  X, 1, beta, C, 1);
+                  }
+               }
+            }
+            else  /* Uplo == Lower */
+            {
+            }
+         }
+         @endskip
+   }
+   #ifdef Conj_  /* must zero complex part of diagonal for HERK! */
+      Mjoin(PATLU,zero)(N, c, (ldc+1)SHIFT);
+   #endif
+}
+
 #ifdef Conj_
 void Mjoin(PATL,herk_IP)
 #else
@@ -27421,7 +27605,78 @@ void Mjoin(PATL,syrk_IP)
    size_t szA, szC, szE, incAk, nkb, k;
    ATL_CUINT nnu = (N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
    ATL_UINT kb, kb0, KB0;
-
+/*
+ * Handle degenerate cases
+ */
+   if (!N)                            /* no output! */
+      return;
+   if (SCALAR_IS_ZERO(alpha) || !K)  /* really scale of C */
+   {
+      if (SCALAR_IS_ONE(beta))       /* no-op */
+         return;
+      if (SCALAR_IS_ZERO(beta))      /* explicit zero */
+      {
+         if (Uplo == AtlasLower)
+            Mjoin(PATL,trsetL)(N, N, beta, beta, C, ldc);
+         else
+            Mjoin(PATL,trsetU)(N, N, beta, beta, C, ldc);
+         return;
+      }
+      Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+      #ifdef Conj_  /* must zero complex part of diagonal for HERK! */
+         Mjoin(PATLU,zero)(N, C+1, (ldc+1)SHIFT);
+      #endif
+      return;
+   }
+   if (K == 1)  /* Level-2/1 BLAS */
+   {
+      #ifdef Conj_
+         ATL_syr1(Uplo, TA, N, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         ATL_syr1(Uplo, TA, N, alpha, A, lda, beta, C, ldc);
+      #endif
+      return;
+   }
+   if (N == 1)  /* dot product */
+   {
+      const size_t incA = (TA==AtlasNoTrans) ? lda : 1;
+      #ifdef TCPLX
+         TYPE dot[2];
+         #ifdef Conj_
+            Mjoin(PATL,dotc_sub)(K, A, incA, A, incA, dot);
+            *dot   *= ralpha;
+            if (rbeta != ATL_rzero)
+               *dot   += rbeta * *C;
+            *C = *dot;
+            C[1] = ATL_rzero;
+         #else
+            const register TYPE ra=(*alpha), ia=alpha[1];
+            register TYPE rd, id, rr;
+            Mjoin(PATL,dotu_sub)(K, A, incA, A, incA, dot);
+            rr = rd = dot[0];
+            id = dot[1];
+            rd = rr*ra - id*ia;
+            id = rr*ia + id*ra;
+            if (!SCALAR_IS_ZERO(beta))
+            {
+               const register TYPE rb=(*beta), ib=beta[1];
+               const register TYPE rc=(*C), ic=C[1];
+               rd += rb*rc - ib*ic;
+               id += rb*ic + ib*rc;
+            }
+            C[0] = rd;
+            C[1] = id;
+         #endif
+      #else
+         TYPE dot;
+         dot = Mjoin(PATL,dot)(K, A, incA, A, incA);
+         dot *= alpha;
+         if (beta != ATL_rzero)
+            dot += beta * *C;
+         *C = dot;
+      #endif
+      return;
+   }
    kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    ATL_assert(kb);
    szC = ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
