@@ -2368,7 +2368,8 @@ ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c : $(basf) force_build
                 -def beta "${beta}" rout=ATL_ccmat2ablk \
                 -o ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c
 @endwhile
-@whiledef rt blk2C C2blk
+@multidef rt2 blk2C C2blk syblk2C
+@whiledef rt  blk2C C2blk syblk2C
 genall_@(rt): $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
 	- rm -f ATL_tmp.c $(rt)
 	touch $(rt)
@@ -2377,19 +2378,29 @@ genall_@(rt): $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
       @multidef ia 1 -1 2
       @whiledef al 1 N1 X
 	echo "#if defined(BETA@(be)) && defined(ALPHA@(al))" >> $(rt)
-	make gen_@(rt) rt=ATL_tmp.c pre=$(pre) vl=$(vl) mu=$(mu) nu=$(nu) \
-             cpvlen=$(cpvlen) beta=@(ib) alpha=@(ia)
+	make gen_@(rt2) rt=ATL_tmp.c pre=$(pre) vlen=$(vlen) mu=$(mu) \
+             nu=$(nu) cpvlen=$(cpvlen) beta=@(ib) alpha=@(ia)
 	cat ATL_tmp.c >> $(rt)
 	echo "#endif" >> $(rt)
          @undef ia
       @endwhile
       @undef ib
    @endwhile
+   @undef rt2
 	- rm -f ATL_tmp.c
+@endwhile
+@whiledef rt blk2C C2blk
 gen_@(rt) : $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
 	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o $(rt) pre=$(pre) vec=NA \
                 rout=@(rt) -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
                 -def cpvl $(cpvlen) -def beta $(beta) -def alpha $(alpha)
+@endwhile
+@whiledef rt blk2C C2blk
+gen_sy@(rt) : $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
+	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o $(rt) pre=$(pre) vec=NA \
+                rout=@(rt) -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+                -def cpvl $(cpvlen) -def beta $(beta) -def alpha $(alpha) \
+                -def TRI 1
 @endwhile
 @define pr @@
 @whiledef pr c
@@ -2622,6 +2633,10 @@ res/@(pre)nreg : xgmmsearch @(pre)mflops.frc
 res/@(pre)@(rt) : xammsearch
 	./xammsearch -p @(pre)
 @endwhile
+@whiledef rt gAMSYRK.sum
+res/@(pre)@(rt) : res/@(pre)sqAMMRES.sum xgmmsearch 
+	./xgmmsearch -p @(pre)
+@endwhile
 @whiledef rt gAMMRES.sum gkvAMMUR.sum gmvAMMUR.sum
 res/@(pre)@(rt) : xgmmsearch
 	./xgmmsearch -p @(pre)
@@ -2662,7 +2677,7 @@ res/@(pre)@(rt) : xgmmsearch
    xammgen
 @skip   xemit_amm
    @whiledef pp
-      @whiledef rt geAMMRES sqAMMRES rkAMMRES geAMMKCLEAN sqAMMKCLEAN
+      @whiledef rt geAMMRES sqAMMRES rkAMMRES geAMMKCLEAN sqAMMKCLEAN gAMSYRK
          res/@(pp)@(rt).sum
       @endwhile
    @endwhile
@@ -7663,6 +7678,8 @@ clean : dclean sclean cclean zclean
    ATL_@(pre)ammm.o ATL_@(pre)ammm_1b.o
    ATL_@(pre)ammm_rk2.o ATL_@(pre)aliased_rkK.o ATL_@(pre)ammm_rkK.o
    ATL_@(pre)ammm_IP.o ATL_@(pre)ammm_tN.o
+   ATL_@(pre)syrk_IP.o
+   @ptyp z c `ATL_@(pre)herk_IP.o`
    @ptyp d s `ATL_@(pre)rk4n4.o`
    @skip ATL_@(pre)ammmNMK.o ATL_@(pre)ammmMNK.o
    @skip ptyp d s `ATL_@(pre)ammmREC.o ATL_@(pre)ammmNKM.o`
@@ -7677,13 +7694,20 @@ clean : dclean sclean cclean zclean
 	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(@(pre)obj)
 	$(RANLIB) $(ATLASlib)
 	touch @(pre)lib.grd
-@multidef rt iploops ammm_tN
+@multidef rt iploops ammm_tN syrk_IP
 @whiledef rt ammm ammm_IP ammmKNMK ammmKMNK ammm_syrk ammm_rkK aliased_rkK
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt).c \
                     $(INCAdir)/atlas_@(pre)amm_sum.h
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt).c
 @endwhile
 @ptyp z c
+   @multidef rt2 syrk_IP
+   @whiledef rt herk_IP
+ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt2).c \
+                    $(INCAdir)/atlas_@(pre)amm_sum.h
+	$(@(UPR)KC) -D@(typ)=1 -DConj_=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt2).c
+      @undef rt2
+   @endwhile
    @whiledef rt ammmN ammmM ammmK ammm_1b ammm_rk2
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_c@(rt).c \
                     $(INCAdir)/atlas_@(pre)amm_sum.h

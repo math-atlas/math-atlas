@@ -2549,9 +2549,14 @@ int MMNamelen(char pre, char *nm, ATL_mmnode_t *mp, int kb)
 {
    int len=5;                         /* ATL_<pre> */
 
-@skip   if (mp->ID && kb < 0)  /* user filename length)
-@skip      return(strlen(mp->rout);
-   len += strlen(nm);                 /* ATL_<pre><nm> */
+   len = strlen(nm);
+   if (len == 4)  /* may be non-gemm kernel (eg., syrk, trmm) */
+   {              /* only one of these, so it gets fixed name */
+      if (nm[0] == 's' && nm[1] == 'y' && nm[2] == 'r' && nm[3] == 'k')
+         return(12); /* ATL_<pre>amsyrkK */
+   }
+   len += 5;  /* ATL_<pre> */
+
    len += NumDecDigits(mp->ID);       /* ATL_<pre><nm><ID> */
    len += 1 + NumDecDigits(kb);       /* ATL_<pre><nm><ID>_<kb> */
    len += 1 + NumDecDigits(mp->vlen); /* +[m,k]<vlen>, V=[m,k]*/
@@ -2590,6 +2595,12 @@ int SprintMMName(char *name, char pre, char *nm, ATL_mmnode_t *mp, int kb)
 {
    int i, ku=mp->ku;
 
+   if (nm[0] == 's' && nm[1] == 'y' && nm[2] == 'r' && nm[3] == 'k')
+   {
+      strcpy(name, "ATL_XamsyrkK");
+      name[4] = pre;
+      return(12);
+   }
    if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
       ku = mp->kbB;
    /* ATL_<pre><nm><ID>_kb[m,n]<vlen>p<pf>x<LS>_<flg>_MUxNUxKU */
@@ -2619,15 +2630,6 @@ static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp)
    assert(name);
    h = SprintMMName(name, pre, nm, mp, kb);
    assert(h <= i);
-@beginskip
-   name[h] = '_';
-   name[h+1] = 'b';
-   if (beta == 0)
-      name[h+2] = '0';
-   else
-      name[h+2] = (beta < 0) ? 'n' : '1';
-   name[h+3] = '\0';
-@endskip
    return(name);
 }
 
@@ -4579,6 +4581,9 @@ double TimeTSKernel
 #define MMCP_CONJ     4
 #define MMCP_SINGLE   5
 #define MMCP_REAL     6
+#define MMCP_SYRK     7
+#define MMCP_SYMM     8
+#define MMCP_TRMM     9
 /*
  * C copy routines choose: direction, a[1,n,X], b[0,1,n,X]
  * AB copy routines choose: direction, TA=[N,T,C,H], a[1,n,X]
@@ -4739,6 +4744,14 @@ static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
          len += 17 - 2*2;
          i = sprintf(sp, "ATL_%c%dcp%sBlkC", pre, ID, dir);
       }
+      else if (p->flag & (1<<MMCP_SYRK)) /* ATL_<pre>syblk2cmat */
+      {
+         i = len = 15;          /* 16:ATL_Xsyblk2cmat */
+         sp = malloc(len+1);
+         assert(sp);
+         strcpy(sp, "ATL_Xsyblk2cmat");
+         sp[4] = pre;
+      }
       else /* ATL_<pre>cpy[To,From]C_<mu>x<nu>_<kvec> */
       {
          len += 24 - 4*2;
@@ -4773,7 +4786,7 @@ static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
          i=sprintf(sp, "ATL_%ccp%sBlkA_%d_%d", pre, dir, p->nu, p->kvec);
       }
    }
-   assert(i < len);
+   assert(i <= len);
    if (LEN)
       *LEN = i;
    return(sp);
@@ -5065,6 +5078,75 @@ void GetMMAllUniqueCopyFromMMNodes
    *CB = cb;
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmcp_t *AddMMCKernCopyFromMMNodes
+(
+   char pre,  /* '[s,d,c,z]' */
+   char dir,  /* '[T,F]' */
+   int KERN,          /* one of MMCP_[SYRK,SYMM,TRMM], or 0 (GEMM) */
+   ATL_mmnode_t *mb,  /* list of amm kerns */
+   ATL_mmcp_t *ab     /* cpy func where A & B can use same routine */
+)
+{
+   int flag = KERN ? (1<<KERN) : 0;
+   ATL_mmnode_t *mp;
+   if (!mb)
+      return(ab);
+   assert(KERN == MMCP_SYRK);        /* true for now */
+   flag |= MMCopyEncode(pre, dir, 'C', 'N');
+   for (mp=mb; mp; mp = mp->next)
+   {
+      ATL_mmcp_t *np;
+      np = GetMMCopyNode(0, mp->mu, mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC) ? 
+                         mp->vlen : 0, flag);
+      np->rout = GetMMCopyName(np, &np->rtlen);
+      np->next = ab;
+      ab = np;
+   }
+   return(ab);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmcp_t *AddMMUniqueACopyFromMMNodes
+(
+   char pre,  /* '[s,d,c,z]' */
+   char dirA,  /* '[T,F]' */
+   ATL_mmnode_t *mb,  /* list of amm kerns */
+   ATL_mmcp_t *ab     /* cpy func where A & B can use same routine */
+)
+{
+   ATL_mmcp_t *np;
+   ATL_mmnode_t *mp;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      np = GetMMCopyNode(0, 0, mp->mu, 
+                         FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
+                         MMCopyEncode(pre, dirA, 'A', 'N'));
+      if (!FindCopy(ab, np))
+      {
+         np->rout = GetMMCopyName(np, &np->rtlen);
+         np->next = ab;
+         ab = np;
+      }
+      else
+         KillCopyNode(np);
+      if (mp->mu != mp->nu)
+      {
+         np = GetMMCopyNode(0, 0, mp->nu, 
+                            FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
+                            MMCopyEncode(pre, dirA, 'A', 'N'));
+         if (!FindCopy(ab, np))
+         {
+            np->rout = GetMMCopyName(np, &np->rtlen);
+            np->next = ab;
+            ab = np;
+         }
+      }
+   }
+   return(ab);
+}
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static void PrepMMForGen(char pre, char *outd, char *nm, ATL_mmnode_t *mb)
