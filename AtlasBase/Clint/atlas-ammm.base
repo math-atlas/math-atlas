@@ -27603,7 +27603,7 @@ void Mjoin(PATL,syrk_IP)
       #define one ATL_rone
    #endif
    size_t szA, szC, szE, incAk, nkb, k;
-   ATL_CUINT nnu = (N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
+   ATL_CUINT nnu = (N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU, NN=nnu*ATL_SYRKK_NU;
    ATL_UINT kb, kb0, KB0;
 /*
  * Handle degenerate cases
@@ -27677,11 +27677,34 @@ void Mjoin(PATL,syrk_IP)
       #endif
       return;
    }
-   kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
-   ATL_assert(kb);
+/*
+ * Choose a KB that is a multiple of KU.  Usually, we like near-square sizes,
+ * but for small problems, you want to expand KB to avoid having vector
+ * reduction (KVEC) and C store dominate cost.  There's some advantage to
+ * containing one or more operands in the L1: on some systems, this results
+ * in better max perf, but on all systems it helps to reduce bandwidth demands
+ * for parallel operations.  So, don't expand kb beyond L1 if a square problem
+ * could fit (since longer than NB KB has only marginal benefit, that might
+ * prevent a more substantial in-L1 benefit).  If problem is really tiny,
+ * may make sense to contain both C & A in the cache.  We ignore the case
+ * where, C/A and the col-major A all fit, as that is super-tiny 
+ */
    szC = ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
          * ATL_SYRKK_VLEN;
    szC *= ((nnu+1)*nnu)>>1;  /* only need lower tri blks, not full nnu*nnu */
+   if (szC < ATL_L1elts)  /* If we can't fit C in L1, no square block can */
+   {
+      szE = ATL_L1elts - szC;  /* szE = elts in L1 after C stored there */
+      kb = (szE>>1) / NN;      /* fit A, Ac & C all in L1 */
+      if (kb < N)
+         kb = ATL_L1elts / N;  /* fill L1 with just A */
+      kb = (kb/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+      if (kb < N)              /* if we can't make at least square */
+         kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   }
+   else  /* just use kb that worked for out-of-L1 best GEMM case */
+      kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   ATL_assert(kb);
 /*
  * Our SYRK C copy is always to Lower, so if output is Upper, will need
  * workspace to put the Lower part, before reflecting it to Upper.
