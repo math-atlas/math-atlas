@@ -565,8 +565,8 @@ struct amminfo
    ablk2cmat_t Cblk2cm, Cblk2cm_b1;
    cmat2ablk_t cm2Cblk;
    ammkern_t amm_b0, amm_b1, amm_bn, amm_k1_b0, amm_k1_b1, amm_k1_bn;
-   ushort IDX, mb, nb, kb, kbmin;
-   uchar flag, mu, nu, ku;
+   ushort IDX, mb, nb, kb, kbmin, kbmax;
+   uchar flag, mu, nu, ku, vlen;
 };
 
 typedef struct ipinfo ipinfo_t;  /* struct for inner-product based gemm */
@@ -603,6 +603,7 @@ struct ipinfo
    uchar nmu, nnu;          /* # of unrollings along each dim */
    uchar pnmu, pnnu;        /* # of unrollings in partial blocks */
    uchar mu, nu, ku;        /* unrolling for each dim used by amm */
+   uchar vlen;              /* vector length (needed for KVEC kerns) */
 };
 typedef struct rkinfo rkinfo_t;
 struct rkinfo
@@ -619,26 +620,13 @@ struct rkinfo
    size_t incAm, incAmS;       /* incA in M loop lrg & small blks */
    size_t incBn, incBnS;       /* incB in N loop lrg & small blks */
    ATL_UINT inca, incaS;       /* mb*kb for large & small blks */
+   ATL_UINT szC;               /* size of real C blk in workspace */
    ushort mb, nb, kb;          /* blk fact, always mul of unrolling */
    ushort KB;                  /* ((kb+ku-1)/vl)*vl if kvec, else kb */
    ushort nmu, nnu;            /* # of unrollings for M/N big blk */
    short idx;                  /* kern array index */
    uchar mu, nu, ku;           /* M/N/K unrollings used by kern */
-@beginskip
-   size_t incAm, incAk;
-   size_t incBn, incBk;
-   size_t lda, ldb, ldc;
-   ammkern_t amm_b0, amm_b1;      /* beta=0 ammm kern */
-   cm2am_t a2blk, b2blk;          /* full-KB A/B copy routs */
-   ablk2cmat_t blk2c;
-   ATL_INT nfmb, nfnb, nfkb;      /* FLOOR(D/db) */
-   short idx;
-   ushort mbL, nbL, kbL;  /* D-nfdb*db */
-   ushort MBL, NBL, KBL;  /* nmu*mu, nnu*nu, nku*ku */
-   ushort mb, nb, kb;     /* blk fact, always mul of unrolling */
-   ushort nmu, nnu, nmuL, nnuL; /* # U for normal & last blks */
-   uchar flag, mu, nu, ku;
-@endskip
+   uchar vlen;                 /* vector length (needed for KVEC kerns) */
 };
 #undef ushort
 #undef uchar
@@ -11209,10 +11197,11 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    {
       for (j=1; j <= nreg; j++)
       {
-         int ONETIME=0;
+@skip         int ONETIME=0;
          int mbu, nbu, mu, nu;
          if (i*j+Mmin(i,j)+1 > nreg)
             continue;
+@beginskip
          if (KVEC)  /* vec on K needs mu*nu mult of VLEN */
          {
             if (VL >= nreg)
@@ -11226,7 +11215,8 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
             mu = i;
          }
          else /* vect on M dim need mu multiple of VLEN */
-            mu = i*VL;
+@endskip
+         mu = (KVEC) ? i : i*VL;
          nu = j;
          mmp->mu = mu;
          mmp->nu = nu;
@@ -11252,8 +11242,8 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
             nuB = nu;
             mfB = mf;
          }
-         if (ONETIME)
-            goto DONE;
+@skip         if (ONETIME)
+@skip            goto DONE;
       }
    }
 DONE:
@@ -11391,18 +11381,21 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
  */
    printf("Searching PWR-2 MUxNU cases for nb=%d, NREG=%d, VLEN=%d, KVEC=%d\n",
           nb, nreg, VL, KVEC);
+@beginskip
 /*
  * Long VLEN with small NREG can be impossible to do with mu*nu%VLEN==0,
  * so force at least one case even if it overruns registers
  */
+@endskip
    for (i=1; i <= nreg; i += i)
    {
       for (j=1; j <= nreg; j += j)
       {
-         int ONETIME=0;
+@skip         int ONETIME=0;
          int mbu, nbu, mu, nu;
          if (i*j+Mmin(i,j)+1 > nreg)
             continue;
+@beginskip
          if (KVEC)  /* vec on K needs mu*nu mult of VLEN */
          {
             if (VL >= nreg)
@@ -11416,7 +11409,8 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
             mu = i;
          }
          else /* vect on M dim need mu multiple of VLEN */
-            mu = i*VL;
+@endskip
+         mu = (KVEC) ? i : i*VL;
          nu = j;
          mmp->mu = mu;
          mmp->nu = nu;
@@ -11442,8 +11436,8 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
             nuB = nu;
             mfB = mf;
          }
-         if (ONETIME)
-            goto DONE;
+@skip         if (ONETIME)
+@skip            goto DONE;
       }
    }
 DONE:
@@ -11510,12 +11504,13 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
           nb, nreg, VL, KVEC);
    for (n=4; n <= nreg; n++)
    {
-      int ONETIME=0;
+@skip      int ONETIME=0;
       int mbu, nbu, mu, nu;
       for (j=1; j*j < n; j++);
       i = n / j;
       if (nb%i || nb%j)
          continue;
+@beginskip
       if (KVEC)
       {
          if (VL >= nreg)
@@ -11526,14 +11521,10 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
          }
          else if ((i*j)%VL)
             continue;
-         mu = i;
-         nu = j;
       }
-      else /* vectorized along M dimension */
-      {
-         mu = i * VL;
-         nu = j;
-      }
+@endskip
+      mu = (KVEC) ? i : i*VL;
+      nu = j;
       mmp->mu = mu;
       mmp->nu = nu;
       if (mmp->genstr)
@@ -11558,8 +11549,8 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
          nuB = nu;
          mfB = mf;
       }
-      if (ONETIME)
-         break;
+@skip      if (ONETIME)
+@skip         break;
    }
 /*
  * For non-AVX x86, try 1-D cases since they are 2-operand assemblies; always
@@ -11576,7 +11567,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
          i = 1; j = n;
          if (nb % n)
             continue;
-         mu = mmp->mu = i*VL;
+         mu = (KVEC) ? i : i*VL;
          nu = mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
@@ -11598,7 +11589,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
             mfB = mf;
          }
          i = n; j = 1;
-         mu = mmp->mu = i * VL;
+         mu = mmp->mu = (KVEC) ? i : i * VL;
          nu = mmp->nu = j;
          mbu = (nb >= mu) ? (nb/mu)*mu : mu;
          nbu = (nb >= nu) ? (nb/nu)*nu : nu;
@@ -15185,6 +15176,8 @@ int Mjoin(PATL,ammm_IP)
    cm2am_t a2blk, b2blk;
    amminfo_t mminfo;
    appAl = Mjoin(PATL,GetAmmmInfo)(&mminfo, TA, TB, M, N, K, alpha, beta);
+   if (K < mminfo.kbmin || (mminfo.kbmax && mminfo.kbmax < K))
+      return(1);
    if (!appAl)
       alpA = alpha;
    else if (appAl == 1)
@@ -20864,6 +20857,8 @@ static INLINE void FillInInfo(amminfo_t *out, int id)
    out->nu = ATL_AMM_NUs[id];
    out->ku = ATL_AMM_KUs[id];
    out->kbmin = ATL_AMM_KBMINs[id];
+   out->kbmax = ATL_AMM_KBMAXs[id];
+   out->vlen = ATL_AMM_VLENs[id];
    out->flag = ATL_AMM_KFLAG[id];
    out->amm_b0 = ATL_AMM_KERN_b0[id];
    out->amm_b1 = ATL_AMM_KERN_b1[id];
@@ -21086,6 +21081,8 @@ int Mjoin(PATL,GetTrsmInfo)
    out->nu = nu = ATL_AMM_NUs[ik];
    out->ku = ku = ATL_AMM_KUs[ik];
    out->kbmin = ATL_AMM_KBMINs[ik];
+   out->kbmax = ATL_AMM_KBMAXs[ik];
+   out->vlen = ATL_AMM_VLENs[ik];
    out->mu = ATL_AMM_MUs[ik];
    out->nu = ATL_AMM_NUs[ik];
    out->ku = ATL_AMM_KUs[ik];
@@ -21322,6 +21319,8 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo)
    out->kb = ATL_AMM_KBs[ik];
 /*   printf("tGetSyAMM, nb=%d, kb=%d, ik=%d\n", nb, out->kb, ik); */
    out->kbmin = ATL_AMM_KBMINs[ik];
+   out->kbmax = ATL_AMM_KBMAXs[ik];
+   out->vlen = ATL_AMM_VLENs[ik];
    out->flag = ATL_AMM_KFLAG[ik];
    out->amm_b0 = ATL_AMM_KERN_b0[ik];
    out->amm_b1 = ATL_AMM_KERN_b1[ik];
@@ -21404,6 +21403,8 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
    out->kb = ATL_AMM_KBs[ik];
 /*  printf("tGetSyAMM_K, mb=%d, nb=%d, kb=%d, ik=%d\n", mb, nb, out->kb, ik); */
    out->kbmin = ATL_AMM_KBMINs[ik];
+   out->kbmax = ATL_AMM_KBMAXs[ik];
+   out->vlen = ATL_AMM_VLENs[ik];
    out->flag = ATL_AMM_KFLAG[ik];
    out->amm_b0 = ATL_AMM_KERN_b0[ik];
    out->amm_b1 = ATL_AMM_KERN_b1[ik];
@@ -21467,6 +21468,8 @@ int Mjoin(PATL,GetAmmmInfo)
    out->nb = ATL_AMM_NBs[ik];
    out->kb = ATL_AMM_KBs[ik];
    out->kbmin = ATL_AMM_KBMINs[ik];
+   out->kbmax = ATL_AMM_KBMAXs[ik];
+   out->vlen = ATL_AMM_VLENs[ik];
    out->mu = ATL_AMM_MUs[ik];
    out->nu = ATL_AMM_NUs[ik];
    out->ku = ATL_AMM_KUs[ik];
@@ -21725,6 +21728,8 @@ int Mjoin(PATL,tGetAmmmInfo)
    out->nb = nb;
    out->kb = ATL_AMM_KBs[ik];
    out->kbmin = ATL_AMM_KBMINs[ik];
+   out->kbmax = ATL_AMM_KBMAXs[ik];
+   out->vlen = ATL_AMM_VLENs[ik];
    out->mu = ATL_AMM_MUs[ik];
    out->nu = ATL_AMM_NUs[ik];
    out->ku = ATL_AMM_KUs[ik];
@@ -22165,14 +22170,14 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    const SCALAR beta 
 )
 {
-   ATL_UINT ku, kb, kb0, KB0, MB, NB, mb, nb, mu, nu;
+   ATL_UINT ku, kb, kb0, KB0, MB, NB, mb, nb, mu, nu, vlen;
    size_t k, nkblks, npmblks, nmblks, npnblks, nnblks;
    #ifdef TCPLX
       static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
    #else 
       #define CONE ATL_rone
    #endif
-   int ic, maxNB=ATL_@(sh)AMM_LASTNB, maxMB=ATL_@(sh)AMM_LASTMB;
+   int szC, maxNB=ATL_@(sh)AMM_LASTNB, maxMB=ATL_@(sh)AMM_LASTMB;
    
 @ROUT ATL_GetAmmmInfoSQ
    ip->kb = mb = nb = kb = ATL_AMM_KBs[idx];
@@ -22184,6 +22189,7 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    ip->mu = mu = ATL_AMM_MUs[idx];
    ip->nu = nu = ATL_AMM_NUs[idx];
    ip->ku = ku = ATL_AMM_KUs[idx];
+   vlen = ip->vlen = ATL_AMM_VLENs[idx];
    ip->lda = lda;
    ip->ldb = ldb;
    ip->ldc = ldc;
@@ -22204,13 +22210,13 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    {
       if (ATL_AMM_KMAJOR(idx))
       {
-         KB0 = ((kb0+ku-1)/ku)*ku;
+         KB0 = ((kb0+vlen-1)/vlen)*vlen;
          if (KB0 != kb)
          {
             if (ATL_AMM_KRUNTIME(idx))
             {
                ATL_CUINT min=ATL_AMM_KBMINs[idx];
-               if (min && KB0 < min)
+               if ((min && KB0 < min) || (KB0/ku)*ku != KB0)
                   ip->ammK1_b0 = ATL_AMM_KERN_K1_b0[idx];
             }
             else
@@ -22220,7 +22226,7 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
       else if (ATL_AMM_KRUNTIME(idx))
       {
          ATL_CUINT min=ATL_AMM_KBMINs[idx];
-         if (min && kb0 < min || (kb/ku)*ku != kb )
+         if ((min && kb0 < min) || (kb0/ku)*ku != kb0 )
             ip->ammK1_b0 = ATL_AMM_KERN_K1_b0[idx];
       }
       else if (kb0 != kb) /* compile-time K only works if kb=kb0 */
@@ -22326,7 +22332,9 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
       b = (npnblks) ? nb : NB;
       ip->nF = N + b - nnblks*NB - npnblks*nb;
    }
-   ip->szC = MB * NB;
+   szC = ((mu*nu+vlen-1)/vlen)*vlen;
+   szC *= ip->nnu * ip->nmu;
+   ip->szC = szC;
 
 
    ip->alpA = ip->alpB = ip->alpC = CONE;
@@ -22492,6 +22500,7 @@ static INLINE void FillInRankKInf
 {
    int kb = ATL_AMM_KBs[idx];
    const int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx], ku=ATL_AMM_KUs[idx];
+   const int vlen=ATL_amm_VLENs[idx];
 
    if (!mb)
       mb = ATL_AMM_MBs[idx];
@@ -22503,6 +22512,7 @@ static INLINE void FillInRankKInf
    out->mu = mu;
    out->nu = nu;
    out->ku = ku;
+   out->vlen = vlen;
    out->lda = lda;
    out->ldb = ldb;
    out->ldc = ldc;
@@ -22686,7 +22696,7 @@ void Mjoin(PATL,GetRKInfo)
    #else
       int kb;
    #endif
-   int idx, mb, nb, MB, NB, NMU, NNU, mu, nu, ku;
+   int idx, mb, nb, MB, NB, NMU, NNU, mu, nu, ku, vlen, szC;
    size_t nsmblks, nmblks, nsnblks, nnblks;
 
    ATL_assert(K <= ATL_rkAMM_LASTKB && K > 2);
@@ -22716,12 +22726,17 @@ void Mjoin(PATL,GetRKInfo)
    NMU = MB / mu;
    NB = ATL_ComputeB(N, nu, NB, &nsnblks, &nnblks);
    NNU = NB / nu;
+   vlen = ATL_AMM_VLENs[idx];
+   szC = ((mu*nu+vlen-1)/vlen)*vlen;
+   szC *= NMU*NNU;
    mb = MB - mu;
    nb = NB - nu;
    out->idx = idx;
    out->amm_b0 = ATL_AMM_KERN_b0[idx];
    out->amm_b1 = ATL_AMM_KERN_b1[idx];
    out->amm_bn = ATL_AMM_KERN_bn[idx];
+   out->vlen = ATL_AMM_VLENs[idx];
+   out->szC = szC;
    out->M = M;
    out->N = N;
    out->K = K;
@@ -23898,7 +23913,7 @@ void Mjoin(PATL,ammmN) /* C <= beta*C + A*B, B/C nb-wide colpan */
  */
    nb = rkinf->nb - nu;
    incC = nb * (ldc+ldc);
-   rC = iC + mb*nb;
+   rC = iC + rkinf->szC;
    nnu = rkinf->nnu - 1;
    incb = rkinf->incaS;
    for (n=rkinf->N, j=0; j < nsnblks; n -= nb, j++)
@@ -23928,7 +23943,7 @@ void Mjoin(PATL,ammmN) /* C <= beta*C + A*B, B/C nb-wide colpan */
    nb += nu;
    incC = nb * (ldc+ldc);
    nnu++;
-   rC = iC + mb*nb;
+@skip   rC = iC + mb*nb;
    incb = rkinf->inca;
    for (; j < nnblks; j++, n -= nb)
    {
@@ -24168,7 +24183,8 @@ int Mjoin(PATL,ammm_rkK)
    else
       szA = (mb*kb)*nsmblks + (MB*kb)*(nmblks-nsmblks);
    szB = NB*kb;
-   szC = MB*NB;
+@skip   szC = MB*NB;
+   szC = rkinf.szC;
    vp = malloc(3*ATL_Cachelen + ATL_MulBySize(szA+szB+szC+2*mu*nu*rkinf.ku));
    ATL_assert(vp);
    if (!vp)
@@ -24379,7 +24395,8 @@ static int ATL_ammm_rkK
       inca = 0;
    }
    szB = NB*kb;
-   szC = MB*NB;
+@skip   szC = MB*NB;
+   szC = krinf->szC;
    vp = malloc(3*ATL_Cachelen + ATL_MulBySize(szA+szB+szC));
    ATL_assert(vp);
    if (!vp)
@@ -24811,6 +24828,87 @@ void Mjoin(PATL,iploopsMK)
       }
    }
 }
+/*
+ * MVS: bit pattern with following meaning by bit position:
+ *   0: set: move A workspace;  unset: A work only mb*nb
+ *   1: set: move B workspace;  unset: B work only kb*nb
+ *   2: set: A wrkspc hold full mat;  unset: A wrkspc holds panel only
+ *      if bit 0 unset, this bit has no affect
+ *   3: set: B wrkspc hold full mat;  unset: B wrkspc holds panel only
+ *      if bit 1 unset, this bit has no affect
+ *
+ * NOTE: we assume global (i,j), but this function assumes any i indexing
+ *       has been rolled into the A/C ptrs.  It does only j indexing for B&C.
+ *       When i|j > 0, we do *NOT* move around in the workspace as we would 
+ *       if we copied them ourselves.  This allows callers that don't need 
+ *       full workspace (eg., triangular loops) to avoid allocating it.
+ */
+void Mjoin(PATL,iploopsNK)
+(
+   ipinfo_t *ip,
+   size_t i,              /* which global row block of C is being computed */
+   size_t j,              /* which glbl colblk to start at (ignore blks <j) */
+   const TYPE *A,         /* if non-NULL, A to cpy, else ignored */
+   const TYPE *B,         /* if non-NULL, Portion B to cpy, else ignored */
+   TYPE *C,               /* original C to write ans to at end of Kloop */
+   const int MVS,         /* 1:move A workspace, 2:move B wrkspc, 3: mv both */
+   TYPE *a,               /* wrkspace for block-copied A */
+   TYPE *b,               /* wrkspace for block-copied B */
+   TYPE *rC,              /* ptr to real portion of C access-major workspace */
+   TYPE *iC,              /* ptr to complex C workspace */
+   const SCALAR beta,     /* scaling factor for C */
+   const ablk2cmat_t blk2c   /* C = alpC*(rC,iC) + beta*C */
+)
+{
+   const size_t nfnblks=ip->nfnblks, nnblks=ip->npnblks+nfnblks;
+   const size_t BB=((MVS&2)&&(MVS&8)) ? (~0):0;
+   const TYPE *pA=A;
+   if (j < nfnblks)
+   {
+      const size_t incBn = (B) ? ip->incBn:0, incCn = ip->ldc*((ip->nb)SHIFT);
+      const size_t pansz = BB & ((ip->nfkblks + 1)*((ip->szB)SHIFT));
+      if (j)
+      {
+         B += j * incBn;
+         C += j * incCn;
+      }
+      for (; j < nfnblks; j++)
+      {
+         Mjoin(PATL,iploopsK)(ip, i, j, pA, B, C, MVS, a, b, 
+                              rC, iC, beta, blk2c);
+         B += incBn;
+         C += incCn;
+         b += pansz;
+         pA = NULL;  /* copy A row-panel only on first iteration */
+      }
+   }
+   else if (j && nfnblks)
+   {
+      if (B)
+         B += nfnblks * ip->incBn;
+      C += nfnblks * ip->ldc * ((ip->mb)SHIFT);
+   }
+   if (j < nnblks)
+   {
+      const size_t incBn = (B) ? ip->pincBn:0, incCn = ip->ldc*((ip->pnb)SHIFT);
+      const size_t pansz = BB & ((ip->nfkblks + 1)*((ip->pszB)SHIFT));
+      if (j > nfnblks)
+      {
+         size_t k = j - nfnblks;
+         B += k * incBn;
+         C += k * incCn;
+      }
+      for (; j < nnblks; j++)
+      {
+         Mjoin(PATL,iploopsK)(ip, i, j, pA, B, C, MVS, a, b,
+                              rC, iC, beta, blk2c);
+         B += incBn;
+         C += incCn;
+         b += pansz;
+         pA = NULL;  /* copy A row-panel only on first iteration */
+      }
+   }
+}
 
 /*
  * A & B ptrs should always be base ptrs to this func.
@@ -24885,6 +24983,82 @@ void Mjoin(PATL,iploopsNMK)
          b += pansz;
          B += incBn;
          C += incCn;
+      }
+   }
+}
+/*
+ * A & B ptrs should always be base ptrs to this func.
+ * MVS: bit pattern with following meaning by bit position:
+ *   0: set: move A workspace;  unset: A work only mb*nb
+ *   1: set: move B workspace;  unset: B work only kb*nb
+ *   2: set: A wrkspc hold full mat;  unset: A wrkspc holds panel only
+ *      if bit 0 unset, this bit has no affect
+ *   3: set: B wrkspc hold full mat;  unset: B wrkspc holds panel only
+ *      if bit 1 unset, this bit has no affect
+ *
+ */
+void Mjoin(PATL,iploopsMNK)
+(
+   ipinfo_t *ip,
+   size_t i,              /* which glbl rowblk to start at (ignore blks <i) */
+   size_t j,              /* which global col block of C is being computed */
+   const TYPE *A,         /* if non-NULL, A to cpy, else ignored */
+   const TYPE *B,         /* if non-NULL, Portion B to cpy, else ignored */
+   TYPE *C,               /* original C to write ans to at end of Kloop */
+   const int MVS,         /* 1:move A workspace, 2:move B wrkspc, 3: mv both */
+   TYPE *a,               /* wrkspace for block-copied A */
+   TYPE *b,               /* wrkspace for block-copied B */
+   TYPE *rC,              /* ptr to real portion of C access-major workspace */
+   TYPE *iC,              /* ptr to complex C workspace */
+   const SCALAR beta,     /* scaling factor for C */
+   const ablk2cmat_t blk2c   /* C = alpC*(rC,iC) + beta*C */
+)
+{
+   const size_t nfmblks=ip->nfmblks, nmblks=ip->npmblks+nfmblks, ldc=ip->ldc;
+   const size_t BMSKA=((MVS&1)&&(MVS&4)) ? (~0):0;
+   const size_t BMSKB=((MVS&2)&&(MVS&8)) ? 0:(~0);
+   if (i < nfmblks)
+   {
+      const size_t pansz = BMSKA & ((ip->nfkblks+1)*((ip->szA)SHIFT));
+      const size_t incAm = ip->incAm, incCm = (ip->mb)SHIFT;
+      if (i)
+      {
+         A += i*incAm;
+         C += i*incCm;
+      }
+      for (; i < nfmblks; i++)
+      {
+         Mjoin(PATL,iploopsNK)(ip, i, j, A, B, C, MVS, a, b,
+                               rC, iC, beta, blk2c);
+         B = (TYPE*)(((size_t)B) & BMSKB);
+         a += pansz;
+         A += incAm;
+         C += incCm;
+      }
+   }
+   else if (i && nfmblks)
+   {
+      A += i * ip->incAm;
+      C += i * ((ip->mb)SHIFT);
+   }
+   if (i < nmblks)
+   {
+      const size_t incAm = ip->pincAm, incCm = (ip->pmb)SHIFT;
+      const size_t pansz = BMSKA & ((ip->nfkblks+1)*((ip->pszA)SHIFT));
+      if (i > nfmblks)
+      {
+         size_t k = i - nfmblks;
+         A += k * incAm;
+         C += k * incCm;
+      }
+      for(; i < nmblks; i++)
+      {
+         Mjoin(PATL,iploopsNK)(ip, i, j, A, B, C, MVS, a, b,
+                               rC, iC, beta, blk2c);
+         B = (TYPE*)(((size_t)B) & BMSKB);
+         a += pansz;
+         A += incAm;
+         C += incCm;
       }
    }
 }
@@ -25479,6 +25653,119 @@ int Mjoin(PATL,ammmKNMK)
 #include "atlas_amm.h"
 #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
 
+int Mjoin(PATL,ammmKMNK)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   TYPE *a, *b, *c;
+   void *vp=NULL;
+   size_t szA, szB, nfkblks, nkblksP;
+   #ifdef TCPLX
+      TYPE *rC;
+      const TYPE *bet=beta;
+   #else
+      TYPE bet=beta;
+      #define rC c
+   #endif
+   int i, kb, extra;
+   ipinfo_t ip;
+
+   i = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
+   Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, K, lda, ldb, ldc,
+                               alpha, beta);
+/*
+ * Figure out a partition of K that should allow malloc to succeed.
+ * In this routine, we need to allocate space for a block of C,
+ * a row-panel of A, and the full matrix B.  If we can't get that
+ * much space, we partition K into Kp, and reduce Kp until the malloc
+ * succeeds.  If Kp drops below 3*LASTKB, we give up and return non-zero,
+ * to indicate that recursion should be used to cut all dims until a malloc
+ * can succeed.
+ */
+   kb = ip.kb;
+   nkblksP = nfkblks = ip.nfkblks;
+/*
+ * Set up extra to have all sizes that are independent of K.
+ * sz[A,B] will be multiplied by number of K blks to get final answer.
+ */
+   extra = (ip.mu<<1)*ip.nu;
+   extra = ATL_MulBySize(ip.szC+extra) + 3 * ATL_Cachelen;
+   szB = ip.szB*ip.nfnblks + ip.pszB*ip.npnblks;
+   szA = ip.szA;
+   while(1)
+   {
+      size_t sz;
+      sz = ATL_MulBySize((szA+szB)*(nkblksP+1)) + extra;
+      if (sz <= ATL_MaxMalloc)
+         vp = malloc(sz);
+      if (vp)
+         break;
+      nkblksP = (nkblksP>>1);
+      if (nkblksP < 3)
+         return(1);
+   }
+   szA *= (nkblksP+1);
+   szB *= (nkblksP+1);
+   a = ATL_AlignPtr(vp);
+   b = a + (szA SHIFT);
+   b = ATL_AlignPtr(b);
+   c = b + (szB SHIFT);
+   c = ATL_AlignPtr(c);
+   #ifdef TCPLX
+      rC=c+ip.szC;
+   #endif
+
+   if (nkblksP == nfkblks)
+      Mjoin(PATL,iploopsMNK)(&ip, 0, 0, A, B, C, 1|2|8, a, b,
+                             rC, c, beta, ip.blk2c);
+   else   /* have partitioned K into areas of at most (nkblksP+1)*kb */
+   {
+      const size_t incAk=ip.incAk*(nkblksP+1);
+      const size_t incBk=ip.incBk*(nkblksP+1), Kp=(nkblksP+1)*kb;
+      size_t k;
+      ablk2cmat_t blk2c = ip.blk2c;
+
+      for (k=Kp; k < K; k += Kp)
+      {
+         Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, Kp, lda, ldb, ldc,
+                                     alpha, bet);
+         Mjoin(PATL,iploopsMNK)(&ip, 0, 0, A, B, C, 1|2|8, a, b,
+                                rC, c, bet, ip.blk2c);
+         #ifdef TCPLX
+            bet = ip.ONE;
+         #else
+            bet = ATL_rone;
+         #endif
+         A += incAk;
+         B += incBk;
+      }
+      k = K - k + Kp;
+      Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, k, lda, ldb, ldc,
+                                  alpha, bet);
+      Mjoin(PATL,iploopsMNK)(&ip, 0, 0, A, B, C, 1|2|8, a, b,
+                             rC, c, bet, ip.blk2c);
+   }
+
+   free(vp);
+   return(0);
+}
+#ifndef TCPLX
+   #undef rC
+#endif
+@beginskip
 static void ATL_ammmNK
 (
    amminfo_t *mminf,
@@ -25742,6 +26029,7 @@ int Mjoin(PATL,ammmKMNK)
    free(vp);
    return(0);
 }
+@endskip
 @ROUT ATL_ammm_syrk
 #include "atlas_misc.h"
 #include "atlas_amm.h"
@@ -26537,13 +26825,15 @@ void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
       KUs[i] = mp->ku;
       KUs[i+n] = mp->kbmin;
       KUs[i+n+n] = mp->kbmax;
+      #if 0
       if (FLAG_IS_SET(mp->flag,MMF_KUISKB))
          mp->kbmin = mp->kbmax = mp->ku = mp->kbB;
       else if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
          mp->kbmin = mp->kbmax = mp->kbB;
+      #endif
    }
-   @multidef st KBMAXs KBMINs KUs NUs MUs KBs NBs MBs
-   @whiledef iv kbmax  kbmin  ku  nu  mu  kbB nbB mbB
+   @multidef st VLENs KBMAXs KBMINs KUs NUs MUs KBs NBs MBs
+   @whiledef iv vlen  kbmax  kbmin  ku  nu  mu  kbB nbB mbB
 @skip   PrintMMIntOffArr(fp, pre, "@(st)", mb, GetOffset(&mb->@(iv), mb));
    PrintIntArrAtOff(fp, pre, "@(st)", mb, inxt, GetOffset(&mb->@(iv), mb),0,0);
       @undef st
@@ -27426,7 +27716,7 @@ static INLINE void ATL_syr1
       #ifdef Conj_
       if (TA == AtlasConjTrans)
       #else
-      if (TA == AtlasTrans)
+      if (TA == AtlasTrans || TA == AtlasConjTrans)
       #endif
       {
          vp = malloc(ATL_MulBySize(N)+ATL_Cachelen);
