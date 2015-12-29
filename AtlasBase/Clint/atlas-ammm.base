@@ -608,25 +608,34 @@ struct ipinfo
 typedef struct rkinfo rkinfo_t;
 struct rkinfo
 {
-   ammkern_t amm_b0;           /* beta=0 amm kern */
-   ammkern_t amm_b1;           /* beta=1 amm kern (needed for complex) */
-   ammkern_t amm_bn;           /* beta=n amm kern (needed for complex) */
-   cm2am_t a2blk, b2blk;       /* full-KB A/B copy routs */
-   ablk2cmat_t blk2C;          /* cpy from acc-maj blk to col-maj C */
-   size_t M, N, K;             /* original rows & cols in C, comm dim A/B */
-   size_t lda, ldb, ldc;       /* stride between row elts for each mat */
-   size_t nsmblks, nsnblks;    /* number of small blocks (size nnu-1) */
-   size_t nmblks, nnblks;      /* total # of blks, incl small */
-   size_t incAm, incAmS;       /* incA in M loop lrg & small blks */
-   size_t incBn, incBnS;       /* incB in N loop lrg & small blks */
-   ATL_UINT inca, incaS;       /* mb*kb for large & small blks */
-   ATL_UINT szC;               /* size of real C blk in workspace */
-   ushort mb, nb, kb;          /* blk fact, always mul of unrolling */
-   ushort KB;                  /* ((kb+ku-1)/vl)*vl if kvec, else kb */
-   ushort nmu, nnu;            /* # of unrollings for M/N big blk */
-   short idx;                  /* kern array index */
-   uchar mu, nu, ku;           /* M/N/K unrollings used by kern */
-   uchar vlen;                 /* vector length (needed for KVEC kerns) */
+   cm2am_t a2blk, b2blk;    /* A/B copy routs */
+   ablk2cmat_t blk2C;       /* cpy from acc-maj blk to col-maj C */
+   ammkern_t amm_b0;        /* beta=0 amm kern */
+   #ifdef TCPLX
+      ammkern_t amm_b1;     /* beta=1 amm kern (needed for complex) */
+      ammkern_t amm_bn;     /* beta=n amm kern (needed for complex) */
+      const TYPE *alpA, *alpB, *beta, *ONE;
+   #endif
+   size_t nfnblks, npnblks; /* # of of full and partial blks along N */
+   size_t nfmblks, npmblks; /* # of of full and partial blks along M */
+   size_t pincAm, incAm;    /* partial & full mb-block increment */
+   size_t pincBn, incBn;    /* partial & full nb-block increment */
+   size_t lda, ldb, ldc;    /* stride between row elts for each mat */
+   #ifndef TCPLX
+      TYPE alpA, alpB, beta;
+   #endif
+   uint szC;                /* size of real C blk in workspace */
+   uint pszA, szA;          /* size of real portion of part & full blks of A */
+   uint pszB, szB;          /* size of real portion of part & full blks of B */
+   ushort idx;              /* kern array index */
+   ushort mF, nF;           /* size of final part of mat before copy */
+   ushort mb, pmb, nb, pnb; /* full & partial blk factors for M & N */
+   ushort kb;               /* K from original problem */
+   ushort KB;               /* ((kb+ku-1)/vl)*vl if kvec, else kb */
+   uchar nmu, nnu;          /* # of unrollings along each dim */
+   uchar pnmu, pnnu;        /* # of unrollings in partial blocks */
+   uchar mu, nu, ku;        /* unrolling for each dim used by amm */
+   uchar vlen;              /* vector length (needed for KVEC kerns) */
 };
 #undef ushort
 #undef uchar
@@ -683,12 +692,17 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
 int Mjoin(PATL,ammm_syrk)
    (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT,ATL_CSZT,
     const SCALAR,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
+void Mjoin(PATL,oploopsM)
+   (rkinfo_t *rkinf, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C,
+    int MV, TYPE *a, TYPE *b, TYPE *rC, TYPE *iC);
+@beginskip
 void Mjoin(PATL,ammmM)
    (rkinfo_t *rkinf, int N, int nb, int nnu, TYPE *a, int INCA,
     const TYPE *b, TYPE *c, const TYPE *A, TYPE *C, const SCALAR beta);
 void Mjoin(PATL,ammmN)
    (rkinfo_t *rkinf, int M, int mb, int nmu, const TYPE *a, TYPE *b, int INCB,
     TYPE *c, const TYPE *B, TYPE *C, const SCALAR beta);
+@endskip
 
 void Mjoin(PATL,ammmK)
    (amminfo_t*, const int mb, const int nmu, const int nb, const int nnu, 
@@ -21929,7 +21943,7 @@ int Mjoin(PATL,tGetAmmmInfo)
    return(appAl);
 }
 
-@ROUT ATL_GetAmmmInfo  ATL_GetAmmmInfoSQ
+@ROUT ATL_GetAmmmInfo  ATL_GetAmmmInfoSQ ATL_GetRankKInfo
 static INLINE int ATL_CompBlkPart
    (size_t D, ATL_UINT maxB, ATL_UINT b, ATL_UINT u, 
     ATL_UINT *BS, size_t *NS, size_t *NL)
@@ -22614,6 +22628,7 @@ static INLINE void FillInRankKInf
 }
 @endskip
 
+@beginskip
 static INLINE int ATL_ComputeB   /* RETURNS: selected blocking */
 (
    size_t N,   /* problem dimension */
@@ -22674,6 +22689,7 @@ static INLINE int ATL_ComputeB   /* RETURNS: selected blocking */
    *NT = nblks;
    return(nb);
 }
+@endskip
 
 #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
 void Mjoin(PATL,GetRKInfo)
@@ -22694,16 +22710,23 @@ void Mjoin(PATL,GetRKInfo)
    #if ATL_rkAMM_MAXKVEC == 0
       const int kb = K;
    #else
-      int kb;
+      int kb=K;
    #endif
-   int idx, mb, nb, MB, NB, NMU, NNU, mu, nu, ku, vlen, szC;
-   size_t nsmblks, nmblks, nsnblks, nnblks;
+   ATL_UINT idx, mb, nb, MB, NB, NMU, NNU, mu, nu, ku, vlen, szC;
+   ATL_UINT maxMB=ATL_rkAMM_LASTMB, maxNB=ATL_rkAMM_LASTNB;
+   size_t npmblks, nmblks, npnblks, nnblks;
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define CONE ATL_rone
+   #endif
 
    ATL_assert(K <= ATL_rkAMM_LASTKB && K > 2);
    idx = K-3;
-   ku = ATL_AMM_KUs[idx];
+   out->ku = ku = ATL_AMM_KUs[idx];
    #if ATL_rkAMM_MAXKVEC > 0
-      kb = ((K + ku - 1)/ku)*ku;
+      if (ATL_AMM_KRUNTIME(idx))
+         kb = ((K + ku - 1)/ku)*ku;
    #endif
 /*
  * If 4 operands (C, wC, A, B) all fit in L1, use small, near-square shapes.
@@ -22713,61 +22736,86 @@ void Mjoin(PATL,GetRKInfo)
  */
    mb = ATL_AMM_MBs[idx];
    nb = ATL_AMM_NBs[idx];
-   mu = ATL_AMM_MUs[idx];
-   nu = ATL_AMM_NUs[idx];
-   MB = mb+mu;
-   NB = nb+nu;
-   if ((((MB*NB)<<1) + (MB+NB)*K) >= ATL_L1elts)
+   out->mu = mu = ATL_AMM_MUs[idx];
+   out->nu = nu = ATL_AMM_NUs[idx];
+   if (((mb*nb)<<1) + (mb+nb)*K <= ATL_L1elts)
    {
-      MB = ATL_rkAMM_LASTMB;
-      NB = ATL_rkAMM_LASTNB;
+      maxMB = mb + mu;
+      maxNB = nb + nu;
    }
-   MB = ATL_ComputeB(M, mu, MB, &nsmblks, &nmblks);
-   NMU = MB / mu;
-   NB = ATL_ComputeB(N, nu, NB, &nsnblks, &nnblks);
-   NNU = NB / nu;
-   vlen = ATL_AMM_VLENs[idx];
+   MB = ATL_CompBlkPart(M, maxMB, mb, mu, &mb, &npmblks, &nmblks);
+   NB = ATL_CompBlkPart(N, maxNB, nb, nu, &nb, &npnblks, &nnblks);
+   out->npmblks = npmblks;
+   out->nfmblks = nmblks;
+   out->npnblks = npnblks;
+   out->nfnblks = nnblks;
+   if (!nmblks)  /* all blks small */
+   {
+      out->mb = out->pmb = MB = mb;
+      out->nmu = out->pnmu = NMU = mb / mu;
+      out->mF = M - (npmblks-1)*mb;
+   }
+   else
+   {
+      int b;
+      out->mb  = MB;
+      out->pmb = mb;
+      out->nmu = NMU = MB / mu;
+      out->pnmu = mb / mu;
+      b = (npmblks) ? mb : MB;
+      out->mF = M + b - nmblks*MB - npmblks*mb;
+   }
+   if (!nnblks)  /* all blks small */
+   {
+      out->nb = out->pnb = NB = nb;
+      out->nnu = out->pnnu = NNU = nb / nu;
+      out->nF = N - (npnblks-1)*nb;
+   }
+   else
+   {
+      int b;
+      out->nb  = NB;
+      out->pnb = nb;
+      out->nnu = NNU = NB / nu;
+      out->pnnu = nb / nu;
+      b = (npnblks) ? nb : NB;
+      out->nF = N + b - nnblks*NB - npnblks*nb;
+   }
+   out->vlen = vlen = ATL_AMM_VLENs[idx];
    szC = ((mu*nu+vlen-1)/vlen)*vlen;
    szC *= NMU*NNU;
-   mb = MB - mu;
-   nb = NB - nu;
+   out->szC = szC;
    out->idx = idx;
    out->amm_b0 = ATL_AMM_KERN_b0[idx];
-   out->amm_b1 = ATL_AMM_KERN_b1[idx];
-   out->amm_bn = ATL_AMM_KERN_bn[idx];
-   out->vlen = ATL_AMM_VLENs[idx];
-   out->szC = szC;
-   out->M = M;
-   out->N = N;
-   out->K = K;
-   out->mb = MB;
-   out->nb = NB;
-   out->kb = kb;
-   out->mu = mu;
-   out->nu = nu;
-   out->ku = ku;
-   out->nmu = NMU;
-   out->nnu = NNU;
+   #ifdef TCPLX
+      out->amm_b1 = ATL_AMM_KERN_b1[idx];
+      out->amm_bn = ATL_AMM_KERN_bn[idx];
+   #endif
+   out->kb = K;
+   out->KB = kb;
    out->lda = lda;
    out->ldb = ldb;
    out->ldc = ldc;
-   out->nsmblks = nsmblks;
-   out->nmblks = nmblks;
-   out->nsnblks = nsnblks;
-   out->nnblks = nnblks;
+   out->pszA = mb*kb;
+   out->szA = MB*kb;
+   out->pszB = kb*nb;
+   out->szB = kb*NB;
+   out->alpA = out->alpB = CONE;
+   out->beta = beta;
    #ifdef TCPLX
+   out->ONE = CONE;
    if (TA == AtlasNoTrans || TA == AtlasConj)
    #else
    if (TA == AtlasNoTrans)
    #endif
    {
       out->incAm  = MB SHIFT;
-      out->incAmS = mb SHIFT;
+      out->pincAm = mb SHIFT;
    }
    else
    {
       out->incAm = lda*(MB SHIFT);
-      out->incAmS = lda*(mb SHIFT);
+      out->pincAm = lda*(mb SHIFT);
    }
    #ifdef TCPLX
    if (TB == AtlasNoTrans || TB == AtlasConj)
@@ -22776,21 +22824,20 @@ void Mjoin(PATL,GetRKInfo)
    #endif
    {
       out->incBn = ldb*(NB SHIFT);
-      out->incBnS = ldb*(nb SHIFT);
+      out->pincBn = ldb*(nb SHIFT);
    }
    else
    {
       out->incBn  = NB SHIFT;
-      out->incBnS = nb SHIFT;
+      out->pincBn = nb SHIFT;
    }
 /*
  * Once we have ATL_ammmN written, put alpha on A if there's only 1 blk of
  * of B.  For now, always put on B and use ATL_ammmM
  */
+   #if 0
    if (nnblks > 1 && nmblks < 2) /* If we only have row panel of C */
    {                             /* apply alpha to A */
-      out->inca = NB*kb;
-      out->incaS = nb*kb;
       #ifdef TCPLX
          if (TB == AtlasNoTrans)
             out->b2blk = ATL_AMM_BN2BLK_a1[idx];
@@ -22838,9 +22885,9 @@ void Mjoin(PATL,GetRKInfo)
       #endif
    }
    else  /* apply alpha to B */
+   #endif
    {
-      out->inca = MB*kb;
-      out->incaS = mb*kb;
+      out->alpB = alpha;
       #ifdef TCPLX
          if (TA == AtlasNoTrans)
             out->a2blk = ATL_AMM_AT2BLK_a1[idx];
@@ -24147,6 +24194,55 @@ int Mjoin(PATL,ammm_rkK)
 )
 {
    void *vp;
+   TYPE *a, *b, *iC, *rC;
+   rkinfo_t op;
+   #ifdef TCPLX
+      const size_t ldc2=ldc+ldc;
+   #else
+      #define ldc2 ldc
+   #endif
+      
+
+   if (K < 3)
+   {
+      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return(0);
+   }
+   Mjoin(PATL,GetRKInfo)(&op, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+/*
+ *  Usual case, compute column-panel of C at a time, need workspace of
+ *  1 block of B and C, and 1 col-panel of A.
+ */
+   {
+      const size_t nnblks = op.nfnblks+op.npnblks;
+      size_t sz, szA, j;
+      szA = op.szA*op.nfmblks + op.pszA*op.npmblks;
+      sz = szA + op.szC + op.szB + (op.mu<<1)*op.nu;
+      vp = malloc(ATL_MulBySize(sz) + 3*ATL_Cachelen);
+      if (!vp)
+         return(1);
+      a = ATL_AlignPtr(vp);
+      b = a + (szA SHIFT);
+      b = ATL_AlignPtr(b);
+      iC = b + (op.szB SHIFT);
+      iC = ATL_AlignPtr(iC);
+      #ifdef TCPLX
+         rC = iC + op.szC;
+      #else
+         rC = iC;
+      #endif
+
+      for (j=0; j < nnblks; j++)
+      {
+         Mjoin(PATL,oploopsM)(&op, 0, j, A, B, C, 1, a, b, rC, iC);
+         A = NULL;
+      }
+   }
+   free(vp);
+}
+@beginskip
+{
+   void *vp;
    TYPE *a, *b, *c;
    size_t szA, szB, szC, incC, incBn, nnblks, nsnblks, nmblks, nsmblks;
    rkinfo_t rkinf;
@@ -24256,6 +24352,7 @@ int Mjoin(PATL,ammm_rkK)
    free(vp);
    return(0);
 }
+@endskip
 #ifdef ldc2
    #undef ldc2
 #endif
@@ -24524,6 +24621,195 @@ int Mjoin(PATL,ammmNKM)
    }
    free(vp);
    return(0);
+}
+@ROUT ATL_oploops
+/*
+ * These loops are used for outer product GEMM formulations, 
+ * where K <= ATL_rkAMM_LASTKB.
+ * 
+ */
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+void Mjoin(PATL,oploopsM)
+(
+   rkinfo_t *op,
+   size_t i,      /* which global row blk of C is being computed */
+   size_t j,      /* which global column blk of C is being computed */
+   const TYPE *A, /* if non-NULL, portion of A to copy */
+   const TYPE *B, /* if non-NULL, portion of B to copy */
+   TYPE *C,       /* C <- alpha * A * B + beta * C */
+   int MV,        /* 1: move a */
+   TYPE *a,       /* wrkspace for block-copied A */
+   TYPE *b,       /* wrkspace for block-copied B */
+   TYPE *rC,      /* ptr to real portion of access-major C workspace */
+   TYPE *iC       /* ptr to cplx portion of access-major C workspace */
+)
+{
+   #ifdef TCPLX
+      TYPE *iA=a, *rA, *iB=b, *rB=b+op->szB;
+      const TYPE *alpA=op->alpA, *alpB=op->alpB, *beta=op->beta;
+      const ammkern_t amm0=op->amm_b0, amm1=op->amm_b1, ammN=op->amm_bn;
+   #else
+      const ammkern_t amm=op->amm_b0;
+   #endif
+   const cm2am_t a2blk=op->a2blk, b2blk=op->b2blk;
+   const ablk2cmat_t blk2C=op->blk2C;
+   const size_t nfmblks=op->nfmblks, nfnblks=op->nfnblks;
+   const size_t nmblks=op->npmblks+nfmblks, nnblks=op->npnblks+nfnblks;
+   const size_t lda=op->lda, ldb=op->ldb;
+   const size_t incAm, inca;
+   #ifndef TCPLX
+      const TYPE alpA=op->alpA, alpB=op->alpB, beta=op->beta;
+   #endif
+   ATL_CUINT kb=op->kb, KB=op->KB;
+   ATL_CUINT mu=op->mu, nu=op->nu;
+   ATL_UINT nmu, mb, nnu=op->nnu, nb=op->nb;
+/*
+ * If needed, copy B block before starting operations
+ */
+   if (B)
+   {
+      if (j)  /* need to increment B & C before copy */
+      {
+         size_t incBn=op->incBn, incCn=(op->ldc)SHIFT;
+         int nblks=Mmin(j, op->nfnblks);
+         B += nblks * incBn;
+         C += incCn*nb;
+         if (nblks <= j)
+         {
+            #ifdef TCPLX
+               rB = iB + op->pszB;
+            #endif
+            nb = op->pnb;
+            nnu = op->pnnu;
+            nblks = j - nblks;
+            B += nblks*op->pincBn;
+            C += incCn*nb;
+         }
+      }
+      #ifdef TCPLX
+         b2blk(kb, nb, alpB, B, ldb, rB, iB);
+      #else
+         b2blk(kb, nb, alpB, B, ldb, b);
+      #endif
+   }
+/*
+ * If present block is one of first large blocks, loop over large blks
+ */
+   if (i < nfmblks)
+   {
+      const size_t incAm = (A) ? op->incAm:0, incCm = (op->mb)SHIFT, m;
+      ATL_UINT szA = op->szA;
+
+      if (i)               /* if we need to skip some blocks */
+      {                    /* Increment A/C ptrs as needed for i */
+         A += i * incAm;   
+         C += i * incCm;
+      }
+      #ifdef TCPLX
+         rA = iA + szA;
+      #endif
+      nmu = op->nmu;
+      for (; i < nfmblks; i++)
+      {
+         #ifdef TCPLX
+            TYPE *an=iA;
+         #else
+            TYPE *an=a;
+         #endif
+         mb = (i != nmblks-1) ? op->mb : op->mF;
+         if (A)
+         {
+            #ifdef TCPLX
+               a2blk(kb, mb, alpA, A, lda, rA, iA);
+               if (MV&1)
+                  an = rA + szA;
+            #else
+               a2blk(kb, mb, alpA, A, lda, a);
+               if (MV&1)
+                  an += szA;
+            #endif
+            A += incAm;
+         }
+         #ifdef TCPLX
+            amm0(nmu, nnu, KB, iA, iB, rC, rA, iB, iC);
+            amm0(nmu, nnu, KB, rA, iB, iC, rA, rB, rC);
+            ammN(nmu, nnu, KB, rA, rB, rC, iA, rB, iC);
+            amm1(nmu, nnu, KB, iA, rB, iC, an, iB, iC);
+            blk2C(mb, nb, op->ONE, rC, iC, beta, C, op->ldc);
+            iA = an;
+            rA = an + szA;
+         #else
+            amm(nmu, nnu, KB, a, b, rC, an, b, rC);
+            blk2C(mb, nb, ATL_rone, rC, beta, C, op->ldc);
+            a = an;
+         #endif
+         C += incCm;
+      }
+   }
+/*
+ * If present block past end of large blocks, increment A/C appropriately
+ */
+   else if (i && nfmblks)
+   {
+      if (A)
+         A += nfmblks * op->incAm;
+      C += nfmblks * ((op->mb)SHIFT);
+   }
+/*
+ * If there are still small blocks to do after doing all large blocks
+ */
+   if (i < nmblks)
+   {
+      const size_t incAm = (A) ? op->pincAm:0, incCm = (op->pmb)SHIFT;
+      ATL_UINT szA = op->pszA;
+
+      if (i > nfmblks)  /* I need to move past some small blocks too */
+      {
+         size_t nblks = i - nfmblks;
+         A += nblks * incAm;
+         C += nblks * incCm;
+      }
+      mb = op->pmb;
+      nmu = op->pnmu;
+      for (; i < nmblks; i++)
+      {
+         #ifdef TCPLX
+            TYPE *an=iA;
+         #else
+            TYPE *an=a;
+         #endif
+         mb = (i != nmblks-1) ? mb : op->mF;
+         if (A)
+         {
+            #ifdef TCPLX
+               a2blk(kb, mb, alpA, A, lda, rA, iA);
+               if (MV&1)
+                  an = rA + szA;
+            #else
+               a2blk(kb, mb, alpA, A, lda, a);
+               if (MV&1)
+                  an += szA;
+            #endif
+            A += incAm;
+         }
+         #ifdef TCPLX
+            amm0(nmu, nnu, KB, iA, iB, rC, rA, iB, iC);
+            amm0(nmu, nnu, KB, rA, iB, iC, rA, rB, rC);
+            ammN(nmu, nnu, KB, rA, rB, rC, iA, rB, iC);
+            amm1(nmu, nnu, KB, iA, rB, iC, an, iB, iC);
+            blk2C(mb, nb, op->ONE, rC, iC, beta, C, op->ldc);
+            iA = an;
+            rA = an + szA;
+         #else
+            amm(nmu, nnu, KB, a, b, rC, an, b, rC);
+            blk2C(mb, nb, ATL_rone, rC, beta, C, op->ldc);
+            a = an;
+         #endif
+         C += incCm;
+      }
+   }
 }
 @ROUT ATL_iploops ATL_ciploops
 #include "atlas_misc.h"
