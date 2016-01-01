@@ -24236,7 +24236,7 @@ int Mjoin(PATL,ammm_rkK)
       #endif
 
       if (nnblks == 1)
-         Mjoin(PATL,oploopsM)(&op, 0, j, A, B, C, 0, a, b, rC, iC);
+         Mjoin(PATL,oploopsM)(&op, 0, 0, A, B, C, 0, a, b, rC, iC);
       else
       {
          for (j=0; j < nnblks; j++)
@@ -24665,59 +24665,62 @@ void Mjoin(PATL,oploopsM)
    const cm2am_t a2blk=op->a2blk, b2blk=op->b2blk;
    const ablk2cmat_t blk2C=op->blk2C;
    const size_t nfmblks=op->nfmblks, nmblks=op->npmblks+nfmblks, lda=op->lda;
+   const size_t nfnblks=op->nfnblks, nnblks=op->npnblks+nfnblks;
    #ifndef TCPLX
       const TYPE alpA=op->alpA, alpB=op->alpB, beta=op->beta;
    #endif
    ATL_CUINT kb=op->kb, KB=op->KB;
    ATL_CUINT mu=op->mu, nu=op->nu;
    ATL_UINT nmu, mb, nnu=op->nnu, nb=op->nb;
+
 /*
  * If needed, copy B block before starting operations
  */
    if (B)
    {
-      const size_t nfblks=op->nfnblks, nnblks=op->npnblks+nfblks;
-      ATL_UINT n = (j != nnblks) ? nb : op->nF;
-
       if (j)  /* need to increment B & C before copy */
       {
          const size_t incCn=(op->ldc)SHIFT;
-         size_t nblks=Mmin(j, nfblks);
+         size_t nblks=Mmin(j, nfnblks);
          B += nblks * op->incBn;
          C += nblks*nb*incCn;
-         if (j >= nfblks)  /* need to switch to smaller nb */
+         if (j >= nfnblks)  /* need to switch to smaller nb */
          {
             #ifdef TCPLX
                rB = iB + op->pszB;
             #endif
             nb = op->pnb;
             nnu = op->pnnu;
-            nblks = j - nfblks;
+            nblks = j - nfnblks;
             B += nblks*op->pincBn;
-            C += incCn*nb;
+            C += nblks*nb*incCn;
          }
       }
+      if (j == nnblks-1)
+         nb = op->nF;
       #ifdef TCPLX
-         b2blk(kb, n, alpB, B, op->ldb, rB, iB);
+         b2blk(kb, nb, alpB, B, op->ldb, rB, iB);
       #else
-         b2blk(kb, n, alpB, B, op->ldb, b);
+         b2blk(kb, nb, alpB, B, op->ldb, b);
       #endif
    }
-   else if (j)  /* still need to inc C ptr & set nnu/nb */
+   else   /* still need to inc C ptr & set nnu/nb */
    {
-      size_t incBn=op->incBn, incCn=(op->ldc)SHIFT, nfblks=op->nfnblks;
-      size_t nblks=Mmin(j, nfblks);
+      size_t incBn=op->incBn, incCn=(op->ldc)SHIFT;
+      size_t nblks=Mmin(j, nfnblks);
       C += nblks*nb*incCn;
-      if (j >= nfblks)  /* need to switch to smaller nb */
+      if (j >= nfnblks)  /* need to switch to smaller nb */
       {
          #ifdef TCPLX
             rB = iB + op->pszB;
          #endif
          nb = op->pnb;
          nnu = op->pnnu;
-         nblks = j - nfblks;
+         nblks = j - nfnblks;
          C += nblks*nb*incCn;
       }
+      if (j == nnblks-1)
+         nb = op->nF;
    }
 /*
  * If present block is one of first large blocks, loop over large blks
@@ -24729,7 +24732,8 @@ void Mjoin(PATL,oploopsM)
 
       if (i)               /* if we need to skip some blocks */
       {                    /* Increment A/C ptrs as needed for i */
-         A += i * incAm;   
+         if (A)
+            A += i * incAm;   
          C += i * incCm;
       }
       #ifdef TCPLX
@@ -24748,15 +24752,17 @@ void Mjoin(PATL,oploopsM)
          {
             #ifdef TCPLX
                a2blk(kb, mb, alpA, A, lda, rA, iA);
-               if (MV&1)
-                  an = rA + szA;
             #else
                a2blk(kb, mb, alpA, A, lda, a);
-               if (MV&1)
-                  an += szA;
             #endif
             A += incAm;
          }
+         if (MV&1)
+         #ifdef TCPLX
+            an = rA + szA;
+         #else
+            an += szA;
+         #endif
          #ifdef TCPLX
             amm0(nmu, nnu, KB, iA, iB, rC, rA, iB, iC);
             amm0(nmu, nnu, KB, rA, iB, iC, rA, rB, rC);
@@ -24793,7 +24799,8 @@ void Mjoin(PATL,oploopsM)
       if (i > nfmblks)  /* I need to move past some small blocks too */
       {
          size_t nblks = i - nfmblks;
-         A += nblks * incAm;
+         if (A)
+            A += nblks * incAm;
          C += nblks * incCm;
       }
       mb = op->pmb;
@@ -24810,16 +24817,14 @@ void Mjoin(PATL,oploopsM)
          {
             #ifdef TCPLX
                a2blk(kb, mb, alpA, A, lda, rA, iA);
-               if (MV&1)
-                  an = rA + szA;
             #else
                a2blk(kb, mb, alpA, A, lda, a);
-               if (MV&1)
-                  an += szA;
             #endif
             A += incAm;
          }
          #ifdef TCPLX
+            if (MV&1)
+               an = rA + szA;
             amm0(nmu, nnu, KB, iA, iB, rC, rA, iB, iC);
             amm0(nmu, nnu, KB, rA, iB, iC, rA, rB, rC);
             ammN(nmu, nnu, KB, rA, rB, rC, iA, rB, iC);
@@ -24828,6 +24833,8 @@ void Mjoin(PATL,oploopsM)
             iA = an;
             rA = an + szA;
          #else
+            if (MV&1)
+               an += szA;
             amm(nmu, nnu, KB, a, b, rC, an, b, rC);
             blk2C(mb, nb, ATL_rone, rC, beta, C, op->ldc);
             a = an;
