@@ -3512,6 +3512,21 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op1]);
          #endif
          break;
+      case VDHADD:
+/*
+ *       behavior diff for avx and sse??
+ */
+         #ifdef AVX
+            ap->next = PrintAssln("\tvhaddpd\t%s,%s,%s\n",
+                                     GetDregOrDeref(op3), 
+                                     archvdregs[-VDREGBEG-op2], 
+                                     archvdregs[-VDREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\thaddpd\t%s, %s\n", GetDregOrDeref(op3),
+                                  archvdregs[-VDREGBEG-op1]);
+         #endif
+         break;
 /*
  *    Conditional MOV or, Select operation.
  *    NOTE: these instructions are only supported in SSE4.1 (or, above) and AVX
@@ -3844,7 +3859,54 @@ struct assmln *lil2ass(BBLOCK *bbase)
          }
          #endif
          break;
+/*
+ *    Two special shuffle, specially needed in avx
+ */
+      case VDHIHALF:
+/*
+ *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[1]; vr0[1] = vr2[1]; 
+ */
+         #ifdef AVX
+            if ( op3 > 0)
+               ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
+                                     GetDeref(op3), 
+                                     archvdregs[-VDREGBEG-op2], 
+                                     archvdregs[-VDREGBEG-op1]);
+            else
+               ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
+                                     archvdregs[-VDREGBEG-op3], 
+                                     archvdregs[-VDREGBEG-op2], 
+                                     archvdregs[-VDREGBEG-op1]);
+            
+         #else
+            fko_error(__LINE__, "Not implemented this instruction in SSE yet!");
+         #endif
+         break;
+
+      case VDLOHALF:
+/*
+ *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[0]; vr0[1] = vr2[0]; 
+ */
+         #ifdef AVX
+            if ( op3 > 0)
+               ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                     GetDeref(op3), 
+                                     archvdregs[-VDREGBEG-op2], 
+                                     archvdregs[-VDREGBEG-op1]);
+            else
+               ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                     archvdregs[-VDREGBEG-op3], 
+                                     archvdregs[-VDREGBEG-op2], 
+                                     archvdregs[-VDREGBEG-op1]);
+            
+         #else
+            fko_error(__LINE__, "Not implemented this instruction in SSE yet!");
+         #endif
+         break;
+
+
    #endif
+
 /*
  * Only x86 and PowerPC have single prec vector instructions
  */
@@ -4284,6 +4346,23 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\txorps\t%s,%s\n", archvfregs[-VFREGBEG-op1],
                                   archvfregs[-VFREGBEG-op1]);
          #endif   
+         break;
+      case VFHADD:
+/*
+ *    NOTE: behavior of this inst for AVX and SSE is different!!!
+ *    But since we only use these instrucitons now for reduction (not for 
+ *    translating HIL to LIL), we ignore this issue fro now. 
+ */
+         #ifdef AVX
+            ap->next = PrintAssln("\tvhaddps\t%s,%s,%s\n",
+                                     GetDregOrDeref(op3), 
+                                     archvfregs[-VFREGBEG-op2], 
+                                     archvfregs[-VFREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\thaddps\t%s, %s\n", GetDregOrDeref(op3),
+                                  archvfregs[-VFREGBEG-op1]);
+         #endif
          break;
 /*
  *    Majedul: adding new vector-compare instructions. they overwrite the 
@@ -4728,7 +4807,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *                765432BA
  *                76CD3289
  */             
-               if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4)    
+               if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4)   
+               {
                   if (cp[3] == 15 && cp[2] == 14 && cp[1] == 13 && cp[0] == 12)
                      ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
                                            archvfregs[-VFREGBEG-op1], /* src2*/ 
@@ -4746,6 +4826,14 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                            archxmmregs[-VFREGBEG-op1]);
                   else
                      fko_warn(__LINE__, "Not implemented this VFSHUF yet");
+               }
+/*             Implementing 3210BA98*/
+               else if (cp[7] == 3 && cp[6] == 2 && cp[3] == 1 && cp[2] == 0 &&
+                        cp[5] == 11 && cp[4] == 10 && cp[1] == 9 && cp[0] == 8)
+                     ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                           archvfregs[-VFREGBEG-op1], /* src2*/ 
+                                           archvfregs[-VFREGBEG-op2], 
+                                           archvfregs[-VFREGBEG-op1]);
 /*             Implementing 76CD3289*/
                else if (cp[7] == 7 && cp[6] == 6 && cp[3] == 3 && cp[2] == 2 &&
                         cp[5] == 12 && cp[4] == 13 && cp[1] == 8 && cp[0] == 9)
@@ -4826,6 +4914,51 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
    #endif
+/*
+ *    Two special shuffle, specially needed in avx
+ */
+      case VFHIHALF:
+/*
+ *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[1]; vr0[1] = vr2[1]; 
+ */
+         #ifdef AVX
+            if ( op3 > 0)
+               ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
+                                     GetDeref(op3), 
+                                     archvfregs[-VFREGBEG-op2], 
+                                     archvfregs[-VFREGBEG-op1]);
+            else
+               ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
+                                     archvfregs[-VFREGBEG-op3], 
+                                     archvfregs[-VFREGBEG-op2], 
+                                     archvfregs[-VFREGBEG-op1]);
+            
+         #else
+            fko_error(__LINE__, "Not implemented this instruction in SSE yet!");
+         #endif
+         break;
+
+      case VFLOHALF:
+/*
+ *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[0]; vr0[1] = vr2[0]; 
+ */
+         #ifdef AVX
+            if ( op3 > 0)
+               ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                     GetDeref(op3), 
+                                     archvfregs[-VFREGBEG-op2], 
+                                     archvfregs[-VFREGBEG-op1]);
+            else
+               ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                     archvfregs[-VFREGBEG-op3], 
+                                     archvfregs[-VFREGBEG-op2], 
+                                     archvfregs[-VFREGBEG-op1]);
+            
+         #else
+            fko_error(__LINE__, "Not implemented this instruction in SSE yet!");
+         #endif
+         break;
+
       case PREFR:
          #ifdef X86
             i = SToff[op3-1].i;
