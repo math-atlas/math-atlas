@@ -663,7 +663,7 @@ void Mjoin(PATL,GetBestKBInfo)
     ATL_CSZT,ATL_CSZT,size_t,size_t,size_t,const SCALAR,const SCALAR);
 @endskip
 void Mjoin(PATL,GetRKInfo)
-   (rkinfo_t*, enum ATLAS_TRANS, enum ATLAS_TRANS,
+   (rkinfo_t*, int, enum ATLAS_TRANS, enum ATLAS_TRANS,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
 int Mjoin(PATL,GetSyrkInfo)
@@ -22695,6 +22695,7 @@ static INLINE int ATL_ComputeB   /* RETURNS: selected blocking */
 void Mjoin(PATL,GetRKInfo)
 (
    rkinfo_t *out,           /* what to use for K-cleanup */
+   int flag,                /* bit 0: if set, only block & remainder */
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
    ATL_CSZT M,
@@ -22712,7 +22713,7 @@ void Mjoin(PATL,GetRKInfo)
    #else
       int kb=K;
    #endif
-   ATL_UINT idx, mb, nb, MB, NB, NMU, NNU, mu, nu, ku, vlen, szC;
+   ATL_UINT idx, mb, nb, MB, NB, NMU, NNU, nmu, nnu, mu, nu, ku, vlen, szC;
    ATL_UINT maxMB=ATL_rkAMM_LASTMB, maxNB=ATL_rkAMM_LASTNB;
    size_t npmblks, nmblks, npnblks, nnblks;
    #ifdef TCPLX
@@ -22740,47 +22741,101 @@ void Mjoin(PATL,GetRKInfo)
    out->nu = nu = ATL_AMM_NUs[idx];
    if (((mb*nb)<<1) + (mb+nb)*K <= ATL_L1elts)
    {
-      maxMB = mb + mu;
-      maxNB = nb + nu;
+      while (((mb*nb)<<1) + (mb+nb)*K <= ATL_L1elts && (mb < M || nb < N))
+      {
+         MB = mb;
+         NB = nb;
+         if (mb <= nb && mb < M)
+            mb += mu;
+         else
+            nb += nu;
+      }
    }
-   MB = ATL_CompBlkPart(M, maxMB, mb, mu, &mb, &npmblks, &nmblks);
-   NB = ATL_CompBlkPart(N, maxNB, nb, nu, &nb, &npnblks, &nnblks);
-   out->npmblks = npmblks;
+   else
+   {
+      MB = ATL_rkAMM_LASTMB;
+      NB = ATL_rkAMM_LASTNB;
+   }
+   if (MB >= M)
+   {
+      mb = 0;
+      npmblks = 0;
+      nmblks = 1;
+      NMU = (M+mu-1)/mu; 
+      MB = NMU*mu;
+   }
+   else
+   {
+      NMU = MB/mu; 
+      MB = NMU*mu;
+      npmblks = 1;
+      nmblks = M/MB;
+      mb = M - nmblks*MB;
+      nmu = (mb+mu-1)/mu;
+      if (nmu < 4 && (flag&1)==0 && NMU > 4)
+      {
+         MB = ATL_CompBlkPart(M, maxMB, ATL_AMM_MBs[idx], mu, 
+                              &mb, &npmblks, &nmblks);
+         NMU = MB / mu;
+         if (!nmblks)
+         {
+            nmblks = npmblks;
+            npmblks = 0;
+            MB = mb;
+            nmu = NMU = mb / mu;
+         }
+         else
+            nmu = mb / mu;
+      }
+      mb = nmu*mu;
+   }
    out->nfmblks = nmblks;
-   out->npnblks = npnblks;
+   out->npmblks = npmblks;
+   out->mb = MB;
+   out->pmb = mb;
+   out->nmu = NMU;
+   out->pnmu = mb / mu;
+   out->mF = M + ((npmblks)?mb:MB) - nmblks*MB - npmblks*mb;
+   if (NB >= N)
+   {
+      nb = 0;
+      npnblks = 0;
+      nnblks = 1;
+      NNU = (N+nu-1)/nu; 
+      out->nF = NB = NNU*nu;
+   }
+   else
+   {
+      NNU = NB/nu; 
+      NB = NNU*nu;
+      npnblks = 1;
+      nnblks = N/NB;
+      nb = N - nnblks*NB;
+      nnu = (nb+nu-1)/nu;
+      if (nnu < 4 && (flag&1)==0 && NNU > 4)
+      {
+         NB = ATL_CompBlkPart(N, maxNB, ATL_AMM_MBs[idx], nu, 
+                              &nb, &npnblks, &nnblks);
+         NNU = NB / nu;
+         if (!nnblks)
+         {
+            nnblks = npnblks;
+            npnblks = 0;
+            NB = nb;
+            nnu = NNU = nb / nu;
+         }
+         else
+            nnu = nb / nu;
+      }
+      nb = nnu*nu;
+   }
    out->nfnblks = nnblks;
-   if (!nmblks)  /* all blks small */
-   {
-      out->mb = out->pmb = MB = mb;
-      out->nmu = out->pnmu = NMU = mb / mu;
-      out->mF = M - (npmblks-1)*mb;
-   }
-   else
-   {
-      int b;
-      out->mb  = MB;
-      out->pmb = mb;
-      out->nmu = NMU = MB / mu;
-      out->pnmu = mb / mu;
-      b = (npmblks) ? mb : MB;
-      out->mF = M + b - nmblks*MB - npmblks*mb;
-   }
-   if (!nnblks)  /* all blks small */
-   {
-      out->nb = out->pnb = NB = nb;
-      out->nnu = out->pnnu = NNU = nb / nu;
-      out->nF = N - (npnblks-1)*nb;
-   }
-   else
-   {
-      int b;
-      out->nb  = NB;
-      out->pnb = nb;
-      out->nnu = NNU = NB / nu;
-      out->pnnu = nb / nu;
-      b = (npnblks) ? nb : NB;
-      out->nF = N + b - nnblks*NB - npnblks*nb;
-   }
+   out->npnblks = npnblks;
+   out->nb = NB;
+   out->pnb = nb;
+   out->nnu = NNU;
+   out->pnnu = nb / nu;
+   out->nF = N + ((npnblks)?nb:NB) - nnblks*NB - npnblks*nb;
    out->vlen = vlen = ATL_AMM_VLENs[idx];
    szC = ((mu*nu+vlen-1)/vlen)*vlen;
    szC *= NMU*NNU;
@@ -24208,7 +24263,12 @@ int Mjoin(PATL,ammm_rkK)
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-   Mjoin(PATL,GetRKInfo)(&op, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+   Mjoin(PATL,GetRKInfo)(&op, 0, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+   #if 0
+   printf("MB=(%d,%d), mb=(%d,%d); NB=(%d,%d), nb=(%d,%d)\n",
+          op.mb, (int)op.nfmblks, op.pmb, (int)op.npmblks,
+          op.nb, (int)op.nfnblks, op.pnb, (int)op.npnblks);
+   #endif
 /*
  *  Usual case, compute column-panel of C at a time, need workspace of
  *  1 block of B and C, and 1 col-panel of A.
@@ -24269,7 +24329,7 @@ int Mjoin(PATL,ammm_rkK)
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-   Mjoin(PATL,GetRKInfo)(&rkinf, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+   Mjoin(PATL,GetRKInfo)(&rkinf, 0,TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
 
    kb = rkinf.kb;
    nnblks = rkinf.nnblks;
