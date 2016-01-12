@@ -2612,17 +2612,19 @@ int CopyPropTrans0(int SRCLIVE, BLIST *scope, INT_BVI scopeblks, BBLOCK *blk,
    INT_BVI ivsrc, ivdst;
    extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
+   /*int flag = 0;*/
 
    bl = FindInList(scope, blk);
    if (bl->ptr)
       change = 1;
 #if 0
-fprintf(stderr, "blk=%d, SRCLIVE=%d, dest=%s", blk->bnum, SRCLIVE, Int2Reg(-dest));
-fprintf(stderr, ", src=%s\n", Int2Reg(-src));
+fprintf(stderr, "blk=%d, SRCLIVE=%d, dest(%d)=%s", blk->bnum, SRCLIVE, 
+        dest, Int2Reg(-dest));
+fprintf(stderr, ", src(%d)=%s\n", src, Int2Reg(-src));
 #endif
-   ivdst = Reg2Regstate(src);
    ivdst = FKO_BVTMP = BitVecCopy(FKO_BVTMP, Reg2Regstate(dest));
    ivsrc = Reg2Regstate(src);
+
    for (ip=ipstart?ipstart->next:blk->ainst1; ip; ip = ip->next)
    {
       j = GET_INST(ip->inst[0]);
@@ -2902,6 +2904,7 @@ int DoCopyProp(BLIST *scope)
    INT_BVI scopeblks;
    INSTQ *ip=NULL, *next, *ipnext;
    BLIST *bl, *epil=NULL, *lp;
+   extern BBLOCK *bbbase;
 
    scopeblks = Scope2BV(scope);
    for (bl=scope; bl; bl = bl->next)

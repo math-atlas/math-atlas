@@ -3419,7 +3419,6 @@ int VarIsAccumulator(BLIST *scope, int var)
       add = ADD;
       mac = UNIMP; /* INT MAC is not implemented yet */
       break;
-   default:
 #if 0      
    case T_VFLOAT:
    case T_VDOUBLE:
@@ -3438,6 +3437,8 @@ int VarIsAccumulator(BLIST *scope, int var)
       mac = VDMAC;
       break;
 #endif
+   default:
+      fko_error(__LINE__, "Unknown type=%d, file=%s", i, __FILE__);
    }
    for (bl=scope; bl; bl = bl->next)
    {
@@ -3567,8 +3568,8 @@ int VarIsMaxOrMin(BLIST *scope, short var, int maxcheck, int mincheck)
       cmp = CMP;
       break;
    default:
-   case T_VFLOAT:
-   case T_VDOUBLE:
+   /*case T_VFLOAT:
+   case T_VDOUBLE:*/
 /*
  *    not applicable for vector intrinsic code
  */

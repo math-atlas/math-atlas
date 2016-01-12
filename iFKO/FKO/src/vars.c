@@ -469,9 +469,12 @@ void CheckUseSet()
             check = BitVecCheckComb(ip->use, use, '-');
             if (check)
             {
+               fprintf(stderr, "======== DEBUG INFO =======\n");
+               /*PrintST(stderr);*/
                PrintThisInst(stderr, 0, ip);
                fprintf(stderr, "USE=%s\n", BV2VarNames(use));
                fprintf(stderr, "IP->USE=%s\n", BV2VarNames(ip->use));
+               fprintf(stderr, "===============================\n");
                assert(!check);
             }
          }

@@ -2297,7 +2297,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int **nspill)
  *    to print the log of all optimizations who make changes
  */
       if (nchanges-nc0)
+      {
          PrintOptInst(stdout, ++iopt, k, scope, global, nchanges-nc0);
+      }
    #endif
    }
    if (scope) KillBlockList(scope);
@@ -3947,6 +3949,7 @@ int main(int nargs, char **args)
  *    apply SLP vectorization method 
  */
       assert(!SlpVectorization());
+      CheckUseSet();
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {
