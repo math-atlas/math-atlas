@@ -376,6 +376,7 @@ struct slpvector
    int islivein;      /* need to create it in pre-header */
    int islive;        /* reached lived or dead by scalar update */
    short vec;
+   short redvar;      /* reduction var for svars, needed for vvrsums */
    int vlen;
    short *svars;
    struct slpvector *next;
