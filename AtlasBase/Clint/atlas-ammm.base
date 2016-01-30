@@ -15090,8 +15090,9 @@ int Mjoin(PATL,ammm_IP)
 @endskip
 @ROUT ATL_ammm_1b
 {
+   size_t szA, szB, szC;
    int i;
-   int nmu, nnu, nku, bM, bN, bK, szB;
+   int nmu, nnu, nku, bM, bN, bK;
    #if ATL_geAMM_MAXKVEC > 1
       int KK;
    #else
@@ -15150,14 +15151,20 @@ int Mjoin(PATL,ammm_IP)
  */
    if (amm != mminfo.amm_b0 && K > 2 && K <= ATL_rkAMM_LASTKB)
       return(-1);
+   szA = bM*KK;
    szB = KK*bN;
-   vp = malloc((bM*bN + bM*KK + szB + mu*nu*ku)*sizeof(TYPE) + 3*ATL_Cachelen);
+   #if ATL_geAMM_MAXKVEC > 1
+      szC = ((mu*nu+mminfo.vlen-1)/mminfo.vlen)*mminfo.vlen * nmu * nnu;
+   #else
+      szC = bM*bN;
+   #endif
+   vp = malloc(ATL_MulBySize(szC+szA+szB + (mu+mu)*nu*ku) + 3*ATL_Cachelen);
    if (!vp)
       return(1);
    pB = ATL_AlignPtr(vp);
    pA = pB + szB;
    pA = ATL_AlignPtr(pA);
-   pC = pA + bM*KK;
+   pC = pA + szA;
    pC = ATL_AlignPtr(pC);
 /*
  * Copy A & B into workspace, and pad K its if necessary
@@ -15238,7 +15245,11 @@ int Mjoin(PATL,ammm_IP)
       return(-1);
    szB = KK*bN;
    szA = bM*KK;
-   szC = bM*bN;
+   #if ATL_geAMM_MAXKVEC > 1
+      szC = ((mu*nu+mminfo.vlen-1)/mminfo.vlen)*mminfo.vlen * nmu * nnu;
+   #else
+      szC = bM*bN;
+   #endif
    vp = malloc((szC+mu*nu*ku + szA + szB)*2*ATL_sizeof + 3*ATL_Cachelen);
    ATL_assert(vp);
    iB = ATL_AlignPtr(vp);
@@ -22726,7 +22737,7 @@ void Mjoin(PATL,GetRKInfo)
    idx = K-3;
    out->ku = ku = ATL_AMM_KUs[idx];
    #if ATL_rkAMM_MAXKVEC > 0
-      if (ATL_AMM_KRUNTIME(idx))
+      if (ATL_AMM_KMAJOR(idx))
          kb = ((K + ku - 1)/ku)*ku;
    #endif
 /*
