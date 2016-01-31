@@ -665,6 +665,8 @@ struct ATL_SyrkK
 };
 #ifdef TYPE
    #define VINT volatile int
+   #define ushort unsigned short
+   #define uint unsigned int
 /*
  * This structure used when K <= MAXKB, and M and N are large
  */
@@ -743,10 +745,30 @@ struct ATL_tamm_tMN
 };
 /*
  * This structure used when N <= MAXNB && K <= MAXKB
+@beginskip
+ *
+ * bflg is a bit vector with a set bit at location below meaning:
+ *   0 : A is not transposed (AtlasNoTrans or AtlasConj)
+ *   1 : A is conjugated (AtlasConj or AtlasConjTrans)
+ *   2 : B is not transposed (AtlasNoTrans or AtlasConj)
+ *   3 : B is conjugated (AtlasConj or AtlasConjTrans)
+@endskip
  */
 typedef struct ATL_tamm_tNK ATL_tamm_tNK_t;
 struct ATL_tamm_tNK
 {
+   rkinfo_t *rp;        /* properly setup rank-K serial data structure */
+   const TYPE *A, *B;   /* input (A & B) matrices */
+   TYPE *C;             /* output matrix */
+   TYPE *wB;            /* workspace for B, shared by all threads */
+   TYPE *w;             /* wrkspc for A&C, len=wsz*P */
+   void *MbCtr;         /* which M block */
+   void *BassgCtr;      /* 1 means must be copied, 0 assigned */
+   void *BdoneCtr;      /* 0 means must be copied, 1 not ready */
+   size_t wsz;          /* gap between thread's workspaces */
+   ushort P;            /* # of threads assigned to this problem */
+@skip   ushort bflg;         /* bitflag, see above for more info */
+@beginskip
    ammkern_t amm_b0;
    cm2am_t a2blk;       /* block copy for A */
    cm2am_t b2blk;       /* block copy for B, applies alpha */
@@ -777,6 +799,7 @@ struct ATL_tamm_tNK
    int lda;             /* leading dim of A */
    int ldb;             /* leading dim of B */
    int ldc;             /* leading dim of C */
+@endskip
 };
 /*
  * This structure used when N <= MIN(MAXNB,MAXMB), so we deal out only
@@ -989,6 +1012,8 @@ struct ATL_tgemm_ammG
    int blkszB;       /* nb*kb */
    int blkszC;       /* mb*nb */
 };
+   #undef uint
+   #undef ushort
    #undef VINT
 #endif
 /*
@@ -4863,10 +4888,6 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
 @ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
    }
 @ROUT ATL_tgemm
-   #if 1  // temporary until we get threads working
-      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
-      return;
-   #endif
 #ifdef TREAL
 @skip  if (N <= ATL_geAMM_LASTMB && K <= ATL_geAMM_LASTKB &&  K > 2 &&
 @skip      M >= (ATL_geAMM_LASTMB<<2)*Mmin(ATL_NTHREADS,8))
@@ -4880,6 +4901,10 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
          return;
    }
 #endif
+   #if 1  // temporary until we get threads working
+      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return;
+   #endif
 /*
  * See if we are in a case where we've implemented a dynamically scheduled
  * code.  Performance of the dynamically scheduled operations varies:
@@ -12733,10 +12758,157 @@ int Mjoin(PATL,ttrsm_amm)
 #define ATL_ESTNCTR 1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
+#include "atlas_cbc.h"
 
 @ROUT ATL_tammm_tNK
+const TYPE *IdxA_rkK(rkinfo_t *op, const TYPE *A, size_t i)
+{
+   size_t m;
+
+   m = op->nfmblks;
+   m = Mmin(m, i);
+   i -= m;
+   A += m * op->incAm + i * op->pincAm;
+   return(A);
+}
+const TYPE *IdxB_rkK(rkinfo_t *op, const TYPE *B, size_t j)
+{
+   size_t n;
+
+   n = op->nfnblks;
+   n = Mmin(n, j);
+   j -= n;
+   B += op->incBn * n + op->pincBn * j;
+   return(B);
+}
+
+TYPE *IdxC_rkK(rkinfo_t *op, TYPE *C, size_t i, size_t j)
+{
+   size_t n;
+
+   n = op->nfmblks;
+   n = Mmin(n, i);
+   i -= n;
+   C += op->mb * n + op->pmb * i;
+   n = op->nfnblks;
+   n = Mmin(n, i);
+   j -= n;
+   C += (op->nb * n + op->pnb * j)*op->ldc;
+   return(C);
+}
 void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
+   ATL_thread_t *tp = vp;
+   ATL_tamm_tNK_t *pd = lp->opstruct;  /* parallel prob def struct */
+   rkinfo_t *rp = pd->rp;
+   size_t ldc=rp->ldc, lda=rp->lda;
+   ATL_CUINT rank = tp->rank, nfmblks=rp->nfmblks, npmblks=rp->npmblks;
+   ATL_CUINT nmblks=nfmblks+npmblks, kb = rp->KB, K=rp->kb;
+   TYPE *pB = pd->wB, *pA = pd->w + rank*pd->wsz, *pC, *C=pd->C;
+   ATL_UINT BCOPIED=0, mb, nb, nmu, nnu;
+   ATL_CUINT N = (rp->nfnblks) ? rp->nb : rp->nF;
+   ablk2cmat_t blk2c = rp->blk2C;
+   cm2am_t a2blk = rp->a2blk;
+   int ictr;
+   ammkern_t amm=rp->amm_b0;
+
+   pC = pA + rp->szA;
+   pC = ATL_AlignPtr(pC);
+/*
+ * First guy here starts to copy B
+ */
+   if (ATL_DecAtomicCount(pd->BassgCtr))
+   {
+      rp->b2blk(K, N, rp->alpB, pd->B, rp->ldb, pB);
+/*
+ *    Let waiting threads know B is ready for use, memsync for weakly-ordered
+ */
+      #if ATL_CBC_STRONG
+         BCOPIED = ATL_DecAtomicCount(pd->BdoneCtr);
+         ATL_assert(BCOPIED);
+      #else
+         ATL_cbc_barrier(pd->P, rank, NULL);
+         BCOPIED = 1;
+      #endif
+   }
+   if (rp->nfnblks)
+   {
+      nb = rp->nb;
+      nnu = rp->nnu;
+   }
+   else
+   {
+      nb = rp->nF;
+      nnu = rp->nnuF;
+   }
+/*
+ * For first A block I work on, I must await B to be copied
+ */
+   if (!BCOPIED)
+   {
+
+      ictr = ATL_DecGlobalAtomicCount(pd->MbCtr, rank);
+      if (ictr)
+      {
+         const TYPE *A;
+         int iblk = nmblks - ictr;
+
+         A = IdxA_rkK(rp, pd->A, iblk);
+         if (iblk < nfmblks)
+         {
+            mb = rp->mb;
+            nmu = rp->nmu;
+         }
+         else if (iblk != nmblks-1)
+         {
+            mb = rp->pmb;
+            nmu = rp->pnmu;
+         }
+         else
+         {
+            mb = rp->mF;
+            nmu = rp->nmuF;
+         }
+         a2blk(K, mb, rp->alpA, A, lda, pA);
+         #if ATL_CBC_STRONG
+            while (ATL_GetAtomicCount(pd->BdoneCtr))  /* await B cpy finish */
+               ATL_thread_yield();
+         #else
+            ATL_cbc_barrier(pd->P, rank, NULL);
+         #endif
+         amm(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
+         blk2c(mb, N, ATL_rone, pC, rp->beta, IdxC_rkK(rp, C, iblk, 0), ldc);
+      }
+   }
+/*
+ * Now, B is ready, so just go to town on remaining blocks
+ */
+   while ((ictr = ATL_DecGlobalAtomicCount(pd->MbCtr, rank)))
+   {
+      const TYPE *A;
+      int iblk = nmblks - ictr;
+
+      A = IdxA_rkK(rp, pd->A, iblk);
+      if (iblk < nfmblks)
+      {
+         mb = rp->mb;
+         nmu = rp->nmu;
+      }
+      else if (iblk != nmblks-1)
+      {
+         mb = rp->pmb;
+         nmu = rp->pnmu;
+      }
+      else
+      {
+         mb = rp->mF;
+         nmu = rp->nmuF;
+      }
+      a2blk(K, mb, rp->alpA, A, lda, pA);
+      amm(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
+      blk2c(mb, N, ATL_rone, pC, rp->beta, IdxC_rkK(rp, C, iblk, 0), ldc);
+   }
+@beginskip
    ATL_thread_t *tp = vp;
    ATL_tamm_tNK_t *pd = lp->opstruct;  /* problem definition structure */
    const unsigned int rank = tp->rank, mb=pd->mb, kb=pd->KB0, K=pd->K,
@@ -12822,6 +12994,7 @@ void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          blk2c(pd->mr, N, ATL_rone, pC, beta, C+ii, ldc);
       }
    }
+@endskip
 }
 /*
  * This routine handles the case where N <= maxNB && K <= maxKB, so B is
@@ -12845,6 +13018,46 @@ int Mjoin(PATL,tammm_tNK)
    ATL_CINT ldc
 )
 {
+   rkinfo_t rki;
+   ATL_tamm_tNK_t tnk;
+   size_t nmblks;
+   void *vp;
+
+   tnk.P = Mjoin(PATL,tGetRKInfo_tNK)(&rki, ATL_NTHREADS, TA, TB, M, N, K, 
+                                  lda, ldb, ldc, alpha, beta);
+//tnk.P = 1;
+   if (tnk.P < 2)
+   {
+      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return(0);
+   }
+   tnk.rp = &rki;
+   tnk.A = A;
+   tnk.B = B;
+   tnk.C = C;
+   tnk.wsz = ATL_MulBySize(rki.szA + rki.szC) + ATL_Cachelen;
+   tnk.wsz = ATL_MulByCachelen(ATL_DivByCachelen(tnk.wsz + ATL_Cachelen-1));
+   vp = malloc(ATL_MulBySize(rki.szB) + tnk.P*tnk.wsz + 2*ATL_Cachelen);
+   tnk.wsz = ATL_DivBySize(tnk.wsz);
+   tnk.wB = ATL_AlignPtr(vp);
+   tnk.w = tnk.wB + rki.szB;
+   tnk.w = ATL_AlignPtr(tnk.w);
+   nmblks = rki.nfmblks + rki.npmblks;
+   tnk.MbCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks, tnk.P), nmblks, 0);
+   tnk.BassgCtr = ATL_SetAtomicCount(1);
+   #if ATL_CBC_STRONG
+      tnk.BdoneCtr = ATL_SetAtomicCount(1);
+   #endif
+   ATL_goparallel(tnk.P, Mjoin(PATL,DoWork_tamm_tNK), &tnk, NULL);
+
+   #if ATL_CBC_STRONG
+   ATL_FreeAtomicCount(tnk.BdoneCtr);
+   #endif
+   ATL_FreeAtomicCount(tnk.BassgCtr);
+   ATL_FreeGlobalAtomicCount(tnk.MbCtr);
+   free(vp);
+   return(0);
+@beginskip
    ATL_SZT nmblks;
    amminfo_t mminfo;
    unsigned int i, mb, nb, kb, mu, nu, ku, P, mr;
@@ -12938,9 +13151,10 @@ int Mjoin(PATL,tammm_tNK)
    ATL_FreeAtomicCount(pd.BdoneCtr);
    ATL_FreeAtomicCount(pd.BassgCtr);
    ATL_FreeGlobalAtomicCount(pd.MbCtr);
-
    free(vp);
    return(0);
+
+@endskip
 }
 @ROUT ATL_tammm_G
 static void DoCpy
@@ -13802,12 +14016,14 @@ int Mjoin(PATL,tammm)
    if (N < ATL_geAMM_LASTNB && K <= ATL_geAMM_LASTKB && K > 2)
       return(Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
+   #if 0
    else if (M <= ATL_geAMM_LASTMB && N <= ATL_geAMM_LASTNB)
       return(Mjoin(PATL,tammm_tMN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
    else if (M > ATL_geAMM_LASTMB && K >= 16 && N > ATL_geAMM_LASTNB)
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc, Mjoin(PATL,tammm_G)));
+   #endif
    return(1);
 }
 @ROUT ATL_tsyrk_amm
@@ -16068,7 +16284,7 @@ void ATL_goParallel
    if (P0 < 2)
 
    {
-      if (!ATL_TP_PTR)
+      if (!ATL_TP1_PTR)
          ATL_TP1_PTR = ATL_NewThreadPool(1, 0, NULL);
       pp = ATL_TP1_PTR;
       pp->nworkers = 1;
@@ -16191,7 +16407,7 @@ void ATL_goParallel
    if (P0 < 2)
 
    {
-      if (!ATL_TP_PTR)
+      if (!ATL_TP1_PTR)
          ATL_TP1_PTR = ATL_NewThreadPool(1, 0, NULL);
       pp = ATL_TP1_PTR;
       pp->nworkers = 1;

@@ -632,6 +632,7 @@ struct rkinfo
    ushort mb, pmb, nb, pnb; /* full & partial blk factors for M & N */
    ushort kb;               /* K from original problem */
    ushort KB;               /* ((kb+ku-1)/vl)*vl if kvec, else kb */
+   uchar nmuF, nnuF;        /* # of unrollings in final M/N blocks */
    uchar nmu, nnu;          /* # of unrollings along each dim */
    uchar pnmu, pnnu;        /* # of unrollings in partial blocks */
    uchar mu, nu, ku;        /* unrolling for each dim used by amm */
@@ -662,6 +663,10 @@ void Mjoin(PATL,GetBestKBInfo)
    (rkinfo_t*,rkinfo_t*,enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,
     ATL_CSZT,ATL_CSZT,size_t,size_t,size_t,const SCALAR,const SCALAR);
 @endskip
+int Mjoin(PATL,tGetRKInfo_tNK)
+   (rkinfo_t*, int, enum ATLAS_TRANS, enum ATLAS_TRANS,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta);
 void Mjoin(PATL,GetRKInfo)
    (rkinfo_t*, int, enum ATLAS_TRANS, enum ATLAS_TRANS,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
@@ -22174,11 +22179,11 @@ int Mjoin(PATL,@(sh)GetAmmmIndx)(size_t M, size_t N, size_t K)
    #endif
    return(idx);
 }
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 /*
  * Given a selected amm index, fill in ipinfo for using inner-product based
  * amm loops
  */
-@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 void Mjoin(PATL,@(sh)ComputeIPInfo)
 (
    ipinfo_t *ip,
@@ -22518,128 +22523,6 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
 
 @ROUT ATL_GetRankKInfo
 @beginskip
-static INLINE void FillInRankKInf
-   (rkinfo_t *out, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
-    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
-    const SCALAR alpha, const SCALAR beta, int mb, int nb)
-{
-   int kb = ATL_AMM_KBs[idx];
-   const int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx], ku=ATL_AMM_KUs[idx];
-   const int vlen=ATL_amm_VLENs[idx];
-
-   if (!mb)
-      mb = ATL_AMM_MBs[idx];
-   if (!nb)
-      nb = ATL_AMM_NBs[idx];
-   out->nfmb = M/mb;
-   out->nfnb = N/nb;
-   out->nfkb = K/kb;
-   out->mu = mu;
-   out->nu = nu;
-   out->ku = ku;
-   out->vlen = vlen;
-   out->lda = lda;
-   out->ldb = ldb;
-   out->ldc = ldc;
-   out->mb = mb;
-   out->nb = nb;
-   out->kb = kb;
-   out->nmu = mb / mu;
-   out->nnu = nb / nu;
-   out->amm_b0 = ATL_AMM_KERN_b0[idx];
-   out->amm_b1 = ATL_AMM_KERN_b1[idx];
-   out->flag = ATL_AMM_KFLAG[idx];
-   out->mbL = M - out->nfmb*mb;
-   out->nbL = N - out->nfnb*nb;
-   out->kbL = K - out->nfkb*kb;
-   out->nmuL = (out->mbL+mu-1)/mu;
-   out->nnuL = (out->nbL+nu-1)/nu;
-   out->MBL = out->nmuL*mu;
-   out->NBL = out->nnuL*nu;
-   out->KBL = ((out->kbL+ku-1)/ku)*ku;
-   if (TA == AtlasNoTrans)
-   {
-      out->a2blk  = ATL_AMM_AT2BLK_a1[idx];
-      out->incAm = mb;
-      out->incAk = kb * (lda SHIFT);
-   }
-   #ifdef TCPLX
-   else if (TA == AtlasConj)
-   {
-      out->a2blk  = ATL_AMM_AH2BLK_a1[idx];
-      out->incAm = mb+mb;
-      out->incAk = kb * (lda+lda);
-   }
-   else if (TA == AtlasConjTrans)
-   {
-      out->a2blk  = ATL_AMM_AC2BLK_a1[idx];
-      out->incAm = mb*(lda+lda);
-      out->incAk = kb+kb;
-   }
-   #endif
-   else
-   {
-      out->a2blk  = ATL_AMM_AN2BLK_a1[idx];
-      out->incAm = mb*(lda SHIFT);
-      out->incAk = kb SHIFT;
-   }
-
-   if (SCALAR_IS_ZERO(beta))
-      out->blk2c  = ATL_AMM_BLK2C_a1_b0[idx];
-   else if (SCALAR_IS_ONE(beta))
-      out->blk2c  = ATL_AMM_BLK2C_a1_b1[idx];
-   else
-      out->blk2c  = SCALAR_IS_NONE(beta) ? 
-                    ATL_AMM_BLK2C_a1_bn[idx]:ATL_AMM_BLK2C_a1_bX[idx];
-   if (TB == AtlasNoTrans)
-   {
-      out->incBk = kb SHIFT;
-      out->incBn = nb*(ldb SHIFT);
-      if (SCALAR_IS_ONE(alpha))
-         out->b2blk  = ATL_AMM_BN2BLK_a1[idx];
-      else
-         out->b2blk  = SCALAR_IS_NONE(alpha) ? 
-                       ATL_AMM_BN2BLK_an[idx]:ATL_AMM_BN2BLK_aX[idx];
-   }
-   #ifdef TCPLX
-   else if (TB == AtlasConjTrans)
-   {
-      out->incBk = kb*(ldb+ldb);
-      out->incBn = nb+nb;
-      if (SCALAR_IS_ONE(alpha))
-         out->b2blk  = ATL_AMM_BH2BLK_a1[idx];
-      else if (SCALAR_IS_NONE(alpha))
-         out->b2blk  = ATL_AMM_BH2BLK_an[idx];
-      else /* alpha = X */
-         out->b2blk  = ATL_AMM_BH2BLK_aX[idx];
-   }
-   else if (TB == AtlasConj)
-   {
-      out->incBk = kb+kb;
-      out->incBn = nb*(ldb+ldb);
-      if (SCALAR_IS_ONE(alpha))
-         out->b2blk  = ATL_AMM_BC2BLK_a1[idx];
-      else if (SCALAR_IS_NONE(alpha))
-         out->b2blk  = ATL_AMM_BC2BLK_an[idx];
-      else /* alpha = X */
-         out->b2blk  = ATL_AMM_BC2BLK_aX[idx];
-   }
-   #endif
-   else  /* TB == AtlasTrans */
-   {
-      out->incBk = kb*(ldb SHIFT);
-      out->incBn = nb SHIFT;
-      if (SCALAR_IS_ONE(alpha))
-         out->b2blk  = ATL_AMM_BT2BLK_a1[idx];
-      else if (SCALAR_IS_NONE(alpha))
-         out->b2blk  = ATL_AMM_BT2BLK_an[idx];
-      else /* alpha = X */
-         out->b2blk  = ATL_AMM_BT2BLK_aX[idx];
-   }
-}
-@endskip
-
-@beginskip
 static INLINE int ATL_ComputeB   /* RETURNS: selected blocking */
 (
    size_t N,   /* problem dimension */
@@ -22703,6 +22586,336 @@ static INLINE int ATL_ComputeB   /* RETURNS: selected blocking */
 @endskip
 
 #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+static INLINE void FillInRankKInf
+   (rkinfo_t *out, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta, 
+    size_t nfmblks, size_t npmblks, int mb, int pmb,
+    size_t nfnblks, size_t npnblks, int nb, int pnb)
+{
+
+   #if ATL_rkAMM_MAXKVEC == 0
+      const unsigned int kb = K;
+   #else
+      int unsigned kb = K;
+   #endif
+   const unsigned int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx];
+   const unsigned int ku=ATL_AMM_KUs[idx], vlen=ATL_AMM_VLENs[idx];
+   unsigned int sz, nmu, nnu;
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define CONE ATL_rone
+   #endif
+
+   #if ATL_rkAMM_MAXKVEC > 0
+      if (ATL_AMM_KMAJOR(idx))
+         kb = ((K + ku - 1)/ku)*ku;
+   #endif
+   out->nfmblks = nfmblks;
+   out->npmblks = npmblks;
+   out->mb = mb;
+   out->pmb = pmb;
+   out->nfnblks = nfnblks;
+   out->npnblks = npnblks;
+   out->nb = nb;
+   out->pnb = pnb;
+   out->mu = mu;
+   out->nu = nu;
+   out->ku = ku;
+   out->vlen = vlen;
+   out->lda = lda;
+   out->ldb = ldb;
+   out->ldc = ldc;
+
+   out->nmu = mb / mu;
+   out->pnmu = pmb / mu;
+   out->nnu = nb / nu;
+   out->pnnu = pnb / nu;
+   if (npmblks)
+   {
+      out->mF = M - nfmblks*mb - (npmblks-1)*pmb;
+      out->nmuF = (out->mF+mu-1) / mu;
+   }
+   else
+      out->nmuF = out->mF = 0;
+   if (npnblks)
+   {
+      out->nF = N - nfnblks*nb - (npnblks-1)*pnb;
+      out->nnuF = (out->nF+nu-1) / nu;
+   }
+   else
+      out->nnuF = out->nF = 0;
+   sz = ((mu*nu+vlen-1)/vlen)*vlen;
+   sz *= (out->nmu) ? out->nmu : out->pnmu;
+   sz *= (out->nnu) ? out->nnu : out->pnnu;
+   out->szC = sz;
+   out->idx = idx;
+   out->amm_b0 = ATL_AMM_KERN_b0[idx];
+   #ifdef TCPLX
+      out->amm_b1 = ATL_AMM_KERN_b1[idx];
+      out->amm_bn = ATL_AMM_KERN_bn[idx];
+   #endif
+   out->kb = K;
+   out->KB = kb;
+   out->lda = lda;
+   out->ldb = ldb;
+   out->ldc = ldc;
+   out->pszA = pmb*kb;
+   out->szA = kb * ((mb) ? mb:pmb);
+   out->pszB = kb*pnb;
+   out->szB = kb * ((nb) ? nb:pnb);
+   out->alpA = out->alpB = CONE;
+   out->beta = beta;
+   #ifdef TCPLX
+      out->ONE = CONE;
+   if (TA == AtlasNoTrans || TA == AtlasConj)
+   #else
+   if (TA == AtlasNoTrans)
+   #endif
+   {
+      out->incAm  = mb SHIFT;
+      out->pincAm = pmb SHIFT;
+   }
+   else
+   {
+      out->incAm = lda*(mb SHIFT);
+      out->pincAm = lda*(pmb SHIFT);
+   }
+   #ifdef TCPLX
+   if (TB == AtlasNoTrans || TB == AtlasConj)
+   #else
+   if (TB == AtlasNoTrans)
+   #endif
+   {
+      out->incBn = ldb*(nb SHIFT);
+      out->pincBn = ldb*(pnb SHIFT);
+   }
+   else
+   {
+      out->incBn  = nb SHIFT;
+      out->pincBn = pnb SHIFT;
+   }
+/*
+ * Once we have ATL_ammmN written, put alpha on A if there's only 1 blk of
+ * of B.  For now, always put on B and use ATL_ammmM
+ */
+   #if 0
+   if (nnblks > 1 && nmblks < 2) /* If we only have row panel of C */
+   {                             /* apply alpha to A */
+      #ifdef TCPLX
+         if (TB == AtlasNoTrans)
+            out->b2blk = ATL_AMM_BN2BLK_a1[idx];
+         else if (TB == AtlasTrans)
+            out->b2blk = ATL_AMM_BT2BLK_a1[idx];
+         else
+            out->b2blk = (TB == AtlasConjTrans) ?
+               ATL_AMM_BH2BLK_a1[idx] : ATL_AMM_BC2BLK_a1[idx];
+
+         if (SCALAR_IS_ONE(alpha))
+         {
+            if (TA == AtlasNoTrans)
+               out->a2blk = ATL_AMM_AT2BLK_a1[idx];
+            else if (TA == AtlasTrans)
+               out->a2blk = ATL_AMM_AN2BLK_a1[idx];
+            else
+               out->a2blk = (TA == AtlasConjTrans) ?
+                  ATL_AMM_AC2BLK_a1[idx] : ATL_AMM_AH2BLK_a1[idx];
+         }
+         else if (SCALAR_IS_NONE(alpha))
+         {
+            if (TA == AtlasNoTrans)
+               out->a2blk = ATL_AMM_AT2BLK_an[idx];
+            else if (TA == AtlasTrans)
+               out->a2blk = ATL_AMM_AN2BLK_an[idx];
+            else
+               out->a2blk = (TA == AtlasConjTrans) ?
+                  ATL_AMM_AC2BLK_an[idx] : ATL_AMM_AH2BLK_an[idx];
+         }
+         else
+         {
+            if (TA == AtlasNoTrans)
+               out->a2blk = ATL_AMM_AT2BLK_aX[idx];
+            else if (TA == AtlasTrans)
+               out->a2blk = ATL_AMM_AN2BLK_aX[idx];
+            else
+               out->a2blk = (TA == AtlasConjTrans) ?
+                  ATL_AMM_AC2BLK_aX[idx] : ATL_AMM_AH2BLK_aX[idx];
+         }
+      #else
+         out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_BN2BLK_a1[idx] : ATL_AMM_BT2BLK_a1[idx];
+         if (SCALAR_IS_ONE(alpha))
+            out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_a1[idx] : ATL_AMM_AN2BLK_a1[idx];
+         else if (SCALAR_IS_NONE(alpha))
+            out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_an[idx] : ATL_AMM_AN2BLK_an[idx];
+         else
+            out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_aX[idx] : ATL_AMM_AN2BLK_aX[idx];
+      #endif
+   }
+   else  /* apply alpha to B */
+   #endif
+   {
+      out->alpB = alpha;
+      #ifdef TCPLX
+         if (TA == AtlasNoTrans)
+            out->a2blk = ATL_AMM_AT2BLK_a1[idx];
+         else if (TA == AtlasTrans)
+            out->a2blk = ATL_AMM_AN2BLK_a1[idx];
+         else
+            out->a2blk = (TA == AtlasConjTrans) ?
+               ATL_AMM_AC2BLK_a1[idx] : ATL_AMM_AH2BLK_a1[idx];
+
+         if (SCALAR_IS_ONE(alpha))
+         {
+            if (TB == AtlasNoTrans)
+               out->b2blk = ATL_AMM_BN2BLK_a1[idx];
+            else if (TB == AtlasTrans)
+               out->b2blk = ATL_AMM_BT2BLK_a1[idx];
+            else
+               out->b2blk = (TB == AtlasConjTrans) ?
+                  ATL_AMM_BH2BLK_a1[idx] : ATL_AMM_BC2BLK_a1[idx];
+         }
+         else if (SCALAR_IS_NONE(alpha))
+         {
+            if (TB == AtlasNoTrans)
+               out->b2blk = ATL_AMM_BN2BLK_an[idx];
+            else if (TB == AtlasTrans)
+               out->b2blk = ATL_AMM_BT2BLK_an[idx];
+            else
+               out->b2blk = (TB == AtlasConjTrans) ?
+                  ATL_AMM_BH2BLK_an[idx] : ATL_AMM_BC2BLK_an[idx];
+         }
+         else
+         {
+            if (TB == AtlasNoTrans)
+               out->b2blk = ATL_AMM_BN2BLK_aX[idx];
+            else if (TB == AtlasTrans)
+               out->b2blk = ATL_AMM_BT2BLK_aX[idx];
+            else
+               out->b2blk = (TB == AtlasConjTrans) ?
+                  ATL_AMM_BH2BLK_aX[idx] : ATL_AMM_BC2BLK_aX[idx];
+         }
+      #else
+         out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_a1[idx] : ATL_AMM_AN2BLK_a1[idx];
+         if (SCALAR_IS_ONE(alpha))
+            out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_BN2BLK_a1[idx] : ATL_AMM_BT2BLK_a1[idx];
+         else if (SCALAR_IS_NONE(alpha))
+            out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_BN2BLK_an[idx] : ATL_AMM_BT2BLK_an[idx];
+         else
+            out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_BN2BLK_aX[idx] : ATL_AMM_BT2BLK_aX[idx];
+      #endif
+   }
+   if (SCALAR_IS_NONE(beta))
+      out->blk2C = ATL_AMM_BLK2C_a1_bn[idx];
+   else if (SCALAR_IS_ONE(beta))
+      out->blk2C = ATL_AMM_BLK2C_a1_b1[idx];
+   else
+      out->blk2C = (SCALAR_IS_ZERO(beta)) ?
+         ATL_AMM_BLK2C_a1_b0[idx] : ATL_AMM_BLK2C_a1_bX[idx];
+}
+
+int Mjoin(PATL,tGetRKInfo_tNK)
+(
+   rkinfo_t *out,
+   int P,                   /* max number of cores to use */
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   size_t lda, 
+   size_t ldb,
+   size_t ldc,
+   const SCALAR alpha,
+   const SCALAR beta
+)
+{
+   #if ATL_rkAMM_MAXKVEC == 0
+      const int kb = K;
+   #else
+      int kb=K;
+   #endif
+   ATL_UINT idx, mb, nb, MB, NB, mu, nu, ku, vlen, szC;
+   size_t npmblks, nfmblks, npnblks, nfnblks;
+
+   ATL_assert(K <= ATL_rkAMM_LASTKB && K > 2);
+   idx = K-3;
+   ku = ATL_AMM_KUs[idx];
+   #if ATL_rkAMM_MAXKVEC > 0
+      if (ATL_AMM_KMAJOR(idx))
+         kb = ((K + ku - 1)/ku)*ku;
+   #endif
+   mb = ATL_AMM_MBs[idx];
+   mu = ATL_AMM_MUs[idx];
+   nu = ATL_AMM_NUs[idx];
+   nb = ((N+nu-1)/nu)*nu;
+   if (nb != N)
+   {
+      NB = nfnblks = 0;
+      npnblks = 1;
+   }
+   else
+   {
+      NB = nb;
+      nfnblks = 1;
+      nb = npnblks = 0;
+   }
+   nfmblks = M / mb;
+   if (nfmblks < P) /* scope reducing mb for greater parallelism */
+   {
+      P = nfmblks;  /* for now, just reduce parallelism */
+   }
+   #if 0  // don't adjust mb until initial debug is done
+/*
+ * If there's enough parallelism, consider increasing mb
+ */
+   else if (nfmblks >= P+P && mb < ATL_rkAMM_LASTMB)
+   {
+      if (((mb*nb)<<1) + (mb+nb)*K <= ATL_L1elts) /* keep it in L1 */
+      {                                           /* if it presently fits */
+         do 
+         {
+            mb += mu;
+         }
+         while (((mb*nb)<<1) + (mb+nb)*K <= ATL_L1elts);
+         mb -= mu;
+      }
+      else  /* if L1 exceeded, maximize MB to min # of times B is flushed */
+         mb = ((ATL_rkAMM_LASTMB+mu-1)/mu)*mu;
+   }
+   #endif
+   MB = mb;
+   nfmblks = M / MB;
+   if (nfmblks)
+   {
+      mb = M - nfmblks*MB;
+      if (mb)
+      {
+         npmblks = 1;
+         mb = ((mb+mu-1)/mu)*mu;
+      }
+      else
+         npmblks = 0;
+   }
+   else
+   {
+      MB = 0;
+      mb = ((M+mu-1)/mu)*mu;
+      npmblks = 1;
+   }
+   FillInRankKInf(out, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta,
+                  nfmblks, npmblks, MB, mb, nfnblks, npnblks, NB, nb);
+   return(P);
+}
+
 void Mjoin(PATL,GetRKInfo)
 (
    rkinfo_t *out,           /* what to use for K-cleanup */
@@ -22725,8 +22938,166 @@ void Mjoin(PATL,GetRKInfo)
       int kb=K;
    #endif
    ATL_UINT idx, mb, nb, MB, NB, NMU, NNU, nmu, nnu, mu, nu, ku, vlen, szC;
+   size_t npmblks, nfmblks, npnblks, nfnblks;
+
+   ATL_assert(K <= ATL_rkAMM_LASTKB && K > 2);
+   idx = K-3;
+   out->ku = ku = ATL_AMM_KUs[idx];
+   #if ATL_rkAMM_MAXKVEC > 0
+      if (ATL_AMM_KMAJOR(idx))
+         kb = ((K + ku - 1)/ku)*ku;
+   #endif
+   mb = ATL_AMM_MBs[idx];
+   nb = ATL_AMM_NBs[idx];
+   mu = ATL_AMM_MUs[idx];
+   nu = ATL_AMM_NUs[idx];
+/*
+ * If 4 operands (C, wC, A, B) all fit in L1, use small, near-square shapes.
+ * otherwise, use MB/NB from largest KB, which we know fits in some level
+ * of cache.  Using larger M/N will tend to minimize function call overhead,
+ * and shouldn't have much negative effect once L1 is overflowed.
+ */
+   if (((mb*nb)<<1) + (mb+nb)*K <= ATL_L1elts)
+   {
+      MB = mb;
+      NB = nb;
+      while (((mb*nb)<<1) + (mb+nb)*K <= ATL_L1elts && (mb < M || nb < N))
+      {
+         MB = mb;
+         NB = nb;
+         if (nb >= N || (mb <= nb && mb < M))
+            mb += mu;
+         else if (nb < N)
+            nb += nu;
+      }
+      nfmblks = M / MB;
+      if (nfmblks)
+      {
+         mb = ((M - MB*nfmblks + mu-1)/mu)*mu;
+         npmblks = (mb) ? 1 : 0;
+      }
+      else
+      {
+         MB = 0;
+         mb = ((M+mu-1)/mu)*mu;
+         npmblks = 1;
+      }
+      nfnblks = N / NB;
+      if (nfnblks)
+      {
+         nb = ((N - NB*nfnblks + nu-1)/nu)*nu;
+         npnblks = (nb) ? 1 : 0;
+      }
+      else
+      {
+         NB = 0;
+         nb = ((N+nu-1)/nu)*nu;
+         npnblks = 1;
+      }
+   }
+/*
+ * If we don't fit in cache, start with assumption we'll use largest M/N blk,
+ * but if the remainder block is very small, while the initial blks are large,
+ * try to rebalance (if allowed by flag).
+ */
+   else
+   {
+      if (ATL_rkAMM_LASTMB > M)  /* only 1 blk in M dim */
+      {
+         nmu = (M+mu-1)/mu;
+         mb = nmu*mu;
+         if (mb == M)
+         {
+            MB = mb;
+            nfmblks = 1;
+            npmblks = mb = 0;
+         }
+         else
+         {
+            MB = nfmblks = 0;
+            npmblks = 1;
+         }
+      }
+      else                      /* at least one M blk */
+      {
+         NMU = ATL_rkAMM_LASTMB / mu;
+         MB = NMU*mu;
+         nfmblks = M / MB;
+         mb = M - nfmblks*MB;
+         if (mb)
+         {
+            int b = ATL_AMM_MBs[idx];
+            nmu = (mb+mu-1)/mu;
+            if (nmu < 4 && b >= nmu*mu && (flag&1)==0 && NMU > 5)
+            {
+               MB = ATL_CompBlkPart(M, MB, b, mu, &mb, &npmblks, &nfmblks);
+               if (!npmblks && M != nfmblks*MB)
+               {
+                  MB = (--nfmblks) ? MB : 0;
+                  npmblks = 1;
+                  mb = ((M - nfmblks*MB + mu-1)/mu)*mu;
+               }
+            }
+            else
+            {
+               npmblks = 1;
+               mb = nmu*mu;
+            }
+         }
+         else
+            npmblks = 0;
+
+      }
+      if (ATL_rkAMM_LASTNB > N)  /* only 1 blk in N dim */
+      {
+         nnu = (N+nu-1)/nu;
+         nb = nnu*nu;
+         if (nb == N)
+         {
+            NB = nb;
+            nfnblks = 1;
+            npnblks = nb = 0;
+         }
+         else
+         {
+            NB = nfnblks = 0;
+            npnblks = 1;
+         }
+      }
+      else                      /* at least one M blk */
+      {
+         NNU = ATL_rkAMM_LASTNB / nu;
+         NB = NNU*nu;
+         nfnblks = N / NB;
+         nb = N - nfnblks*NB;
+         if (nb)
+         {
+            int b = ATL_AMM_NBs[idx];
+            nnu = (nb+nu-1)/nu;
+            if (nnu < 4 && b >= nnu*nu && (flag&1)==0 && NNU > 5)
+            {
+               NB = ATL_CompBlkPart(N, NB, b, nu, &nb, &npnblks, &nfnblks);
+               if (!npnblks && N != nfnblks*NB)
+               {
+                  NB = (--nfnblks) ? NB : 0;
+                  npnblks = 1;
+                  nb = ((N - nfnblks*NB + nu-1)/nu)*nu;
+               }
+            }
+            else
+            {
+               npnblks = 1;
+               nb = nnu*nu;
+            }
+         }
+         else
+            npnblks = 0;
+      }
+   }
+   FillInRankKInf(out, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta, 
+                  nfmblks, npmblks, MB, mb, nfnblks, npnblks, NB, nb);
+@beginskip
    ATL_UINT maxMB=ATL_rkAMM_LASTMB, maxNB=ATL_rkAMM_LASTNB;
-   size_t npmblks, nmblks, npnblks, nnblks;
    #ifdef TCPLX
       static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
    #else
@@ -23019,6 +23390,7 @@ void Mjoin(PATL,GetRKInfo)
    else
       out->blk2C = (SCALAR_IS_ZERO(beta)) ? 
          ATL_AMM_BLK2C_a1_b0[idx] : ATL_AMM_BLK2C_a1_bX[idx];
+@endskip
 @skip   printf("IDR=%d, B=(%d,%d,%d), U=(%d,%d,%d)\n",
 @skip          idx, out->mb, out->nb, out->kb, out->mu, out->nu, ku);
 }
@@ -24779,8 +25151,11 @@ void Mjoin(PATL,oploopsM)
             C += nblks*nb*incCn;
          }
       }
-      if (j == nnblks-1)
+      if (j == nnblks-1 && j >= nfnblks)
+      {
          nb = op->nF;
+         nnu = op->nnuF;
+      }
       #ifdef TCPLX
          b2blk(kb, nb, alpB, B, op->ldb, rB, iB);
       #else
@@ -24801,9 +25176,12 @@ void Mjoin(PATL,oploopsM)
          nnu = op->pnnu;
          nblks = j - nfnblks;
          C += nblks*nb*incCn;
+         if (j == nnblks-1)
+         {
+            nb = op->nF;
+            nnu = op->nnuF;
+         }
       }
-      if (j == nnblks-1)
-         nb = op->nF;
    }
 /*
  * If present block is one of first large blocks, loop over large blks
@@ -24823,6 +25201,7 @@ void Mjoin(PATL,oploopsM)
          rA = iA + szA;
       #endif
       nmu = op->nmu;
+      mb = op->mb;
       for (; i < nfmblks; i++)
       {
          #ifdef TCPLX
@@ -24830,7 +25209,7 @@ void Mjoin(PATL,oploopsM)
          #else
             TYPE *an=a;
          #endif
-         mb = (i != nmblks-1) ? op->mb : op->mF;
+@skip         mb = (i != nmblks-1) ? op->mb : op->mF;
          if (A)
          {
             #ifdef TCPLX
@@ -24894,7 +25273,12 @@ void Mjoin(PATL,oploopsM)
          #else
             TYPE *an=a;
          #endif
-         mb = (i != nmblks-1) ? mb : op->mF;
+         if (i == nmblks-1)
+         {
+            mb = op->mF;
+            nmu = op->nmuF;
+         }
+@skip         mb = (i != nmblks-1) ? mb : op->mF;
          #ifdef TCPLX
             rA = iA + szA;
          #endif
