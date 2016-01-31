@@ -4888,6 +4888,10 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
 @ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
    }
 @ROUT ATL_tgemm
+   if (N <= ATL_rkAMM_LASTNB && K <= ATL_rkAMM_LASTKB && K > 2)
+      if (!Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                 beta, C, ldc))
+         return;
 #ifdef TREAL
 @skip  if (N <= ATL_geAMM_LASTMB && K <= ATL_geAMM_LASTKB &&  K > 2 &&
 @skip      M >= (ATL_geAMM_LASTMB<<2)*Mmin(ATL_NTHREADS,8))
@@ -12789,13 +12793,14 @@ TYPE *IdxC_rkK(rkinfo_t *op, TYPE *C, size_t i, size_t j)
    n = op->nfmblks;
    n = Mmin(n, i);
    i -= n;
-   C += op->mb * n + op->pmb * i;
+   C += (op->mb * n + op->pmb * i)SHIFT;
    n = op->nfnblks;
    n = Mmin(n, i);
    j -= n;
-   C += (op->nb * n + op->pnb * j)*op->ldc;
+   C += (op->nb * n + op->pnb * j)*((op->ldc) SHIFT);
    return(C);
 }
+
 void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
@@ -12804,22 +12809,42 @@ void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    size_t ldc=rp->ldc, lda=rp->lda;
    ATL_CUINT rank = tp->rank, nfmblks=rp->nfmblks, npmblks=rp->npmblks;
    ATL_CUINT nmblks=nfmblks+npmblks, kb = rp->KB, K=rp->kb;
-   TYPE *pB = pd->wB, *pA = pd->w + rank*pd->wsz, *pC, *C=pd->C;
+   #ifdef TCPLX
+      TYPE *iB = pd->wB, *iA = pd->w + rank*pd->wsz, *C=pd->C;
+      TYPE *rC, *iC, *rA, *rB = iB+rp->szB; ;
+   #else
+      TYPE *pB = pd->wB, *pA = pd->w + rank*pd->wsz, *pC, *C=pd->C;
+   #endif
    ATL_UINT BCOPIED=0, mb, nb, nmu, nnu;
    ATL_CUINT N = (rp->nfnblks) ? rp->nb : rp->nF;
    ablk2cmat_t blk2c = rp->blk2C;
    cm2am_t a2blk = rp->a2blk;
    int ictr;
-   ammkern_t amm=rp->amm_b0;
+   #ifdef TCPLX
+      ammkern_t amm_b0=rp->amm_b0, amm_b1=rp->amm_b1, amm_bn=rp->amm_bn;
+   #else
+      ammkern_t amm=rp->amm_b0;
+   #endif
 
-   pC = pA + rp->szA;
-   pC = ATL_AlignPtr(pC);
+   #ifdef TCPLX
+      rA = iA + rp->szA;
+      iC = rA + rp->szA;
+      iC = ATL_AlignPtr(iC);
+      rC = iC + rp->szC;
+   #else
+      pC = pA + rp->szA;
+      pC = ATL_AlignPtr(pC);
+   #endif
 /*
  * First guy here starts to copy B
  */
    if (ATL_DecAtomicCount(pd->BassgCtr))
    {
-      rp->b2blk(K, N, rp->alpB, pd->B, rp->ldb, pB);
+      #ifdef TCPLX
+         rp->b2blk(K, N, rp->alpB, pd->B, rp->ldb, rB, iB);
+       #else
+         rp->b2blk(K, N, rp->alpB, pd->B, rp->ldb, pB);
+       #endif
 /*
  *    Let waiting threads know B is ready for use, memsync for weakly-ordered
  */
@@ -12869,15 +12894,28 @@ void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             mb = rp->mF;
             nmu = rp->nmuF;
          }
-         a2blk(K, mb, rp->alpA, A, lda, pA);
+         #ifdef TCPLX
+            a2blk(K, mb, rp->alpA, A, lda, rA, iA);
+         #else
+            a2blk(K, mb, rp->alpA, A, lda, pA);
+         #endif
          #if ATL_CBC_STRONG
             while (ATL_GetAtomicCount(pd->BdoneCtr))  /* await B cpy finish */
                ATL_thread_yield();
          #else
             ATL_cbc_barrier(pd->P, rank, NULL);
          #endif
-         amm(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
-         blk2c(mb, N, ATL_rone, pC, rp->beta, IdxC_rkK(rp, C, iblk, 0), ldc);
+         #ifdef TCPLX
+            amm_b0(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+            amm_b0(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+            amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+            amm_b1(nmu, nnu, kb, iA, rB, iC, iA, iB, rC);
+            blk2c(mb, N, rp->ONE, rC, iC, rp->beta, 
+                  IdxC_rkK(rp, C, iblk, 0), ldc);
+         #else
+            amm(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
+            blk2c(mb, N, ATL_rone, pC, rp->beta, IdxC_rkK(rp, C, iblk, 0), ldc);
+         #endif
       }
    }
 /*
@@ -12904,9 +12942,18 @@ void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          mb = rp->mF;
          nmu = rp->nmuF;
       }
-      a2blk(K, mb, rp->alpA, A, lda, pA);
-      amm(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
-      blk2c(mb, N, ATL_rone, pC, rp->beta, IdxC_rkK(rp, C, iblk, 0), ldc);
+      #ifdef TCPLX
+         a2blk(K, mb, rp->alpA, A, lda, rA, iA);
+         amm_b0(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+         amm_b0(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+         amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+         amm_b1(nmu, nnu, kb, iA, rB, iC, iA, iB, rC);
+         blk2c(mb, N, rp->ONE, rC, iC, rp->beta, IdxC_rkK(rp, C, iblk, 0), ldc);
+      #else
+         a2blk(K, mb, rp->alpA, A, lda, pA);
+         amm(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
+         blk2c(mb, N, ATL_rone, pC, rp->beta, IdxC_rkK(rp, C, iblk, 0), ldc);
+      #endif
    }
 @beginskip
    ATL_thread_t *tp = vp;
@@ -13025,12 +13072,12 @@ int Mjoin(PATL,tammm_tNK)
 
    tnk.P = Mjoin(PATL,tGetRKInfo_tNK)(&rki, ATL_NTHREADS, TA, TB, M, N, K, 
                                   lda, ldb, ldc, alpha, beta);
-//tnk.P = 1;
    if (tnk.P < 2)
    {
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
+   printf("P=%d\n", tnk.P);
    tnk.rp = &rki;
    tnk.A = A;
    tnk.B = B;
@@ -13038,9 +13085,9 @@ int Mjoin(PATL,tammm_tNK)
    tnk.wsz = ATL_MulBySize(rki.szA + rki.szC) + ATL_Cachelen;
    tnk.wsz = ATL_MulByCachelen(ATL_DivByCachelen(tnk.wsz + ATL_Cachelen-1));
    vp = malloc(ATL_MulBySize(rki.szB) + tnk.P*tnk.wsz + 2*ATL_Cachelen);
-   tnk.wsz = ATL_DivBySize(tnk.wsz);
+   tnk.wsz = ATL_DivBySize(tnk.wsz)SHIFT;
    tnk.wB = ATL_AlignPtr(vp);
-   tnk.w = tnk.wB + rki.szB;
+   tnk.w = tnk.wB + (rki.szB SHIFT);
    tnk.w = ATL_AlignPtr(tnk.w);
    nmblks = rki.nfmblks + rki.npmblks;
    tnk.MbCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks, tnk.P), nmblks, 0);
