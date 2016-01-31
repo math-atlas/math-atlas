@@ -663,10 +663,12 @@ void Mjoin(PATL,GetBestKBInfo)
    (rkinfo_t*,rkinfo_t*,enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,
     ATL_CSZT,ATL_CSZT,size_t,size_t,size_t,const SCALAR,const SCALAR);
 @endskip
-int Mjoin(PATL,tGetRKInfo_tNK)
+@whiledef sf _tNK _tK
+int Mjoin(PATL,tGetRKInfo@(sf))
    (rkinfo_t*, int, enum ATLAS_TRANS, enum ATLAS_TRANS,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
+@endwhile
 void Mjoin(PATL,GetRKInfo)
    (rkinfo_t*, int, enum ATLAS_TRANS, enum ATLAS_TRANS,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
@@ -700,6 +702,9 @@ int Mjoin(PATL,ammm_syrk)
 void Mjoin(PATL,oploopsM)
    (rkinfo_t *rkinf, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C,
     int MV, TYPE *a, TYPE *b, TYPE *rC, TYPE *iC);
+void Mjoin(PATL,opblk)
+   (rkinfo_t *op, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C,
+    TYPE *pA, TYPE *pB, TYPE *rC, TYPE *iC);
 @beginskip
 void Mjoin(PATL,ammmM)
    (rkinfo_t *rkinf, int N, int nb, int nnu, TYPE *a, int INCA,
@@ -22822,6 +22827,85 @@ static INLINE void FillInRankKInf
          ATL_AMM_BLK2C_a1_b0[idx] : ATL_AMM_BLK2C_a1_bX[idx];
 }
 
+int Mjoin(PATL,tGetRKInfo_tK)
+(
+   rkinfo_t *out,
+   int P,                   /* max number of cores to use */
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   size_t lda, 
+   size_t ldb,
+   size_t ldc,
+   const SCALAR alpha,
+   const SCALAR beta
+)
+{
+   #if ATL_rkAMM_MAXKVEC == 0
+      const int kb = K;
+   #else
+      int kb=K;
+   #endif
+   ATL_UINT idx, mb, nb, MB, NB, mu, nu, ku, vlen, szC;
+   size_t npmblks, nfmblks, npnblks, nfnblks;
+
+   ATL_assert(K <= ATL_rkAMM_LASTKB && K > 2);
+   idx = K-3;
+   ku = ATL_AMM_KUs[idx];
+   #if ATL_rkAMM_MAXKVEC > 0
+      if (ATL_AMM_KMAJOR(idx))
+         kb = ((K + ku - 1)/ku)*ku;
+   #endif
+   mb = ATL_AMM_MBs[idx];
+   mu = ATL_AMM_MUs[idx];
+   nu = ATL_AMM_NUs[idx];
+/*
+ * Calculate M blocking; for now, just use default mb/nb, assume full ||
+ */
+   nfmblks = M / mb;
+   MB = mb;
+   if (nfmblks)
+   {
+      mb = M - nfmblks*MB;
+      if (mb)
+      {
+         npmblks = 1;
+         mb = ((mb+mu-1)/mu)*mu;
+      }
+      else
+         npmblks = 0;
+   }
+   else
+   {
+      MB = 0;
+      mb = ((M+mu-1)/mu)*mu;
+      npmblks = 1;
+   }
+   nfnblks = N / nb;
+   NB = nb;
+   if (nfnblks)
+   {
+      nb = N - nfnblks*NB;
+      if (nb)
+      {
+         npnblks = 1;
+         nb = ((nb+nu-1)/nu)*nu;
+      }
+      else
+         npnblks = 0;
+   }
+   else
+   {
+      NB = 0;
+      nb = ((N+nu-1)/nu)*nu;
+      npnblks = 1;
+   }
+   FillInRankKInf(out, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta,
+                  nfmblks, npmblks, MB, mb, nfnblks, npnblks, NB, nb);
+   return(P);
+}
 int Mjoin(PATL,tGetRKInfo_tNK)
 (
    rkinfo_t *out,
@@ -25095,6 +25179,120 @@ int Mjoin(PATL,ammmNKM)
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+/*
+ * This function used primarily by threaded rank-K update cases.  It has
+ * following options:
+ *   If A/B i/j block can be copied by passing base A/B ptr 
+ *   If rC is NULL, then do only the indicated A/B copy, w/o ammm
+ */
+void Mjoin(PATL,opblk)
+(
+   rkinfo_t *op,
+   size_t i,      /* which global row blk of C is being computed */
+   size_t j,      /* which global column blk of C is being computed */
+   const TYPE *A, /* if non-NULL, base A ptr to copy */
+   const TYPE *B, /* if non-NULL, base B ptr to copy */
+   TYPE *C,       /* C <- alpha * A * B + beta * C */
+   TYPE *pA,      /* wrkspace for block-copied A */
+   TYPE *pB,      /* wrkspace for block-copied B */
+   TYPE *rC,      /* if non-NULL: ptr to real part of access-major C wrkspc */
+   TYPE *iC       /* ptr to cplx portion of access-major C workspace */
+)
+{
+   #ifdef TCPLX
+      TYPE *iA=pA, *rA=pA+op->szA, *iB=pB, *rB=pB+op->szB;
+   #endif
+   ATL_CUINT kb = op->KB, K=op->kb;
+   int nb, nnu, mb, nmu;
+
+   if (B || rC)  /* need to copy A or setup nb / adjust C */
+   {
+      const size_t nfnblks=op->nfnblks, nnblks=nfnblks+op->npnblks;
+      size_t n;
+
+      if (j < nfnblks)
+      {
+         nb = op->nb;
+         nnu = op->nnu;
+         n = j;
+      }
+      else if (j != nnblks-1)
+      {
+         nb = op->pnb;
+         nnu = op->pnnu;
+         n = nfnblks;
+      }
+      else
+      {
+         nb = op->nF;
+         nnu = op->nnuF;
+         n = nfnblks;
+      }
+      j -= n;
+      if (B)
+      {
+         B += op->incBn * n + op->pincBn * j;
+         #ifdef TCPLX
+            op->b2blk(K, nb, op->alpB, B, op->ldb, rB, iB);
+         #else
+            op->b2blk(K, nb, op->alpB, B, op->ldb, pB);
+         #endif
+      }
+      if (rC)
+         C += (op->nb * n + op->pnb * j)*((op->ldc)SHIFT);
+   }
+   if (A || rC)  /* need to copy a portion of A to access-major */
+   {
+      const size_t nfmblks=op->nfmblks, nmblks=nfmblks+op->npmblks;
+      size_t m;
+
+      if (i < nfmblks)
+      {
+         mb = op->mb;
+         nmu = op->nmu;
+         m = i;
+      }
+      else if (i != nmblks-1)
+      {
+         mb = op->pmb;
+         nmu = op->pnmu;
+         m = nfmblks;
+      }
+      else
+      {
+         mb = op->mF;
+         nmu = op->nmuF;
+         m = nfmblks;
+      }
+      i -= m;
+      if (A)
+      {
+         A += op->incAm * m + op->pincAm * i;
+         #ifdef TCPLX
+            op->a2blk(K, mb, op->alpA, A, op->lda, rA, iA);
+         #else
+            op->a2blk(K, mb, op->alpA, A, op->lda, pA);
+         #endif
+      }
+      if (rC)
+         C += (op->mb * m + op->pmb * i)SHIFT;
+   }
+
+   if (rC)   /* want to do matrix multiplication */
+   {
+      #ifdef TCPLX
+         ammkern_t amm_b0=op->amm_b0, amm_b1=op->amm_b1, amm_bn=op->amm_bn;
+         amm_b0(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+         amm_b0(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+         amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+         amm_b1(nmu, nnu, kb, iA, rB, iC, iA, iB, rC);
+         op->blk2C(mb, nb, op->ONE, rC, iC, op->beta, C, op->ldc);
+      #else
+         op->amm_b0(nmu, nnu, kb, pA, pB, rC, pA, pB, rC);
+         op->blk2C(mb, nb, ATL_rone, rC, op->beta, C, op->ldc);
+      #endif
+   }
+}
 void Mjoin(PATL,oploopsM)
 (
    rkinfo_t *op,
