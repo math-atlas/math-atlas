@@ -13131,6 +13131,11 @@ int Mjoin(PATL,tammm_tNK)
 }
 
 
+#if 0
+#undef ATL_CBC_STRONG
+#define ATL_CBC_STRONG 0
+#endif
+
 void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp=vpp;
@@ -13192,13 +13197,22 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
             while (ATL_GetAtomicCount(pd->donBCtr))  /* await B cpy finish */
                ATL_thread_yield();
          }
+/*
+ *       Now multiply local(weak)/glob B * local A, and write to my piece of C
+ */
+         Mjoin(PATL,opblk)(op, i, 0, NULL, NULL, C, a, pB, rC, pC);
       #else
          pB = pd->wBb + vrank*((op->szB)SHIFT);
-      #endif
 /*
- *    Now multiply local(weak)/glob B * local A, and write to my piece of C
+ *       All threads make local copy of B to avoid costly sync
  */
-      Mjoin(PATL,opblk)(op, i, 0, NULL, NULL, C, a, pB, rC, pC);
+         Mjoin(PATL,opblk)(op, 0, 0, NULL, B, NULL, NULL, pB, NULL, NULL);
+/*
+ *       Copy chosen block to correct place in global A workspace & do multiply
+ */
+         a = IdxAw_rkK(op, pA, i);
+         Mjoin(PATL,opblk)(op, i, 0, A, NULL, C, a, pB, rC, pC);
+      #endif
 /*
  *    Now loop over any remaining A blks with known-good pB
  */
@@ -13206,11 +13220,13 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
       {
          i = nmblks - ictr;
          a = IdxAw_rkK(op, pA, i);
-         Mjoin(PATL,opblk)(op, i, 0, A, NULL, NULL, a, NULL, NULL, NULL);
          #if ATL_CBC_STRONG
+            Mjoin(PATL,opblk)(op, i, 0, A, NULL, NULL, a, NULL, NULL, NULL);
             ATL_DecGlobalAtomicCount(pd->donACtr, rank);
+            Mjoin(PATL,opblk)(op, i, 0, NULL, NULL, C, a, pB, rC, pC);
+         #else
+            Mjoin(PATL,opblk)(op, i, 0, A, NULL, C, a, pB, rC, pC);
          #endif
-         Mjoin(PATL,opblk)(op, nmblks-ictr, 0, NULL, NULL, C, a, pB, rC, pC);
       }
    }
 /*
@@ -13222,7 +13238,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
       while (ATL_GetGlobalAtomicCount(pd->donACtr, vrank))
          ATL_thread_yield();      /* await A cpy finish */
    #else
-      ATL_cbc_barrier(pp->P, vrank, NULL);
+      ATL_cbc_barrier(pp->nworkers, vrank, NULL);  /* barrier & memory fence */
    #endif
 /*
  * Now loop over colpans from [1,nByCols+1], wt thread doing entire col,
