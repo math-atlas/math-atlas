@@ -12842,7 +12842,7 @@ void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 #ifndef TCPLX
    #undef rC
 #endif
-TYPE INLINE *IdxAw_rkK(rkinfo_t *op, TYPE *A, size_t i)
+TYPE INLINE *ATL_IdxAw_rkK(rkinfo_t *op, TYPE *A, size_t i)
 {
    size_t m;
 
@@ -12851,6 +12851,29 @@ TYPE INLINE *IdxAw_rkK(rkinfo_t *op, TYPE *A, size_t i)
    i -= m;
    A += (m * op->szA + i * op->pszA)SHIFT;
    return(A);
+}
+TYPE INLINE *ATL_IdxAw(ipinfo_t *ip, TYPE *A, size_t i, size_t k)
+{
+   const size_t nfmblks = nfmblks, szA = (i < nfmblks) ? ip->szA:ip->pszA;
+   size_t m;
+
+   m = Mmin(nfmblks, i);
+   i -= m;
+   m = (m * ip->szA + i * szA) * (ip->nfkblks+1);  /* offset to kpan */
+   m = (m+k*szA)SHIFT;
+   return(A+m);
+}
+
+TYPE INLINE *ATL_IdxBw(ipinfo_t *ip, TYPE *B, size_t k, size_t j)
+{
+   const size_t nfnblks = nfnblks, szB = (j < nfnblks) ? ip->szB:ip->pszB;
+   size_t n;
+
+   n = Mmin(nfnblks, j);
+   j -= n;
+   n = (n * ip->szB + j * szB) * (ip->nfkblks+1);  /* offset to kpan */
+   n = (n+k*szB)SHIFT;
+   return(B+n);
 }
 @beginskip
 const TYPE *IdxA_rkK(rkinfo_t *op, const TYPE *A, size_t i)
@@ -13187,7 +13210,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
 /*
  *       Copy A, then await B done ACK
  */
-         a = IdxAw_rkK(op, pA, i);
+         a = ATL_IdxAw_rkK(op, pA, i);
          Mjoin(PATL,opblk)(op, i, 0, A, NULL, NULL, a, NULL, NULL, NULL);
          ATL_DecGlobalAtomicCount(pd->donACtr, vrank);
          if (!BCOPIED)
@@ -13208,7 +13231,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
 /*
  *       Copy chosen block to correct place in global A workspace & do multiply
  */
-         a = IdxAw_rkK(op, pA, i);
+         a = ATL_IdxAw_rkK(op, pA, i);
          Mjoin(PATL,opblk)(op, i, 0, A, NULL, C, a, pB, rC, pC);
       #endif
 /*
@@ -13217,7 +13240,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
       while ( (ictr = ATL_DecGlobalAtomicCount(pd->begACtr, vrank)) )
       {
          i = nmblks - ictr;
-         a = IdxAw_rkK(op, pA, i);
+         a = ATL_IdxAw_rkK(op, pA, i);
          #if ATL_CBC_STRONG
             Mjoin(PATL,opblk)(op, i, 0, A, NULL, NULL, a, NULL, NULL, NULL);
             ATL_DecGlobalAtomicCount(pd->donACtr, vrank);
@@ -13257,7 +13280,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
  */
          for (i=1; i < nmblks; i++)
          {
-            Mjoin(PATL,opblk)(op, i, j, NULL, NULL, C, IdxAw_rkK(op, pA, i), 
+            Mjoin(PATL,opblk)(op, i, j, NULL, NULL, C, ATL_IdxAw_rkK(op, pA, i), 
                               pB, rC, pC);
          }
       }
@@ -13308,7 +13331,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
          while ( (ictr = ATL_DecGlobalAtomicCount(pd->BlkCtrs[jmax], vrank)) )
          {
             int i = nmblks - ictr;
-            Mjoin(PATL,opblk)(op, i, j, NULL, NULL, C, IdxAw_rkK(op, pA, i), 
+            Mjoin(PATL,opblk)(op, i, j, NULL, NULL, C, ATL_IdxAw_rkK(op, pA, i), 
                               wb, rC, pC);
          }
       }
