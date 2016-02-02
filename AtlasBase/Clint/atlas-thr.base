@@ -757,16 +757,16 @@ struct ATL_tamm_tK
    TYPE *wBb;           /* wrkspc for last nByBlks blks of B */
    TYPE *w;             /* wrkspc for B&C, len=wsz*P */
    void *ColCtr;        /* [1,nByCols] */
-   void *BlkCtr;        /* [1,nByBlks*nmblks] */
+   void **BlkCtrs;      /* nByBlks [1,nmblks] Atomic Ctrs */
    void *begACtr;       /* [1,nmblks], assign A copy */
+   void *begBBlksCtr;   /* [1,nByBlks] */
    #if ATL_CBC_STRONG
       void *donACtr;    /* [1,nmblks], indicate A copy done */
-      void *cpyBCtr;    /* [1,nByBlks] */
+      void *donBBlksCtr;/* [1,nByBlks] */
       void *begBCtr;    /* 1: you should copy common B */
       void *donBCtr;    /* 0: common B is ready, you can proceed */
    #endif
    size_t wsz;          /* gap between thread's workspaces */
-   size_t nblks;        /* total number of blks dealt out by nByBlks colpans */
    uint nByCols;        /* # of colpans dealt out 1 colpan at time */
    uint nByBlks;        /* # of last colpans worked on by block */
    ushort P;            /* # of threads assigned to this problem */
@@ -13131,11 +13131,6 @@ int Mjoin(PATL,tammm_tNK)
 }
 
 
-#if 0
-#undef ATL_CBC_STRONG
-#define ATL_CBC_STRONG 0
-#endif
-
 void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp=vpp;
@@ -13162,17 +13157,20 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
    if (nByBlks)
    {
       ATL_UINT szB=((op->szB)SHIFT);
-      while ( (ictr = ATL_DecGlobalAtomicCount(pd->cpyBCtr, rank)) )
+      while ( (ictr = ATL_DecAtomicCount(pd->begBBlksCtr)) )
       {
           Mjoin(PATL,opblk)(op, 0, nnblks-ictr, NULL, B, NULL, NULL,
-                            pd->wBb+(ictr-1)*szB, NULL, NULL);
+                            pd->wBb+(nByBlks-ictr)*szB, NULL, NULL);
+          #if ATL_CBC_STRONG
+             ATL_DecAtomicCount(pd->donBBlksCtr);
+          #endif
       }
    }
 /* 
  * Now, do compute 1st colpan of C while copying global A; 
  * strongly-ordered cachces uses shared B, while weak duplicate B
  */
-   ictr = ATL_DecGlobalAtomicCount(pd->begACtr, rank);
+   ictr = ATL_DecGlobalAtomicCount(pd->begACtr, vrank);
    if (ictr)
    {
       int BCOPIED = 0;
@@ -13191,7 +13189,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
  */
          a = IdxAw_rkK(op, pA, i);
          Mjoin(PATL,opblk)(op, i, 0, A, NULL, NULL, a, NULL, NULL, NULL);
-         ATL_DecGlobalAtomicCount(pd->donACtr, rank);
+         ATL_DecGlobalAtomicCount(pd->donACtr, vrank);
          if (!BCOPIED)
          {
             while (ATL_GetAtomicCount(pd->donBCtr))  /* await B cpy finish */
@@ -13202,7 +13200,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
  */
          Mjoin(PATL,opblk)(op, i, 0, NULL, NULL, C, a, pB, rC, pC);
       #else
-         pB = pd->wBb + vrank*((op->szB)SHIFT);
+         pB = pd->w + vrank*pd->wsz;
 /*
  *       All threads make local copy of B to avoid costly sync
  */
@@ -13216,13 +13214,13 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
 /*
  *    Now loop over any remaining A blks with known-good pB
  */
-      while ( (ictr = ATL_DecGlobalAtomicCount(pd->begACtr, rank)) )
+      while ( (ictr = ATL_DecGlobalAtomicCount(pd->begACtr, vrank)) )
       {
          i = nmblks - ictr;
          a = IdxAw_rkK(op, pA, i);
          #if ATL_CBC_STRONG
             Mjoin(PATL,opblk)(op, i, 0, A, NULL, NULL, a, NULL, NULL, NULL);
-            ATL_DecGlobalAtomicCount(pd->donACtr, rank);
+            ATL_DecGlobalAtomicCount(pd->donACtr, vrank);
             Mjoin(PATL,opblk)(op, i, 0, NULL, NULL, C, a, pB, rC, pC);
          #else
             Mjoin(PATL,opblk)(op, i, 0, A, NULL, C, a, pB, rC, pC);
@@ -13247,7 +13245,7 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
    if (nByCols)
    {
       ATL_CUINT nfnblks = op->nfnblks;
-      while ( (ictr = ATL_DecGlobalAtomicCount(pd->ColCtr, rank)) )
+      while ( (ictr = ATL_DecGlobalAtomicCount(pd->ColCtr, vrank)) )
       {
          int i, j = nByCols - ictr + 1;
 /*
@@ -13276,10 +13274,43 @@ void Mjoin(PATL,DoWork_amm_tK)(void *vpp, int rank, int vrank)
  */
    if (nByBlks)
    {
-      ATL_assert(0);  // until we are ready to support
-      while ( (ictr = ATL_DecGlobalAtomicCount(pd->BlkCtr, rank)) )
+      #if ATL_CBC_STRONG
+         while (ATL_GetAtomicCount(pd->donBBlksCtr))  /* await B cpy finish */
+            ATL_thread_yield();
+      #endif
+      while (1)
       {
-         uint j = nByCols - ictr + 1;
+         ATL_UINT max, j, jmax=0;
+         TYPE *wb;
+/*
+ *       Find column with maximum remaining blocks, and work on that one
+ */
+         max = ATL_GetGlobalAtomicCount(pd->BlkCtrs[0], vrank);
+         for (j=1; j < nByBlks; j++)
+         {
+            int k;
+            k = ATL_GetGlobalAtomicCount(pd->BlkCtrs[j], vrank);
+            if (k >= max)
+            {
+               max = k;
+               jmax = j;
+            }
+         }
+         if (!max)   /* if no blocks are left in any of the nByBlks colpans */
+            break;   /* we are done */
+/*
+ *       For chosen colpan, work on individual blks of C with other threads.
+ *       This is the last nByBlks columns, so add 1st and nByCols to get glob j
+ *       Both the shared B and the global A have been copied at start of alg.
+ */
+         j = jmax + 1 + nByCols;
+         wb = pd->wBb + jmax*((op->szB)SHIFT);
+         while ( (ictr = ATL_DecGlobalAtomicCount(pd->BlkCtrs[jmax], vrank)) )
+         {
+            int i = nmblks - ictr;
+            Mjoin(PATL,opblk)(op, i, j, NULL, NULL, C, IdxAw_rkK(op, pA, i), 
+                              wb, rC, pC);
+         }
       }
    }
 }
@@ -13315,11 +13346,11 @@ int Mjoin(PATL,tammm_tK)
    rkinfo_t rki;
    ATL_tamm_tK_t tnk;
    size_t nmblks, nnblks, szAp, szBb, sz;
-   uint nByCols, nByBlks;
    void *vp=NULL;
 
    tnk.P = Mjoin(PATL,tGetRKInfo_tK)(&rki, ATL_NTHREADS, TA, TB, M, N, K, 
                                      lda, ldb, ldc, alpha, beta);
+@skip   tnk.P = 1;
    if (tnk.P < 2)
    {
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
@@ -13335,14 +13366,15 @@ int Mjoin(PATL,tammm_tK)
  */
    nmblks = rki.nfmblks + rki.npmblks;
    nnblks = rki.nfnblks + rki.npnblks;
-   #if 0
-   tnk.nByBlks = tnk.P >> 1;
-   tnk.nByBlks = Mmin(tnk.nByBlks, 4);
+   #if 1
+   tnk.nByBlks = tnk.P - 1;
+   tnk.nByBlks = Mmin(tnk.nByBlks, 32); /* allowing huge causes too many Ctrs */
    tnk.nByBlks = Mmin(tnk.nByBlks, nnblks-1);
+   #elif 0
+      tnk.nByBlks = 0;         // just for testing, bad load balance
    #else
-      tnk.nByBlks = 0;  // just for testing, bad load balance
+      tnk.nByBlks = nnblks-1;  // just for testing, bad parallel overhead
    #endif
-   tnk.nblks = nmblks*tnk.nByBlks;
    tnk.nByCols = nnblks - tnk.nByBlks - 1;
 /*
  * Get wrkspc
@@ -13372,28 +13404,49 @@ int Mjoin(PATL,tammm_tK)
    else
       tnk.ColCtr = NULL;
    tnk.begACtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,tnk.P), nmblks, 0);
+   if (tnk.nByBlks)
+      tnk.begBBlksCtr = ATL_SetAtomicCount(tnk.nByBlks);
+   else
+      tnk.begBBlksCtr = NULL;
    #if ATL_CBC_STRONG
       tnk.donACtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,tnk.P), 
                                              nmblks, 0);
       if (tnk.nByBlks)
-         tnk.cpyBCtr = ATL_SetAtomicCount(tnk.nByBlks);
+         tnk.donBBlksCtr = ATL_SetAtomicCount(tnk.nByBlks);
       else
-         tnk.cpyBCtr = NULL;
+         tnk.donBBlksCtr = NULL;
       tnk.begBCtr = ATL_SetAtomicCount(1);
       tnk.donBCtr = ATL_SetAtomicCount(1);
    #endif
-   tnk.BlkCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(tnk.nblks,tnk.P), 
-                                         tnk.nblks, 0);
+   if (tnk.nByBlks)
+   {
+      int nat, i;
+      tnk.BlkCtrs = malloc(tnk.nByBlks * sizeof(void*));
+      ATL_assert(tnk.BlkCtrs);
+      nat = ATL_EstNctr(nmblks,tnk.P);
+      for (i=0; i < tnk.nByBlks; i++)
+         tnk.BlkCtrs[i] = ATL_SetGlobalAtomicCount(nat, nmblks, 0);
+   }
+   else
+      tnk.BlkCtrs = NULL;
    ATL_goParallel(tnk.P, Mjoin(PATL,DoWork_amm_tK), NULL, &tnk, NULL);
 
-   ATL_FreeGlobalAtomicCount(tnk.BlkCtr);
+   if (tnk.nByBlks)
+   {
+      int i;
+      for (i=0; i < tnk.nByBlks; i++)
+         ATL_FreeGlobalAtomicCount(tnk.BlkCtrs[i]);
+      free(tnk.BlkCtrs);
+   }
    ATL_FreeGlobalAtomicCount(tnk.begACtr);
+   if (tnk.nByBlks)
+      ATL_FreeAtomicCount(tnk.begBBlksCtr);
    #if ATL_CBC_STRONG
       ATL_FreeAtomicCount(tnk.begBCtr);
       ATL_FreeAtomicCount(tnk.donBCtr);
       ATL_FreeGlobalAtomicCount(tnk.donACtr);
       if (tnk.nByBlks)
-         ATL_FreeAtomicCount(tnk.cpyBCtr);
+         ATL_FreeAtomicCount(tnk.donBBlksCtr);
    #endif
    if (tnk.nByCols)
       ATL_FreeGlobalAtomicCount(tnk.ColCtr);
