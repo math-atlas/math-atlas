@@ -602,6 +602,7 @@ struct ipinfo
    ushort KB0;              /* if amm k-vec, ((kb0+ku-1)/ku)*ku, else kb0 */
    uchar nmu, nnu;          /* # of unrollings along each dim */
    uchar pnmu, pnnu;        /* # of unrollings in partial blocks */
+   uchar nmuF, nnuF;        /* # of unrolling for final (remainder) block */
    uchar mu, nu, ku;        /* unrolling for each dim used by amm */
    uchar vlen;              /* vector length (needed for KVEC kerns) */
 };
@@ -704,7 +705,7 @@ void Mjoin(PATL,oploopsM)
     int MV, TYPE *a, TYPE *b, TYPE *rC, TYPE *iC);
 void Mjoin(PATL,opblk)
    (rkinfo_t *op, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C,
-    TYPE *pA, TYPE *pB, TYPE *rC, TYPE *iC);
+    TYPE *pA, TYPE *pAn, TYPE *pB, TYPE *pBn, TYPE *rC, TYPE *iC);
 @beginskip
 void Mjoin(PATL,ammmM)
    (rkinfo_t *rkinf, int N, int nb, int nnu, TYPE *a, int INCA,
@@ -22351,6 +22352,7 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
       b = (npmblks) ? mb : MB;
       ip->mF = M + b - nmblks*MB - npmblks*mb;
    }
+   ip->nmuF = ((ip->mF+mu-1)/mu);
    if (!nnblks) /* all blks small */
    {
       ip->nb = ip->pnb = NB = nb;
@@ -22367,6 +22369,7 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
       b = (npnblks) ? nb : NB;
       ip->nF = N + b - nnblks*NB - npnblks*nb;
    }
+   ip->nnuF = ((ip->nF+nu-1)/nu);
    szC = ((mu*nu+vlen-1)/vlen)*vlen;
    szC *= ip->nnu * ip->nmu;
    ip->szC = szC;
@@ -25195,7 +25198,9 @@ void Mjoin(PATL,opblk)
    const TYPE *B, /* if non-NULL, base B ptr to copy */
    TYPE *C,       /* C <- alpha * A * B + beta * C */
    TYPE *pA,      /* wrkspace for block-copied A */
+   TYPE *pAn,     /* next A wrkspc to be prefetched */
    TYPE *pB,      /* wrkspace for block-copied B */
+   TYPE *pBn,     /* next B wrkspc to be prefetched */
    TYPE *rC,      /* if non-NULL: ptr to real part of access-major C wrkspc */
    TYPE *iC       /* ptr to cplx portion of access-major C workspace */
 )
@@ -25288,10 +25293,10 @@ void Mjoin(PATL,opblk)
          amm_b0(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
          amm_b0(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
          amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
-         amm_b1(nmu, nnu, kb, iA, rB, iC, iA, iB, rC);
+         amm_b1(nmu, nnu, kb, iA, rB, iC, pAn, pBn, rC);
          op->blk2C(mb, nb, op->ONE, rC, iC, op->beta, C, op->ldc);
       #else
-         op->amm_b0(nmu, nnu, kb, pA, pB, rC, pA, pB, rC);
+         op->amm_b0(nmu, nnu, kb, pA, pB, rC, pAn, pBn, rC);
          op->blk2C(mb, nb, ATL_rone, rC, op->beta, C, op->ldc);
       #endif
    }
@@ -25556,7 +25561,13 @@ void Mjoin(PATL,iploopsK)
       const TYPE alpA=ip->alpA, alpB=ip->alpB;
    #endif
 
-   if (i < nfmblks)
+   if (i == nmblks-1)
+   {
+      nmu = ip->nmuF;
+      mb = ip->mF;
+      inca = (i < nfmblks) ? ip->szA : ip->pszA;
+   }
+   else if (i < nfmblks)
    {
       nmu = ip->nmu;
       mb = ip->mb;
@@ -25568,8 +25579,14 @@ void Mjoin(PATL,iploopsK)
       inca = ip->pszA;
       mb = ip->pmb;
    }
-   mb = (i != nmblks-1) ? mb : ip->mF;
-   if (j < nfnblks)
+   
+   if (j == nnblks-1)
+   {
+      nnu = ip->nnuF;
+      nb = ip->nF;
+      incb = (j < nfnblks) ? ip->szB : ip->pszB;
+   }
+   else if (j < nfnblks)
    {
       nnu = ip->nnu;
       incb = ip->szB;
@@ -25581,7 +25598,6 @@ void Mjoin(PATL,iploopsK)
       incb = ip->pszB;
       nb = ip->pnb;
    }
-   nb = (j != nnblks-1) ? nb : ip->nF;
 
 #ifdef TCPLX
    cinca = inca;
@@ -25609,10 +25625,13 @@ void Mjoin(PATL,iploopsK)
       rB=iB+cincb;
       if (B)
          b2blk(kb0, nb, alpB, B+incBk*nfkblks, ldb, rB, iB);
-      amm(nmu, nnu, KB0, iA, iB, rC, rA, iB, iC);
-      amm(nmu, nnu, KB0, rA, iB, iC, rA, rB, rC);
-      ip->ammK1_bn(nmu, nnu, KB0, rA, rB, rC, iA, rB, iC);
-      ip->ammK1_b1(nmu, nnu, KB0, iA, rB, iC, an, bn, rC);
+      if (iC)
+      {
+         amm(nmu, nnu, KB0, iA, iB, rC, rA, iB, iC);
+         amm(nmu, nnu, KB0, rA, iB, iC, rA, rB, rC);
+         ip->ammK1_bn(nmu, nnu, KB0, rA, rB, rC, iA, rB, iC);
+         ip->ammK1_b1(nmu, nnu, KB0, iA, rB, iC, an, bn, rC);
+      }
    }
 /*
  * Otherwise just take first block, so any hardware prefetch isn't confused
@@ -25631,10 +25650,13 @@ void Mjoin(PATL,iploopsK)
          b2blk(kb0, nb, alpB, B, ldb, rB, iB);
          B += incBk;
       }
-      amm(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
-      amm(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
-      ip->ammK1_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
-      ip->ammK1_b1(nmu, nnu, kb, iA, rB, iC, an, bn, rC);
+      if (iC)
+      {
+         amm(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+         amm(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+         ip->ammK1_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+         ip->ammK1_b1(nmu, nnu, kb, iA, rB, iC, an, bn, rC);
+      }
    }
    a = an;
    b = bn;
@@ -25655,10 +25677,13 @@ void Mjoin(PATL,iploopsK)
       }
       an = a + inca;
       bn = b + incb;
-      amm_bn(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
-      amm_b1(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
-      amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
-      amm_b1(nmu, nnu, kb, iA, rB, iC, an, bn, rC);
+      if (iC)
+      {
+         amm_bn(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+         amm_b1(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+         amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+         amm_b1(nmu, nnu, kb, iA, rB, iC, an, bn, rC);
+      }
 
       a = an;
       b = bn;
@@ -25688,7 +25713,8 @@ void Mjoin(PATL,iploopsK)
       b += nfkblks*incb;
       if (B)
          b2blk(kb0, nb, alpB, B+incBk*nfkblks, ldb, b);
-      amm(nmu, nnu, KB0, a, b, rC, an, bn, rC);
+      if (rC)
+         amm(nmu, nnu, KB0, a, b, rC, an, bn, rC);
    }
 /*
  * Otherwise just take first block, so any hardware prefetch isn't confused
@@ -25706,7 +25732,8 @@ void Mjoin(PATL,iploopsK)
          b2blk(kb0, nb, alpB, B, ldb, b);
          B += incBk;
       }
-      amm(nmu, nnu, KB0, a, b, rC, an, bn, rC);
+      if (rC)
+         amm(nmu, nnu, KB0, a, b, rC, an, bn, rC);
    }
    amm = ip->amm_b1;
    a = an;
@@ -25726,7 +25753,8 @@ void Mjoin(PATL,iploopsK)
       }
       an = a + inca;
       bn = b + incb;
-      amm(nmu, nnu, kb, a, b, rC, an, bn, rC);
+      if (rC)
+         amm(nmu, nnu, kb, a, b, rC, an, bn, rC);
       a = an;
       b = bn;
    }
