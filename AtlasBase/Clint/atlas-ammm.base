@@ -22186,7 +22186,305 @@ int Mjoin(PATL,@(sh)GetAmmmIndx)(size_t M, size_t N, size_t K)
    #endif
    return(idx);
 }
+@ROUT ATL_GetAmmmInfoSQ `@define mb @nb@`
+@ROUT ATL_GetAmmmInfo `@define mb @mb@`
 @ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
+void Mjoin(PATL,@(sh)FillInIPInfo)
+(
+   ipinfo_t *ip,        /* output */
+   int idx,             /* what amm kernel index to use */
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   size_t M, 
+   size_t N, 
+   size_t K, 
+   size_t lda,
+   size_t ldb,
+   size_t ldc,
+   const SCALAR alpha,
+   const SCALAR beta,
+@ROUT ATL_GetAmmmInfo
+   size_t nfmblks,
+   size_t npmblks,
+   ATL_UINT mb,
+   ATL_UINT pmb,
+   size_t nfnblks,
+   size_t npnblks,
+   ATL_UINT nb,
+   ATL_UINT pnb
+@ROUT ATL_GetAmmmInfoSQ
+   ATL_UINT nb,
+   ATL_UINT pnb,
+   size_t nfmblks,
+   size_t npmblks,
+   size_t nfnblks,
+   size_t npnblks
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
+)
+{
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define CONE ATL_rone
+   #endif
+   ATL_UINT vlen, mu, nu, ku, kb, nkblks, KB0, kb0, szC;
+
+   ip->mu = mu = ATL_AMM_MUs[idx];
+   ip->nu = nu = ATL_AMM_NUs[idx];
+   ip->ku = ku = ATL_AMM_KUs[idx];
+   ip->kb = kb = ATL_AMM_KBs[idx];
+   ip->vlen = vlen = ATL_AMM_VLENs[idx];
+   ip->lda = lda;
+   ip->ldb = ldb;
+   ip->ldc = ldc;
+
+@ROUT ATL_GetAmmmInfo
+   ip->mb = mb;
+   ip->pmb = pmb;
+   ip->nmu = mb / mu;
+   ip->pnmu = pmb / mu;
+   if (npmblks)
+      ip->mF = M - nfmblks*mb - (npmblks-1)*pmb;
+   else
+      ip->mF = M - (nfmblks-1)*mb;
+   ip->nmuF = (ip->mF+mu-1) / mu;
+
+   ip->nb = nb;
+   ip->pnb = pnb;
+   ip->nnu = nb / nu;
+   ip->pnnu = pnb / nu;
+@ROUT ATL_GetAmmmInfoSQ
+   ip->mb = ip->nb = nb;
+   ip->pnb = ip->pmb = pnb;
+   ip->nnu = nb / nu;
+   ip->pnnu = pnb / nu;
+
+   if (npmblks)
+      ip->mF = M - nfmblks*nb - (npmblks-1)*pnb;
+   else
+      ip->mF = M - (nfmblks-1)*nb;
+   ip->nmuF = (ip->mF+mu-1) / mu;
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
+   if (npnblks)
+      ip->nF = N - nfnblks*nb - (npnblks-1)*pnb;
+   else
+      ip->nF = N - (nfnblks-1)*nb;
+   ip->nnuF = (ip->nF+nu-1) / nu;
+
+/*
+ * Compute K remainder block, and how it affects kernel to use
+ */
+   nkblks = K / kb;
+   KB0 = kb0 = K - nkblks*kb;
+   ip->amm_b1 = ATL_AMM_KERN_b1[idx];
+   ip->ammK1_b0 = ATL_AMM_KERN_b0[idx];  /* default case */
+   #ifdef TCPLX
+      ip->ONE = CONE;
+      ip->amm_b0 = ip->ammK1_b0;
+      ip->ammK1_b1 = ip->amm_b1;
+      ip->ammK1_bn = ip->amm_bn = ATL_AMM_KERN_bn[idx];
+   #endif
+   if (kb0)  /* K not a multiple of kb, need initial block */
+   {
+      if (ATL_AMM_KMAJOR(idx))
+      {
+         KB0 = ((kb0+vlen-1)/vlen)*vlen;
+         if (KB0 != kb)
+         {
+            if (ATL_AMM_KRUNTIME(idx))
+            {
+               ATL_CUINT min=ATL_AMM_KBMINs[idx];
+               if ((min && KB0 < min) || (KB0/ku)*ku != KB0)
+                  ip->ammK1_b0 = ATL_AMM_KERN_K1_b0[idx];
+            }
+            else
+               ip->ammK1_b0 = ATL_AMM_KERN_K1_b0[idx];
+         }
+      }
+      else if (ATL_AMM_KRUNTIME(idx))
+      {
+         ATL_CUINT min=ATL_AMM_KBMINs[idx];
+         if ((min && kb0 < min) || (kb0/ku)*ku != kb0 )
+            ip->ammK1_b0 = ATL_AMM_KERN_K1_b0[idx];
+      }
+      else if (kb0 != kb) /* compile-time K only works if kb=kb0 */
+         ip->ammK1_b0 = ATL_AMM_KERN_K1_b0[idx];
+
+   #ifdef TCPLX
+      if (ip->ammK1_b0 != ip->amm_b0)
+      {
+         ip->ammK1_b1 = ATL_AMM_KERN_K1_b1[idx];
+         ip->ammK1_bn = ATL_AMM_KERN_K1_bn[idx];
+      }
+   #endif
+   }
+   else
+   {
+      kb0 = KB0 = kb;
+      nkblks--;
+      ATL_assert(nkblks >= 0);
+   }
+   ip->KB0 = KB0;
+   ip->kb0 = kb0;
+   szC = ((mu*nu+vlen-1)/vlen)*vlen;
+   szC *= ip->nnu * ip->nmu;
+   ip->szC = szC;
+
+
+   ip->alpA = ip->alpB = ip->alpC = CONE;
+   if (M < N)  /* alpha goes on A or C */
+   {
+      if (M < K)
+         ip->alpC = alpha;
+      else
+         ip->alpA = alpha;
+   }
+   else if (N < K)
+      ip->alpC = alpha;
+   else
+      ip->alpB = alpha;
+   if (SCALAR_IS_NONE(ip->alpA))
+   {
+      #ifdef TCPLX
+      if (TA == AtlasConjTrans)
+         ip->a2blk = ATL_AMM_AC2BLK_an[idx];
+      else if (TA == AtlasConj)
+         ip->a2blk = ATL_AMM_AH2BLK_an[idx];
+      else
+      #endif
+         ip->a2blk = (TA == AtlasNoTrans) ?
+            ATL_AMM_AT2BLK_an[idx] : ATL_AMM_AN2BLK_an[idx];
+   }
+   else if (SCALAR_IS_ONE(ip->alpA))
+   {
+      #ifdef TCPLX
+      if (TA == AtlasConjTrans)
+         ip->a2blk = ATL_AMM_AC2BLK_a1[idx];
+      else if (TA == AtlasConj)
+         ip->a2blk = ATL_AMM_AH2BLK_a1[idx];
+      else
+      #endif
+         ip->a2blk = (TA == AtlasNoTrans) ?
+            ATL_AMM_AT2BLK_a1[idx] : ATL_AMM_AN2BLK_a1[idx];
+   }
+   else  /* alphaA = X */
+   {
+      #ifdef TCPLX
+      if (TA == AtlasConjTrans)
+         ip->a2blk = ATL_AMM_AC2BLK_aX[idx];
+      else if (TA == AtlasConj)
+         ip->a2blk = ATL_AMM_AH2BLK_aX[idx];
+      else
+      #endif
+         ip->a2blk = (TA == AtlasNoTrans) ?
+            ATL_AMM_AT2BLK_aX[idx] : ATL_AMM_AN2BLK_aX[idx];
+   }
+
+   if (SCALAR_IS_NONE(ip->alpB))
+   {
+      #ifdef TCPLX
+      if (TB == AtlasConjTrans)
+         ip->b2blk = ATL_AMM_BH2BLK_an[idx];
+      else if (TB == AtlasConj)
+         ip->b2blk = ATL_AMM_BC2BLK_an[idx];
+      else
+      #endif
+         ip->b2blk = (TB == AtlasNoTrans) ?
+            ATL_AMM_BN2BLK_an[idx] : ATL_AMM_BT2BLK_an[idx];
+   }
+   else if (SCALAR_IS_ONE(ip->alpB))
+   {
+      #ifdef TCPLX
+      if (TB == AtlasConjTrans)
+         ip->b2blk = ATL_AMM_BH2BLK_a1[idx];
+      else if (TB == AtlasConj)
+         ip->b2blk = ATL_AMM_BC2BLK_a1[idx];
+      else
+      #endif
+         ip->b2blk = (TB == AtlasNoTrans) ?
+            ATL_AMM_BN2BLK_a1[idx] : ATL_AMM_BT2BLK_a1[idx];
+   }
+   else  /* alphaB = X */
+   {
+      #ifdef TCPLX
+      if (TB == AtlasConjTrans)
+         ip->b2blk = ATL_AMM_BH2BLK_aX[idx];
+      else if (TB == AtlasConj)
+         ip->b2blk = ATL_AMM_BC2BLK_aX[idx];
+      else
+      #endif
+         ip->b2blk = (TB == AtlasNoTrans) ?
+            ATL_AMM_BN2BLK_aX[idx] : ATL_AMM_BT2BLK_aX[idx];
+   }
+
+   if (SCALAR_IS_ONE(ip->alpC))
+   {
+      ip->blk2c_b1 = ATL_AMM_BLK2C_a1_b1[idx];
+      if (SCALAR_IS_NONE(beta))
+         ip->blk2c = ATL_AMM_BLK2C_a1_bn[idx];
+      else if (SCALAR_IS_ONE(beta))
+         ip->blk2c = ip->blk2c_b1;
+      else
+         ip->blk2c = (SCALAR_IS_ZERO(beta)) ?
+            ATL_AMM_BLK2C_a1_b0[idx] : ATL_AMM_BLK2C_a1_bX[idx];
+   }
+   else if (SCALAR_IS_NONE(ip->alpC))
+   {
+      ip->blk2c_b1 = ATL_AMM_BLK2C_an_b1[idx];
+      if (SCALAR_IS_NONE(beta))
+         ip->blk2c = ATL_AMM_BLK2C_an_bn[idx];
+      else if (SCALAR_IS_ONE(beta))
+         ip->blk2c = ip->blk2c_b1;
+      else
+         ip->blk2c = (SCALAR_IS_ZERO(beta)) ?
+            ATL_AMM_BLK2C_an_b0[idx] : ATL_AMM_BLK2C_an_bX[idx];
+   }
+   else /* alphaC = X */
+   {
+      ip->blk2c_b1 = ATL_AMM_BLK2C_aX_b1[idx];
+      if (SCALAR_IS_NONE(beta))
+         ip->blk2c = ATL_AMM_BLK2C_aX_bn[idx];
+      else if (SCALAR_IS_ONE(beta))
+         ip->blk2c = ip->blk2c_b1;
+      else
+         ip->blk2c = (SCALAR_IS_ZERO(beta)) ?
+            ATL_AMM_BLK2C_aX_b0[idx] : ATL_AMM_BLK2C_aX_bX[idx];
+   }
+
+   ip->nfkblks = nkblks;
+   if (IS_COLMAJ(TA))
+   {
+      ip->incAk  = (kb SHIFT)*lda;
+      ip->incAm  = (@(mb) SHIFT);
+      ip->pincAm = (p@(mb) SHIFT);
+   }
+   else
+   {
+      ip->incAk  = (kb SHIFT);
+      ip->incAm  = (@(mb) SHIFT)*lda;
+      ip->pincAm = (p@(mb) SHIFT)*lda;
+   }
+   if (IS_COLMAJ(TB))
+   {
+      ip->incBk  = (kb SHIFT);
+      ip->incBn  = (nb SHIFT)*ldb;
+      ip->pincBn = (pnb SHIFT)*ldb;
+   }
+   else
+   {
+      ip->incBk  = (kb SHIFT)*ldb;
+      ip->incBn  = (nb SHIFT);
+      ip->pincBn = (pnb SHIFT);
+   }
+   ip->pszA = p@(mb)*kb;
+   ip->szA = @(mb)*kb;
+   ip->pszB = kb*pnb;
+   ip->szB = kb*nb;
+}
+#ifndef TCPLX
+   #undef ONE
+#endif
+
 /*
  * Given a selected amm index, fill in ipinfo for using inner-product based
  * amm loops
