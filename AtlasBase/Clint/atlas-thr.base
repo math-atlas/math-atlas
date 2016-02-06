@@ -5037,7 +5037,7 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
 @ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
    }
 @ROUT ATL_tgemm
-   #if 0
+   #if 1
    if (N <= ATL_rkAMM_LASTNB && K <= ATL_rkAMM_LASTKB && K > 2)
       if (!Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                  beta, C, ldc))
@@ -5048,9 +5048,10 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
          return;
    
    #endif
-   if (!Mjoin(PATL,tammm_sMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                              beta, C, ldc))
-      return;
+   if (K > ATL_rkAMM_LASTKB)
+      if (!Mjoin(PATL,tammm_sMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                 beta, C, ldc))
+         return;
 #ifdef TREAL00
 @skip  if (N <= ATL_geAMM_LASTMB && K <= ATL_geAMM_LASTKB &&  K > 2 &&
 @skip      M >= (ATL_geAMM_LASTMB<<2)*Mmin(ATL_NTHREADS,8))
@@ -17327,8 +17328,6 @@ void Mjoin(PATL,DoWork_amm_sMK)(void *vpp, int rank, int vrank)
  */
    if (nByBlks)
    {
-      ATL_assert(0);
-      #if 0
       #if ATL_CBC_STRONG
          while (ATL_GetAtomicCount(pd->donBBlksCtr))  /* await B cpy finish */
             ATL_thread_yield();
@@ -17359,27 +17358,17 @@ void Mjoin(PATL,DoWork_amm_sMK)(void *vpp, int rank, int vrank)
  *       Both the shared B and the global A have been copied at start of alg.
  */
          j = jmax + 1 + nByCols;
-         wb = pd->wBb + jmax*((ip->szB)SHIFT);
-         ictr = ATL_DecGlobalAtomicCount(pd->BlkCtrs[jmax], vrank);
-         if (ictr)
+         wb = pd->wBb + jmax*szBp;
+         while ( (ictr = ATL_DecGlobalAtomicCount(pd->BlkCtrs[jmax], vrank)) )
          {
-            TYPE *a, *an;
+            TYPE *aw, *c;
             int i = nmblks - ictr;
-            ict2 = ATL_DecGlobalAtomicCount(pd->BlkCtrs[jmax], vrank);
-            a  = IdxAw_rkK(ip, pA, i);
-            an = IdxAw_rkK(ip, pA, nmblks-ict2);
-            Mjoin(PATL,opblk)(ip, i, j, NULL, NULL, C, a, an, wb, wb, rC, pC);
-            while (ict2)
-            {
-               i = nmblks-ict2;
-               a = an;
-               ict2 = ATL_DecGlobalAtomicCount(pd->BlkCtrs[jmax], vrank);
-               an = IdxAw_rkK(ip, pA, nmblks-ict2);
-               Mjoin(PATL,opblk)(ip, i, j, NULL, NULL, C, a, an, wb, wb, rC,pC);
-            }
+            aw = IdxAw_ip(ip, pA, i, 0);
+            c = IdxC_ip(ip, C, i, j);
+            Mjoin(PATL,iploopsK)(ip, i, j, NULL, NULL, c, 3, aw, wb, rC, pC,
+                                 beta, blk2c);
          }
       }
-      #endif
    }
 }
 #ifndef TCPLX
@@ -17427,7 +17416,7 @@ int Mjoin(PATL,tammm_sMK)
    nmblks = ip.nfmblks + ip.npmblks;
    nnblks = ip.nfnblks + ip.npnblks;
    nkblks = ip.nfkblks + 1;
-   #if 0
+   #if 1
    smk.nByBlks = smk.P - 1;
    smk.nByBlks = Mmin(smk.nByBlks, 32); /* allowing huge causes too many Ctrs */
    smk.nByBlks = Mmin(smk.nByBlks, nnblks-1);
