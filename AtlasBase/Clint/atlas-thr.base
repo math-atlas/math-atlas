@@ -721,12 +721,22 @@ struct ATL_tamm_tMN
    ipinfo_t *ip;          /* inner product structure */
    const TYPE *A, *B;
    TYPE *C;
-   void *blkACtr;         /* aggregated block counter */
-   void *blkUCtr;         /* unaggregated block counter */
+   TYPE *w;
+   #ifdef TCPLX
+      const TYPE *beta;
+   #endif
+   void *PartKctr;        /* K partition counter */
+   void *blkUctr;         /* unpartitioned K block counter */
    void *Cmut;            /* mutex protecting output matrix */
-   size_t nAblks;         /* number of aggregated blocks */
-   size_t nUblks;         /* number of unaggregated blks at end */
-   size_t nblksA;         /* # of KBs in an aggregated block */
+   size_t nblksKp;        /* # of blocks in a K partition */
+   size_t nKp;            /* # of K partitions to be dealt out */
+   size_t nUblks;         /* nUblks = # of blocks not assigned to Kps */
+                          /* nKp*nblksKp + nUblks = (ip->nfkblks+1) */
+   size_t wsz;            /* gap between threads' works */
+   #ifndef TCPLX
+      TYPE beta;
+   #endif
+   uint ndone;             /* [0,P] */
 };
 
 typedef struct ATL_tamm_tNK ATL_tamm_tNK_t;
@@ -5032,6 +5042,11 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
          return;
    
    #endif
+   if (N <= ATL_geAMM_LASTNB && M <= ATL_geAMM_LASTMB && 
+       K > ATL_NTHREADS*ATL_geAMM_LASTKB)
+      if (!Mjoin(PATL,tammm_tMN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                 beta, C, ldc))
+         return;
    if (K > ATL_rkAMM_LASTKB)
       if (!Mjoin(PATL,tammm_sMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                  beta, C, ldc))
@@ -12047,6 +12062,151 @@ DONE:
 #define ATL_INDX    1
 #include "atlas_level1.h"
 #include "atlas_tlvl3.h"
+
+#ifdef TCPLX
+static void INLINE Mjoin(PATL,amm_tMN_k)
+   (ipinfo_t *ip, size_t k, size_t bet, const TYPE *A, const TYPE *B, 
+    TYPE *rA, TYPE *iA, TYPE *rB, TYPE *iB, TYPE *rC, TYPE *iC)
+{
+   const size_t nfkblks = ip->nfkblks;
+   ATL_CUINT nmu=ip->nmuF, nnu=ip->nnuF;
+   ATL_UINT kb = ip->kb;
+   if (k != nfkblks || kb == ip->kb0)  /* normal kb size */
+   {
+      ammkern_t amm_b1=ip->amm_b1, amm_bn=ip->amm_bn;
+      ip->b2blk(kb, ip->nF, ip->ONE, B+ip->incBk*k, ip->ldb, rB, iB);
+      ip->a2blk(kb, ip->mF, ip->ONE, A+ip->incAk*k, ip->lda, rA, iA);
+      if (bet)
+      {
+         amm_bn(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+         amm_b1(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      }
+      else
+      {
+         ammkern_t amm=ip->amm_b0;
+         amm(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+         amm(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      }
+      amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+      amm_b1(nmu, nnu, kb, iA, rB, iC, iA, iB, rC);
+   }
+   else /* KB0/kb0 size */
+   {
+      ammkern_t amm_b1=ip->ammK1_b1, amm_bn=ip->ammK1_bn;
+      kb = ip->kb0;
+      ip->b2blk(kb, ip->nF, ip->ONE, B+ip->incBk*nfkblks, ip->ldb, rB, iB);
+      ip->a2blk(kb, ip->mF, ip->ONE, A+ip->incAk*nfkblks, ip->lda, rA, iA);
+      kb = ip->KB0;
+      if (bet)
+      {
+         amm_bn(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+         amm_b1(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      }
+      else
+      {
+         ammkern_t amm=ip->ammK1_b0;
+         amm(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+         amm(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      }
+      amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+      amm_b1(nmu, nnu, kb, iA, rB, iC, iA, iB, rC);
+   }
+}
+#else
+static void INLINE Mjoin(PATL,amm_tMN_k)
+   (ipinfo_t *ip, size_t k, size_t bet, const TYPE *A, const TYPE *B, 
+    TYPE *pA, TYPE *pB, TYPE *pC)
+{
+   const size_t nfkblks = ip->nfkblks;
+   ATL_UINT kb = ip->kb;
+   if (k != nfkblks || kb == ip->kb0)  /* normal kb size */
+   {
+      ip->b2blk(kb, ip->nF, ATL_rone, B+ip->incBk*k, ip->ldb, pB);
+      ip->a2blk(kb, ip->mF, ATL_rone, A+ip->incAk*k, ip->lda, pA);
+      if (bet)
+         ip->amm_b1(ip->nmuF, ip->nnuF, kb, pA, pB, pC, pA, pB, pC);
+      else
+         ip->amm_b0(ip->nmuF, ip->nnuF, kb, pA, pB, pC, pA, pB, pC);
+   }
+   else /* KB0/kb0 size */
+   {
+      ip->b2blk(ip->kb0, ip->nF, ATL_rone, B+ip->incBk*nfkblks, ip->ldb, pB);
+      ip->a2blk(ip->kb0, ip->mF, ATL_rone, A+ip->incAk*nfkblks, ip->lda, pA);
+      if (bet)
+         ip->ammK1_b1(ip->nmuF, ip->nnuF, ip->KB0, pA, pB, pC, pA, pB, pC);
+      else
+         ip->ammK1_b0(ip->nmuF, ip->nnuF, ip->KB0, pA, pB, pC, pA, pB, pC);
+   }
+}
+#endif
+
+void Mjoin(PATL,DoWork_amm_tMN)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_tamm_tMN_t *pd = pp->PD;
+   ipinfo_t *ip = pd->ip;
+   const size_t nUblks = pd->nUblks, nPblks = pd->nKp * pd->nblksKp;
+   size_t namm=0;
+   const TYPE *A=pd->A, *B=pd->B;
+   #ifdef TCPLX
+      TYPE *iA = pd->w + vrank*pd->wsz, *rA, *iB, *rB, *iC, *rC;
+   #else
+      TYPE *pA = pd->w + vrank*pd->wsz, *pB, *pC;
+   #endif
+
+   #ifdef TCPLX
+      rA = iA + ip->szA;
+      iB = rA + ip->szA;
+      iB = ATL_AlignPtr(iB);
+      rB = iB + ip->szB;
+      iC = rB + ip->szB;
+      iC = ATL_AlignPtr(iC);
+      rC = iC + ip->szC;
+   #else
+      pB = pA + ip->szA;
+      pB = ATL_AlignPtr(pB);
+      pC = pB + ip->szB;
+      pC = ATL_AlignPtr(pC);
+   #endif
+   if (nPblks)
+   {
+      ATL_assert(0);
+   }
+   if (nUblks)
+   {
+      size_t kctr, kk = nPblks + nUblks;
+      while ( (kctr = ATL_DecGlobalAtomicCount(pd->blkUctr, vrank)) )
+      {
+         size_t k = kk - kctr;
+         #ifdef TCPLX
+            Mjoin(PATL,amm_tMN_k)(ip, k, namm, A, B, rA, iA, rB, iB, rC, iC);
+         #else
+            Mjoin(PATL,amm_tMN_k)(ip, k, namm, A, B, pA, pB, pC);
+         #endif
+         namm++;
+      }
+   }
+   if (namm)
+   {
+      ATL_mutex_lock(pd->Cmut);
+      if (pd->ndone)             /* beta already applied */
+      #ifdef TCPLX
+         ip->blk2c_b1(ip->mF, ip->nF, ip->alpC, rC, iC, ip->ONE, pd->C,ip->ldc);
+      #else
+         ip->blk2c_b1(ip->mF, ip->nF, ip->alpC, pC, ATL_rone, pd->C, ip->ldc);
+      #endif
+      else                        /* I'm first, apply real beta */
+      #ifdef TCPLX
+         ip->blk2c(ip->mF, ip->nF, ip->alpC, rC, iC, pd->beta, pd->C, ip->ldc);
+      #else
+         ip->blk2c(ip->mF, ip->nF, ip->alpC, pC, pd->beta, pd->C, ip->ldc);
+      #endif
+      (pd->ndone)++;
+      ATL_mutex_unlock(pd->Cmut);
+   }
+//   printf("%d: namm=%lu, wrk=[%p,%p]\n", vrank, (unsigned long) namm,
+//          pA, (pA+pd->wsz));
+}
 /*
  * This routine should be used only when M <= LASTMB && N <= LASTNB, and it
  * therefore handles a simple inner-product to update a single block of C.
@@ -12070,14 +12230,51 @@ int Mjoin(PATL,tammm_tMN)
 )
 {
    void *vp;
+   size_t sz;
+   int P;
    ATL_tamm_tMN_t pd;
-   ipinfo_t ip, ipL;
+   ipinfo_t ip;
 
-   ATL_assert(M <= ATL_geAMM_LASTMB && N <= ATL_geAMM_LASTNB && 
-              K > ATL_NTHREADS*ATL_geAMM_LASTKB);
-   Mjoin(PATL,geFillInIPInfo)(&ip, 0, TA, TB, M, N, K, lda, ldb, ldc, 
-                              alpha, beta, 1, 0, ((M+1)>>1)<<1, 0
+   if (M > ATL_geAMM_LASTMB || N > ATL_geAMM_LASTNB)
+//              K < ATL_NTHREADS*ATL_geAMM_LASTKB)
+      return(2);  /* not correct shape! */
 
+   P = Mjoin(PATL,tGetIPInfo_tMN)(&ip, ATL_NTHREADS, TA, TB, M, N, K, alpha,
+                                  lda, ldb, beta, ldc);
+//printf("     P=%d\n", P);
+   pd.wsz = ATL_MulBySize(ip.szA + ip.szB + ip.szC) + 3*ATL_Cachelen-1;
+   pd.wsz = ATL_MulByCachelen(ATL_DivByCachelen(pd.wsz));
+   vp = malloc(ATL_Cachelen + P*pd.wsz + ATL_MulBySize((ip.mu+ip.mu)*ip.nu));
+   if (!vp)
+      return(1);
+   pd.wsz = ATL_DivBySize((pd.wsz SHIFT));
+   pd.w = ATL_AlignPtr(vp);
+   pd.ip = &ip;
+   pd.beta = beta;
+   pd.A = A;
+   pd.B = B;
+   pd.C = C;
+   pd.Cmut = ATL_mutex_init();
+   pd.ndone = 0;
+   pd.nKp = pd.nblksKp = 0;
+   pd.nUblks = ip.nfkblks + 1;
+   if (pd.nKp)
+      pd.PartKctr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nKp, P), pd.nKp, 0);
+   else
+      pd.PartKctr = NULL;
+   if (pd.nUblks)
+      pd.blkUctr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nUblks, P), 
+                                            pd.nUblks, 0);
+   else
+      pd.blkUctr = NULL;
+
+   ATL_goParallel(P, Mjoin(PATL,DoWork_amm_tMN), NULL, &pd, NULL);
+   if (pd.PartKctr)
+      ATL_FreeGlobalAtomicCount(pd.PartKctr);
+   if (pd.blkUctr)
+      ATL_FreeGlobalAtomicCount(pd.blkUctr);
+   ATL_mutex_free(pd.Cmut);
+   free(vp);
    return(0);
 }
 @beginskip
@@ -13072,7 +13269,7 @@ int Mjoin(PATL,tammm_tNK)
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-   printf("P=%d\n", tnk.P);
+//   printf("P=%d\n", tnk.P);
    tnk.rp = &rki;
    tnk.A = A;
    tnk.B = B;
@@ -13377,7 +13574,7 @@ int Mjoin(PATL,tammm_tK)
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-   printf("P=%d\n", tnk.P);
+//   printf("P=%d\n", tnk.P);
    tnk.rp = &rki;
    tnk.A = A;
    tnk.B = B;

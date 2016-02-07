@@ -572,13 +572,12 @@ struct amminfo
 typedef struct ipinfo ipinfo_t;  /* struct for inner-product based gemm */
 struct ipinfo
 {
-   ammkern_t ammK1_b0;   /* amm safe to use for KB0 calc */
-   ammkern_t amm_b1;     /* amm to use after first K peel */
-   cm2am_t a2blk, b2blk; /* A/B copy funcs */
+   ammkern_t ammK1_b0, ammK1_b1; /* amm safe to use for KB0 calc */
+   ammkern_t amm_b0, amm_b1;     /* amm to use after first K peel */
+   cm2am_t a2blk, b2blk;         /* A/B copy funcs */
    ablk2cmat_t blk2c, blk2c_b1;  /* cpy from acc-maj blk to col-maj C */
    #ifdef TCPLX
-      ammkern_t ammK1_bn, ammK1_b1;
-      ammkern_t amm_b0;
+      ammkern_t ammK1_bn;
       ammkern_t amm_bn;
       const TYPE *alpA, *alpB, *alpC, *ONE;
    #endif
@@ -646,6 +645,10 @@ struct rkinfo
 enum ATL_AMMALG {ATL_amm1b, ATL_ammrkK, ATL_NMK};
 
 int Mjoin(PATL,geGetAmmmIndx)(size_t M, size_t N, size_t K);
+int Mjoin(PATL,tGetIPInfo_tMN)
+   (ipinfo_t *ip, int P, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
+    size_t M, size_t N, size_t K, const SCALAR alpha, size_t lda, size_t ldb,
+    const SCALAR beta, size_t ldc);
 void Mjoin(PATL,geComputeIPInfo)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc, 
@@ -22276,11 +22279,10 @@ void Mjoin(PATL,@(sh)FillInIPInfo)
  */
    nkblks = K / kb;
    KB0 = kb0 = K - nkblks*kb;
-   ip->amm_b1 = ATL_AMM_KERN_b1[idx];
-   ip->ammK1_b0 = ATL_AMM_KERN_b0[idx];  /* default case */
+   ip->ammK1_b1 = ip->amm_b1 = ATL_AMM_KERN_b1[idx];
+   ip->ammK1_b0 = ip->amm_b0 = ATL_AMM_KERN_b0[idx];  /* default case */
    #ifdef TCPLX
       ip->ONE = CONE;
-      ip->amm_b0 = ip->ammK1_b0;
       ip->ammK1_b1 = ip->amm_b1;
       ip->ammK1_bn = ip->amm_bn = ATL_AMM_KERN_bn[idx];
    #endif
@@ -22310,13 +22312,13 @@ void Mjoin(PATL,@(sh)FillInIPInfo)
       else if (kb0 != kb) /* compile-time K only works if kb=kb0 */
          ip->ammK1_b0 = ATL_AMM_KERN_K1_b0[idx];
 
-   #ifdef TCPLX
       if (ip->ammK1_b0 != ip->amm_b0)
       {
          ip->ammK1_b1 = ATL_AMM_KERN_K1_b1[idx];
-         ip->ammK1_bn = ATL_AMM_KERN_K1_bn[idx];
+         #ifdef TCPLX
+            ip->ammK1_bn = ATL_AMM_KERN_K1_bn[idx];
+         #endif
       }
-   #endif
    }
    else
    {
@@ -22492,8 +22494,14 @@ int Mjoin(PATL,tGetIPInfo_tMN)
     const SCALAR beta, size_t ldc)
 {
    ATL_UINT idx, mb, nb, kb, mu, nu, nkblks;
+/*
+ * Eventually, scope all block factors, and find best predicted perf 
+ * when scoping mu/nu cleanup.  Will be imprecise since diff kerns for diff
+ * blockings, but better than present.  For now, assume large M/N, so use
+ * largest kern.
+ */
    idx = ATL_geAMM_NCASES-1;
-   idx = 0;   /* just for debugging */
+//   idx = 0;   /* just for debugging */
    kb = ATL_AMM_KBs[idx];
    mu = ATL_AMM_MUs[idx];
    mb = ((M+mu-1)/mu)*mu;
@@ -22504,11 +22512,10 @@ int Mjoin(PATL,tGetIPInfo_tMN)
                               alpha, beta, 1, 0, mb, 0, 1, 0, nb, 0);
    nb = ip->nfkblks + 1;
    P = Mmin(P, nb);
-   ip->alpC = alpha;
-   #ifdef TCPLX
-      ip->alpA = ip->alpB = ip->ONE;
+   #ifdef TREAL
+      ATL_assert(ip->alpC == alpha);
    #else
-      ip->alpA = ip->alpB = ATL_rone;
+      ATL_assert(ip->alpC[0] == alpha[0] && ip->alpC[1] == alpha[1]);
    #endif
    return(P);
 }
