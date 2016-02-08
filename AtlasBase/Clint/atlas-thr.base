@@ -5041,9 +5041,8 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
                                 beta, C, ldc))
          return;
    
-   #endif
    if (N <= ATL_geAMM_LASTNB && M <= ATL_geAMM_LASTMB && 
-       K > ATL_NTHREADS*ATL_geAMM_LASTKB)
+       K > (ATL_geAMM_LASTKB<<2))
       if (!Mjoin(PATL,tammm_tMN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                  beta, C, ldc))
          return;
@@ -5051,6 +5050,7 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
       if (!Mjoin(PATL,tammm_sMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                  beta, C, ldc))
          return;
+   #endif
 #ifdef TREAL00
 @skip  if (N <= ATL_geAMM_LASTMB && K <= ATL_geAMM_LASTKB &&  K > 2 &&
 @skip      M >= (ATL_geAMM_LASTMB<<2)*Mmin(ATL_NTHREADS,8))
@@ -12145,7 +12145,8 @@ void Mjoin(PATL,DoWork_amm_tMN)(void *vpp, int rank, int vrank)
    ATL_tpool_t *pp=vpp;
    ATL_tamm_tMN_t *pd = pp->PD;
    ipinfo_t *ip = pd->ip;
-   const size_t nUblks = pd->nUblks, nPblks = pd->nKp * pd->nblksKp;
+   const size_t nUblks=pd->nUblks, nblksKp=pd->nblksKp, nKp=pd->nKp;
+   const size_t nPblks=nKp*nblksKp;
    size_t namm=0;
    const TYPE *A=pd->A, *B=pd->B;
    #ifdef TCPLX
@@ -12170,7 +12171,20 @@ void Mjoin(PATL,DoWork_amm_tMN)(void *vpp, int rank, int vrank)
    #endif
    if (nPblks)
    {
-      ATL_assert(0);
+      size_t kctr;
+      while ( (kctr = ATL_DecGlobalAtomicCount(pd->PartKctr, vrank)) )
+      {
+         size_t k = (nKp - kctr)*nblksKp, kmax;
+         for (kmax=k+nblksKp; k < kmax; k++)
+         {
+            #ifdef TCPLX
+               Mjoin(PATL,amm_tMN_k)(ip, k, namm, A, B, rA, iA, rB, iB, rC, iC);
+            #else
+               Mjoin(PATL,amm_tMN_k)(ip, k, namm, A, B, pA, pB, pC);
+            #endif
+            namm++;
+         }
+      }
    }
    if (nUblks)
    {
@@ -12231,7 +12245,7 @@ int Mjoin(PATL,tammm_tMN)
 {
    void *vp;
    size_t sz;
-   int P;
+   ATL_UINT P, p;
    ATL_tamm_tMN_t pd;
    ipinfo_t ip;
 
@@ -12241,7 +12255,36 @@ int Mjoin(PATL,tammm_tMN)
 
    P = Mjoin(PATL,tGetIPInfo_tMN)(&ip, ATL_NTHREADS, TA, TB, M, N, K, alpha,
                                   lda, ldb, beta, ldc);
-//printf("     P=%d\n", P);
+   #if 0
+      pd.nKp = 1;
+      pd.nblksKp = ip.nfkblks;
+   #elif 0
+      pd.nKp = pd.nblksKp = 0;
+   #else
+      sz = (ip.nfkblks + 1)>>1;
+      if (sz < P)
+         pd.nKp = pd.nblksKp = 0;
+      else if (sz >= (P<<4))
+      {
+         pd.nKp = 8;
+         pd.nblksKp = sz>>3;
+      }
+      else if (sz >= (P<<3))
+      {
+         pd.nKp = 4;
+         pd.nblksKp = sz>>2;
+      }
+      else
+      {
+         pd.nblksKp = 2;
+         pd.nKp = sz>>1;
+      }
+   #endif
+   pd.nUblks = (ip.nfkblks+1) - pd.nKp*pd.nblksKp;
+   p = pd.nKp + pd.nUblks;
+   P = Mmin(P,p);
+//printf("     P=%d, nPblks=%d, nKp=%d, nblksP=%d, nUblks=%d\n", P, 
+//       (int)(pd.nKp*pd.nblksKp), (int)pd.nKp, (int)pd.nblksKp,(int)(pd.nUblks));
    pd.wsz = ATL_MulBySize(ip.szA + ip.szB + ip.szC) + 3*ATL_Cachelen-1;
    pd.wsz = ATL_MulByCachelen(ATL_DivByCachelen(pd.wsz));
    vp = malloc(ATL_Cachelen + P*pd.wsz + ATL_MulBySize((ip.mu+ip.mu)*ip.nu));
@@ -12256,8 +12299,6 @@ int Mjoin(PATL,tammm_tMN)
    pd.C = C;
    pd.Cmut = ATL_mutex_init();
    pd.ndone = 0;
-   pd.nKp = pd.nblksKp = 0;
-   pd.nUblks = ip.nfkblks + 1;
    if (pd.nKp)
       pd.PartKctr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nKp, P), pd.nKp, 0);
    else
