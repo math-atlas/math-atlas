@@ -753,7 +753,40 @@ struct ATL_tamm_tNK
    size_t wsz;          /* gap between thread's workspaces */
    ushort P;            /* # of threads assigned to this problem */
 };
-
+/*
+ * This structure used for K > MAXKB, but K small enough we can allocate
+ * all of A plus a few colpans of B.
+ */
+typedef struct ATL_tamm_sNK ATL_tamm_sNK_t;
+struct ATL_tamm_sNK
+{
+   ipinfo_t *ip;
+   #ifdef TCPLX
+      const TYPE *beta;
+   #endif
+   const TYPE *A, *B;   /* input (A & B) matrices */
+   TYPE *C;             /* output matrix */
+   TYPE *wB;            /* workspace for B, shared by all threads */
+   TYPE *wAb;           /* wrkspc for last nByBlks blks of A */
+   TYPE *w;             /* wrkspc for A&C, len=wsz*P */
+   void *RowCtr;        /* [1,nByRows] */
+   void **BlkCtrs;      /* nByBlks [1,nnblks] Atomic Ctrs */
+   void *begBCtr;       /* [1,nnblks], assign B copy */
+   void *begABlksCtr;   /* [1,nByBlks] */
+   #if ATL_CBC_STRONG
+      void *donBCtr;    /* [1,nnblks], indicate B copy done */
+      void *donABlksCtr;/* [1,nByBlks] */
+      void *begACtr;    /* 1: you should copy common A */
+      void *donACtr;    /* 0: common A is ready, you can proceed */
+   #endif
+   size_t wsz;          /* gap between thread's workspaces */
+   size_t szAp;         /* # of elts in one K-panel of A */
+   #ifndef TCPLX
+      TYPE beta;
+   #endif
+   uint nByRows;        /* # of colpans dealt out 1 colpan at time */
+   uint nByBlks;        /* # of last colpans worked on by block */
+};
 @whiledef shp tK sMK
    @addkeys shp=@(shp)
 @SHP tK
@@ -1332,13 +1365,20 @@ void Mjoin(PATL,tvgemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
                         const void *beta, void *C, ATL_CINT ldc);
 int Mjoin(PATL,ammm_REC)
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
-    ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
-    const TYPE *A, ATL_CINT lda, const TYPE *B, ATL_CINT ldb,
-    const SCALAR beta, TYPE *C, ATL_CINT ldc,
-    int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, ATL_CINT, ATL_CINT, ATL_CINT,
-               const SCALAR, const TYPE*, ATL_CINT,  const TYPE*, ATL_CINT,
-               const SCALAR, TYPE*, ATL_CINT));
-@whiledef rt tammm_G tammm_tMN tammm_tNK tammm_tK tammm_sMK
+    size_t M, size_t N, size_t K, const SCALAR alpha,
+    const TYPE *A, size_t lda, const TYPE *B, size_t ldb,
+    const SCALAR beta, TYPE *C, size_t ldc, ATL_UINT flg,
+    int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, size_t, size_t, size_t,
+               const SCALAR, const TYPE*, size_t,  const TYPE*, size_t,
+               const SCALAR, TYPE*, size_t));
+@whiledef rt tammm_tMN tammm_tNK tammm_tK tammm_sMK tammm_sNK tammm
+int Mjoin(PATL,@(rt))
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
+    size_t M, size_t N, size_t K, const SCALAR alpha,
+    const TYPE *A, size_t lda, const TYPE *B, size_t ldb,
+    const SCALAR beta, TYPE *C, size_t ldc);
+@endwhile
+@whiledef rt tammm_G
 int Mjoin(PATL,@(rt))
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
     ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
@@ -2537,7 +2577,7 @@ int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
    pthread_attr_t attr;
    #ifndef ATL_NOAFFINITY
       #if defined(ATL_PAFF_SETAFFNP)
-         cpu_set_t *cpuset;
+         cpu_set_t *cpuset=NULL;
       #elif defined(ATL_PAFF_PLPA)
          plpa_cpu_set_t cpuset;
       #elif defined(ATL_PAFF_CPUSET) /* untried FreeBSD code */
@@ -2576,6 +2616,7 @@ int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
       CPU_ZERO(cpuset);
       CPU_SET(affID, cpuset);
       ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t),cpuset));
+      free(cpuset);
    #elif defined(ATL_PAFF_SETPROCNP)
       ATL_assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t)affID,
                                                PTHREAD_BIND_FORCED_NP));
@@ -5031,89 +5072,9 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
 @ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
    }
 @ROUT ATL_tgemm
-   #if 1
-   if (N <= ATL_rkAMM_LASTNB && K <= ATL_rkAMM_LASTKB && K > 2)
-      if (!Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                 beta, C, ldc))
-         return;
-   if (K <= ATL_rkAMM_LASTKB && K > 2)
-      if (!Mjoin(PATL,tammm_tK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                beta, C, ldc))
-         return;
-   
-   if (N <= ATL_geAMM_LASTNB && M <= ATL_geAMM_LASTMB && 
-       K > (ATL_geAMM_LASTKB<<2))
-      if (!Mjoin(PATL,tammm_tMN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                 beta, C, ldc))
-         return;
-   if (K > ATL_rkAMM_LASTKB)
-      if (!Mjoin(PATL,tammm_sMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                 beta, C, ldc))
-         return;
-   #endif
-#ifdef TREAL00
-@skip  if (N <= ATL_geAMM_LASTMB && K <= ATL_geAMM_LASTKB &&  K > 2 &&
-@skip      M >= (ATL_geAMM_LASTMB<<2)*Mmin(ATL_NTHREADS,8))
-   {
-      int Mjoin(PATL,tammm)(enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
-         ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, const SCALAR alpha,
-         const TYPE *A, ATL_CSZT lda, const TYPE *B, ATL_CSZT ldb,
-         const SCALAR beta, TYPE *C, ATL_CSZT ldc);
-      if (!Mjoin(PATL,tammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
-                             beta, C, ldc))
-         return;
-   }
-#endif
-   #if 1  // temporary until we get threads working
-      printf("P=1\n");
-      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+   if (!Mjoin(PATL,tammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                          beta, C, ldc))
       return;
-   #endif
-/*
- * See if we are in a case where we've implemented a dynamically scheduled
- * code.  Performance of the dynamically scheduled operations varies:
- * on Intel, its typically faster, and on AMD its slower than
- * statically scheduled *when run on an unloaded machine*.  The difference is
- * that if there is load on one or more processors, dynamically scheduled
- * code is almost twice as fast.  On unloaded machines, the performance 
- * difference is due mostly to the differing partitioning, not the overhead
- * of dynamic scheduling, which always seems to pay for itself.
- * On unloaded AMD machines, the asymptotic loss is roughly 1-2%.
- * Dynamic scheduling seems to always be a performance loss for MAC OSX
- *
- * NOTE: these cases commented out for all systems since they use block-major
- *       code, which is now usually slower than access-major!
- */
-@skip   #ifndef ATL_OS_OSX
-   #if 0
-      #ifdef FindingCE
-         ATL_assert(!Mjoin(PATL,tgemm_bigMN_Kp)(TA, TB, M, N, K, alpha, A, lda, 
-                                                B, ldb, beta, C, ldc));
-         return;
-      #endif
-/*
- *    Rank-K update has special case
- */
-      i = Mmax(ATL_NTHREADS,4)*NB;
-      if (K <= 4*NB && M >= 2*MB && N >= 2*NB && Mmax(M,N) >= i)
-      {
-         if (!Mjoin(PATL,tgemm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
-                                    beta, C, ldc))
-            return;
-      }
-/*
- *    Very large matrices loops over rank-Kp updates, where Kp is set by
- *    CacheEdge.  If any dim is very small, use one of the other cases.
- */
-      i = Mmin(M,N);
-      i = Mmin(i, K);
-      if (i > Mmax(8,2*ATL_NTHREADS)*NB)
-      {
-         if (!Mjoin(PATL,tgemm_bigMN_Kp)(TA, TB, M, N, K, alpha, A, lda, 
-                                         B, ldb, beta, C, ldc))
-            return;
-      }
-   #endif
 /*
  * See how many processors are optimal for this problem
  */
@@ -12230,17 +12191,17 @@ int Mjoin(PATL,tammm_tMN)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CINT M,
-   ATL_CINT N,
-   ATL_CINT K,
+   size_t M,
+   size_t N,
+   size_t K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CINT lda,
+   size_t lda,
    const TYPE *B,
-   ATL_CINT ldb,
+   size_t ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CINT ldc
+   size_t ldc
 )
 {
    void *vp;
@@ -13285,17 +13246,17 @@ int Mjoin(PATL,tammm_tNK)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CINT M,
-   ATL_CINT N,
-   ATL_CINT K,
+   size_t M,
+   size_t N,
+   size_t K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CINT lda,
+   size_t lda,
    const TYPE *B,
-   ATL_CINT ldb,
+   size_t ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CINT ldc
+   size_t ldc
 )
 {
    rkinfo_t rki;
@@ -13589,17 +13550,17 @@ int Mjoin(PATL,tammm_tK)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CINT M,
-   ATL_CINT N,
-   ATL_CINT K,
+   size_t M,
+   size_t N,
+   size_t K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CINT lda,
+   size_t lda,
    const TYPE *B,
-   ATL_CINT ldb,
+   size_t ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CINT ldc
+   size_t ldc
 )
 {
    rkinfo_t rki;
@@ -14478,75 +14439,111 @@ int Mjoin(PATL,tammm_smNK)
 @ROUT ATL_tgemm_amm
 /*
  * recurs on any standard GEMM interface routine, passed as a function
- * pointer in amm.
+ * pointer in amm.  flg is a bitflag, meaning if set:
+ * 0    1 : Do divide M
+ * 1    2 : Do divide N
+ * 2    4 : Do divide K
+ * 3    8 : stop dividing M when it is < 4*MAXMB
+ * 4   16 : stop dividing N when it is < 4*MAXNB
+ * 5   32 : stop dividing K when it is < 3*MAXKB
  */
 int Mjoin(PATL,ammm_REC)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CINT M,
-   ATL_CINT N,
-   ATL_CINT K,
+   size_t M,
+   size_t N,
+   size_t K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CINT lda,
+   size_t lda,
    const TYPE *B,
-   ATL_CINT ldb,
+   size_t ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CINT ldc,
-   int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, ATL_CINT, ATL_CINT, ATL_CINT,
-              const SCALAR, const TYPE*, ATL_CINT,  const TYPE*, ATL_CINT, 
-              const SCALAR, TYPE*, ATL_CINT)
+   size_t ldc,
+   ATL_UINT flg,
+   int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, size_t, size_t, size_t,
+              const SCALAR, const TYPE*, size_t,  const TYPE*, size_t, 
+              const SCALAR, TYPE*, size_t)
 )
 {
+   size_t Dk, Dm;
    if (amm(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc))
    {
+      if ((flg&8) && M <= (ATL_geAMM_LASTMB<<2))
+         flg &= ~1;
+      if ((flg&16) && N <= (ATL_geAMM_LASTNB<<2))
+         flg &= ~2;
+      if ((flg&32) && K <= 3*ATL_geAMM_LASTKB)
+         flg &= ~4;
 /*
  *    Stopping criteria in case something is horribly wrong
  */
       if (K <= ATL_geAMM_LASTKB && M <= ATL_geAMM_LASTMB && 
-          N <= ATL_geAMM_LASTNB)
+          N <= ATL_geAMM_LASTNB || !(flg&7))
       {
+         printf("ATLAS warning: out-of-workspace causes serial execution!\n");
          Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
          return(0);
       }
 /*
  *    Divide K first: it cuts space from both A & B
  */
-      if (K+K >= Mmax(M,N))
+      if ((flg | 3) == flg)
+         Dk = Mmax(M,N);
+      else if ((flg&3) == 0)
+         Dk = 0;
+      else
+         Dk = (flg&1) ? M : N;
+      Dm = (flg&2) ? N : 0;
+      if (K+K >= Dk && (flg&4))
       {
          const int KL = K>>1, KR = K-KL;
+         #ifdef TCPLX
+            TYPE ONE[2] = {ATL_rone, ATL_rzero};
+         #else
+            #define ONE ATL_rone
+         #endif
          ATL_assert(!Mjoin(PATL,ammm_REC)(TA, TB, M, N, KL, alpha, A, lda, 
-                                          B, ldb, beta, C, ldc, amm));
-         A += (TA == AtlasNoTrans) ? KL*lda : KL;
-         B += (TB == AtlasNoTrans) ? KL : KL*ldb;
+                                          B, ldb, beta, C, ldc, flg, amm));
+         A += ((TA == AtlasNoTrans) ? KL*lda : KL)SHIFT;
+         B += ((TB == AtlasNoTrans) ? KL : KL*ldb)SHIFT;
          return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, KR, alpha, A, lda, 
-                                     B, ldb, ATL_rone, C, ldc, amm));
+                                     B, ldb, ONE, C, ldc, flg, amm));
+         #ifndef TCPLX
+            #undef ONE
+         #endif
       }
 /*
  *    If M largest dim (twice K), cut it instead
  */
-      else if (M >= N)
+      else if (M >= Dm && (flg&1))
       {
          const int ML = M>>1, MR = M-ML;
          ATL_assert(!Mjoin(PATL,ammm_REC)(TA, TB, ML, N, K, alpha, A, lda, 
-                                          B, ldb, beta, C, ldc, amm));
-         A += (TA == AtlasNoTrans) ? ML : ML*lda;
+                                          B, ldb, beta, C, ldc, flg, amm));
+         A += ((TA == AtlasNoTrans) ? ML : ML*lda)SHIFT;
          return(Mjoin(PATL,ammm_REC)(TA, TB, MR, N, K, alpha, A, lda, 
-                                     B, ldb, beta, C+ML, ldc, amm));
+                                     B, ldb, beta, C+(ML SHIFT), ldc, flg,amm));
       }
 /*
  *    Otherwise, cut N
  */
-      else
+      else if (flg&2)
       {
          const int NL = N>>1, NR = N-NL;
          ATL_assert(!Mjoin(PATL,ammm_REC)(TA, TB, M, NL, K, alpha, A, lda, 
-                                          B, ldb, beta, C, ldc, amm));
-         B += (TB == AtlasNoTrans) ? NL*ldb : NL;
-         return(Mjoin(PATL,ammm_REC)(TA, TB, M, NR, K, alpha, A, lda, 
-                                     B, ldb, beta, C+NL*ldc, ldc, amm));
+                                          B, ldb, beta, C, ldc, flg, amm));
+         B += ((TB == AtlasNoTrans) ? NL*ldb : NL)SHIFT;
+         return(Mjoin(PATL,ammm_REC)(TA, TB, M, NR, K, alpha, A, lda, B, ldb, 
+                                     beta, C+NL*(ldc SHIFT), ldc, flg, amm));
+      }
+      else  /* can't cut anymore, give up and use serial */
+      {
+         printf("ATLAS warning: out-of-workspace causes serial execution!\n");
+         Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+         return(0);
       }
    }
    return(0);
@@ -14569,17 +14566,41 @@ int Mjoin(PATL,tammm)
    ATL_CSZT ldc
 )
 {
-   if (N <= ATL_rkAMM_LASTNB && K <= ATL_rkAMM_LASTKB && K > 2)
+   size_t nblks;
+   if (K <= 2)    /* presently no threading for K=1 or 2 */
+      return(1);  /* signal failure */
+/*
+ * _tNK & _tMN require minimal wrkspc, so just return if they fail
+ */
+   if (N <= ATL_rkAMM_LASTNB && K <= ATL_rkAMM_LASTKB)
       return(Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
-   #if 0
-   else if (M <= ATL_geAMM_LASTMB && N <= ATL_geAMM_LASTNB)
+   if (N <= ATL_geAMM_LASTNB && M <= ATL_geAMM_LASTMB &&
+       K > (ATL_geAMM_LASTKB<<2))
       return(Mjoin(PATL,tammm_tMN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
-   else if (M > ATL_geAMM_LASTMB && K >= 16 && N > ATL_geAMM_LASTNB)
+/*
+ * Routines that copy one entire matrix may need to cut varying dims in order
+ * to fit within workspace requirements.  Use ammm_REC for this.
+ */
+   if (K <= ATL_rkAMM_LASTKB)  /* outer product / rank-K with N > LASTNB */
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                  beta, C, ldc, Mjoin(PATL,tammm_G)));
-   #endif
+                                  beta, C, ldc, 1, Mjoin(PATL,tammm_tK)));
+/*
+ * _sMK & _sNK only work when C provides adequate parallelism
+ */
+   nblks = (M+ATL_geAMM_LASTMB-1) / ATL_geAMM_LASTMB;
+   nblks *= (N+ATL_geAMM_LASTNB-1) / ATL_geAMM_LASTNB;
+   if (nblks >= ATL_NTHREADS)
+@skip   if (M >= 2*ATL_geAMM_LASTMB || N >= 2*ATL_geAMM_LASTNB)
+   {
+      if (M < N+ATL_geAMM_LASTMB)
+         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                     beta, C, ldc, 5, Mjoin(PATL,tammm_sMK)));
+      else
+         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                     beta, C, ldc, 6, Mjoin(PATL,tammm_sNK)));
+   }
    return(1);
 }
 @ROUT ATL_tsyrk_amm
@@ -17415,6 +17436,368 @@ Mjoin(PATL,comb_sum)
    }
    return(val);
 }
+@ROUT ATL_tammm_sNK
+#include "atlas_misc.h"
+#define ATL_ESTNCTR 1
+#define ATL_INDX    1
+#include "atlas_tlvl3.h"
+#include "atlas_bitvec.h"
+#include "atlas_cbc.h"
+
+//#undef ATL_CBC_STRONG
+//#define ATL_CBC_STRONG 0
+
+void Mjoin(PATL,DoWork_amm_sNK)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_tamm_sNK_t *pd = pp->PD;
+   ipinfo_t *ip = pd->ip;
+   const TYPE *B = pd->B, *A = pd->A;
+   TYPE *pB = pd->wB, *pA = pd->w + vrank*pd->wsz, *pC, *C=pd->C;
+   ablk2cmat_t blk2c=ip->blk2c;
+   #ifdef TCPLX
+      TYPE *rC;
+      const TYPE *beta=pd->beta;
+   #else
+      const TYPE beta=pd->beta;
+      #define rC pC
+   #endif
+   ATL_CUINT nByBlks=pd->nByBlks, nByRows=pd->nByRows;
+   const size_t nmblks=ip->nfmblks+ip->npmblks, nnblks=ip->nfnblks+ip->npnblks;
+   const size_t nkblks = ip->nfkblks + 1, szAp=pd->szAp;
+   int ictr;
+/*
+ * First, copy last nByRows A operands
+ */
+   pC = pA + szAp;
+   pC = ATL_AlignPtr(pC);
+   #ifdef TCPLX
+      rC = pC + ip->szC;
+   #endif
+   if (nByBlks)
+   {
+      while ( (ictr = ATL_DecAtomicCount(pd->begABlksCtr)) )
+      {
+          size_t i=nmblks-ictr, k;
+          ATL_UINT nb, nnu;
+          TYPE *wa = pd->wAb+(nByBlks-ictr)*szAp;
+          Mjoin(PATL,iploopsK)(ip, i, 0, IdxA_ip(ip, A, i, 0), NULL, NULL, 
+                               3, wa, NULL, NULL, NULL, ip->alpA, NULL);
+          #if ATL_CBC_STRONG
+             ATL_DecAtomicCount(pd->donABlksCtr);
+          #endif
+      }
+   }
+/*
+ * Now, compute 1st rowpan of C while copying global B;
+ * strongly-ordered cachces uses single shared A, while weak redundant A
+ */
+   ictr = ATL_DecGlobalAtomicCount(pd->begBCtr, vrank);
+   if (ictr)
+   {
+      int ACOPIED = 0;
+      int j = nnblks - ictr;
+      TYPE *wb, *wa;
+      #if ATL_CBC_STRONG
+         wa = pd->wAb + nByBlks*szAp;
+         if (ATL_DecAtomicCount(pd->begACtr))
+         {
+             Mjoin(PATL,iploopsK)(ip, 0, 0, A, NULL, NULL, 3, wa, NULL, 
+                                  NULL, NULL, ip->alpA, NULL);
+            ACOPIED = ATL_DecAtomicCount(pd->donACtr);
+            ATL_assert(ACOPIED);
+         }
+/*
+ *       Copy B, then await A done ACK
+ */
+         wb = IdxBw_ip(ip, pB, 0, j);
+         Mjoin(PATL,iploopsK)(ip, 0, j, NULL, IdxB_ip(ip, B, 0, j), NULL, 3,
+                              NULL, wb, NULL, NULL, ip->alpB, NULL);
+         ATL_DecGlobalAtomicCount(pd->donBCtr, vrank);
+         if (!ACOPIED)
+         {
+            while (ATL_GetAtomicCount(pd->donACtr))  /* await A cpy finish */
+               ATL_thread_yield();
+         }
+/*
+ *       Now multiply local(weak)/glob B * local A, and write to my piece of C
+ */
+         Mjoin(PATL,iploopsK)(ip, 0, j, NULL, NULL, IdxC_ip(ip, C, 0, j), 
+                              3, wa, wb, rC, pC, beta, blk2c);
+      #else
+         wa = pA;
+/*
+ *       Copy chosen block to correct place in global B workspace & do multiply
+ */
+         wb = IdxBw_ip(ip, pB, 0, j);
+         Mjoin(PATL,iploopsK)(ip, 0, j, A, IdxB_ip(ip, B, 0, j), 
+                              IdxC_ip(ip, C, 0, j), 3, wa, wb, rC, pC,
+                              beta, blk2c);
+      #endif
+/*
+ *    Now loop over any remaining B blks with known-good wa
+ */
+      while ( (ictr = ATL_DecGlobalAtomicCount(pd->begBCtr, vrank)) )
+      {
+         j = nnblks - ictr;
+         wb = IdxBw_ip(ip, pB, 0, j);
+         #if ATL_CBC_STRONG
+            Mjoin(PATL,iploopsK)(ip, 0, j, NULL, IdxB_ip(ip, B, 0, j), NULL, 3, 
+                                 NULL, wb, NULL, NULL, ip->alpB, NULL);
+            ATL_DecGlobalAtomicCount(pd->donBCtr, vrank);
+            Mjoin(PATL,iploopsK)(ip, 0, j, NULL, NULL, IdxC_ip(ip, C, 0, j), 3,
+                                 wa, wb, rC, pC, beta, blk2c);
+         #else
+            Mjoin(PATL,iploopsK)(ip, 0, j, NULL, IdxB_ip(ip, B, 0, j),
+                                 IdxC_ip(ip, C, 0, j), 3, wa, wb, rC, pC,
+                                 beta, blk2c);
+         #endif
+      }
+   }
+/*
+ * We now have global B copied for everyone's use.  For weakly-ordered caches,
+ * we sync all thr to to make sure we can all see each others' copies;
+ * Strongly-ordered caches need to hang-fire until B copy is complete.
+ */
+   #if ATL_CBC_STRONG
+      while (ATL_GetGlobalAtomicCount(pd->donBCtr, vrank))
+         ATL_thread_yield();      /* await B cpy finish */
+   #else
+      ATL_cbc_barrier(pp->nworkers, vrank, NULL);  /* barrier & memory fence */
+   #endif
+/*
+ * Now loop over rowpans from [1,nByRows+1], wt thread doing entire col,
+ * and global B copy known to be ready to use.
+ */
+   if (nByRows)
+   {
+      while ( (ictr = ATL_DecGlobalAtomicCount(pd->RowCtr, vrank)) )
+      {
+         int i = nByRows - ictr + 1, j;
+         const TYPE *a; 
+         TYPE *c, *wb;
+/*
+ *       For top block, use copied B, and copy this k-panel of A
+ */
+         a = IdxA_ip(ip, A, i, 0);
+         c = IdxC_ip(ip, C, i, 0);
+         Mjoin(PATL,iploopsK)(ip, i, 0, a, NULL, c, 3, pA, pB, rC, pC,
+                              beta, blk2c);
+/*
+ *       Remaining blocks don't need to copy A or B
+ */
+         for (j=1; j < nnblks; j++)
+         {
+            TYPE *bw, *c;
+            bw = IdxBw_ip(ip, pB, 0, j);
+            c = IdxC_ip(ip, C, i, j);
+            Mjoin(PATL,iploopsK)(ip, i, j, NULL, NULL, c, 3, pA, bw, rC, pC,
+                                 beta, blk2c);
+         }
+      }
+   }
+/*
+ * Finally, load balance end of computation by using block-level scheduling
+ * for last nByBlks rows
+ */
+   if (nByBlks)
+   {
+      #if ATL_CBC_STRONG
+         while (ATL_GetAtomicCount(pd->donABlksCtr))  /* await A cpy finish */
+            ATL_thread_yield();
+      #endif
+      while (1)
+      {
+         ATL_UINT max, i, imax=0;
+         TYPE *wa;
+/*
+ *       Find row with maximum remaining blocks, and work on that one
+ */
+         max = ATL_GetGlobalAtomicCount(pd->BlkCtrs[0], vrank);
+         for (i=1; i < nByBlks; i++)
+         {
+            int k;
+            k = ATL_GetGlobalAtomicCount(pd->BlkCtrs[i], vrank);
+            if (k >= max)
+            {
+               max = k;
+               imax = i;
+            }
+         }
+         if (!max)   /* if no blocks are left in any of the nByBlks rowpans */
+            break;   /* we are done */
+/*
+ *       For chosen rowpan, work on individual blks of C with other threads.
+ *       This is the last nByBlks rows, so add 1st and nByRows to get glob i
+ *       Both the shared A and the global B have been copied at start of alg.
+ */
+         i = imax + 1 + nByRows;
+         wa = pd->wAb + imax*szAp;
+         while ( (ictr = ATL_DecGlobalAtomicCount(pd->BlkCtrs[imax], vrank)) )
+         {
+            TYPE *bw, *c;
+            int j = nnblks - ictr;
+            bw = IdxBw_ip(ip, pB, 0, j);
+            c = IdxC_ip(ip, C, i, j);
+            Mjoin(PATL,iploopsK)(ip, i, j, NULL, NULL, c, 3, wa, bw, rC, pC,
+                                 beta, blk2c);
+         }
+      }
+   }
+}
+#ifndef TCPLX
+   #undef rC
+#endif
+/*
+ * This routine handles the case where K = i*maxKB, and M is reasonably large
+ * so that the it can spend most of its time giving out entire rowpanels of C,
+ * and only go to block-level syncs for a few rowpans at end.  It requires
+ * enough workspace to allocate common B (whole matrix), and P*(szApan+szC).
+ * The need to allocate entire B means that N can't be too large either.
+ * It is particularly important for recursive panel LU/QR factorization.
+ */
+int Mjoin(PATL,tammm_sNK)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   size_t M,
+   size_t N,
+   size_t K,
+   const SCALAR alpha,
+   const TYPE *A,
+   size_t lda,
+   const TYPE *B,
+   size_t ldb,
+   const SCALAR beta,
+   TYPE *C,
+   size_t ldc
+)
+{
+   int idx;
+   ipinfo_t ip;
+   ATL_tamm_sNK_t snk;
+   size_t nmblks, nnblks, nkblks, szBt, szAp, szAb, sz;
+   void *vp=NULL;
+   ATL_UINT P;
+
+   snk.beta = beta;
+   idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
+   Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc, 
+                               alpha, beta);
+/*
+ * Compute how many columns to handle wt block-level and colpan-lvl sheduling
+ */
+   nmblks = ip.nfmblks + ip.npmblks;
+   nnblks = ip.nfnblks + ip.npnblks;
+   nkblks = ip.nfkblks + 1;
+   #if 1
+      snk.nByBlks = ATL_NTHREADS - 1;
+      snk.nByBlks = Mmin(snk.nByBlks, 32); /* huge causes too many Ctrs */
+      snk.nByBlks = Mmin(snk.nByBlks, nmblks-1);
+   #elif 0
+      snk.nByBlks = 0;         /* just for testing, bad load balance */
+   #else
+      snk.nByBlks = nmblks-1;  /* just for testing, bad parallel overhead */
+   #endif
+   snk.nByRows = nmblks - snk.nByBlks - 1;
+/*
+ * Compute max parallelism, and call serial if inadequate
+ */
+   P = snk.nByRows + (snk.nByBlks+1)*nnblks;
+   P = Mmin(P, ATL_NTHREADS);
+   if (P < 2)
+   {
+      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return(0);
+   }
+   #if 0
+   printf("P=%d, nByRows=%d, nByBlks=%d, nfnblks=%d, nb=%d npnblks=%d, pnb=%d\n", 
+          (int)P, (int)snk.nByRows, (int)snk.nByBlks, (int)ip.nfnblks, ip.nb,
+          (int)ip.npnblks, ip.pnb);
+   #endif
+   snk.ip = &ip;
+   snk.A = A;
+   snk.B = B;
+   snk.C = C;
+/*
+ * Get wrkspc
+ */
+   szBt = (ip.szB*ip.nfnblks + ip.pszB*ip.npnblks)*(ip.nfkblks+1);
+   szAp = (ip.nfmblks) ? ip.szA:ip.pszA;
+   szAp *= nkblks;
+   snk.szAp = szAp SHIFT;
+   #if ATL_CBC_STRONG
+      szAb = szAp*(1+snk.nByBlks);
+   #else
+      szAb = szAp*snk.nByBlks;
+   #endif
+   snk.wsz = ATL_MulBySize(szAp + ip.szC) + ATL_Cachelen;
+   snk.wsz = ATL_MulByCachelen(ATL_DivByCachelen(snk.wsz + ATL_Cachelen-1));
+   sz = ATL_MulBySize(szBt+szAb) + P*snk.wsz + 3*ATL_Cachelen;
+   if (sz <= ATL_PTMAXMALLOC)
+      vp = malloc(sz);
+   if (!vp)
+      return(1);
+   snk.wsz = ATL_DivBySize(snk.wsz)SHIFT;
+   snk.wB = ATL_AlignPtr(vp);
+   snk.wAb = snk.wB + (szBt SHIFT);
+   snk.wAb = ATL_AlignPtr(snk.wAb);
+   snk.w = snk.wAb + (szAb SHIFT);
+   snk.w = ATL_AlignPtr(snk.w);
+   if (snk.nByRows)
+      snk.RowCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(snk.nByRows, P), 
+                                            snk.nByRows, 0);
+   else
+      snk.RowCtr = NULL;
+   snk.begBCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nnblks,P), nnblks, 0);
+   if (snk.nByBlks)
+      snk.begABlksCtr = ATL_SetAtomicCount(snk.nByBlks);
+   else
+      snk.begABlksCtr = NULL;
+   #if ATL_CBC_STRONG
+      snk.donBCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nnblks,P), nnblks, 0);
+      if (snk.nByBlks)
+         snk.donABlksCtr = ATL_SetAtomicCount(snk.nByBlks);
+      else
+         snk.donABlksCtr = NULL;
+      snk.begACtr = ATL_SetAtomicCount(1);
+      snk.donACtr = ATL_SetAtomicCount(1);
+   #endif
+   if (snk.nByBlks)
+   {
+      int nat, i;
+      snk.BlkCtrs = malloc(snk.nByBlks * sizeof(void*));
+      ATL_assert(snk.BlkCtrs);
+      nat = ATL_EstNctr(nnblks,P);
+      for (i=0; i < snk.nByBlks; i++)
+         snk.BlkCtrs[i] = ATL_SetGlobalAtomicCount(nat, nnblks, 0);
+   }
+   else
+      snk.BlkCtrs = NULL;
+   ATL_goParallel(P, Mjoin(PATL,DoWork_amm_sNK), NULL, &snk, NULL);
+
+   if (snk.nByBlks)
+   {
+      int i;
+      for (i=0; i < snk.nByBlks; i++)
+         ATL_FreeGlobalAtomicCount(snk.BlkCtrs[i]);
+      free(snk.BlkCtrs);
+   }
+   ATL_FreeGlobalAtomicCount(snk.begBCtr);
+   if (snk.nByBlks)
+      ATL_FreeAtomicCount(snk.begABlksCtr);
+   #if ATL_CBC_STRONG
+      ATL_FreeAtomicCount(snk.begACtr);
+      ATL_FreeAtomicCount(snk.donACtr);
+      ATL_FreeGlobalAtomicCount(snk.donBCtr);
+      if (snk.nByBlks)
+         ATL_FreeAtomicCount(snk.donABlksCtr);
+   #endif
+   if (snk.nByRows)
+      ATL_FreeGlobalAtomicCount(snk.RowCtr);
+   free(vp);
+   return(0);
+}
 @ROUT ATL_tammm_sMK
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
@@ -17441,7 +17824,7 @@ void Mjoin(PATL,DoWork_amm_sMK)(void *vpp, int rank, int vrank)
    ATL_CUINT nByBlks=pd->nByBlks, nByCols=pd->nByCols;
    const size_t nmblks=ip->nfmblks+ip->npmblks, nnblks=ip->nfnblks+ip->npnblks;
    const size_t nkblks = ip->nfkblks + 1, szBp=pd->szBp;
-   int ictr, ict2;
+   int ictr;
 /*
  * First, copy last nByCols B operands
  */
@@ -17645,17 +18028,17 @@ int Mjoin(PATL,tammm_sMK)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CINT M,
-   ATL_CINT N,
-   ATL_CINT K,
+   size_t M,
+   size_t N,
+   size_t K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CINT lda,
+   size_t lda,
    const TYPE *B,
-   ATL_CINT ldb,
+   size_t ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CINT ldc
+   size_t ldc
 )
 {
    int idx;
@@ -17663,6 +18046,7 @@ int Mjoin(PATL,tammm_sMK)
    ATL_tamm_sMK_t smk;
    size_t nmblks, nnblks, nkblks, szAt, szBp, szBb, sz;
    void *vp=NULL;
+   ATL_UINT P;
 
    smk.beta = beta;
    idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
@@ -17675,27 +18059,26 @@ int Mjoin(PATL,tammm_sMK)
    nnblks = ip.nfnblks + ip.npnblks;
    nkblks = ip.nfkblks + 1;
    #if 1
-   smk.nByBlks = smk.P - 1;
-   smk.nByBlks = Mmin(smk.nByBlks, 32); /* allowing huge causes too many Ctrs */
-   smk.nByBlks = Mmin(smk.nByBlks, nnblks-1);
+      smk.nByBlks = ATL_NTHREADS - 1;
+      smk.nByBlks = Mmin(smk.nByBlks, 32); /* huge causes too many Ctrs */
+      smk.nByBlks = Mmin(smk.nByBlks, nnblks-1);
    #elif 1
-      smk.nByBlks = 0;         // just for testing, bad load balance
+      smk.nByBlks = 0;         /* just for testing, bad load balance */
    #else
-      smk.nByBlks = nnblks-1;  // just for testing, bad parallel overhead
+      smk.nByBlks = nnblks-1;  /* just for testing, bad parallel overhead */
    #endif
    smk.nByCols = nnblks - smk.nByBlks - 1;
 /*
  * Compute max parallelism, and call serial if inadequate
  */
-   smk.P = smk.nByCols + (smk.nByBlks+1)*nmblks;
-   smk.P = Mmin(smk.P, ATL_NTHREADS);
-//   smk.P = 1;
-   if (0 && smk.P < 2)
+   P = smk.nByCols + (smk.nByBlks+1)*nmblks;
+   P = Mmin(P, ATL_NTHREADS);
+   if (P < 2)
    {
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-   printf("iP=%d\n", smk.P);
+//   printf("iP=%d\n", P);
    smk.ip = &ip;
    smk.A = A;
    smk.B = B;
@@ -17714,7 +18097,7 @@ int Mjoin(PATL,tammm_sMK)
    #endif
    smk.wsz = ATL_MulBySize(szBp + ip.szC) + ATL_Cachelen;
    smk.wsz = ATL_MulByCachelen(ATL_DivByCachelen(smk.wsz + ATL_Cachelen-1));
-   sz = ATL_MulBySize(szAt+szBb) + smk.P*smk.wsz + 3*ATL_Cachelen;
+   sz = ATL_MulBySize(szAt+szBb) + P*smk.wsz + 3*ATL_Cachelen;
    if (sz <= ATL_PTMAXMALLOC)
       vp = malloc(sz);
    if (!vp)
@@ -17726,18 +18109,17 @@ int Mjoin(PATL,tammm_sMK)
    smk.w = smk.wBb + (szBb SHIFT);
    smk.w = ATL_AlignPtr(smk.w);
    if (smk.nByCols)
-      smk.ColCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(smk.nByCols, smk.P), 
+      smk.ColCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(smk.nByCols, P), 
                                             smk.nByCols, 0);
    else
       smk.ColCtr = NULL;
-   smk.begACtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,smk.P), nmblks, 0);
+   smk.begACtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,P), nmblks, 0);
    if (smk.nByBlks)
       smk.begBBlksCtr = ATL_SetAtomicCount(smk.nByBlks);
    else
       smk.begBBlksCtr = NULL;
    #if ATL_CBC_STRONG
-      smk.donACtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,smk.P), 
-                                             nmblks, 0);
+      smk.donACtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,P), nmblks, 0);
       if (smk.nByBlks)
          smk.donBBlksCtr = ATL_SetAtomicCount(smk.nByBlks);
       else
@@ -17750,13 +18132,13 @@ int Mjoin(PATL,tammm_sMK)
       int nat, i;
       smk.BlkCtrs = malloc(smk.nByBlks * sizeof(void*));
       ATL_assert(smk.BlkCtrs);
-      nat = ATL_EstNctr(nmblks,smk.P);
+      nat = ATL_EstNctr(nmblks,P);
       for (i=0; i < smk.nByBlks; i++)
          smk.BlkCtrs[i] = ATL_SetGlobalAtomicCount(nat, nmblks, 0);
    }
    else
       smk.BlkCtrs = NULL;
-   ATL_goParallel(smk.P, Mjoin(PATL,DoWork_amm_sMK), NULL, &smk, NULL);
+   ATL_goParallel(P, Mjoin(PATL,DoWork_amm_sMK), NULL, &smk, NULL);
 
    if (smk.nByBlks)
    {
@@ -17822,9 +18204,9 @@ static int ATL_loopK
 
    s0.done = ATL_SetAtomicCount(P);
    s0.ColCtr = ATL_SetGlobalAtomicCount(Mmin((P>>1),16), nnblks, 0);
-   s0.begActr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,.P), nmblks, 0);
+   s0.begActr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,P), nmblks, 0);
    #if ATL_CBC_STRONG
-      s0.endActr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,.P), nmblks, 0);
+      s0.endActr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks,P), nmblks, 0);
    #endif
    if (K > Kp)
    {
