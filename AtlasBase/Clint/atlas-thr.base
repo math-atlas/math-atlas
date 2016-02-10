@@ -754,6 +754,81 @@ struct ATL_tamm_tNK
    ushort P;            /* # of threads assigned to this problem */
 };
 /*
+ * This data structure for doing access-major threaded gemm for moderately
+ * sized problems where no dimension is <= to the blocking factor, and
+ * the problem is not too large to prevent us from copying all of A & B
+ * up front.  Copying up front allows us to compute the blocks of C
+ * in any order.  For large problems, will have to recur (mainly on K) to
+ * get workspace down to reasonable levels.  This case will not work well
+ * if the number of C blocks is not quite a bit larger than the nthreads.
+ */
+typedef struct ATL_tamm_gOOO ATL_tamm_gOOO_t;
+struct ATL_tamm_gOOO
+{
+   ipinfo_t *ip;
+   const TYPE *A;    /* input matrix */
+   const TYPE *B;    /* input matrix */
+   TYPE *C;          /* output matrix */
+   TYPE *wC;         /* ATL_NTHREADS thread-local mb*nb workspaces */
+   TYPE *wA, *wB;    /* workspaces for storing A & B */
+   int *cpyAdBV;     /* nmblks BV, set means K-panel of A has been copied */
+   int *cpyBdBV;     /* nnblks BV, set means K-panel of A has been copied */
+   int *cCblkBV;     /* nMNblks BV for dealing C blks while copying */
+   int *cbetaBV;     /* nMNblks BV: unset means beta not yet applied */
+   void *cpmut;      /* mutex protecting cpyA/BdBV & cCblkBV */
+   void *cbetamut;   /* mutex protecting cbetaBV */
+   void *ccCtr;      /* nMNblks ctr for dealing out (diagonal) blocks wt copy */
+   void *cCtr;       /* ncblks ctr for dealing out blocks w/o copy */
+   void **KbegCtr;   /* counters for dealing out K blocks for copying */
+   void **KdonCtr;   /* K-counters for copied blocks */
+   void **Cmuts;     /* MNblks mutex locks for copy-blocks of C */
+   size_t panszA;    /* nkblks * blkszA */
+   size_t panszB;    /* nkblks * blkszB */
+   #ifdef ATL_PHI_SORTED
+      VINT *chkin;   /* ncores*ATL_Cachelen check-in array */
+      int ncores;    /* ncores, on PHI it is nthr/4 */
+      int ncntxts;   /* ncontexts to use per core */
+   #endif
+   VINT cpyAdone;    /* set when all of A has been copied */
+   VINT cpyBdone;    /* set when all of B has been copied */
+   VINT NOCPWORK;    /* set to 1 by 1st thread to find all copy work started */
+   int nCblks;       /* nmblks * nnblks */
+   int nMNblks;      /* MAX(nmblks,nnblks) */
+};
+/*
+ * This structure used for inner-product (K > MAXKB) -based solutions.
+ * It uses the MNK loop order, so it loops over row-panels of C in outer loop.
+ * It copies all of A & B up front before starting the computation.
+ */
+typedef struct ATL_tamm_gMNK ATL_tamm_gMNK_t;
+struct ATL_tamm_gMNK
+{
+   ipinfo_t *ip;
+   #ifdef TCPLX
+      const TYPE *beta;
+   #endif
+   const TYPE *A, *B;   /* input (A & B) matrices */
+   TYPE *C;             /* output matrix */
+   TYPE *wA;            /* workspace for A, shared by all threads */
+   TYPE *wB;            /* workspace for B, shared by all threads */
+   TYPE *wC;            /* wrkspc for C, len=szC*P, part among threads */
+   void *RowCtr;        /* [1,nByRows] */
+   void **BlkCtrs;      /* nByBlks [1,nnblks] Atomic Ctrs */
+   void *asgActr;       /* [1,nBblks] */
+   void *asgBctr;       /* [1,nAblks] */
+   #if ATL_CBC_STRONG
+      void *donActr;    /* [1,nAblks] */
+      void *donBctr;    /* [1,nBblks] */
+   #endif
+   size_t nByRows;        /* # of rowpans dealt out 1 colpan at time */
+   size_t nByBlks;        /* # of last rowpans worked on by block */
+   size_t nAblks;         /* nmblks*nkblks, total # of blks in A */
+   size_t nBblks;         /* nkblks*nnblks, total # of blks in B */
+   #ifndef TCPLX
+      TYPE beta;
+   #endif
+};
+/*
  * This structure used for K > MAXKB, but K small enough we can allocate
  * all of A plus a few colpans of B.
  */
@@ -1371,7 +1446,7 @@ int Mjoin(PATL,ammm_REC)
     int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, size_t, size_t, size_t,
                const SCALAR, const TYPE*, size_t,  const TYPE*, size_t,
                const SCALAR, TYPE*, size_t));
-@whiledef rt tammm_tMN tammm_tNK tammm_tK tammm_sMK tammm_sNK tammm
+@whiledef rt tammm_tMN tammm_tNK tammm_tK tammm_sMK tammm_sNK tammm tammm_gMNK
 int Mjoin(PATL,@(rt))
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
     size_t M, size_t N, size_t K, const SCALAR alpha,
@@ -1421,6 +1496,10 @@ void Mjoin(PATL,tsvgemm@(TA)@(TB))
 @endmif
    @endwhile
 @endwhile
+TYPE *Mjoin(PATL,ipcopyA)
+   (ipinfo_t *ip, const TYPE *A, size_t i, size_t k, TYPE *w);
+TYPE *Mjoin(PATL,ipcopyB)
+   (ipinfo_t *ip, const TYPE *B, size_t k, size_t j, TYPE *w);
 #endif  /* end ifdef TYPE */
 /*
  * Helper functions we'd like to inline
@@ -5072,6 +5151,12 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
 @ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
    }
 @ROUT ATL_tgemm
+   #if 0
+   if (K > ATL_geAMM_LASTKB)
+      if (!Mjoin(PATL,tammm_gMNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc))
+         return;
+   #endif
    if (!Mjoin(PATL,tammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                           beta, C, ldc))
       return;
@@ -13674,6 +13759,126 @@ int Mjoin(PATL,tammm_tK)
    return(0);
 }
 @ROUT ATL_tammm_G
+#ifdef TCPLX
+void Mjoin(PATL,ipCompBlk)
+   (ipinfo_t *ip, size_t i, size_t j, size_t k, int be,
+    TYPE *iA, TYPE *iB, TYPE *iC, TYPE *nA, TYPE *nB, TYPE *nC)
+{
+      ammkern_t amm;
+      TYPE *rC = iC+ip->szC, *rA, *rB;
+}
+#else
+void Mjoin(PATL,ipCompBlk)
+   (ipinfo_t *ip, size_t i, size_t j, size_t k, int be,
+    TYPE *wA, TYPE *wB, TYPE *wC, TYPE *nA, TYPE *nB, TYPE *nC)
+{
+   #ifdef TCPLX
+   #else
+      ammkern_t amm;
+   #endif
+   ATL_CUINT kb = (k == ip->nkblks) ? ip->kb : ip->KB0;
+   const size_t nfmblks = ip->nfmblks, npmblks = ip->npmblks;
+   const size_t nfnblks = ip->nfnblks, npnblks = ip->npnblks;
+   unsigned int nmu, nnu, kb;
+
+   if (i+1 == nfmblks + npmblks)
+      nmu = ip->nmuF
+   else
+      nmu = (i < nfmblks) ? ip->nmu : ip->pnmu;
+   if (j+1 == nfnblks + npnblks)
+      nnu = ip->nnuF
+   else
+      nnu = (i < nfnblks) ? ip->nnu : ip->pnnu;
+
+   if (kb == ip->kb)  /* can use normal amm */
+      amm = (be) ? ip->amm_b1 : ip->amm_b0;
+   else               /* must use ammK1 for K-cleanup */
+      amm = (be) ? ip->ammK1_b1 : ip->ammK1_b0;
+   amm(nmu, nnu, kb, wA, wB, wC, nA, nB, nC);
+}
+#endif
+/*
+ * This routine computes one block C += A * B step
+ */
+static void DoBlkWtCpy
+(
+   ATL_tamm_gOOO_t *pd,              /* problem definition */
+   ATL_CUINT rank,                   /* my (virtual) rank */
+   size_t dblk,                      /* CpyBlk of C to compute */
+   size_t k,                         /* which K-dim blk to do */
+   int ibeta,                        /* 0: assume beta=0, else beta=1 */
+   TYPE *wA,                         /* private A workspace */
+   TYPE *wB,                         /* private B workspace */
+   TYPE *wC                          /* private C workspace */
+)
+{
+   ipinfo_t *ip=pd->ip;
+   const size_t nmblks=pd->nmblks, nnblks=pd->nnblks, nkblks=ip->nfkblks+1; 
+   size_t i, j;
+   TYPE *wA, *wB, *C;
+   TYPE beta = ATL_rone;
+
+   if (dblk < nmblks)  /* need to copy A blk */
+      wA = Mjoin(PATL,ipcopyA)(ip, pd->A, i, k, wA);
+   else
+   {
+      i = nmblks-1;
+      wA = IdxAw_ip(pd->ip, ip->A, i, k);
+   }
+   if (dblk < nnblks)  /* need to copy B blk */
+      wB = Mjoin(PATL,ipcopyB)(ip, pd->B, k, j, wB);
+   else
+   {
+      j = nnblks-1;
+      wB = IdxAw_ip(pd->ip, ip->B, k, j);
+   }
+/*
+ * If I just finished copying dblk K-panel for A & B, let folks know
+ */
+   if (ATL_DecGlobalAtomicCountDown((pd->KdonCtr)[dblk], rank) == 1)
+   {
+      ATL_mutex_lock(pd->cpmut);
+      if (dblk < nmblks)
+         ATL_SetBitBV(pd->cpyAdBV, dblk);
+      if (!pd->cpyAdone)
+         if (ATL_FindFirstUnsetBitBV(pd->cpyAdBV, 0) == -1)
+            pd->cpyAdone = 1;
+
+      if (dblk < nnblks)
+         ATL_SetBitBV(pd->cpyBdBV, dblk);
+      if (!pd->cpyBdone)
+         if (ATL_FindFirstUnsetBitBV(pd->cpyBdBV, 0) == -1)
+            pd->cpyBdone = 1;
+      ATL_mutex_unlock(pd->cpmut);
+   }
+   if (dblk < Mmin(nmblks, nnblks))
+      Mjoin(PATL,ipCompBlk)(ip, i, j, k, ibeta, wA, wB, wC, wA, wB, wC);
+}
+static void CompCcp                  /* old DoBlksWtCpy */
+(
+   ATL_tamm_gOOO_t *pd,              /* problem definition */
+   unsigned const int rank,          /* my (virtual) rank */
+   size_t dblk,                      /* CpyBlk of C to compute */
+   size_t kctr,                      /* non-zero KbegCtr */
+   TYPE *wA                          /* my private A workspace */
+   TYPE *wB                          /* my private B workspace */
+   TYPE *wC                          /* my private C workspace */
+)
+{
+   const size_t nkblks = pd->ip->nkblks + 1;
+   const size_t minblks = Mmin(pd->nmblks, pd->nnblks);
+   DoBlkWtCpy(pd, rank, dblk, nkblks-kctr, 0, wA, wB, wC);
+   while (kctr = ATL_DecGlobalAtomicCount((pd->KbegCtr)[dblk], rank))
+   {
+      DoBlkWtCpy(pd, rank, dblk, nkblks-kctr, 1, wA, wB, wC);
+   }
+/*
+ * If we computed a block of C (rather than copying A or B past C's diagonals),
+ * seize mutex for block of original C, and add my part to it
+ */
+   if (dblk < minblks)
+}
+@beginskip
 static void DoCpy
 (
    ATL_tgemm_ammG_t *pd,             /* problem definition */
@@ -14348,6 +14553,7 @@ int Mjoin(PATL,tammm_G)
    free(vp);
    return(0);
 }
+@endskip
 @ROUT ATL_tammm_smNK
 typedef struct ATL_tamm_smNK ATL_tamm_smNK_t;
 struct ATL_tamm_smNK
@@ -14587,14 +14793,17 @@ int Mjoin(PATL,tammm)
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc, 1, Mjoin(PATL,tammm_tK)));
 /*
- * _sMK & _sNK only work when C provides adequate parallelism
+ * _sMK,  _sNK, & gMNK only work when C provides adequate parallelism
  */
    nblks = (M+ATL_geAMM_LASTMB-1) / ATL_geAMM_LASTMB;
    nblks *= (N+ATL_geAMM_LASTNB-1) / ATL_geAMM_LASTNB;
    if (nblks >= ATL_NTHREADS)
 @skip   if (M >= 2*ATL_geAMM_LASTMB || N >= 2*ATL_geAMM_LASTNB)
    {
-      if (M < N+ATL_geAMM_LASTMB)
+      if (M > (ATL_geAMM_LASTMB<<4) && N > (ATL_geAMM_LASTNB<<4))
+         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                     beta, C, ldc, 5, Mjoin(PATL,tammm_gMNK)));
+      else if (M < N+ATL_geAMM_LASTMB)
          return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                      beta, C, ldc, 5, Mjoin(PATL,tammm_sMK)));
       else
@@ -17435,6 +17644,313 @@ Mjoin(PATL,comb_sum)
       *bchk = newv;  /* signal answer is ready */
    }
    return(val);
+}
+@ROUT ATL_tammm_gMNK
+#include "atlas_misc.h"
+#define ATL_ESTNCTR 1
+#define ATL_INDX    1
+#include "atlas_cbc.h"
+#include "atlas_tlvl3.h"
+#include "atlas_bitvec.h"
+
+//#undef ATL_CBC_STRONG
+//#define ATL_CBC_STRONG 0
+
+TYPE *Mjoin(PATL,ipcopyA)(ipinfo_t *ip, const TYPE *A, size_t i, size_t k,
+                          TYPE *w)
+{
+   ATL_CUINT K = (k != ip->nfkblks) ? ip->kb : ip->kb0;
+   ATL_UINT M = (i < ip->nfmblks) ? ip->mb : ip->pmb;
+   if (i == ip->nfmblks + ip->npmblks - 1)
+      M = ip->mF;
+   #ifdef TCPLX
+      TYPE *iw, *rw;
+      A = IdxA_ip(ip, A, i, k);
+      iw = IdxAw_ip(ip, w, i, k);
+      rw = iw + ((i < ip->nfmblks) ? ip->szA : ip->pszA);
+      ip->a2blk(K, M, ip->alpA, A, ip->lda, rw, iw);
+   #else
+      w = IdxAw_ip(ip, w, i, k);
+      A = IdxA_ip(ip, A, i, k);
+      ip->a2blk(K, M, ip->alpA, A, ip->lda, w);
+   #endif
+   return(w);
+}
+
+TYPE *Mjoin(PATL,ipcopyB)(ipinfo_t *ip, const TYPE *B, size_t k, size_t j,
+                          TYPE *w)
+{
+   ATL_CUINT K = (k != ip->nfkblks) ? ip->kb : ip->kb0;
+   ATL_UINT N = (j < ip->nfnblks) ? ip->nb : ip->pnb;
+   if (j == ip->nfnblks + ip->npnblks - 1)
+      N = ip->nF;
+   #ifdef TCPLX
+      TYPE *iw, *rw;
+      B = IdxB_ip(ip, B, k, j);
+      iw = IdxBw_ip(ip, w, k, j);
+      rw = iw + ((j < ip->nfnblks) ? ip->szB : ip->pszB);
+      ip->b2blk(K, N, ip->alpB, B, ip->ldb, rw, iw);
+   #else
+      w = IdxBw_ip(ip, w, k, j);
+      B = IdxB_ip(ip, B, k, j);
+      ip->b2blk(K, N, ip->alpB, B, ip->ldb, w);
+   #endif
+   return(w);
+}
+
+void Mjoin(PATL,DoWork_amm_gMNK)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_tamm_gMNK_t *pd = pp->PD;
+   ipinfo_t *ip = pd->ip;
+   const TYPE *A=pd->A, *B=pd->B;
+   TYPE *pB = pd->wB, *pA = pd->wA; 
+   TYPE *pC = pd->wC + vrank*((ip->szC)SHIFT), *C=pd->C;
+   ablk2cmat_t blk2c=ip->blk2c;
+   #ifdef TCPLX
+      TYPE *rC=pC+ip->szC;
+      const TYPE *beta=pd->beta;
+   #else
+      const TYPE beta=pd->beta;
+      #define rC pC
+   #endif
+   ATL_CUINT nByBlks=pd->nByBlks, nByRows=pd->nByRows;
+   const size_t nmblks=ip->nfmblks+ip->npmblks, nnblks=ip->nfnblks+ip->npnblks;
+   const size_t nkblks = ip->nfkblks + 1;
+   const size_t nAblks = pd->nAblks, nBblks = pd->nBblks;
+   size_t ctr;
+/*
+ * First, copy all of B & A
+ */
+   while ( (ctr = ATL_DecGlobalAtomicCount(pd->asgBctr, vrank)) )
+   {
+      size_t j, k=nBblks-ctr;
+      j = k / nkblks;
+      k -= j*nkblks;
+      Mjoin(PATL,ipcopyB)(ip, B, k, j, pB);
+      #if ATL_CBC_STRONG
+         ATL_DecGlobalAtomicCount(pd->donBctr, vrank);
+      #endif
+   }
+   while ( (ctr = ATL_DecGlobalAtomicCount(pd->asgActr, vrank)) )
+   {
+      size_t i, k=nAblks-ctr;
+      i = k / nkblks;
+      k -= i*nkblks;
+      Mjoin(PATL,ipcopyA)(ip, A, i, k, pA);
+      #if ATL_CBC_STRONG
+         ATL_DecGlobalAtomicCount(pd->donActr, vrank);
+      #endif
+   }
+/*
+ * We now have global A&B copied for everyone's use.  For weakly-ordered caches,
+ * we sync all thr to to make sure we can all see each others' copies;
+ * Strongly-ordered caches need to hang-fire until A&B copy is complete.
+ */
+   #if ATL_CBC_STRONG
+      while (ATL_GetGlobalAtomicCount(pd->donBctr, vrank))
+         ATL_thread_yield();      /* await B cpy finish */
+      while (ATL_GetGlobalAtomicCount(pd->donActr, vrank))
+         ATL_thread_yield();      /* await A cpy finish */
+   #else
+      ATL_cbc_barrier(pp->nworkers, vrank, NULL);  /* barrier & memory fence */
+   #endif
+/*
+ * Now loop over rowpans from [0,nByRows-1], wt thread doing entire col,
+ * and global A & B copy known to be already in access-major in workspace
+ */
+   if (nByRows)
+   {
+      while ( (ctr = ATL_DecGlobalAtomicCount(pd->RowCtr, vrank)) )
+      {
+         int i = nByRows - ctr, j;
+         const TYPE *a;
+         TYPE *wa, *c;
+
+         wa = IdxAw_ip(ip, pA, i, 0);
+         for (j=0; j < nnblks; j++)
+         {
+            TYPE *wb, *c;
+            wb = IdxBw_ip(ip, pB, 0, j);
+            c = IdxC_ip(ip, C, i, j);
+            Mjoin(PATL,iploopsK)(ip, i, j, NULL, NULL, c, 3, wa, wb, rC, pC,
+                                 beta, blk2c);
+         }
+      }
+   }
+/*
+ * Finally, load balance end of computation by using block-level scheduling
+ * for last nByBlks rows
+ */
+   if (nByBlks)
+   {
+      while (1)
+      {
+         ATL_UINT max, i, imax=0;
+         TYPE *wa;
+/*
+ *       Find row with maximum remaining blocks, and work on that one
+ */
+         max = ATL_GetGlobalAtomicCount(pd->BlkCtrs[0], vrank);
+         for (i=1; i < nByBlks; i++)
+         {
+            int k;
+            k = ATL_GetGlobalAtomicCount(pd->BlkCtrs[i], vrank);
+            if (k >= max)
+            {
+               max = k;
+               imax = i;
+            }
+         }
+         if (!max)   /* if no blocks are left in any of the nByBlks rowpans */
+            break;   /* we are done */
+/*
+ *       For chosen rowpan, work on individual blks of C with other threads.
+ *       This is the last nByBlks rows, so add 1st and nByRows to get glob i
+ *       Both the shared A and the global B have been copied at start of alg.
+ */
+         i = imax + nByRows;
+         wa = IdxAw_ip(ip, pA, i, 0);
+         while ( (ctr = ATL_DecGlobalAtomicCount(pd->BlkCtrs[imax], vrank)) )
+         {
+            TYPE *wb, *c;
+            int j = nnblks - ctr;
+            wb = IdxBw_ip(ip, pB, 0, j);
+            c = IdxC_ip(ip, C, i, j);
+            Mjoin(PATL,iploopsK)(ip, i, j, NULL, NULL, c, 3, wa, wb, rC, pC,
+                                 beta, blk2c);
+         }
+      }
+   }
+}
+#ifndef TCPLX
+   #undef rC
+#endif
+
+int Mjoin(PATL,tammm_gMNK)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   size_t M,
+   size_t N,
+   size_t K,
+   const SCALAR alpha,
+   const TYPE *A,
+   size_t lda,
+   const TYPE *B,
+   size_t ldb,
+   const SCALAR beta,
+   TYPE *C,
+   size_t ldc
+)
+{
+   int idx;
+   ipinfo_t ip;
+   ATL_tamm_gMNK_t pd;
+   size_t nmblks, nnblks, nkblks, szB, szA, sz;
+   void *vp=NULL;
+   ATL_UINT P;
+
+   pd.beta = beta;
+   idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
+   Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc, 
+                               alpha, beta);
+/*
+ * Compute how many columns to handle wt block-level and colpan-lvl sheduling
+ */
+   nmblks = ip.nfmblks + ip.npmblks;
+   nnblks = ip.nfnblks + ip.npnblks;
+   nkblks = ip.nfkblks + 1;
+   pd.nAblks = nmblks * nkblks;
+   pd.nBblks = nkblks * nnblks;
+   #if 1
+      pd.nByBlks = Mmin(32,ATL_NTHREADS-1); /* huge causes too many ctrs */
+      pd.nByBlks = Mmin(pd.nByBlks, nmblks);
+   #elif 0
+      pd.nByBlks = 0;         /* just for testing, bad load balance */
+   #else
+      pd.nByBlks = nmblks;    /* just for testing, bad parallel overhead */
+   #endif
+   pd.nByRows = nmblks - pd.nByBlks;
+/*
+ * Compute max parallelism, and call serial if inadequate
+ */
+   P = pd.nByRows + pd.nByBlks*nnblks;
+   P = Mmin(P, ATL_NTHREADS);
+   if (0 && P < 2)
+   {
+      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return(0);
+   }
+   #if 0
+   printf("P=%d, nByRows=%d, nByBlks=%d, nfnblks=%d, nb=%d npnblks=%d, pnb=%d\n", 
+          (int)P, (int)pd.nByRows, (int)pd.nByBlks, (int)ip.nfnblks, ip.nb,
+          (int)ip.npnblks, ip.pnb);
+   #endif
+   pd.ip = &ip;
+   pd.A = A;
+   pd.B = B;
+   pd.C = C;
+/*
+ * Get wrkspc
+ */
+   szA = (ip.szA*ip.nfmblks + ip.pszA*ip.npmblks)*nkblks;
+   szB = (ip.szB*ip.nfnblks + ip.pszB*ip.npnblks)*nkblks;
+   sz = (ip.szC SHIFT)*P + (ip.mu<<1)*ip.nu;
+   sz = ATL_MulBySize(szA + szB + sz) + 3*ATL_Cachelen;
+   if (sz <= ATL_PTMAXMALLOC)
+      vp = malloc(sz);
+   if (!vp)
+      return(1);
+   pd.wA = ATL_AlignPtr(vp);
+   pd.wB = pd.wA + (szA SHIFT);
+   pd.wB = ATL_AlignPtr(pd.wB);
+   pd.wC = pd.wB + (szB SHIFT);
+   pd.wC = ATL_AlignPtr(pd.wC);
+
+   if (pd.nByRows)
+      pd.RowCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nByRows, P), 
+                                            pd.nByRows, 0);
+   else
+      pd.RowCtr = NULL;
+   pd.asgActr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nAblks,P), pd.nAblks,0);
+   pd.asgBctr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nBblks,P), pd.nBblks,0);
+   #if ATL_CBC_STRONG
+      pd.donActr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nAblks,P), 
+                                            pd.nAblks, 0);
+      pd.donBctr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nBblks,P), 
+                                            pd.nBblks, 0);
+   #endif
+   if (pd.nByBlks)
+   {
+      int nat, i;
+      pd.BlkCtrs = malloc(pd.nByBlks * sizeof(void*));
+      ATL_assert(pd.BlkCtrs);
+      nat = ATL_EstNctr(nnblks,P);
+      for (i=0; i < pd.nByBlks; i++)
+         pd.BlkCtrs[i] = ATL_SetGlobalAtomicCount(nat, nnblks, 0);
+   }
+   else
+      pd.BlkCtrs = NULL;
+   ATL_goParallel(P, Mjoin(PATL,DoWork_amm_gMNK), NULL, &pd, NULL);
+
+   if (pd.nByBlks)
+   {
+      int i;
+      for (i=0; i < pd.nByBlks; i++)
+         ATL_FreeGlobalAtomicCount(pd.BlkCtrs[i]);
+      free(pd.BlkCtrs);
+   }
+   ATL_FreeGlobalAtomicCount(pd.asgActr);
+   ATL_FreeGlobalAtomicCount(pd.asgBctr);
+   #if ATL_CBC_STRONG
+      ATL_FreeGlobalAtomicCount(pd.donActr);
+      ATL_FreeGlobalAtomicCount(pd.donBctr);
+   #endif
+   if (pd.nByRows)
+      ATL_FreeGlobalAtomicCount(pd.RowCtr);
+   free(vp);
+   return(0);
 }
 @ROUT ATL_tammm_sNK
 #include "atlas_misc.h"
