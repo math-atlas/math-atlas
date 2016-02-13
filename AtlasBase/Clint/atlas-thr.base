@@ -772,7 +772,7 @@ struct ATL_tamm_gOOO
    TYPE *wC;         /* ATL_NTHREADS thread-local mb*nb workspaces */
    TYPE *wA, *wB;    /* workspaces for storing A & B */
    #ifdef TCPLX
-      TYPE *beta;
+      const TYPE *beta;
    #endif
    int *cpyAdBV;     /* nmblks BV, set means K-panel of A has been copied */
    int *cpyBdBV;     /* nnblks BV, set means K-panel of A has been copied */
@@ -13765,20 +13765,13 @@ int Mjoin(PATL,tammm_tK)
    return(0);
 }
 @ROUT ATL_tammm_G
-#ifdef TCPLX
-void Mjoin(PATL,ipCompBlk)
-   (ipinfo_t *ip, size_t i, size_t j, size_t k, int be,
-    TYPE *iA, TYPE *iB, TYPE *iC, TYPE *nA, TYPE *nB, TYPE *nC)
-{
-      ammkern_t amm;
-      TYPE *rC = iC+ip->szC, *rA, *rB;
-}
-#else
 void Mjoin(PATL,ipCompBlk)
    (ipinfo_t *ip, size_t i, size_t j, size_t k, int be,
     TYPE *wA, TYPE *wB, TYPE *wC, TYPE *nA, TYPE *nB, TYPE *nC)
 {
    #ifdef TCPLX
+      TYPE *iC=wC, *rC=wC+ip->szC, *iA=wA, *iB=wB, *rA, *rB;
+      ammkern_t amm_b1, amm_bn, amm0_b1, amm0_bn;
    #else
       ammkern_t amm;
    #endif
@@ -13796,14 +13789,50 @@ void Mjoin(PATL,ipCompBlk)
    else
       nnu = (i < nfnblks) ? ip->nnu : ip->pnnu;
 
-   if (kb == ip->kb)  /* can use normal amm */
-      amm = (be) ? ip->amm_b1 : ip->amm_b0;
-   else               /* must use ammK1 for K-cleanup */
-      amm = (be) ? ip->ammK1_b1 : ip->ammK1_b0;
-   amm(nmu, nnu, kb, wA, wB, wC, nA, nB, nC);
+   #ifdef TCPLX
+      rA = iA + ((i < nfmblks) ? ip->szA : ip->pszA);
+      rB = iB + ((j < nfnblks) ? ip->szB : ip->pszB);
+      if (kb == ip->kb)  /* can use normal amm */
+      {
+         if (be)
+         {
+            amm0_b1 = amm_b1 = ip->amm_b1;
+            amm0_bn = amm_bn = ip->amm_bn;
+         }
+         else
+         {
+            amm0_b1 = amm0_bn = ip->amm_b0;
+            amm_b1 = ip->amm_b1;
+            amm_bn = ip->amm_bn;
+         }
+      }
+      else /* need K1 versions of everything */
+      {
+         if (be)
+         {
+            amm0_b1 = amm_b1 = ip->ammK1_b1;
+            amm0_bn = amm_bn = ip->ammK1_bn;
+         }
+         else
+         {
+            amm0_b1 = amm0_bn = ip->ammK1_b0;
+            amm_b1 = ip->ammK1_b1;
+            amm_bn = ip->ammK1_bn;
+         }
+      }
+      amm0_bn(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+      amm0_b1(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+      amm_b1(nmu, nnu, kb, iA, rB, iC, nA, nB, rC);
+   #else
+      if (kb == ip->kb)  /* can use normal amm */
+         amm = (be) ? ip->amm_b1 : ip->amm_b0;
+      else               /* must use ammK1 for K-cleanup */
+         amm = (be) ? ip->ammK1_b1 : ip->ammK1_b0;
+      amm(nmu, nnu, kb, wA, wB, wC, nA, nB, nC);
+   #endif
 }
-#endif
-void Mjoin(PATL,ipwriteC)(ipinfo_t *ip, size_t i, size_t j, TYPE *beta, 
+void Mjoin(PATL,ipwriteC)(ipinfo_t *ip, size_t i, size_t j, const TYPE *beta, 
                           TYPE *wC, TYPE *C)
 {
    #ifdef TCPLX
@@ -13825,7 +13854,7 @@ void Mjoin(PATL,ipwriteC)(ipinfo_t *ip, size_t i, size_t j, TYPE *beta,
       if (!beta)
          ip->blk2c_b1(mb, nb, ip->alpC, rC, wC, ip->ONE, C, ip->ldc);
       else
-         ip->blk2c(mb, nb, ip->alpC, rC, wC, *beta, C, ip->ldc);
+         ip->blk2c(mb, nb, ip->alpC, rC, wC, beta, C, ip->ldc);
    #else
       if (!beta)
          ip->blk2c_b1(mb, nb, ip->alpC, wC, ATL_rone, C, ip->ldc);
@@ -13849,7 +13878,6 @@ static void DoBlkWtCpy
    ipinfo_t *ip=pd->ip;
    const size_t nmblks=pd->nmblks, nnblks=pd->nnblks, nkblks=ip->nfkblks+1; 
    size_t i=dblk, j=dblk;
-   TYPE beta = ATL_rone;
    TYPE *wA = pd->wA, *wB = pd->wB;
 
    if (dblk < nmblks)  /* need to copy A blk */
@@ -14101,7 +14129,8 @@ static void DoCompNoCopy(ATL_tamm_gOOO_t *pd, ATL_UINT rank, TYPE *wC)
    ipinfo_t *ip=pd->ip;
    TYPE *C=pd->C, *wA=pd->wA, *wB=pd->wB;
    #ifdef TCPLX
-      TYPE *rC = wC + ip->szC, *beta=pd->beta;
+      const TYPE *beta=pd->beta;
+      TYPE *rC = wC + ip->szC;
    #else
       const TYPE beta=pd->beta;
       #define rC wC
@@ -14182,7 +14211,7 @@ int Mjoin(PATL,tammm_G)
    }
    #endif
    idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
-//   idx = 1;
+//   idx = 0;
    Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
                                alpha, beta);
    if (ip.kb > K)
@@ -14199,6 +14228,7 @@ int Mjoin(PATL,tammm_G)
    if (pd.nCblks != sz)
       return(1);
    P = Mmin(ATL_NTHREADS,pd.nCblks);
+//   P=1;
 printf("P=%d, B=(%d,%d,%d)\n", P, (int)ip.kb, (int)ip.nb, (int)ip.kb);
    szA = pd.nmblks*nkblks*ip.szA;
    szA = nkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
@@ -14253,9 +14283,9 @@ printf("P=%d, B=(%d,%d,%d)\n", P, (int)ip.kb, (int)ip.nb, (int)ip.kb);
    pd.Cmuts = pd.KdonCtr + nMNblks;
    pd.wA = (TYPE*)(pd.Cmuts+nMNblks);
    pd.wA = ATL_AlignPtr(pd.wA);
-   pd.wB = pd.wA + szA;
+   pd.wB = pd.wA + (szA SHIFT);
    pd.wB = ATL_AlignPtr(pd.wB);
-   pd.wC = pd.wB + szB;
+   pd.wC = pd.wB + (szB SHIFT);
    pd.wC = ATL_AlignPtr(pd.wC);
    pd.A = A;
    pd.B = B;
@@ -18096,12 +18126,13 @@ TYPE *Mjoin(PATL,ipcopyA)(ipinfo_t *ip, const TYPE *A, size_t i, size_t k,
       iw = IdxAw_ip(ip, w, i, k);
       rw = iw + ((i < ip->nfmblks) ? ip->szA : ip->pszA);
       ip->a2blk(K, M, ip->alpA, A, ip->lda, rw, iw);
+      return(iw);
    #else
       w = IdxAw_ip(ip, w, i, k);
       A = IdxA_ip(ip, A, i, k);
       ip->a2blk(K, M, ip->alpA, A, ip->lda, w);
+      return(w);
    #endif
-   return(w);
 }
 
 TYPE *Mjoin(PATL,ipcopyB)(ipinfo_t *ip, const TYPE *B, size_t k, size_t j,
@@ -18117,12 +18148,13 @@ TYPE *Mjoin(PATL,ipcopyB)(ipinfo_t *ip, const TYPE *B, size_t k, size_t j,
       iw = IdxBw_ip(ip, w, k, j);
       rw = iw + ((j < ip->nfnblks) ? ip->szB : ip->pszB);
       ip->b2blk(K, N, ip->alpB, B, ip->ldb, rw, iw);
+      return(iw);
    #else
       w = IdxBw_ip(ip, w, k, j);
       B = IdxB_ip(ip, B, k, j);
       ip->b2blk(K, N, ip->alpB, B, ip->ldb, w);
+      return(w);
    #endif
-   return(w);
 }
 
 void Mjoin(PATL,DoWork_amm_gMNK)(void *vpp, int rank, int vrank)
