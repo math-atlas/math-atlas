@@ -1457,6 +1457,7 @@ int Mjoin(PATL,ammm_REC)
     int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, size_t, size_t, size_t,
                const SCALAR, const TYPE*, size_t,  const TYPE*, size_t,
                const SCALAR, TYPE*, size_t));
+@multidef rt tammm_G
 @whiledef rt tammm_tMN tammm_tNK tammm_tK tammm_sMK tammm_sNK tammm tammm_gMNK
 int Mjoin(PATL,@(rt))
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
@@ -1464,7 +1465,7 @@ int Mjoin(PATL,@(rt))
     const TYPE *A, size_t lda, const TYPE *B, size_t ldb,
     const SCALAR beta, TYPE *C, size_t ldc);
 @endwhile
-@whiledef rt tammm_G
+@whiledef rt
 int Mjoin(PATL,@(rt))
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
     ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
@@ -14294,26 +14295,30 @@ void Mjoin(PATL,DoWork_OOO)(void *vpp, int rank, int vrank)
       DoLastComp(pd, vrank, myC);
 }
 /*
- * This one can be used anytime C is large enough to provide parallelism.
+ * This algorithm can be used for any parallelizable case wt K>LASTKB.  Usually,
+ * it deals out blocks of C, with K-dim divided only for initial copy of A & B
+ * and some load balance at the end.  However, if C is small and K is large,
+ * it can switch and do parallalize along K (with fairly high overhead).
  * It tries to copy all of A & B up front, so recursion may be needed to
  * use it for large matrices.
  * RETURNS: 0 if it did the operation, non-zero if it did not
  */
+
 int Mjoin(PATL,tammm_G)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CINT M,
-   ATL_CINT N,
-   ATL_CINT K,
+   size_t M,
+   size_t N,
+   size_t K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CINT lda,
+   size_t lda,
    const TYPE *B,
-   ATL_CINT ldb,
+   size_t ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CINT ldc
+   size_t ldc
 )
 {
    ATL_tamm_gOOO_t pd;
@@ -14327,15 +14332,7 @@ int Mjoin(PATL,tammm_G)
                          p4 = nthr>>2, p4_2 = nthr+nthr, p4_3 = p4_2+p4;
    #endif
 
-   #if 0
-   nmblks = M / ATL_sqAMM_66MB;
-   nnblks = N / ATL_sqAMM_66NB;
-   ncblks = sz = ((size_t)nmblks) * nnblks;
-   if (ncblks != sz)   /* too many blocks to safely count */
-      return(1);       /* so tell caller to recur or call something else */
-   #endif
    idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
-   idx = 0;
    Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
                                alpha, beta);
    if (ip.kb > K)
@@ -14377,21 +14374,24 @@ int Mjoin(PATL,tammm_G)
          imin = pd.nnblks;
       else
          imin = (pd.nmblks != pd.nnblks) ? pd.nmblks : pd.nmblks-1;
-      pd.ncK = (P > 2) ? P-2 : 1;
-      pd.ncK = Mmin(pd.ncK,imin);
+      if (pd.nCblks-nKpar < P)
+         pd.ncK = imin;
+      else
+      {
+         pd.ncK = (P > 2) ? P-2 : 1;
+         pd.ncK = Mmin(pd.ncK,imin);
+      }
       P += pd.ncK*nkblks;
       P = Mmin(ATL_NTHREADS,P);
-      nKpar += pd.ncK;
    }
 /*
  * Quick exit for problems too small to thread
  */
-   if (0 && P < 1)
+   if (P < 2)
    {
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-   P=1;
 printf("P=%d, ncK=%d, B=(%d,%d,%d)\n", P, (int)pd.ncK, ip.kb, ip.nb, ip.kb);
    szA = nkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
    szB = nkblks*(ip.nfnblks*ip.szB + ip.npnblks*ip.pszB);
@@ -14953,7 +14953,10 @@ void Mjoin(PATL,DoWork_ammG)(void *vpp, int rank, int vrank)
    DoNoCopyBlksG(pd, rank, vrank, myC);
 }
 /*
- * This one can be used anytime C is large enough to provide parallelism.
+ * This algorithm can be used for any parallelizable case.  Usually, it
+ * deals out blocks of C, with K-dim divided only for initial copy of A & B
+ * and some load balance at the end.  However, if C is small and K is large,
+ * it can switch and do parallalize along K (with fairly high overhead).
  * It tries to copy all of A & B up front, so recursion may be needed to
  * use it for large matrices.
  * RETURNS: 0 if it did the operation, non-zero if it did not
@@ -14962,17 +14965,17 @@ int Mjoin(PATL,tammm_G)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CINT M,
-   ATL_CINT N,
-   ATL_CINT K,
+   size_t M,
+   size_t N,
+   size_t K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CINT lda,
+   size_t lda,
    const TYPE *B,
-   ATL_CINT ldb,
+   size_t ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CINT ldc
+   size_t ldc
 )
 {
    int ncblks, nmblks, nnblks, nkblks, nMNblks, mb, nb, kb, mu, nu, ku; 
@@ -15446,6 +15449,18 @@ int Mjoin(PATL,tammm)
    if (K <= ATL_rkAMM_LASTKB)  /* outer product / rank-K with N > LASTNB */
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc, 1, Mjoin(PATL,tammm_tK)));
+
+   if (N < (ATL_geAMM_LASTNB<<2) && K < (ATL_geAMM_LASTKB<<2) &&  
+       (M>>ATL_NTHRPOW2) > ATL_geAMM_LASTMB)
+         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                     beta, C, ldc, 6, Mjoin(PATL,tammm_sNK)));
+   if (M < (ATL_geAMM_LASTMB<<2) && K < (ATL_geAMM_LASTKB<<2) &&  
+       (N>>ATL_NTHRPOW2) > ATL_geAMM_LASTNB)
+         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                     beta, C, ldc, 5, Mjoin(PATL,tammm_sMK)));
+   return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                               beta, C, ldc, 63, Mjoin(PATL,tammm_G)));
+@beginskip
 /*
  * _sMK,  _sNK, & gMNK only work when C provides adequate parallelism
  */
@@ -15465,6 +15480,7 @@ int Mjoin(PATL,tammm)
                                      beta, C, ldc, 6, Mjoin(PATL,tammm_sNK)));
    }
    return(1);
+@endskip
 }
 @ROUT ATL_tsyrk_amm
 #include "atlas_misc.h"
