@@ -14090,7 +14090,7 @@ static INLINE int GetResCblk
          }
          else               /* nnblks >= nmblks */
          {                  /* last col (non-diag) is reserved */
-            i = ctr;
+            i = k;
             j = nnblks-1;
          }
          if (!pd->cpyAdone && !ATL_IsBitSetBV(pd->cpyAdBV, i))
@@ -14267,7 +14267,7 @@ void DoLastComp(ATL_tamm_gOOO_t *pd, ATL_UINT rank, TYPE *wC)
             ATL_mutex_lock(pd->lbetamut);
             if (!ATL_IsBitSetBV(pd->lbetaBV, cctr))
             {
-               ATL_SetBitBV(pd->cbetaBV, cctr);
+               ATL_SetBitBV(pd->lbetaBV, cctr);
                ATL_mutex_unlock(pd->lbetamut);
                Mjoin(PATL,ipwriteC)(ip, i, j, SADD(pd->beta), wC, C);
                COPIED=1;
@@ -14278,6 +14278,7 @@ void DoLastComp(ATL_tamm_gOOO_t *pd, ATL_UINT rank, TYPE *wC)
          if (!COPIED)
             Mjoin(PATL,ipwriteC)(pd->ip, i, j, NULL, wC, C);
          ATL_mutex_unlock(Cmuts[cctr]);
+//printf("%d:wrote C(%d,%d), CPY=%d, ctr=%d\n", rank, i, j, COPIED, cctr);
       }
       cctr = GetResCblk(rank, pd, &i, &j);
    }
@@ -14323,7 +14324,7 @@ int Mjoin(PATL,tammm_G)
 {
    ATL_tamm_gOOO_t pd;
    ipinfo_t ip;
-   int P, i, j, k, idx;
+   int P, i, j, k, idx, mb, pmb, nb, pnb;
    size_t nkcnt, nkblks, nKpar, nMNblks, sz, szA, szB;
    amminfo_t mminfo;
    void *vp;
@@ -14332,11 +14333,18 @@ int Mjoin(PATL,tammm_G)
                          p4 = nthr>>2, p4_2 = nthr+nthr, p4_3 = p4_2+p4;
    #endif
 
-   idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
-   Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
-                               alpha, beta);
-   if (ip.kb > K)
-      return(1);
+//   idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
+//   Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
+//                               alpha, beta);
+   idx = Mjoin(PATL,tGetParCIndx)(&ip, ATL_NTHREADS, M, N, K);
+       
+   Mjoin(PATL,geFillInIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
+                              alpha, beta, 
+                              ip.nfmblks, ip.npmblks, ip.mb, ip.pmb, 
+                              ip.nfnblks, ip.npnblks, ip.nb, ip.pnb);
+
+//   if (ip.kb > K)
+//      return(1);
 
    pd.ip = &ip;
    pd.nmblks = ip.nfmblks + ip.npmblks;
@@ -14367,9 +14375,14 @@ int Mjoin(PATL,tammm_G)
    P = nkcnt = pd.nCblks - nKpar;  /* # of C blks given out as private work */
    P += nkblks * nKpar;            /* # of C blks parallelized along K */
    P = Mmin(ATL_NTHREADS,P);
-   if (nkcnt > 1)
+   if (nkcnt > 1)   /* do we want to split K dim of some of these C blks? */
    {
       size_t imin;
+/*
+ *    Our algorithm can only give out the non-diagonal elements of last row/col
+ *    so we must limit ncK (# of non-diag c parallelized along K) to last 
+ *    row/col block count
+ */
       if (pd.nmblks > pd.nnblks)
          imin = pd.nnblks;
       else
@@ -14392,7 +14405,9 @@ int Mjoin(PATL,tammm_G)
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-printf("P=%d, ncK=%d, B=(%d,%d,%d)\n", P, (int)pd.ncK, ip.kb, ip.nb, ip.kb);
+printf("P=%d, ncK=%d, M=(%d,%d; %d,%d) N=(%d,%d; %d,%d)\n", 
+       P, (int)pd.ncK, (int)ip.nfmblks, (int)ip.npmblks, ip.mb, ip.pmb, 
+       (int)ip.nfnblks, (int)ip.npnblks, ip.nb, ip.pnb);
    szA = nkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
    szB = nkblks*(ip.nfnblks*ip.szB + ip.npnblks*ip.pszB);
    sz = (nMNblks*3+2*pd.ncK)*sizeof(void*);/* K[beg,don,last]Ctr & Cmuts arrs */
