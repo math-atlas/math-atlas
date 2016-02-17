@@ -14333,11 +14333,7 @@ int Mjoin(PATL,tammm_G)
                          p4 = nthr>>2, p4_2 = nthr+nthr, p4_3 = p4_2+p4;
    #endif
 
-//   idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
-//   Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
-//                               alpha, beta);
    idx = Mjoin(PATL,tGetParCIndx)(&ip, ATL_NTHREADS, M, N, K);
-       
    Mjoin(PATL,geFillInIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
                               alpha, beta, 
                               ip.nfmblks, ip.npmblks, ip.mb, ip.pmb, 
@@ -14375,8 +14371,8 @@ int Mjoin(PATL,tammm_G)
    P = nkcnt = pd.nCblks - nKpar;  /* # of C blks given out as private work */
    P += nkblks * nKpar;            /* # of C blks parallelized along K */
    P = Mmin(ATL_NTHREADS,P);
-   if (nkcnt > 1)   /* do we want to split K dim of some of these C blks? */
-   {
+   if (nkcnt > 1 && ip.nfkblks > 8)
+   {        /* do we want to split K dim of some of these C blks? */
       size_t imin;
 /*
  *    Our algorithm can only give out the non-diagonal elements of last row/col
@@ -14405,9 +14401,11 @@ int Mjoin(PATL,tammm_G)
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
+#if 1
 printf("P=%d, ncK=%d, M=(%d,%d; %d,%d) N=(%d,%d; %d,%d)\n", 
        P, (int)pd.ncK, (int)ip.nfmblks, (int)ip.npmblks, ip.mb, ip.pmb, 
        (int)ip.nfnblks, (int)ip.npnblks, ip.nb, ip.pnb);
+#endif
    szA = nkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
    szB = nkblks*(ip.nfnblks*ip.szB + ip.npnblks*ip.pszB);
    sz = (nMNblks*3+2*pd.ncK)*sizeof(void*);/* K[beg,don,last]Ctr & Cmuts arrs */
@@ -15445,8 +15443,14 @@ int Mjoin(PATL,tammm)
 )
 {
    size_t nblks;
-   if (K <= 2)    /* presently no threading for K=1 or 2 */
+/*
+ * No threading for Level-2 operations, or support for K=1,2
+ */
+   if (K <= 2 || M < 2 || N < 2)
       return(1);  /* signal failure */
+   if (M <= ATL_geAMM_LASTMB && N <= ATL_geAMM_LASTNB &&
+       K <= ATL_geAMM_LASTKB)
+      return(1);
 /*
  * _tNK & _tMN require minimal wrkspc, so just return if they fail
  */
@@ -15473,8 +15477,9 @@ int Mjoin(PATL,tammm)
        (N>>ATL_NTHRPOW2) > ATL_geAMM_LASTNB)
          return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                      beta, C, ldc, 5, Mjoin(PATL,tammm_sMK)));
-   return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                               beta, C, ldc, 63, Mjoin(PATL,tammm_G)));
+   if (K >= ATL_geAMM_LASTKB && M >= 12 && N >= 12)
+      return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc, 63, Mjoin(PATL,tammm_G)));
 @beginskip
 /*
  * _sMK,  _sNK, & gMNK only work when C provides adequate parallelism
@@ -15494,8 +15499,8 @@ int Mjoin(PATL,tammm)
          return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                      beta, C, ldc, 6, Mjoin(PATL,tammm_sNK)));
    }
-   return(1);
 @endskip
+   return(1);
 }
 @ROUT ATL_tsyrk_amm
 #include "atlas_misc.h"
@@ -18884,9 +18889,17 @@ int Mjoin(PATL,tammm_sNK)
    ATL_UINT P;
 
    snk.beta = beta;
+   #if 1
+   idx = Mjoin(PATL,tGetParCIndx)(&ip, ATL_NTHREADS, M, N, K);
+   Mjoin(PATL,geFillInIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
+                              alpha, beta, 
+                              ip.nfmblks, ip.npmblks, ip.mb, ip.pmb, 
+                              ip.nfnblks, ip.npnblks, ip.nb, ip.pnb);
+   #else
    idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
    Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc, 
                                alpha, beta);
+   #endif
 /*
  * Compute how many columns to handle wt block-level and colpan-lvl sheduling
  */
@@ -18914,6 +18927,9 @@ int Mjoin(PATL,tammm_sNK)
       return(0);
    }
    #if 0
+printf("snk:P=%d, M=(%d,%d; %d,%d) N=(%d,%d; %d,%d)\n",
+       P, (int)ip.nfmblks, (int)ip.npmblks, ip.mb, ip.pmb,
+       (int)ip.nfnblks, (int)ip.npnblks, ip.nb, ip.pnb);
    printf("P=%d, nByRows=%d, nByBlks=%d, nfnblks=%d, nb=%d npnblks=%d, pnb=%d\n", 
           (int)P, (int)snk.nByRows, (int)snk.nByBlks, (int)ip.nfnblks, ip.nb,
           (int)ip.npnblks, ip.pnb);
@@ -19252,9 +19268,17 @@ int Mjoin(PATL,tammm_sMK)
    ATL_UINT P;
 
    smk.beta = beta;
+#if 1
+   idx = Mjoin(PATL,tGetParCIndx)(&ip, ATL_NTHREADS, M, N, K);
+   Mjoin(PATL,geFillInIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
+                              alpha, beta, 
+                              ip.nfmblks, ip.npmblks, ip.mb, ip.pmb, 
+                              ip.nfnblks, ip.npnblks, ip.nb, ip.pnb);
+#else
    idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
    Mjoin(PATL,geComputeIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc, 
                                alpha, beta);
+#endif
 /*
  * Compute how many columns to handle wt block-level and colpan-lvl sheduling
  */
@@ -19281,7 +19305,11 @@ int Mjoin(PATL,tammm_sMK)
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-//   printf("iP=%d\n", P);
+#if 0
+printf("smk:P=%d, M=(%d,%d; %d,%d) N=(%d,%d; %d,%d)\n",
+       P, (int)ip.nfmblks, (int)ip.npmblks, ip.mb, ip.pmb,
+       (int)ip.nfnblks, (int)ip.npnblks, ip.nb, ip.pnb);
+#endif
    smk.ip = &ip;
    smk.A = A;
    smk.B = B;
