@@ -68,6 +68,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     L : dump LIL <file>.L\n");
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");*/
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
+   fprintf(stderr, "  -U all : Unroll main loop all the way\n");
    /*fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");*/
    fprintf(stderr, "  -LNZV : loop level no hazard vectorization\n");
    fprintf(stderr, "  -SV <path#> <nvlens> :" 
@@ -676,6 +677,12 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             break;
          case 'U':
             FKO_UR = atoi(args[++i]);
+/*
+ *          we may now have '-U all' as argument. check it. set FKO_UR to -1 
+ */
+            if (!FKO_UR)
+               if (!strcmp(args[i], "all"))
+                  FKO_UR = -1;
             break;
          case 't':
             for(++i, j=0; args[i][j]; j++)
@@ -3950,6 +3957,11 @@ int main(int nargs, char **args)
  */
       assert(!SlpVectorization());
       CheckUseSet();
+#if 0
+      fprintf(stdout, "LIL after SLP Vec\n");
+      PrintInst(stdout, bbbase);
+      exit(0);
+#endif
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {
@@ -4112,6 +4124,18 @@ int main(int nargs, char **args)
          exit(0);
 #endif         
    }
+/*
+ * apply unroll all the way. we will get rid of optloop at the end of 
+ * fundamental opts
+ */
+   else if (FKO_UR == -1)
+   {
+      int ur;
+      ur = CountUnrollFactor(optloop);
+      assert(ur);
+      if(ur > 1) 
+         UnrollLoop(optloop, ur); /* with modified cleanup */ 
+   }
    /* neither vectorize nor unrolled ! */
    else if (!DO_VECT(FKO_FLAG) && !(VECT_FLAG & VECT_INTRINSIC) ) 
    {
@@ -4179,8 +4203,7 @@ int main(int nargs, char **args)
       else assert(0); /* must have moving ptr for prefetch */
          
       if (optloop->pfarrs)
-      {
-         
+      { 
          if (!FKO_SB || !(VECT_FLAG & VECT_SV)) FKO_SB = 1;
          if (!FKO_UR) FKO_UR = 1;
          AddPrefetch(optloop, FKO_UR*FKO_SB);
@@ -4193,9 +4216,21 @@ int main(int nargs, char **args)
  * NOTE: this is done after all the fundamental optimizations sothat we can 
  * keep them too in the duplicated loop. 
  */
-   if (VECT_FLAG && VECT_FLAG != VECT_INTRINSIC 
+   if (VECT_FLAG 
+         && VECT_FLAG != VECT_INTRINSIC 
+         && VECT_FLAG != VECT_SLP 
          && IsAlignLoopSpecNeeded(optloop))
       UnalignLoopSpecialization(optloop);
+/*
+ * applied optloop all the way, now time to delete the optloop control 
+ */
+#if 1
+   if (FKO_UR == -1)
+   {
+      /*UnrollAllTheWay();*/
+      DelLoopControl(optloop);
+   }
+#endif
 /*
  * FINAL STAGE: 
  *    1. Apply repeatable optimization

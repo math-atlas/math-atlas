@@ -747,9 +747,10 @@ void CalcBlockIG(BBLOCK *bp)
                   fprintf(stderr, "%s(%d) set already exists, ignode = %d\n",
                           STname[myIG[j]->var-1], myIG[j]->var, j);
 #endif
-                  fko_error(__LINE__, "Live range of %s is set again without "
+                  fko_error(__LINE__, "Live range of %s(%d) is set again without "
                            "being used! Need to apply useless expression "
-                           "elimination first!", STname[myIG[j]->var-1]);
+                           "elimination first!", STname[myIG[j]->var-1], 
+                           myIG[j]->var);
                }
             }
          }

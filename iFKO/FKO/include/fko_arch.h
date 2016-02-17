@@ -137,6 +137,7 @@
    #else /* by default SSE4.1*/
       /*#define INT_VEC*/
       /*#define FKO_IVLEN 4*/
+      #define SSE3   /* sse4.1 includes sse3 */
       #define FP_VEC
       #define FKO_SVLEN 4
       #define DP_VEC

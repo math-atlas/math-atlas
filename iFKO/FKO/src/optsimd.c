@@ -10549,7 +10549,7 @@ void UpdateVecLoop(LOOPQ *lp)
    else
       fprintf(stderr, "No Var!\n");
 #endif
-
+   if (pbase) KillAllPtrinfo(pbase);
    if (sp) free(sp);
 }
 
@@ -11122,8 +11122,14 @@ INSTQ *FinalizePack(PACK *pk, INSTQ *uinst, int *change)
                   fko_error(__LINE__, "diff ptrs!! extend slp to support that!");
                assert(!lda && !ilda);
                if (ioffset != offset + 1)
-                  fko_error(__LINE__, "mem access not consecutive: %d, %d!", 
-                        offset, ioffset);
+               {
+/*
+ *                we support broadcast.. so, all access may point to same loc
+ */
+                  if (ioffset != offset)
+                     fko_error(__LINE__, "mem access not consecutive: %d, %d!", 
+                           offset, ioffset);
+               }
                offset = ioffset;
             }
          }
@@ -12801,7 +12807,9 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
                                                         STpts2[k]);
                            #if 1
 /*
- *                         for now, we use anligned ld/st
+ *                         for now, we use unaligned ld/st
+ *                         FIXME: need a markup which works for the routine to
+ *                         scope this out!
  */
                               for (k=0; k < nmem; k++)
                               {
@@ -13350,12 +13358,25 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
    /*ILIST *iln;*/
    PACK *pk;
    /*SLP_VECTOR *vlist = NULL;*/
-
-   for (ip=nsbp->ainst1; ip; )
+/*
+ * NOTE:
+ * we want to keep all inactive inst, like: CMPFLAG, intact. So, used inst1 
+ * instead of ainst1.
+ */
+   
+   /*for (ip=nsbp->ainst1; ip; )*/
+   for (ip=nsbp->inst1; ip; )
    {
       if (!ACTIVE_INST(ip->inst[0]))
       {
-         ip = ip->next;
+/*
+ *       FIXME: we need to add all inactive flags like CMPFLAG for later use.
+ */
+         InsNewInst(sbp, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                    ip->inst[3]);
+         InsNewInst(vbp, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                    ip->inst[3]);
+         ip = DelInst(ip);
          continue;
       }
 /*
@@ -13394,7 +13415,8 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
  *          If those remain in nsbp, that means they are not scheduled yet. in
  *          that case, we can't schedule this pack
  */
-            if (IsInstInQueue(nsbp->ainst1, il->inst))
+            /*if (IsInstInQueue(nsbp->ainst1, il->inst))*/
+            if (IsInstInQueue(nsbp->inst1, il->inst))
             {
                nosch = 1;
 #if 0
@@ -13428,7 +13450,8 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
             }
 #endif
             SchInstQ(pk, nsbp, sbp, ip);
-            ip = nsbp->ainst1; /* start from top again*/
+            /*ip = nsbp->ainst1;*/ 
+            ip = nsbp->inst1; /* start from top again*/
 #if 0
             fprintf(stderr, "biq: \n");
             PrintThisInstQ(stderr,nsbp->ainst1);
@@ -14572,7 +14595,6 @@ int PreHeadSLP(BBLOCK *blk, SLP_VECTOR *vlist, BBLOCK *prehead)
             vlist2 = AddVectorInList(vlist2, vl, 0);
       }
    }
-   PrintVectors(stderr, vlist2);
 #endif
 
    //vlist2 = SchVectorInst(nsbp, sbp, vbp, livein, liveout, vlist2, inpack, &err);
@@ -15550,7 +15572,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns2 = HADD(s2, s3);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[3]-1].sa[2], 0);
    ip = ip->next;          
@@ -15560,7 +15582,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns4 = HADD(s4, s5);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[4]-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[4]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[5]-1].sa[2], 0);
    ip = ip->next;          
@@ -15570,7 +15592,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
    
    //ns6 = HADD(s6, s7);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[6]-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[6]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[7]-1].sa[2], 0);
    ip = ip->next;          
@@ -15580,7 +15602,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
   
    //ns0 = HADD (ns0, ns2);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns2-1].sa[2], 0);
    ip = ip->next;          
@@ -15590,7 +15612,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns4 = HADD (ns4, ns6);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns4-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns4-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns6-1].sa[2], 0);
    ip = ip->next;          
@@ -15600,7 +15622,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns1 = PERMUTE2f128(ns0, ns4, 0x31);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns4-1].sa[2], 0);
    ip = ip->next;          
@@ -15610,7 +15632,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns0 = PERMUTE2f128(ns0, ns4, 0x20);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns4-1].sa[2], 0);
    ip = ip->next;          
@@ -15620,7 +15642,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //vs = VADD(ns0, ns1);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns1-1].sa[2], 0);
    ip = ip->next;          
@@ -15704,7 +15726,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns2 = HADD(s2, s3);
-   ip->next= NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[s[2]-1].sa[2], 0);
+   ip->next= NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[s[2]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[3]-1].sa[2], 0);
    ip = ip->next;          
@@ -15714,7 +15736,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
    
    //ns1 = PERMUTE2F128(ns0, ns2, 0x31);
-   ip->next = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns2-1].sa[2], 0);
    ip = ip->next;          
@@ -15724,7 +15746,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns0 = PERMUTE2F128(ns0, ns2, 0x20);
-   ip->next = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns2-1].sa[2], 0);
    ip = ip->next;          
@@ -15734,7 +15756,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
    
    //vs = VADD(ns0, ns1);
-   ip->next = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns1-1].sa[2], 0);
    ip = ip->next;          
@@ -15828,7 +15850,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns2 = HADD(s2, s3);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[3]-1].sa[2], 0);
    ip = ip->next;          
@@ -15838,7 +15860,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns0 = HADD(ns0, ns2);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns2-1].sa[2], 0);
    ip = ip->next;          
@@ -15848,7 +15870,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
    
 /* ns1 = PERMUTE2f128(ns0, ns0, 0x31); */
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHIHALF, -vreg1, -vreg0, -vreg0);
    ip = ip->next;          
@@ -15856,7 +15878,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;  
 
 /* ns0 = PERMUTE2f128(ns0, ns0, 0x20); */
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLOHALF, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
@@ -15864,7 +15886,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //vs = VADD(ns0, ns1);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns1-1].sa[2], 0);
    ip = ip->next;          
@@ -15879,23 +15901,23 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip0 = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
-   ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg1, -vreg0, -vreg1);
+   ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg1);
    ip = ip->next;          
-   ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg1, 0); 
+   ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
 
    //ns2 = HADD(s2, s3);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[3]-1].sa[2], 0);
    ip = ip->next;          
-   ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg1, -vreg0, -vreg1);
+   ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg1);
    ip = ip->next;          
-   ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns2-1].sa[2], -vreg1, 0); 
+   ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns2-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
 
    //vs = HADD(ns0, ns2);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns2-1].sa[2], 0);
    ip = ip->next;          
@@ -15929,7 +15951,10 @@ INSTQ *DVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    const int nv = 2;
 
    vs = vd->vec;
-
+#if 0
+   PrintVectors(stderr, vd);
+   fprintf(stderr, " vvrsum(%d) = %s\n", vs, STname[vs-1]);
+#endif
 /*
  * create tmp vectors, not needed to save them in list
  * NOTE: var names are copied inside symbol table
@@ -15983,7 +16008,7 @@ INSTQ *DVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;         
 
    //ns1 = PERMUTE2f128(ns0, s1, 0x31);
-   ip->next = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -15993,7 +16018,7 @@ INSTQ *DVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //vs = VADD(ns0, ns1);
-   ip->next = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns1-1].sa[2], 0);
    ip = ip->next;          
@@ -16043,12 +16068,12 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
  * create tmp vectors, not needed to save them in list
  * NOTE: var names are copied inside symbol table
  */
-   sprintf(vname, "_NDVRS2_%d", vid++);
-   ns0 = InsertNewLocal(vname, T_VDOUBLE);
+   sprintf(vname, "_NVRS2_%d", vid++);
+   ns0 = InsertNewLocal(vname, T_VFLOAT);
 
 #ifdef AVX
-   sprintf(vname, "_NDVRS2_%d", vid++);
-   ns1 = InsertNewLocal(vname, T_VDOUBLE);
+   sprintf(vname, "_NVRS2_%d", vid++);
+   ns1 = InsertNewLocal(vname, T_VFLOAT);
 #endif
 /*
  * init s var
@@ -16095,7 +16120,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns0 = HADD(ns0, ns0);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
@@ -16103,7 +16128,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
    
    //ns1 = PERMUTE2f128(ns0, ns0, 0x31);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHIHALF, -vreg1, -vreg0, -vreg0);
    ip = ip->next;          
@@ -16111,7 +16136,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;  
 
    //ns0 = PERMUTE2f128(ns0, ns0, 0x20);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLOHALF, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
@@ -16119,7 +16144,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;         
 
    //vs = VADD(ns0, ns1);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns1-1].sa[2], 0);
    ip = ip->next;          
@@ -16139,7 +16164,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
    
    //vs = HADD(ns0, ns0);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
@@ -16210,23 +16235,25 @@ INSTQ *DVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    
    //ns0 = HADD(s0, s0);
    ip = ip0 = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[s[0]-1].sa[2], 0);
-   ip->next = NewInst(NULL, ip, NULL, VDHADD, -vreg0, -vreg0, -vreg0);
+   ip->next = NewInst(NULL, ip, NULL, VDHADD, -vreg1, -vreg0, -vreg0);
    ip = ip->next;          
-   ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns0-1].sa[2], -vreg0, 0); 
+   ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns0-1].sa[2], -vreg1, 0); 
    ip = ip->next;         
 
    //ns1 = PERMUTE2f128(ns0, s0, 0x31);
-   ip->next = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   //ns1 = PERMUTE2f128(ns0, ns0, 0x31);
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[0]-1].sa[2], 0);
    ip = ip->next;          
    ip->next = NewInst(NULL, ip, NULL, VDHIHALF, -vreg2, -vreg0, -vreg1);
+   //ip->next = NewInst(NULL, ip, NULL, VDHIHALF, -vreg2, -vreg0, -vreg0);
    ip = ip->next;          
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns1-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
    //vs = VADD(ns0, ns1);
-   ip->next = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns1-1].sa[2], 0);
    ip = ip->next;          
@@ -16241,7 +16268,7 @@ INSTQ *DVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip0 = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VDHADD, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
-   ip->next = NewInst(NULL, ip, NULL, VDST, SToff[vs-1].sa[2], -vreg1, 0); 
+   ip->next = NewInst(NULL, ip, NULL, VDST, SToff[vs-1].sa[2], -vreg0, 0); 
    ip = ip->next;         
 
 #else
@@ -16273,12 +16300,12 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
  * create tmp vectors, not needed to save them in list
  * NOTE: var names are copied inside symbol table
  */
-   sprintf(vname, "_NDVRS2_%d", vid++);
-   ns0 = InsertNewLocal(vname, T_VDOUBLE);
+   sprintf(vname, "_NVRS1_%d", vid++);
+   ns0 = InsertNewLocal(vname, T_VFLOAT);
 
 #ifdef AVX
-   sprintf(vname, "_NDVRS2_%d", vid++);
-   ns1 = InsertNewLocal(vname, T_VDOUBLE);
+   sprintf(vname, "_NVRS1_%d", vid++);
+   ns1 = InsertNewLocal(vname, T_VFLOAT);
 #endif
 /*
  * init s var
@@ -16317,7 +16344,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
    //ns0 = HADD(ns0, ns0);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
@@ -16325,7 +16352,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
    
    //ns1 = PERMUTE2f128(ns0, ns0, 0x31);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHIHALF, -vreg1, -vreg0, -vreg0);
    ip = ip->next;          
@@ -16333,7 +16360,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;  
 
    //ns0 = PERMUTE2f128(ns0, ns0, 0x20);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLOHALF, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
@@ -16341,7 +16368,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;         
 
    //vs = VADD(ns0, ns1);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns1-1].sa[2], 0);
    ip = ip->next;          
@@ -16359,7 +16386,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
    
    //vs = HADD(ns0, ns0);
-   ip->next = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
@@ -16380,7 +16407,10 @@ INSTQ *InstVVRSUM(SLP_VECTOR *rvl, int len, SLP_VECTOR *vd)
 {
    short type;
    INSTQ *ip = NULL;
-   
+
+#if 0
+   fprintf(stderr, "Applying VVRSUM_%d\n", len);
+#endif
    type = FLAG2TYPE(rvl->flag);
    if (type == T_FLOAT  || type == T_VFLOAT)
    {
@@ -16430,12 +16460,12 @@ void DelRedCodeFromRvars(BBLOCK *blk, short *svars)
    int i;
    int isend;
    INSTQ *ip, *ip0;
-
+   
    ip = blk->ainst1;
    while(ip)
    {
       for (i=1; i < 4; i++)
-         if(ip->inst[i] > 0 && !NonLocalDeref(ip->inst[0]) 
+         if(ip->inst[i] > 0 && !NonLocalDeref(ip->inst[i]) 
                && FindInShortList(svars[0], svars+1, STpts2[ip->inst[i]-1]) )
             break;
       if (i != 4)
@@ -16913,7 +16943,7 @@ int DoSlpWithReduction(BBLOCK *blk, SLP_VECTOR *vl0)
       nvrs = vlen;
       if (i != vlen)
       {
-         nvrs = 2;
+         nvrs = 1;
          while (nvrs < i) 
             nvrs <<= 1;
          
@@ -17073,6 +17103,7 @@ int DoLoopSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails, SLP_VECTOR *vl0,
  * copy active inst from block, create upackq
  */
    upackq = DupInstQ(blk->ainst1);
+   //upackq = DupInstQ(blk->inst1);
 /*
  * step: 1
  * =========
@@ -17167,8 +17198,10 @@ int DoLoopSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails, SLP_VECTOR *vl0,
  * Calculate dependencies
  */
    nsbp = NewBasicBlock(NULL, NULL);
-   nsbp = DupInstQInBlock(nsbp, blk->ainst1);
-   UpdateDep(nsbp->ainst1, 0);
+   //nsbp = DupInstQInBlock(nsbp, blk->ainst1);
+   //UpdateDep(nsbp->ainst1, 0);
+   nsbp = DupInstQInBlock(nsbp, blk->inst1);
+   UpdateDep(nsbp->inst1, 0);
 /*
  * step: 4
  * ========
@@ -17259,6 +17292,12 @@ int DoLoopSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails, SLP_VECTOR *vl0,
  */
    //fprintf(stderr, "*************** start finalizing \n");
    FinalizeVecBlock(blk, vbp);
+
+#if 0
+   fprintf(stdout,"vectorized: \n");
+   PrintThisInstQ(stdout, blk->inst1);
+   fflush(stdout);
+#endif
    nnpack = NPACK; /* store the npack in this call */
 /*
  * resolve the up/down recursion with prehead and posttails
@@ -17457,17 +17496,239 @@ int DoLoopSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails, SLP_VECTOR *vl0,
    return(0);
 }
 
+int PreSLPchecking(LOOPQ *lp)
+/*
+ * NOTE: this checking is not required for SLP, but may be needed for other
+ * optimizations. Most of them are assumed to vectorization by other 
+ * optimzations. 
+ */
+{
+   int i, k, N;
+   short op;
+   INSTQ *ip, *ip0, *ipl, *ipN;
+   struct ptrinfo *pbase, *p;
+   short *s;
+   BLIST *bl;
+/*
+ * for now, we consider single posttails
+ */
+   if (!lp->posttails || lp->posttails->next)
+   {
+      fprintf(stderr, "only one posttails is considered in SLP\n");
+   }
+/*
+ * do moving pointer analysis. 
+ * NOTE: It is not essential for SLP itseft, but normally, it is assumed 
+ * whenever vec is applied. needed later for prefecting 
+ * FIXME: need to add CMPFLAG for CF_LOOP_PTRUPDATE 
+ */
+   pbase = FindMovingPointers(lp->blocks);
+   for (N=0, p=pbase; p; p=p->next) N++;
+   s = malloc(sizeof(short)*(N+1));
+   assert(s);
+   s[0] = N;
+   for (i=1, p=pbase; p; p=p->next, i++)
+   {
+      s[i] = p->ptr;
+#if 0
+      fprintf(stderr, "%s : (%d, %d), ",STname[p->ptr-1], SToff[p->upst-1].i, 
+               p->nupdate );
+      if (p->flag & PTRF_INC) fprintf(stderr, " INC ");
+      if (p->flag & PTRF_CONTIG) fprintf(stderr, " CONTIG ");
+      if (p->flag & PTRF_CONSTINC) fprintf(stderr, " CONSTINC ");
+      if (p->flag & PTRF_MIXED) fprintf(stderr, " MIXED ");
+      fprintf(stderr, "\n");
+#endif
+      if (p->nupdate > 1)
+      {
+         fprintf(stderr, "multiple pointer update prohibit vect!\n");
+         return(1);
+      }
+/*
+ *    check whether ptr is accessed after ptr update. we won't vectorize if 
+ *    it is so.
+ */
+
+      for (ip = p->ilist->inst->next; ip; ip=ip->next)
+      {
+         for (k=1; k < 4; k++)
+         {
+            op = ip->inst[k];
+            if (op > 0 && IS_DEREF(STflag[op-1]) && STpts2[op-1] == p->ptr)
+            {
+               fprintf(stderr, "Use of ptr %s after being updated\n", 
+                     STname[p->ptr-1]);
+               return(1);
+            }
+         }
+      }
+   }
+   optloop->varrs = s;
+
+/*
+ * delete pointer updates and add at the bottom before loop control 
+ */
+   ip0 = KillPointerUpdates(pbase, 1);
+   
+   for (bl=lp->tails; bl; bl = bl->next)
+   {
+      ipl = FindCompilerFlag(bl->blk, CF_LOOP_UPDATE);
+      assert(ipl);
+      ipN = InsNewInst(NULL, NULL, ipl, CMPFLAG, CF_LOOP_PTRUPDATE, 0, 0);
+      CalcThisUseSet(ipN);
+
+      for (ip = ip0; ip; ip = ip->next)
+      {
+         ipN = InsNewInst(NULL, NULL, ipl, ip->inst[0], ip->inst[1],
+                          ip->inst[2], ip->inst[3]);
+         CalcThisUseSet(ipN);
+      }
+   } 
+   if (pbase) KillAllPtrinfo(pbase);
+   INUSETU2D = 0;
+   return(0);
+}
+
+int MemUnalign2Align(LOOPQ *lp)
+{
+   int type;
+   int i, j, n;
+   short *pts, *s;
+   INSTQ *ip;
+   BLIST *bl;
+   struct ptrinfo *pi, *pbase;
+   int ninst = 4;
+   enum inst inst;
+   static enum inst
+      valign[]    = { VFLD, VDLD, VFST, VDST},
+      vualign[]   = {VFLDU, VDLDU, VFSTU, VDSTU};
+ 
+#if 0
+   if ( IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag) )
+      type = T_VFLOAT;
+   else if ( IS_DOUBLE(lp->vflag) || IS_VDOUBLE(lp->vflag) )
+      type = T_VDOUBLE;
+   else 
+      fko_error(__LINE__, "unknown vector type! ");
+#endif
+
+   pbase = FindMovingPointers(lp->blocks);  
+   for (n=0, pi=pbase; pi; pi=pi->next) 
+      n++;
+   
+   s = malloc(sizeof(short)*(n+1));
+   assert(s);
+   s[0] = n;
+   for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
+      if (IS_FP(STflag[pi->ptr-1]))
+         s[i] = pi->ptr;
+/*
+ * NOTE: haven't considered 2D array ptr yet... need to consider them too later.
+ */
+   pts = malloc(sizeof(short)*(n+1));
+   assert(pts);
+   
+   if (lp->aaligned)
+   {
+
+      //fprintf(stderr, "PTR: ");
+      for (i=1, j=1, n=lp->aaligned[0]; i <= n; i++)
+      {
+      //fprintf(stderr, "%s(%d), ", STname[lp->aaligned[i]-1], lp->abalign[i]);     
+         type = FLAG2TYPE(STflag[lp->aaligned[i]-1]) == T_FLOAT? 
+            T_VFLOAT : T_VDOUBLE;
+         if ( FindInShortList(s[0], s+1, lp->aaligned[i]) 
+               && lp->abalign[i] >= type2len(type)) 
+            pts[j++] = lp->aaligned[i];
+      }
+      pts[0] = j-1;
+      //fprintf(stderr, "\n");
+   }
+   else if (lp->abalign && lp->abalign)
+   {
+      for (i=1, j=1, n=s[0]; i <=n; i++)
+      {
+         type = FLAG2TYPE(STflag[s[i]-1]) == T_FLOAT? 
+            T_VFLOAT : T_VDOUBLE;
+         if (lp->abalign[1] >= type2len(type))
+            pts[j++] = s[i];
+      }
+      pts[0] = j-1;
+   }
+   else /* doesn't meet the alignment requirement*/
+   {
+      free(s);
+      free(pts);
+      KillAllPtrinfo(pbase);
+      return(1);
+   }
+   free(s); 
+   KillAllPtrinfo(pbase);
+
+#if 0
+   fprintf(stderr, "aligned ptr = ");
+   for (i=1, n=pts[0]; i <= n; i++)
+   {
+      fprintf(stderr, "%s ", STname[pts[i]-1]);
+   }
+   fprintf(stderr, "\n");
+#endif
+/*
+ * convert all related mem access to aligned access
+ */
+   for (bl=lp->blocks; bl; bl=bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip=ip->next)
+      {
+         inst = ip->inst[0];
+         if ( IS_UNALIGNED_VLOAD(inst))
+         {
+            if (FindInShortList(pts[0], pts+1, STpts2[ip->inst[2]-1]))
+            {
+               for (j=0; j < ninst; j++)
+                  if (vualign[j] == inst)
+                     break;
+               assert(j != ninst);
+               ip->inst[0] = valign[j];
+            }
+         }
+         else if (IS_UNALIGNED_VSTORE (inst))
+         {
+            if (FindInShortList(pts[0], pts+1, STpts2[ip->inst[1]-1]))
+            {
+               for (j=0; j < ninst; j++)
+                  if (vualign[j] == inst)
+                     break;
+               assert(j != ninst);
+               ip->inst[0] = valign[j];
+            }
+         }
+      }
+   }
+   free(pts);
+   return(0);
+}
+
+
 int SlpVectorization()
 {
    int err; 
    extern LOOPQ *optloop;
    extern LOOPQ *loopq;
    extern BBLOCK *bbbase;
-/*
- * NOTE: we currently only consider single posttail for optloop in SLP
- */
-   assert(optloop->blocks && !optloop->blocks->next);
    
+   if ( PreSLPchecking(optloop) )
+   {
+      fprintf(stderr, "Prechecking failed for SLP\n");
+      return(1); /* returns error */
+   }
+#if 0
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
 /*
  * NOTE: developing SLP in a way that we can specify preheader and postails 
  * to generate vector prologue and epilogue; otherwise prologue/eplilogue will
@@ -17481,8 +17742,7 @@ int SlpVectorization()
 #endif
 /*
  * create a new preheader
- */
-   
+ */ 
    if (!CFUSETU2D)
    {
       CalcInsOuts(bbbase);
@@ -17505,10 +17765,18 @@ int SlpVectorization()
 
    KillPackTable();
 
+/*
+ * if user markup says that some ptr are aligned, replace all unaligned ld/st
+ * with aligned ld/st
+ */
+
+   if (optloop->aaligned || (!optloop->aaligned && optloop->abalign) )
+         MemUnalign2Align(optloop);
+
 #if 0
    fprintf(stdout, "LIL after SLP\n");
    PrintInst(stdout, bbbase);
-   PrintST(stdout);
+   //PrintST(stdout);
    //ShowFlow("cfg.dot", bbbase);
 #endif
    

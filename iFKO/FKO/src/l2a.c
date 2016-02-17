@@ -3402,7 +3402,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef AVX
             ap->next = PrintAssln("\tvaddpd\t%s, %s, %s\n", 
                                   GetDregOrDeref(op3),
-                                  archvdregs[-VDREGBEG-op1], 
+                                  archvdregs[-VDREGBEG-op2], 
                                   archvdregs[-VDREGBEG-op1]); 
          #else
             assert(op1 == op2);
@@ -3414,7 +3414,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef AVX
             ap->next = PrintAssln("\tvsubpd\t%s, %s, %s\n", 
                                   GetDregOrDeref(op3),
-                                  archvdregs[-VDREGBEG-op1], 
+                                  archvdregs[-VDREGBEG-op2], 
                                   archvdregs[-VDREGBEG-op1]); 
          #else
             assert(op1 == op2);
@@ -3481,7 +3481,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef AVX
             ap->next = PrintAssln("\tvmaxpd\t%s, %s, %s\n", 
                                   GetDregOrDeref(op3),
-                                  archvdregs[-VDREGBEG-op1], 
+                                  archvdregs[-VDREGBEG-op2], 
                                   archvdregs[-VDREGBEG-op1]); 
          #else
             assert(op1 == op2);
@@ -3493,7 +3493,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef AVX
             ap->next = PrintAssln("\tvminpd\t%s, %s, %s\n", 
                                   GetDregOrDeref(op3),
-                                  archvdregs[-VDREGBEG-op1], 
+                                  archvdregs[-VDREGBEG-op2], 
                                   archvdregs[-VDREGBEG-op1]); 
          #else
             assert(op1 == op2);

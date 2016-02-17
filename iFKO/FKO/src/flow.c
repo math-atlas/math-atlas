@@ -1453,9 +1453,6 @@ void FinalizeLoops()
 
    for (lp=loopq; lp; lp = lp->next)
    {
-#if 0
-      fprintf(stderr, "lp->blkvec = %d\n", lp->blkvec);
-#endif      
       lp->blocks = BitVec2BlockList(lp->blkvec);
       lp->depth = 1;
       lp->body_label = lp->header->ilab;
@@ -1537,8 +1534,21 @@ void FinalizeLoops()
  *    1. there must be an optloop found from the CFG which matches optloop.
  *    2. optloop must be the innermost loop.
  */
+#if 0
       assert(optloop->next);
       assert(optloop->next->depth == maxdep);
+#else
+      if (optloop->next)
+      {
+         assert(optloop->next->depth == maxdep);
+      }
+      else /* no optloop anymore*/
+      {
+         KillFullLoop(optloop);
+         optloop = NULL;
+      }
+
+#endif
    }
    SortLoops(maxdep);
    for (i=1, lp=loopq; lp; i++, lp = lp->next) lp->loopnum = i;
