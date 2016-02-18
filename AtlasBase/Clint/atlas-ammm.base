@@ -716,6 +716,9 @@ int Mjoin(PATL,ammm_syrk)
 void Mjoin(PATL,oploopsM)
    (rkinfo_t *rkinf, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C,
     int MV, TYPE *a, TYPE *b, TYPE *rC, TYPE *iC);
+void Mjoin(PATL,oploopsN)
+   (rkinfo_t *rkinf, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C,
+    int MV, TYPE *a, TYPE *b, TYPE *rC, TYPE *iC);
 void Mjoin(PATL,opblk)
    (rkinfo_t *op, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C,
     TYPE *pA, TYPE *pAn, TYPE *pB, TYPE *pBn, TYPE *rC, TYPE *iC);
@@ -25338,6 +25341,7 @@ int Mjoin(PATL,ammm_rkK)
    void *vp;
    TYPE *a, *b, *iC, *rC;
    rkinfo_t op;
+   size_t nnblks;
    #ifdef TCPLX
       const size_t ldc2=ldc+ldc;
    #else
@@ -25360,6 +25364,7 @@ int Mjoin(PATL,ammm_rkK)
  *  Usual case, compute column-panel of C at a time, need workspace of
  *  1 block of B and C, and 1 col-panel of A.
  */
+   if (op.nfmblks+op.npmblks != 1)
    {
       const size_t nnblks = op.nfnblks+op.npnblks;
       size_t sz, szA, j;
@@ -25392,6 +25397,25 @@ int Mjoin(PATL,ammm_rkK)
             A = NULL;
          }
       }
+   }
+   else  /* only 1 block of A, traverse C row-wise */
+   {
+      size_t sz;
+      sz = op.szA + op.szB + op.szC + (op.mu<<1)*op.nu;
+      vp = malloc(ATL_MulBySize(sz) + 3*ATL_Cachelen);
+      if (!vp)
+         return(1);
+      a = ATL_AlignPtr(vp);
+      b = a + (op.szA SHIFT);
+      b = ATL_AlignPtr(b);
+      iC = b + (op.szB SHIFT);
+      iC = ATL_AlignPtr(iC);
+      #ifdef TCPLX
+         rC = iC + op.szC;
+      #else
+         rC = iC;
+      #endif
+      Mjoin(PATL,oploopsN)(&op, 0, 0, A, B, C, 0, a, b, rC, iC);
    }
    free(vp);
    return(0);
@@ -25904,7 +25928,6 @@ void Mjoin(PATL,opblk)
          op->blk2C(mb, nb, ATL_rone, rC, op->beta, C, op->ldc);
       #endif
    }
-   A = (nmblks != 1) ? A : NULL;  /* avoid redundant copy if only 1 blk A */
 }
 void Mjoin(PATL,oploopsM)
 (
@@ -26028,7 +26051,7 @@ void Mjoin(PATL,oploopsM)
             #else
                a2blk(kb, mb, alpA, A, lda, a);
             #endif
-            A += incAm;
+            A = (nmblks != 1) ? (A+incAm) : NULL;
          }
          if (MV&1)
          #ifdef TCPLX
@@ -26100,7 +26123,7 @@ void Mjoin(PATL,oploopsM)
             #else
                a2blk(kb, mb, alpA, A, lda, a);
             #endif
-            A += incAm;
+            A = (nmblks != 1) ? (A+incAm) : NULL;
          }
          #ifdef TCPLX
             if (MV&1)
@@ -26120,6 +26143,211 @@ void Mjoin(PATL,oploopsM)
             a = an;
          #endif
          C += incCm;
+      }
+   }
+}
+void Mjoin(PATL,oploopsN)
+(
+   rkinfo_t *op,
+   size_t i,      /* which global row blk of C is being computed */
+   size_t j,      /* which global column blk of C is being computed */
+   const TYPE *A, /* if non-NULL, portion of A to copy */
+   const TYPE *B, /* if non-NULL, portion of B to copy */
+   TYPE *C,       /* C <- alpha * A * B + beta * C */
+   int MV,        /* 2: move b */
+   TYPE *a,       /* wrkspace for block-copied A */
+   TYPE *b,       /* wrkspace for block-copied B */
+   TYPE *rC,      /* ptr to real portion of access-major C workspace */
+   TYPE *iC       /* ptr to cplx portion of access-major C workspace */
+)
+{
+   #ifdef TCPLX
+      TYPE *iA=a, *rA=a+op->szA, *iB=b, *rB;
+      const TYPE *alpA=op->alpA, *alpB=op->alpB, *beta=op->beta;
+      const ammkern_t amm0=op->amm_b0, amm1=op->amm_b1, ammN=op->amm_bn;
+   #else
+      const ammkern_t amm=op->amm_b0;
+   #endif
+   const cm2am_t a2blk=op->a2blk, b2blk=op->b2blk;
+   const ablk2cmat_t blk2C=op->blk2C;
+   const size_t nfmblks=op->nfmblks, nmblks=op->npmblks+nfmblks, ldb=op->ldb;
+   const size_t nfnblks=op->nfnblks, nnblks=op->npnblks+nfnblks, ldc=op->ldc;
+   #ifndef TCPLX
+      const TYPE alpA=op->alpA, alpB=op->alpB, beta=op->beta;
+   #endif
+   ATL_CUINT kb=op->kb, KB=op->KB;
+   ATL_CUINT mu=op->mu, nu=op->nu;
+   ATL_UINT nmu=op->nmu, mb=op->mb, nnu, nb;
+
+/*
+ * If needed, copy A block before starting operations
+ */
+   if (A)
+   {
+      if (i)  /* need to increment A & C before copy */
+      {
+         size_t nblks=Mmin(i, nfmblks);
+         A += nblks * op->incAm;
+         C += nblks*mb;
+         if (i >= nfmblks)  /* need to switch to smaller mb */
+         {
+            #ifdef TCPLX
+               rA = iA + op->pszA;
+            #endif
+            mb = op->pmb;
+            nmu = op->pnmu;
+            nblks = i - nfmblks;
+            A += nblks*op->pincAm;
+            C += nblks*mb;
+         }
+      }
+      if (i == nmblks-1 && i >= nfmblks)
+      {
+         mb = op->mF;
+         nmu = op->nmuF;
+      }
+      #ifdef TCPLX
+         a2blk(kb, mb, alpA, A, op->lda, rA, iA);
+      #else
+         a2blk(kb, mb, alpA, A, op->lda, a);
+      #endif
+   }
+   else   /* still need to inc C ptr & set nnu/nb */
+   {
+      size_t nblks=Mmin(i, nfmblks);
+      C += nblks*mb;
+      if (i >= nfmblks)  /* need to switch to smaller mb */
+      {
+         #ifdef TCPLX
+            rA = iA + op->pszA;
+         #endif
+         mb = op->pmb;
+         nmu = op->pnmu;
+         nblks = i - nfmblks;
+         C += nblks*mb;
+         if (i == nmblks-1)
+         {
+            mb = op->mF;
+            nmu = op->nmuF;
+         }
+      }
+   }
+/*
+ * If present block is one of first large blocks, loop over large blks
+ */
+   if (j < nfnblks)
+   {
+      const size_t incBn = (B) ? op->incBn:0, incCn = ldc*(op->nb)SHIFT;
+      ATL_UINT szB = op->szB;
+      ATL_CUINT incBw = (MV&2) ? ((szB)SHIFT):0;
+
+      if (j)               /* if we need to skip some blocks */
+      {                    /* Increment B/C ptrs as needed for j */
+         if (B)
+            B += j * incBn;
+         C += j * incCn;
+      }
+      #ifdef TCPLX
+         rB = iB + szB;
+      #endif
+      nnu = op->nnu;
+      nb = op->nb;
+      for (; j < nfnblks; j++)
+      {
+         #ifdef TCPLX
+            TYPE *bn=iB+incBw;
+         #else
+            TYPE *bn=b+incBw;
+         #endif
+         if (B)
+         {
+            #ifdef TCPLX
+               b2blk(kb, nb, alpB, B, ldb, rB, iB);
+            #else
+               b2blk(kb, nb, alpB, B, ldb, b);
+            #endif
+            B = (nnblks != 1) ? (B+incBn) : NULL;
+         }
+         #ifdef TCPLX
+            amm0(nmu, nnu, KB, iA, iB, rC, rA, iB, iC);
+            amm0(nmu, nnu, KB, rA, iB, iC, rA, rB, rC);
+            ammN(nmu, nnu, KB, rA, rB, rC, iA, rB, iC);
+            amm1(nmu, nnu, KB, iA, rB, iC, iA, bn, iC);
+            blk2C(mb, nb, op->ONE, rC, iC, beta, C, ldc);
+            iB = bn;
+            rB = bn + szB;
+         #else
+            amm(nmu, nnu, KB, a, b, rC, a, bn, rC);
+            blk2C(mb, nb, ATL_rone, rC, beta, C, ldc);
+            b = bn;
+         #endif
+         C += incCn;
+      }
+   }
+/*
+ * If present block past end of large blocks, increment B/C appropriately
+ */
+   else if (j && nfnblks)
+   {
+      if (B)
+         B += nfnblks * op->incBn;
+      C += nfnblks * (op->nb * ldc)SHIFT;
+   }
+/*
+ * If there are still small blocks to do after doing all large blocks
+ */
+   if (j < nnblks)
+   {
+      const size_t incBn = (B) ? op->pincBn:0, incCn = ldc*(op->pnb)SHIFT;
+      ATL_UINT szB = op->pszB;
+      ATL_CUINT incBw = (MV&2) ? ((szB)SHIFT):0;
+
+      if (j > nfnblks)  /* I need to move past some small blocks too */
+      {
+         size_t nblks = j - nfnblks;
+         B += nblks * incBn;
+         C += nblks * incCn;
+      }
+      nb = op->pnb;
+      nnu = op->pnnu;
+      for (; j < nnblks; j++)
+      {
+         #ifdef TCPLX
+            TYPE *bn = iB + incBw;
+         #else
+            TYPE *bn = b + incBw;
+         #endif
+         if (j == nnblks-1)
+         {
+            nb = op->nF;
+            nnu = op->nnuF;
+         }
+         #ifdef TCPLX
+            rB = iB + szB;
+         #endif
+         if (B)
+         {
+            #ifdef TCPLX
+               b2blk(kb, nb, alpB, B, ldb, rB, iB);
+            #else
+               b2blk(kb, nb, alpB, B, ldb, b);
+            #endif
+            B = (nnblks != 1) ? (B+incBn) : NULL;
+         }
+         #ifdef TCPLX
+            amm0(nmu, nnu, KB, iA, iB, rC, rA, iB, iC);
+            amm0(nmu, nnu, KB, rA, iB, iC, rA, rB, rC);
+            ammN(nmu, nnu, KB, rA, rB, rC, iA, rB, iC);
+            amm1(nmu, nnu, KB, iA, rB, iC, iA, bn, iC);
+            blk2C(mb, nb, op->ONE, rC, iC, beta, C, op->ldc);
+            iB = bn;
+            rB = bn + szB;
+         #else
+            amm(nmu, nnu, KB, a, b, rC, a, bn, rC);
+            blk2C(mb, nb, ATL_rone, rC, beta, C, op->ldc);
+            b = bn;
+         #endif
+         C += incCn;
       }
    }
 }
