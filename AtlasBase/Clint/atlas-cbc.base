@@ -126,7 +126,7 @@
    #endif
 #elif defined(ATL_ARCH_POWER3) || defined(ATL_ARCH_POWER4) || \
       defined(ATL_ARCH_POWER5) || defined(ATL_ARCH_POWER6) || \
-      defined(ATL_ARCH_POWER7)
+      defined(ATL_ARCH_POWER7) || defined(ATL_ARCH_POWER8)
    #define ATL_CBC_STRONG 0
    #ifdef __GNUC__
       #define ATL_membar __asm__ __volatile__ ("dcs")
@@ -245,8 +245,22 @@ void mybarr
 
    if (iam)
    {
+      #if !defined(ATL_USE_CBC) && defined(DOFENCE)
+         ATL_mutex_lock(ATL_TP_PTR->cbcmut);
+      #endif
       bchk[II] = newv;
-      #ifdef DOFENCE
+/*
+ *    I use this barrier to do memory sync on systems with weakly-ordered
+ *    caches.  On such systems w/o membar support (eg., POWER), we need
+ *    something for correctness, so I do lock & unlock a mutex to force
+ *    flushing the write buffers.
+ *
+ *    It hurt me more to write this piece of crap than it hurts you to read
+ *    it, stuff you and your judgement.
+ */
+      #if !defined(ATL_USE_CBC) && defined(DOFENCE)
+         ATL_mutex_unlock(ATL_TP_PTR->cbcmut);
+      #elif defined(DOFENCE)
          ATL_membar;
       #endif
       while (*bchk != newv);
@@ -261,9 +275,16 @@ void mybarr
       }
       #ifdef DOPOST
          #ifdef DOFENCE
-            ATL_membar;
+            #if !defined(ATL_USE_CBC)
+               ATL_mutex_lock(ATL_TP_PTR->cbcmut);
+            #else
+               ATL_membar;
+            #endif
          #endif
          *bchk = newv;
+         #if !defined(ATL_USE_CBC) && defined(DOFENCE)
+            ATL_mutex_unlock(ATL_TP_PTR->cbcmut);
+         #endif
       #endif
    }
 }
@@ -528,9 +549,16 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
    ATL_CUINT II = rank<<ATL_chksh;
    const char newv = !bchk[II];
    #ifdef DOFENCE
-      ATL_membar;
+      #if !defined(ATL_USE_CBC)
+         ATL_mutex_lock(ATL_TP_PTR->cbcmut);
+      #else
+         ATL_membar;
+      #endif
    #endif
    bchk[II] = newv;
+   #if !defined(ATL_USE_CBC) && defined(DOFENCE)
+      ATL_mutex_unlock(ATL_TP_PTR->cbcmut);
+   #endif
    return(newv);
 }
 @ROUT ATL_cbc_wait

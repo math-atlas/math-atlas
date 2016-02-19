@@ -273,6 +273,7 @@ struct ATL_ThreadPool
    int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
    int *combDoneBV;       /* 1: thr of that rank's data already combined */
    void *tpmut;           /* mutex protecting above pool info */
+   void *cbcmut;          /* mutex used for cbc ops on weakly-ord caches */
 /*
  * variables below here manipulated only when threads known to be polling
  */
@@ -302,6 +303,7 @@ struct ATL_ThreadPool
    int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
    int *combDoneBV;       /* 1: thr of that rank's data already combined */
    void *tpmut;           /* mutex protecting above pool info */
+   void *cbcmut;          /* mutex used for cbc ops on weakly-ord caches */
 /*
  * variables below here manipulated only when threads known to be polling
  */
@@ -340,6 +342,7 @@ struct ATL_ThreadPool
    int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
    int *combDoneBV;       /* 1: thr of that rank's data already combined */
    void *tpmut;           /* mutex protecting above pool info */
+   void *cbcmut;          /* mutex used for cbc ops on weakly-ord caches */
 /* 
  * variables below here manipulated only when threads known asleep 
  */
@@ -949,6 +952,46 @@ struct ATL_tamm_gK
    volatile uint RDY;   /* set when struct is available for work assignment */
 };
 /*
+ * This struct use to parallelize case where C consists of only 1 block,
+ * so all parallelism must be found along K
+ */
+typedef struct ATL_tsyrk_tN ATL_tsyrk_tN_t;
+struct ATL_tsyrk_tN
+{
+   ablk2cmat_t blk2c, blk2c_b1;
+   cm2am_t a2blk;
+   const TYPE *A;
+   TYPE *C;
+   TYPE *w, *wT;         /* ptrs to global main wrkspc & triang wrkspc */
+   #ifdef TCPLX
+      const TYPE *alpha, *beta, *ONE;
+   #endif
+   void *jobCtr;         /* [1,njobs] */
+   void *K1ctr;          /* [1,nK1] : counter for individual kb blks */
+   void *KB0ctr;         /* if (kb0) 1, else ptr is NULL */
+   void *Cmut;           /* mutex protecting write to C/appBeta */
+   size_t lda, ldc;      /* stride between rows A/C arrays */
+   size_t njobs;         /* number of nKjob chunks to give out */
+   size_t nK1;           /* total number of K blks given out individually */
+   size_t incAk;         /* A ptr inc after doing kb-sized block */
+   size_t szW;           /* stride between threads' part of w */
+   #ifndef TCPLX
+      TYPE alpha, beta;
+   #endif
+   uint szA, szC;        /* 1 block storage size for A/C workspace */
+   #ifdef Conj_
+      ushort NoTrans;    /* = (TA == AtlasNoTrans) */
+      ushort Pcnt;       /* set to P & dec during C write-out, prot by Cmut */
+   #endif
+   ushort N;             /* size of triangle, known small for this case */
+   ushort nnu;           /* CEIL(N/NU) */
+   ushort kb;            /* size of K for all blks except last */
+   ushort kb0, KB0;      /* unpadded & (possibly) padded last-blk size */
+   ushort jobshift;      /* power-of-2 of # of kbblks given out as a job */
+   ushort appBeta;       /* set to 0 once beta applied; protected by Cmut */
+};  /* NOTE: nKjob*njob + nK1 = nkblks; kb0 always in nK1 */
+
+/*
  * This structure used when N <= MIN(MAXNB,MAXMB), so we deal out only
  * K blocks using the global counter KbCtr.  
  */
@@ -1398,6 +1441,18 @@ int Mjoin(PATL,threadMM)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 void ATL_tvsyr2k_rec(ATL_SYR2K_t *syp, ATL_CINT Nblks, ATL_CINT nr, 
                      const void *A, const void *B, void *C);
 #ifdef TYPE
+@beginskip
+#ifdef TCPLX
+   void Mjoin(PATL,therk_tN)
+      (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS TA, ATL_CSZT N, 
+       ATL_CSZT K, const TYPE ralpha, const TYPE *A, ATL_CSZT lda,
+       const TYPE rbeta, TYPE *C, ATL_CSZT ldc);
+#endif
+void Mjoin(PATL,tsyrk_tN)
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS TA, ATL_CSZT N, 
+    ATL_CSZT K, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
+    const SCALAR beta, TYPE *C, ATL_CSZT ldc);
+@endskip
 void Mjoin(PATL,tsyrk)
    (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
     ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
@@ -7707,7 +7762,22 @@ void Mjoin(PATL,t@(rt))
       (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
        ATL_CINT K, const @(styp) alpha, const TYPE *A, ATL_CINT lda,
        const @(styp) beta, TYPE *C, ATL_CINT ldc);
-
+/*
+ * dynamic scheduling overhead makes this a loss on most machines.  I suspect
+ * it'll win on Phi, and maybe other extreme-scale machines, so we'll keep it
+ * around for now
+ */
+   #if 0
+   if (N <= ATL_sqAMM_LASTNB)
+   {
+@ROUT ATL_therk
+      Mjoin(PATL,therk_tN)(Uplo, Trans, N, K, alpha0, A, lda, beta0, C, ldc);
+@ROUT ATL_tsyrk
+      Mjoin(PATL,tsyrk_tN)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
+@ROUT ATL_tsyrk ATL_therk
+      return;
+   }
+   #endif
    if (Mjoin(PATL,threadMM)(Trans, 
                             (Trans == AtlasNoTrans) ? AtlasTrans:AtlasNoTrans,
                             N, N>>1, K) < 2)
@@ -14148,6 +14218,22 @@ static INLINE long GetCblk(ATL_CUINT rank, ATL_tamm_gOOO_t *pd)
  */
    if (pd->cpyAdone & pd->cpyBdone)
    {
+/*
+ *    On weakly-ordered caches, checking cpyA/cpyB insufficient to ensure
+ *    copied data is visible, so lock a BS mutex to force a memory barrier
+ *    (the producer thread will have locked a mutex to update the copy bitvec)
+ *    Use diagonal C mutex, which should have nobody using it.
+ */
+      #if !ATL_CBC_STRONG
+         static char FIRST=1;
+      if (FIRST)
+      {
+         FIRST=0;
+         ib = (rank < pd->nMNblks)  ? rank : 0; /* spread across dead mutexes */
+         ATL_mutex_lock(pd->Cmuts[ib]);
+         ATL_mutex_unlock(pd->Cmuts[ib]);
+      }
+      #endif
       do
       {
          ib = ATL_DecGlobalAtomicCount(pd->cCtr, rank);
@@ -15488,26 +15574,6 @@ int Mjoin(PATL,tammm)
    if (K >= ATL_geAMM_LASTKB && M >= 12 && N >= 12)
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc, 63, Mjoin(PATL,tammm_G)));
-@beginskip
-/*
- * _sMK,  _sNK, & gMNK only work when C provides adequate parallelism
- */
-   nblks = (M+ATL_geAMM_LASTMB-1) / ATL_geAMM_LASTMB;
-   nblks *= (N+ATL_geAMM_LASTNB-1) / ATL_geAMM_LASTNB;
-   if (nblks >= ATL_NTHREADS)
-@skip   if (M >= 2*ATL_geAMM_LASTMB || N >= 2*ATL_geAMM_LASTNB)
-   {
-      if (M > (ATL_geAMM_LASTMB<<4) && N > (ATL_geAMM_LASTNB<<4))
-         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                     beta, C, ldc, 5, Mjoin(PATL,tammm_gMNK)));
-      else if (M < N+ATL_geAMM_LASTMB)
-         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                     beta, C, ldc, 5, Mjoin(PATL,tammm_sMK)));
-      else
-         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                     beta, C, ldc, 6, Mjoin(PATL,tammm_sNK)));
-   }
-@endskip
    return(1);
 }
 @ROUT ATL_tsyrk_amm
@@ -18079,6 +18145,7 @@ ATL_tpool_t *ATL_NewThreadPool
    }
    pp->combmut = ATL_mutex_init();
    pp->tpmut = ATL_mutex_init();
+   pp->cbcmut = ATL_mutex_init();
    #ifdef ATL_PHI_SORTED
       pp->wcond2 = ATL_cond_init();
       pp->wcond3 = ATL_cond_init();
@@ -18113,6 +18180,8 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
       ATL_mutex_free(pp->combmut);
    if (pp->tpmut)
       ATL_mutex_free(pp->tpmut);
+   if (pp->cbcmut)
+      ATL_mutex_free(pp->cbcmut);
    #ifdef ATL_TP_FULLPOLL
       free(pp->chkin);
    #elif !defined(ATL_OMP_THREADS) && !defined(ATL_WINTHREADS)
@@ -19545,4 +19614,531 @@ int Mjoin(PATL,tammm_gK)
 {
 
    return(ATL_recur_gK(ip, A, B, C));
+}
+@ROUT ATL_tsyrk_tN
+#include "atlas_misc.h"
+#include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_perf.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+#define ATL_ESTNCTR 1
+#define ATL_INDX    1
+#include "atlas_tlvl3.h"
+
+
+static void DoWork(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_tsyrk_tN_t *pd = pp->PD;
+   const TYPE *A = pd->A;
+   #ifdef TCPLX
+      TYPE *iA = pd->w + vrank*pd->szW, *rA=iA+pd->szA, *iC=rA+pd->szA, *rC, *a;
+      #ifdef Conj_
+         TYPE *crA, *ciA;
+      #endif
+      ammkern_t syrkK_bn = Mjoin(PATL,amsyrkK_b0); 
+      ammkern_t syrkK_b1 = Mjoin(PATL,amsyrkK_b0);
+      #define one pd->ONE
+   #else
+      TYPE *wA = pd->w + vrank*pd->szW, *wC = wA + pd->szA;
+      ammkern_t syrkK = Mjoin(PATL,amsyrkK_b0);
+      #define one ATL_rone
+   #endif
+   cm2am_t a2blk = pd->a2blk;
+   const size_t njobs=pd->njobs, lda=pd->lda, nK1=pd->nK1, incAk=pd->incAk;
+   ATL_CUINT kb=pd->kb, N=pd->N, nnu=pd->nnu;
+
+   #ifdef TCPLX
+      iC = ATL_AlignPtr(iC);
+      rC = iC + pd->szC;
+      #ifdef Conj_
+         crA = (pd->NoTrans) ? rA : iA;
+         ciA = (pd->NoTrans) ? iA : rA;
+      #endif
+   #else
+      wC = ATL_AlignPtr(wC);
+   #endif
+/*
+ * First do the big chunky jobs
+ */
+   if (njobs)
+   {
+      void *jobCtr = pd->jobCtr;
+      size_t Jctr, njobs=pd->njobs;
+      ATL_CUINT jobshift=pd->jobshift;
+      while ( (Jctr = ATL_DecGlobalAtomicCount(jobCtr, vrank)) )
+      {
+         size_t k = (njobs-Jctr)<<jobshift;
+         const size_t kend = k + (1<<jobshift);
+         do
+         {
+            #ifdef TCPLX
+               a2blk(kb, N, one, A+incAk*k, lda, rA, iA);
+               #ifdef Conj_
+                  syrkK_b1(nnu, nnu, kb, iA, iA, rC, crA, ciA, iC);
+                  syrkK_bn(nnu, nnu, kb, crA, ciA, iC, rA, rA, rC);
+                  Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, rA, rA, rC, ciA,crA,iC);
+                  Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, ciA, crA, iC, iA,iA,rC);
+               #else
+                  syrkK_bn(nnu, nnu, kb, iA, iA, rC, rA, iA, iC);
+                  syrkK_b1(nnu, nnu, kb, rA, iA, iC, rA, rA, rC);
+                  Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, rA, rA, rC, iA, rA, iC);
+                  Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, iA, rA, iC, iA, iA, rC);
+               #endif
+               syrkK_bn = Mjoin(PATL,amsyrkK_bn);
+               syrkK_b1 = Mjoin(PATL,amsyrkK_b1);
+            #else
+               a2blk(kb, N, ATL_rone, A+incAk*k, lda, wA);
+               syrkK(nnu, nnu, kb, wA, wA, wC, wA, wA, wC);
+               syrkK = Mjoin(PATL,amsyrkK_b1);
+            #endif
+         }
+         while (++k != kend);
+      }
+   }
+/*
+ * Now loop over individual full-kb computations
+ */
+   if (nK1)
+   {
+      const size_t k0 = (njobs << pd->jobshift);  /* # of k blks already done */
+      size_t k, Kctr;
+      void *K1ctr=pd->K1ctr;
+      while ( (Kctr = ATL_DecGlobalAtomicCount(K1ctr, vrank)) )
+      {
+         k = k0 + nK1 - Kctr;
+         #ifdef TCPLX
+            a2blk(kb, N, one, A+incAk*k, lda, rA, iA);
+            #ifdef Conj_
+               syrkK_b1(nnu, nnu, kb, iA, iA, rC, crA, ciA, iC);
+               syrkK_bn(nnu, nnu, kb, crA, ciA, iC, rA, rA, rC);
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, rA, rA, rC, ciA, crA, iC);
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, ciA, crA, iC, iA, iA, rC);
+            #else
+               syrkK_bn(nnu, nnu, kb, iA, iA, rC, rA, iA, iC);
+               syrkK_b1(nnu, nnu, kb, rA, iA, iC, rA, rA, rC);
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, rA, rA, rC, iA, rA, iC);
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, iA, rA, iC, iA, iA, rC);
+            #endif
+            syrkK_bn = Mjoin(PATL,amsyrkK_bn);
+            syrkK_b1 = Mjoin(PATL,amsyrkK_b1);
+         #else
+            a2blk(kb, N, ATL_rone, A+incAk*k, lda, wA);
+            syrkK(nnu, nnu, kb, wA, wA, wC, wA, wA, wC);
+            syrkK = Mjoin(PATL,amsyrkK_b1);
+         #endif
+      }
+   }
+/*
+ * If last kb is partial, only one guy does that
+ */
+   if (pd->kb0)
+   {
+      if (ATL_DecAtomicCount(pd->KB0ctr))
+      {
+         size_t k = (njobs<<pd->jobshift) + nK1;
+         #ifdef TCPLX
+            ATL_CUINT KB=pd->KB0;
+            a2blk(pd->kb0, N, one, A+incAk*k, lda, rA, iA);
+            #ifdef Conj_
+               syrkK_b1(nnu, nnu, KB, iA, iA, rC, crA, ciA, iC);
+               syrkK_bn(nnu, nnu, KB, crA, ciA, iC, rA, rA, rC);
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, KB, rA, rA, rC, ciA, crA, iC);
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, KB, ciA, crA, iC, iA, iA, rC);
+            #else
+               syrkK_bn(nnu, nnu, KB, iA, iA, rC, rA, iA, iC);
+               syrkK_b1(nnu, nnu, KB, rA, iA, iC, rA, rA, rC);
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, KB, rA, rA, rC, iA, rA, iC);
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, KB, iA, rA, iC, iA, iA, rC);
+               syrkK_b1 = NULL;
+            #endif
+         #else
+            a2blk(pd->kb0, N, ATL_rone, A+incAk*k, lda, wA);
+            syrkK(nnu, nnu, pd->KB0, wA, wA, wC, wA, wA, wC);
+            syrkK = NULL;
+         #endif
+      }
+   }
+/*
+ * Write out if we did any work
+ */
+#ifdef TCPLX
+   if (syrkK_b1 != Mjoin(PATL,amsyrkK_b0)) /* we did at least 1 blk */
+#else
+   if (syrkK != Mjoin(PATL,amsyrkK_b0))
+#endif
+   {
+      if (pd->wT)  /* Upper triangle must transpose in workspace */
+      {
+         ablk2cmat_t blk2c=pd->blk2c_b1;
+         TYPE *wc = pd->wT + (vrank SHIFT) * ((size_t)N)*N, *C=pd->C;
+         ATL_CSZT ldc=pd->ldc;
+         ATL_UINT k, APPBETA=0;
+   
+         if (blk2c == Mjoin(PATL,syblk2cmat_a1_b1))
+         blk2c = Mjoin(PATL,syblk2cmat_a1_b0);
+         else 
+            blk2c = (blk2c == Mjoin(PATL,syblk2cmat_an_b1)) ? 
+               Mjoin(PATL,syblk2cmat_an_b0) : Mjoin(PATL,syblk2cmat_aX_b0);
+         #ifdef TCPLX
+         #else
+            blk2c(N, N, pd->alpha, wC, ATL_rzero, wc, N);
+         #endif
+         ATL_mutex_lock(pd->Cmut);
+         if (pd->appBeta)  /* only set if beta != 1 & we are first here */
+         {
+            const SCALAR beta = pd->beta;
+            if (SCALAR_IS_ZERO(pd->beta))
+               for (k=0; k < N; k++, wc += (1 SHIFT), C += (ldc SHIFT))
+                   Mjoin(PATL,copy)(k+1, wc, N, C, 1);
+            else
+               for (k=0; k < N; k++, wc += (1 SHIFT), C += (ldc SHIFT))
+                  Mjoin(PATL,axpby)(k+1, one, wc, N, beta, C, 1);
+            pd->appBeta = 0;
+         }
+         else
+            for (k=0; k < N; k++, wc += (1 SHIFT), C += (ldc SHIFT))
+               Mjoin(PATL,axpby)(k+1, one, wc, N, one, C, 1);
+         ATL_mutex_unlock(pd->Cmut);
+      }
+      else   /* Lower triangle can just write to C */
+      {
+         #ifdef Conj_
+            ATL_UINT ZeroDiag=0;
+         #endif
+         ATL_mutex_lock(pd->Cmut);
+         if (pd->appBeta)
+         {
+            pd->appBeta = 0;
+            #ifdef TCPLX
+               pd->blk2c(N, N, pd->alpha, rC, iC, pd->beta, pd->C, pd->ldc);
+            #else
+               pd->blk2c(N, N, pd->alpha, wC, pd->beta, pd->C, pd->ldc);
+            #endif
+         }
+         else
+         {
+            #ifdef TCPLX
+               pd->blk2c_b1(N, N, pd->alpha, rC, iC, pd->beta, pd->C, pd->ldc);
+            #else
+               pd->blk2c_b1(N, N, pd->alpha, wC, pd->beta, pd->C, pd->ldc);
+            #endif
+         }
+         #ifdef Conj_
+            if (!(--(pd->Pcnt)))
+            #ifdef Conj_  /* must zero complex part of diagonal! */
+               Mjoin(PATLU,zero)(N, pd->C+1, (pd->ldc+1)SHIFT);
+            #endif
+         #endif
+         ATL_mutex_unlock(pd->Cmut);
+      }
+   }  /* end of if we did work */
+}
+#undef one
+
+#ifdef Conj_
+void Mjoin(PATL,therk_tN)
+#else
+void Mjoin(PATL,tsyrk_tN)
+#endif
+(
+   const enum ATLAS_UPLO Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CSZT N,
+   ATL_CSZT K,
+#ifdef Conj_
+   const TYPE ralpha,
+#else
+   const SCALAR alpha,
+#endif
+   const TYPE *A,
+   ATL_CSZT lda,
+#ifdef Conj_
+   const TYPE rbeta,
+#else
+   const SCALAR beta,
+#endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+/*
+ * C NxN, A NxK
+ * SYRK:
+ *    C = alpha * A * A^T + beta*C, if TA == AtlasNoTrans
+ *    C = alpha * A^T * A + beta*C, if TA == AtlasTrans
+ * HERK:
+ *    C = alpha * A * A^H + beta*C, if TA == AtlasNoTrans
+ *    C = alpha * A^H * A + beta*C, if TA == AtlasTrans
+ */
+{
+   ATL_tsyrk_tN_t pd;
+   void *vp;
+   #ifdef TCPLX
+      const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+   #ifdef Conj_
+      const TYPE alpha[2] = {ralpha, ATL_rzero};
+      const TYPE beta[2] = {rbeta, ATL_rzero};
+   #endif
+   size_t szA, szC, szT, szE, szP, incAk, nkb, k;
+   ATL_CUINT nnu = (N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU, NN=nnu*ATL_SYRKK_NU;
+   ATL_UINT kb, P;
+/*
+ * Handle degenerate cases
+ */
+   if (!N)                            /* no output! */
+      return;
+   if (SCALAR_IS_ZERO(alpha) || !K)  /* really scale of C */
+   {
+      if (SCALAR_IS_ONE(beta))       /* no-op */
+         return;
+      if (SCALAR_IS_ZERO(beta))      /* explicit zero */
+      {
+         if (Uplo == AtlasLower)
+            Mjoin(PATL,trsetL)(N, N, beta, beta, C, ldc);
+         else
+            Mjoin(PATL,trsetU)(N, N, beta, beta, C, ldc);
+         return;
+      }
+      Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+      #ifdef Conj_  /* must zero complex part of diagonal for HERK! */
+         Mjoin(PATLU,zero)(N, C+1, (ldc+1)SHIFT);
+      #endif
+      return;
+   }
+/*
+ * Quick return if problem isn't worth parallelizing
+ */
+   #if 0
+   if (K < (Mmax(ATL_sqAMM_66KB,ATL_SYRKK_KU)*Mmin(ATL_NTHREADS,4)) || 
+       N == 1)
+   {
+      #ifdef Conj_
+         Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         Mjoin(PATL,syrk_IP)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+      #endif
+       return;
+   }
+   #endif
+/*
+ * Choose a KB that is a multiple of KU.  Usually, we like near-square sizes,
+ * but for small problems, you want to expand KB to avoid having vector
+ * reduction (KVEC) and C store dominate cost.  There's some advantage to
+ * containing one or more operands in the L1: on some systems, this results
+ * in better max perf, but on all systems it helps to reduce bandwidth demands
+ * for parallel operations.  So, don't expand kb beyond L1 if a square problem
+ * could fit (since longer than NB KB has only marginal benefit, that might
+ * prevent a more substantial in-L1 benefit).  If problem is really tiny,
+ * may make sense to contain both C & A in the cache.  We ignore the case
+ * where, C/A and the col-major A all fit, as that is super-tiny
+ */
+   szC = ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+         * ATL_SYRKK_VLEN;
+   szC *= ((nnu+1)*nnu)>>1;  /* only need lower tri blks, not full nnu*nnu */
+   if (szC < ATL_L1elts)  /* If we can't fit C in L1, no square block can */
+   {
+      szE = ATL_L1elts - szC;  /* szE = elts in L1 after C stored there */
+      kb = (szE>>1) / NN;      /* fit A, Ac & C all in L1 */
+      if (kb < N)
+         kb = ATL_L1elts / N;  /* fill L1 with just A */
+      kb = (kb/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+      if (kb < N)              /* if we can't make at least square */
+         kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   }
+   else  /* just use kb that worked for out-of-L1 best GEMM case */
+      kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   ATL_assert(kb);
+/*
+ * Now, see if we need to reduce kb to enhance parallelism, or if we have full
+ */
+   nkb = K / kb;
+   if (nkb < ATL_NTHREADS && kb > ATL_sqAMM_66KB)  /* need to reduce */
+   {
+      do
+      {
+         kb -= ATL_SYRKK_KU;
+         nkb = K / kb;
+      }
+      while (nkb < ATL_NTHREADS && kb > ATL_sqAMM_66KB);
+   }
+   pd.kb = kb;
+   pd.nnu = nnu;
+   pd.szC = szC;
+   pd.KB0 = pd.kb0 = K - nkb*kb;
+   if (pd.kb0)
+   {
+      #if ATL_SYRKK_KVEC > 1
+         pd.KB0 = ((pd.kb0+ATL_SYRKK_KVEC-1)/ATL_SYRKK_KVEC)*ATL_SYRKK_KVEC;
+      #endif
+   }
+/*
+ * Compute the number of jobs (consisting of multiple kblks) and number of
+ * k blocks given out individually (for load balancing)
+ */
+   pd.N = N;
+   #if 1
+      if (nkb > ATL_NTHREADS*3)
+      {
+         size_t nj, nk1;
+         for (k=1; k < 8; k++)
+         {
+            nk1 = (ATL_NTHREADS-1)<<k;
+            if (nk1+nk1 > nkb)
+               break;
+            nj = (nkb - nk1) >> k;
+            if (nj < 2*ATL_NTHREADS)
+               break;
+         }
+         pd.jobshift = --k;
+         pd.njobs = (nkb - ((ATL_NTHREADS-1)<<k)) >> k;
+         pd.njobs = (pd.njobs/ATL_NTHREADS)*ATL_NTHREADS;
+         pd.nK1 = nkb - (pd.njobs<<k);
+      }
+      else
+      {
+         pd.nK1 = nkb;
+         pd.jobshift = pd.njobs = 0;
+      }
+      #if 0
+      printf("nkb=%d, njob=%d, jobCnt=%d, nK1=%d\n", 
+             (int)nkb, (int)pd.njobs, 1<<pd.jobshift, (int)pd.nK1);
+      #endif
+   #elif 1
+      pd.nK1 = nkb;
+      pd.jobshift = pd.njobs = 0;
+   #elif 0
+      pd.njobs = nkb;
+      pd.jobshift = 0;
+      pd.nK1 = 0;
+   #endif
+   k = (pd.kb0) ? 1 : 0;
+   k += pd.nK1 + pd.njobs << pd.jobshift;
+   P = Mmin(ATL_NTHREADS, k);
+//P = 1;
+   #if Conj_
+      pd.Pcnt = P;
+      pd.NoTrans = (TA == AtlasNoTrans);
+   #endif
+/*
+ * Our SYRK C copy is always to Lower, so if output is Upper, will need
+ * workspace to put the Lower part, before reflecting it to Upper.
+ * Need max of this extra space, or preload distance.
+ */
+   if (Uplo == AtlasUpper)
+   {
+      szT = P * N * N;
+      szE = (szT >= ATL_SYRKK_NU*ATL_SYRKK_NU*2)?ATL_SYRKK_NU*ATL_SYRKK_NU*2:0;
+   }
+   else
+   {
+      szT = 0;
+      szE = ATL_SYRKK_NU*ATL_SYRKK_NU*2;
+   }
+   szA = nnu*ATL_SYRKK_NU * kb;
+   szP = ATL_MulBySize(szA+szC) + ATL_Cachelen;
+   szP = ATL_MulByCachelen(ATL_DivByCachelen(szP + ATL_Cachelen-1));
+   vp = malloc(ATL_MulBySize(P*(szP+szT)+szE)+2*ATL_Cachelen);
+   ATL_assert(vp);
+
+   pd.szA = szA;
+   pd.szW = szP = ATL_DivBySize(szP)SHIFT;
+   pd.w = ATL_AlignPtr(vp);
+   if (Uplo == AtlasUpper)
+   {
+      pd.wT = pd.w + szP*P;
+      pd.wT = ATL_AlignPtr(pd.wT);
+   }
+   else
+      pd.wT = NULL;
+   pd.A = A;
+   pd.C = C;
+   pd.lda = lda;
+   pd.ldc = ldc;
+   pd.alpha = alpha;
+   pd.beta = beta;
+   #ifdef TCPLX
+      pd.ONE = ONE;
+   #endif
+   pd.appBeta = !SCALAR_IS_ONE(beta);
+   pd.Cmut = ATL_mutex_init();
+   if (pd.kb0)
+      pd.KB0ctr = ATL_SetAtomicCount(1);
+   else
+      pd.KB0ctr = NULL;
+   if (pd.njobs)
+      pd.jobCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.njobs,P),pd.njobs,0);
+   else
+      pd.jobCtr = NULL;
+   if (pd.nK1)
+      pd.K1ctr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nK1,P), pd.nK1, 0);
+   else
+      pd.K1ctr = NULL;
+
+
+   if (IS_COLMAJ(TA))
+   {
+      pd.incAk = lda*(kb SHIFT);
+      pd.a2blk = Mjoin(PATL,a2blk_syrkT);
+   }
+   else
+   {
+      pd.incAk = kb SHIFT;
+      pd.a2blk = Mjoin(PATL,a2blk_syrkN);
+   }
+   if (Uplo == AtlasLower)
+   {
+      if (SCALAR_IS_NONE(alpha))
+      {
+         pd.blk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+         if (SCALAR_IS_ONE(beta))
+            pd.blk2c = Mjoin(PATL,syblk2cmat_an_b1);
+         else if (SCALAR_IS_NONE(beta))
+            pd.blk2c = Mjoin(PATL,syblk2cmat_an_bn);
+         else
+            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,syblk2cmat_an_b0) :
+                       Mjoin(PATL,syblk2cmat_an_bX);
+      }
+      else if (SCALAR_IS_ONE(alpha))
+      {
+         pd.blk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+         if (SCALAR_IS_ONE(beta))
+            pd.blk2c = Mjoin(PATL,syblk2cmat_a1_b1);
+         else if (SCALAR_IS_NONE(beta))
+            pd.blk2c = Mjoin(PATL,syblk2cmat_a1_bn);
+         else
+            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,syblk2cmat_a1_b0) :
+                       Mjoin(PATL,syblk2cmat_a1_bX);
+      }
+      else /* alpha = X */
+      {
+         pd.blk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+         if (SCALAR_IS_ONE(beta))
+            pd.blk2c = Mjoin(PATL,syblk2cmat_aX_b1);
+         else if (SCALAR_IS_NONE(beta))
+            pd.blk2c = Mjoin(PATL,syblk2cmat_aX_bn);
+         else
+            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,syblk2cmat_aX_b0) :
+                       Mjoin(PATL,syblk2cmat_aX_bX);
+      }
+   }
+   else 
+   {
+      if (SCALAR_IS_NONE(alpha))
+         pd.blk2c = Mjoin(PATL,syblk2cmat_an_b0);
+      else
+         pd.blk2c = SCALAR_IS_ONE(alpha) ?
+                 Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+   }
+
+   ATL_goParallel(P, DoWork, NULL, &pd, NULL);
+
+   ATL_mutex_free(pd.Cmut);
+   if (pd.KB0ctr)
+      ATL_FreeAtomicCount(pd.KB0ctr);
+   if (pd.K1ctr)
+      ATL_FreeGlobalAtomicCount(pd.K1ctr);
+   if (pd.jobCtr)
+      ATL_FreeGlobalAtomicCount(pd.jobCtr);
+   free(vp);
 }
