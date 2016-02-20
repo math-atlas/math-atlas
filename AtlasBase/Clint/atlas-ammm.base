@@ -22125,6 +22125,144 @@ int Mjoin(PATL,@(sh)GetAmmInfoInt)(char wh, int idx)
    }
    return(0);
 }
+@ROUT ATL_GetAmmmInfoSQ
+/*
+ * Designed for parallelism mainly on C blocks, K > LASTKB (ipinfo, not opinfo)
+ * C is known to be Upper or Lower.  Fills in only M/N blocking info in ipinfo.
+ */
+int Mjoin(PATL,tGetParTriCIndx)(ipinfo_t *ip, int P, size_t N, size_t K)
+{
+   unsigned int ik=ATL_AMM_NCASES-1, nb0, nb, mu, nu;
+   size_t nmblks, nnblks, ncblks;
+
+   if (K < ATL_@(sh)AMM_LASTKB)
+      for (ik=0; ik < ATL_AMM_NCASES && ATL_AMM_KBs[ik] < K; ik++);
+   mu = ATL_AMM_MUs[ik];
+   nu = ATL_AMM_NUs[ik];
+   nb0 = nb = ATL_AMM_NBs[ik];
+/*
+ * If blocking tuned to KB provides enough parallelism, just use it
+ */
+   nnblks = N/nb;
+   ncblks = ((nnblks-1)*nnblks)>>1 + nnblks;
+   if (ncblks >= P)  /* standard blocking provides enough parallelism */
+   {
+      unsigned int n;
+      n = N - nb*nnblks;
+      if (n)
+      {
+         ip->nfnblks = nnblks;
+         ip->npnblks = 1;
+         ip->nb = nb;
+         ip->pnb = ((n+nu-1)/nu)*nu;
+      }
+      else
+      {
+         ip->nfnblks = nnblks;
+         ip->npnblks = 0;
+         ip->nb = ip->pnb = nb;
+      }
+      ip->nfmblks = ip->nfnblks;
+      ip->npmblks = 0;
+      ip->mb = ip->nb
+      ip->pmb = ip->pnb;
+      return(ik);
+   }
+/*
+ * If we reach here, must reduce nb for parallelism, but don't go below
+ * NB that gets 66% of original perf (better to reduce P)
+ */
+   if (N <= ATL_sqAMM_66NB)
+      nb = nu*((N+nu-1)/nu);
+   else if (ATL_sqAMM_66NB <= ATL_sqAMM_50NB + nu)
+      nb = nu*((ATL_sqAMM_66NB+nu-1)/nu);
+   else
+      nb = nu*(ATL_sqAMM_66NB/nu);
+   nnblks = N/nb;
+   ncblks = (((nnblks-1)*nnblks)>>1 + nnblks);
+   if (ncblks < P)  /* nb at min, so reduce parallelism */
+   {
+      unsigned int n;
+      n = N - nb*nnblks;
+      if (!n)
+      {
+         ip->pnb = ip->nb = nb;
+         ip->npnblks = 0;
+         ip->nfnblks = nnblks;
+      }
+      else if (n < nu || n+nb <= nb0)
+      {
+         ip->nb = nb + ((n+nu-1)/nu)*nu;
+         ip->pnb = nb;
+         ip->nfnblks = 1;
+         ip->npnblks = (nnblks) ? nnblks - 1 : 0;
+      }
+      else
+      {
+         ip->nb = nb;
+         ip->nfnblks = nnblks;
+         ip->npnblks = 1;
+         ip->pnb = n;
+      }
+      ip->nfmblks = ip->nfnblks;
+      ip->npmblks = 0;
+      ip->mb = ip->nb
+      ip->pmb = ip->pnb;
+      return(ik);
+   }
+/*
+ * If we get to here, present setting using minimal nb gives enough
+ * parallelism, so look at increasing nb towards nb0 until we reach P limit.
+ * The idea is that once we have the required parallelism, we want
+ * to increase block performance back up towards maximum for KB.
+ */
+   if (nb0 > N)
+      nb0 = ((N+nu-1)/nu)*nu;
+   while (1)
+   {
+      unsigned int nbN=nb;
+      size_t cblks, nblks;
+      if (nb < nb0)
+      {
+         nbN += nu;
+         nblks = N / nbN;
+         cblks = ((nblks-1)*nblks)>>1 + nblks;
+         if (cblks < P)
+            break;
+         nnblks = nblks;
+      }
+      else
+         break;
+      nb = nbN;
+      ncblks = cblks;
+   }
+   nb0 = N - nnblks * nb;
+   if (nb0 > nu)
+   {
+      ip->nfnblks = nnblks;
+      ip->npnblks = 1;
+      ip->nb = nb;
+      ip->pnb = ((nb0+nu-1)/nu)*nu;
+   }
+   else if (!nb0)
+   {
+      ip->nfnblks = nnblks;
+      ip->npnblks = 0;
+      ip->pnb = ip->nb = nb;
+   }
+   else  /* N%nb <= nu */
+   {
+      ip->nfnblks = 1;
+      ip->npnblks = (nnblks) ? nnblks-1 : 0;
+      ip->nb = nb+nu;
+      ip->pnb = nb;
+   }
+   ip->nfmblks = ip->nfnblks;
+   ip->npmblks = 0;
+   ip->mb = ip->nb
+   ip->pmb = ip->pnb;
+   return(ik);
+}
 @ROUT ATL_GetAmmmInfo
 /*
  * Designed for parallelism mainly on C blocks, K > LASTKB (ipinfo, not opinfo)
