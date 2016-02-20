@@ -61,6 +61,21 @@
  * POWERPC/ARM64 feature weakly-ordered cache systems, and so we need _cbc_
  * routs with the correct memory and OOE fences to guarantee correct behavior.
  *
+ * This file defines the following integer macros
+ * ATL_CBC_WEAK : defined to 0 on systems known to be strongly ordered, else 1
+ * ATL_CBC_STRONG: !ATL_CBC_WEAK
+ * ATL_CBC_RBAR : 1 if ATL_rmembar is defined, else 0
+ * ATL_CBC_WBAR : 1 if ATL_wmembar is defined, else 0
+ * ATL_CBC_RWBAR: 1 if ATL_membar is defined, else 0
+ * ATL_CBC_NOBAR: 1 if there is no safe memory barrier method (must use mutex)
+ *
+ * In addition, only strongly ordered caches, the macro ATL_ALIAS_CBC will
+ * be defined, which just means that we don't compile the cbc_ variants of
+ * some functions.  Remembering that ATL_barrier is a barrier using CBC
+ * communication, and ATL_cbc_barrier is a barrier that *also* does a 
+ * memory fence, then these two funcs are the same thing on a strongly-ordered
+ * system, so rather than compiling two routs, we'll just alias them.
+ *
  * This file also provides macros for barriers that can be used:
  * ATL_membar : force all prior local stores globally visible before executing 
  *              any following local stores, and do not allow any local loads 
@@ -69,21 +84,33 @@
  * ATL_wmembar: force all prior local stores globally visible before executing
  *              any following local stores
  *
+ *
  ******************************************************************************
  */
+/*
+ * By default, we assume weakly-ordered with mutexes required.  This will
+ * be overwridden for known systems below
+ */
+#define ATL_CBC_WEAK  1  /* assume weakly-ordered (worse case) */
+#define ATL_CBC_RBAR  0 
+#define ATL_CBC_WBAR  0
+#define ATL_CBC_RWBAR 0
+#define ATL_CBC_NOBAR 1 /* assume no memory barrier support */ 
+
 /*
  * All known x86 use strongly-ordered caches, so CBC is safe.  
  * There are some instructions on the PHI that seem to violate strong ordering,
  * but ATLAS does not presently use them.  If these inst become important,
- * we may need to define the barriers
+ * we may need to define the barriers, which I've outlined below (untested)
  */
 #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
-   #define ATL_CBC_HANDLED 1
-   #define ATL_USE_CBC 1
+   #undef ATL_CBC_WEAK
+   #define ATL_CBC_WEAK  0 
    #define ATL_ALIAS_CBC 1
-   #define ATL_CBC_STRONG 1
    #ifdef ATL_ALIAS_CBC
       #define ATL_membar
+      #define ATL_rmembar
+      #define ATL_wmembar
    #else
       #define ATL_membar __asm__ __volatile__ ("mfence" : : : "memory")
       #define ATL_rmembar __asm__ __volatile__ ("lfence" : : : "memory")
@@ -92,13 +119,19 @@
 /*
  * ARM has weakly-ordered cache, so CBC must use explicit membarrier to work.
  * This memory barrier code provided by David Nuechterlein, who has gotten
- * CBC-based codes to work based on it.
+ * CBC-based codes to work based on it.  Only defined for GNUC because I
+ * need a way to do inline assembly, can support other compilers if given info.
  */
 #elif defined(ATL_ARCH_ARM64) || defined(ATL_ARCH_ARMv7)
-   #define ATL_CBC_STRONG 0
    #if __GNUC__
-      #define ATL_CBC_HANDLED 1
-      #define ATL_USE_CBC 1
+      #undef  ATL_CBC_RBAR
+      #define ATL_CBC_RBAR  1
+      #undef  ATL_CBC_WBAR
+      #define ATL_CBC_WBAR  1
+      #undef  ATL_CBC_RWBAR
+      #define ATL_CBC_RWBAR 1
+      #undef  ATL_CBC_NOBAR
+      #define ATL_CBC_NOBAR 0
       #define ATL_membar __asm__ __volatile__ ("dmb sy" : : : "memory")
       #define ATL_rmembar __asm__ __volatile__ ("isb sy" : : : "memory")
       #define ATL_wmembar __asm__ __volatile__ ("dmb st" : : : "memory")
@@ -120,40 +153,44 @@
  * to do some experimentation later.
  */
 #elif defined(ATL_ARCH_PPCG4) || defined(ATL_ARCH_PPCG5)
-   #define ATL_CBC_STRONG 0
    #ifdef __GNUC__
       #define ATL_membar __asm__ __volatile__ ("sync")
    #endif
 #elif defined(ATL_ARCH_POWER3) || defined(ATL_ARCH_POWER4) || \
       defined(ATL_ARCH_POWER5) || defined(ATL_ARCH_POWER6) || \
       defined(ATL_ARCH_POWER7) || defined(ATL_ARCH_POWER8)
-   #define ATL_CBC_STRONG 0
    #ifdef __GNUC__
       #define ATL_membar __asm__ __volatile__ ("dcs")
    #endif
 #endif
-#ifndef ATL_CBC_STRONG       /* for safety, default to */
-   #define ATL_CBC_STRONG 0  /* to weakly-ordered cache assumption */
+#ifndef ATL_CBC_WEAK
+   #error "Malformed atlas_cbc.h!"
 #endif
-#ifdef ATL_CBC_HANDLED
-   #undef ATL_CBC_HANDLED
+#if ATL_CBC_WEAK
+   #define ATL_CBC_STRONG 0
 #else
-   #ifdef ATL_USE_CBC
-      #undef ATL_USE_CBC
-   #endif
-   #ifdef ATL_membar
-      #undef ATL_membar
-   #endif
-   #define ATL_membar
+   #define ATL_CBC_STRONG 1
+#endif
+#if !ATL_CBC_RBAR && defined(ATL_rmembar)
+   #undef ATL_rmembar
+#endif
+#if !ATL_CBC_WBAR && defined(ATL_wmembar)
+   #undef ATL_wmembar
+#endif
+#if !ATL_CBC_RWBAR && defined(ATL_membar)
+   #undef ATL_membar
 #endif
 /*
  * If read/write membarrier not defined, defined them as global membarrier
  */
-#ifndef ATL_rmembar
+#if !ATL_CBC_RBAR && ATL_CBC_RWBAR
    #define ATL_rmembar ATL_membar
 #endif
-#ifndef ATL_wmembar
+#if !ATL_CBC_WBAR && ATL_CBC_RWBAR
    #define ATL_wmembar ATL_membar
+#endif
+#if !ATL_CBC_RWBAR && ATL_CBC_WBAR && ATL_CBC_RBAR
+   #define ATL_membar { ATL_wmembar ; ATL_rmembar; }
 #endif
 void ATL_barrier(ATL_CUINT P, ATL_CUINT IAM, void*);
 void ATL_barrier_nopost0(ATL_CUINT P, ATL_CUINT IAM, void*);
@@ -232,6 +269,16 @@ char ATL_post(ATL_CUINT rank, void *vchk);
       #define mybarr ATL_barrier_nopost0
    #endif
 #endif
+/*
+ * The DOFENCE varient must do a memory fence on systems wt weakly-ordered
+ * caches.  On such systems w/o membar support (eg., POWER), we need
+ * something for correctness, so I do lock & unlock a mutex to force
+ * flushing the write buffers.  The code is ugly, but allows me to use
+ * the same model of comminication w/o writing special code everywhere.
+ *
+ * It hurt me more to write this piece of crap than it hurts you to read it,
+ * so stuff you and your judgement!
+ */
 void mybarr
 (
    ATL_CUINT P,     /* # of threads to barrier */
@@ -245,25 +292,26 @@ void mybarr
 
    if (iam)
    {
-      #if !defined(ATL_USE_CBC) && defined(DOFENCE)
-         ATL_mutex_lock(ATL_TP_PTR->cbcmut);
+      #if defined(DOFENCE) && ATL_CBC_WEAK /* need to membar */
+         #if ATL_CBC_NOBAR
+            ATL_mutex_lock(ATL_TP_PTR->cbcmut);
+         #else
+            ATL_wmembar;
+         #endif
       #endif
       bchk[II] = newv;
-/*
- *    I use this barrier to do memory sync on systems with weakly-ordered
- *    caches.  On such systems w/o membar support (eg., POWER), we need
- *    something for correctness, so I do lock & unlock a mutex to force
- *    flushing the write buffers.
- *
- *    It hurt me more to write this piece of crap than it hurts you to read
- *    it, stuff you and your judgement.
- */
-      #if !defined(ATL_USE_CBC) && defined(DOFENCE)
+      #if defined(DOFENCE) && ATL_CBC_WEAK && ATL_CBC_NOBAR
          ATL_mutex_unlock(ATL_TP_PTR->cbcmut);
-      #elif defined(DOFENCE)
-         ATL_membar;
       #endif
       while (*bchk != newv);
+      #if defined(DOFENCE) && ATL_CBC_WEAK 
+         #if !ATL_CBC_NOBAR
+            ATL_rmembar;
+         #else
+            ATL_mutex_lock(ATL_TP_PTR->cbcmut);   /* crappy ATL_rmembar */
+            ATL_mutex_unlock(ATL_TP_PTR->cbcmut); /* with huge overhead! */
+         #endif
+      #endif
    }
    else
    {
@@ -274,15 +322,19 @@ void mybarr
          while (bchk[d] != newv);
       }
       #ifdef DOPOST
-         #ifdef DOFENCE
-            #if !defined(ATL_USE_CBC)
-               ATL_mutex_lock(ATL_TP_PTR->cbcmut);
+         #if defined(DOFENCE) && ATL_CBC_WEAK
+            #if !ATL_CBC_NOBAR
+               ATL_wmembar;
             #else
-               ATL_membar;
+               ATL_mutex_lock(ATL_TP_PTR->cbcmut);
             #endif
          #endif
          *bchk = newv;
-         #if !defined(ATL_USE_CBC) && defined(DOFENCE)
+      #endif
+      #if defined(DOFENCE) && ATL_CBC_WEAK
+         #if !ATL_CBC_NOBAR
+            ATL_rmembar;
+         #else
             ATL_mutex_unlock(ATL_TP_PTR->cbcmut);
          #endif
       #endif
@@ -471,8 +523,13 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
          myval[1] = val[1];
       #endif
       *myval = *val;
-      #ifdef DOFENCE
-         ATL_membar;
+      #if defined(DOFENCE) && ATL_CBC_WEAK
+         #if !ATL_CBC_NOBAR
+            ATL_wmembar;
+         #else
+            ATL_mutex_lock(ATL_TP_PTR->cbcmut);   /* ahhhhhh */
+            ATL_mutex_unlock(ATL_TP_PTR->cbcmut); /* the pain, the pain */
+         #endif
       #endif
       *mybool = newv;
       while (*bchk != newv);
@@ -481,6 +538,14 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
          val[1] = ans[1];
       #endif
       idx = *hisidx;
+      #if defined(DOFENCE) && ATL_CBC_WEAK
+         #if !ATL_CBC_NOBAR
+            ATL_rmembar;
+         #else
+            ATL_mutex_lock(ATL_TP_PTR->cbcmut);   /* ahhhhhh */
+            ATL_mutex_unlock(ATL_TP_PTR->cbcmut); /* the pain, the pain */
+         #endif
+      #endif
    }
    else
    {
@@ -548,15 +613,16 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
    volatile char *bchk = (vchk) ? (volatile char*)vchk : ATL_TP_PTR->bchkin;
    ATL_CUINT II = rank<<ATL_chksh;
    const char newv = !bchk[II];
-   #ifdef DOFENCE
-      #if !defined(ATL_USE_CBC)
-         ATL_mutex_lock(ATL_TP_PTR->cbcmut);
+
+   #if defined(DOFENCE) && ATL_CBC_WEAK
+      #if !ATL_CBC_NOBAR
+         ATL_wmembar;
       #else
-         ATL_membar;
+         ATL_mutex_lock(ATL_TP_PTR->cbcmut);   /* make my writes visible */
       #endif
    #endif
    bchk[II] = newv;
-   #if !defined(ATL_USE_CBC) && defined(DOFENCE)
+   #if defined(DOFENCE) && ATL_CBC_WEAK && ATL_CBC_NOBAR
       ATL_mutex_unlock(ATL_TP_PTR->cbcmut);
    #endif
    return(newv);
