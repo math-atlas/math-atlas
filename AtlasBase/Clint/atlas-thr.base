@@ -15560,12 +15560,78 @@ static void DoBlkWtCpy
    }
    if (pd->sysz)
    {
-      ATL_assert(0);
-   #if 0
-      if (pd->sya2blk != ip->a2blk)
+      int kb, KB, nnu, nb;
+      #ifdef TCPLX
+         #ifdef Conj_
+            TYPE *crA, *ciA;
+         #endif
+         TYPE *rA, *rC;
+         ammkern_t amm_b1=(ibeta)?Mjoin(PATL,amsyrkK_b1):Mjoin(PATL,amsyrkK_b0);
+         ammkern_t amm_bn=(ibeta)?Mjoin(PATL,amsyrkK_bn):Mjoin(PATL,amsyrkK_b0);
+      #else
+         ammkern_t amm=(ibeta)?Mjoin(PATL,amsyrkK_b1):Mjoin(PATL,amsyrkK_b0);
+      #endif
+/*
+ *    Compute dims, and if amm's A or B format not already what we need, copy A
+ */
+      if (kblk != ip->nfkblks)
+         kb = KB = ip->kb;
+      else
+      {
+          kb = ip->kb0;
+          #if ATL_SYRKK_KVEC > 1
+             KB = ((kb+ATL_SYRKK_KVEC-1)/ATL_SYRKK_KVEC)*ATL_SYRKK_KVEC;
+          #else
+             KB = kb;
+          #endif
+      }
+      nb = (dblk != pd->ndiag-1) ? ip->nb : ip->nF;
+      nnu = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
+      if (pd->sya2blk == ip->b2blk)
+      {
+         wA = wB;
+         #ifdef TCPLX
+            rA = wA + KB*nb;
+         #endif
+      }
+      else if (pd->sya2blk != ip->a2blk)
+      {
          wA = wC + pd->sysz;
-      a2blk(kb, nb, ATL_rone, A, lda, wA);
-   #endif
+         #ifdef TCPLX
+            rA = wA + KB*nnu*ATL_SYRKK_NU;
+            pd->sya2blk(kb, nb, ip->ONE, IdxA_ip(ip, pd->A, dblk, dblk), 
+                        pd->lda, rA, wA);
+         #else
+            pd->sya2blk(kb, nb, ATL_rone, IdxA_ip(ip, pd->A, dblk, dblk), 
+                        pd->lda, wA);
+         #endif
+      }
+      #ifdef TCPLX
+      else
+         rA = wA + KB*nnu*ATL_SYRKK_NU;
+      #endif
+/*
+ *    Perform the SYRK
+ */
+      #ifdef TCPLX
+         rC = wC + ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+                     *ATL_SYRKK_VLEN;
+         #ifdef Conj_
+            crA = (!TA) ? rA : iA;
+            ciA = (!TA) ? iA : rA;
+            amm_b1(nnu, nnu, KB, wA, wA, rC, crA, ciA, wC);
+            amm_bn(nnu, nnu, KB, crA, ciA, wC, rA, rA, rC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, KB, rA, rA, rC, ciA, crA, wC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, KB, ciA, crA, wC, wA, wA, rC);
+         #else
+            amm_bn(nnu, nnu, KB, wA, wA, rC, rA, wA, wC);
+            amm_b1(nnu, nnu, KB, rA, wA, wC, rA, rA, rC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, KB, rA, rA, rC, wA, rA, wC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, KB, wA, rA, wC, wA, wA, rC);
+         #endif
+      #else
+         amm(nnu, nnu, KB, wA, wA, wC, wA, wA, wC);   
+      #endif
    }
    else
       Mjoin(PATL,ipCompBlk)(ip, dblk, dblk, kblk, ibeta, wA, wB, wC, wA,wB,wC);
@@ -15581,6 +15647,7 @@ static void DoBlksWtCpy
 )
 {
    ipinfo_t *ip=pd->ip;
+   const size_t ldc = ip->ldc;
    #ifdef TCPLX
       const TYPE *beta=ip->ONE;
       #define ONE ip->ONE
@@ -15590,14 +15657,11 @@ static void DoBlksWtCpy
       #define ZERO ATL_rzero
       TYPE beta = ONE;
    #endif
+   ATL_UINT szC=ip->szC;
    const int TRANS = (pd->TA == AtlasTrans);
    int kblk = pd->nkblks - kctr;
    int b;
    TYPE *wA, *wB, *w, *c;
-   if (dblk != pd->ndiag-1)
-      b = (dblk < ip->nfnblks) ? ip->nb : ip->pnb;
-   else
-      b = ip->nF;
    DoBlkWtCpy(rank, pd, dblk, kblk, 0, wC);
    while (kctr = ATL_DecGlobalAtomicCount((pd->KbegCtr)[dblk], rank))
    {
@@ -15605,15 +15669,55 @@ static void DoBlksWtCpy
       DoBlkWtCpy(rank, pd, dblk, kblk, 1, wC);
    }
 /*
- * Since I'm done with this blk of C, copy it to block-major storage, and
- * scale by alpha (blk2c won't access only triangle, so must cpy first)
+ * For C writeout, must go through workspace to avoid writing outside the
+ * triangle, unless you use the SYRK kernel and Uplo == Lower
  */
-   w = wC + (ip->szC SHIFT);
-   Mjoin(PATL,zero)(b*b, w, 1);
+   if (!pd->sysz) /* used gemm to compute diag blk */
+   {
+      if (dblk != pd->ndiag-1)
+         b = (dblk < ip->nfnblks) ? ip->nb : ip->pnb;
+      else
+         b = ip->nF;
+/*
+ *    Since I'm done with this blk of C, copy it to block-major storage, and
+ *    scale by alpha (blk2c won't access only triangle, so must cpy first)
+ */
+      w = wC + (szC SHIFT);
+      Mjoin(PATL,zero)(b*b, w, 1);
+      #ifdef TCPLX
+         ip->blk2c(b, b, ip->alpC, wC, wC+szC, ZERO, w, b);
+      #else
+         ip->blk2c(b, b, ip->alpC, wC, ZERO, w, b);
+      #endif
+   }
+   else if (!pd->LOWER)  /* Upper must use workspace */
+   {
+      #ifdef TCPLX
+         const TYPE *alpha;
+      #else
+         TYPE alpha;
+      #endif
+      if (ip->alpA == ip->alpB)
+         alpha = ip->alpC;
+      else if (ip->alpA == ip->alpC)
+         alpha = ip->alpB;
+      else
+         alpha = ip->alpA;
+      szC = ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+            *ATL_SYRKK_VLEN;
+      b = (dblk < ip->nfnblks) ? ip->nb : ip->nF;
+      w = wC+(szC<<1);
+      #ifdef TCPLX
+         pd->syblk2c(b, b, alpha, wC+szC, wC, ZERO, w, b);
+      #else
+         w = wC+szC;
+         pd->syblk2c(b, b, alpha, wC, ZERO, w, b);
+      #endif
+   }
    #ifdef TCPLX
-      ip->blk2c(b, b, ip->alpC, wC, wC+ip->szC, ZERO, w, b);
-   #else
-      ip->blk2c(b, b, ip->alpC, wC, ZERO, w, b);
+   else
+      szC = ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+            *ATL_SYRKK_VLEN;
    #endif
 /*
  * Now, seize mutex for diagonal block of original C, and copy back out
@@ -15626,17 +15730,70 @@ static void DoBlksWtCpy
       ATL_SetBitBV(pd->dbetaBV, dblk); /* tell rest of thrs don't apply beta */
       beta = pd->beta;                 /* because I'm going to do it */
    }
-   if (pd->LOWER)
+   if (!pd->sysz)
    {
-      int j;
-      for (j=0; j < b; j++, c += (pd->ldc+1)SHIFT, w += (b+1)SHIFT)
-          Mjoin(PATL,axpby)(b-j, ONE, w, 1, beta, c, 1);
+      if (pd->LOWER)
+      {
+         int j;
+         for (j=0; j < b; j++, c += (ldc+1)SHIFT, w += (b+1)SHIFT)
+             Mjoin(PATL,axpby)(b-j, ONE, w, 1, beta, c, 1);
+      }
+      else
+      {
+         int j;
+         for (j=0; j < b; j++, c += ldc, w += b)
+             Mjoin(PATL,axpby)(j+1, ONE, w, 1, beta, c, 1);
+      }
    }
-   else
+   else if (pd->LOWER)  /* can write directly to C */
    {
-      int j;
-      for (j=0; j < b; j++, c += pd->ldc, w += b)
-          Mjoin(PATL,axpby)(j+1, ONE, w, 1, beta, c, 1);
+      ablk2cmat_t blk2c = (SCALAR_IS_ONE(beta) ? pd->syblk2c_b1 : pd->syblk2c);
+      #ifdef TCPLX
+         const TYPE *alpha;
+      #else
+         TYPE alpha;
+      #endif
+      b = (dblk < ip->nfnblks) ? ip->nb : ip->nF;
+      if (ip->alpA == ip->alpB)
+         alpha = ip->alpC;
+      else if (ip->alpA == ip->alpC)
+         alpha = ip->alpB;
+      else
+         alpha = ip->alpA;
+      #ifdef TCPLX
+         blk2c(b, b, alpha, wC+szC, wC, beta, c, ldc);
+         #ifdef Conj_  /* must zero complex part of diagonal! */
+            Mjoin(PATLU,zero)(N, C+1, (ldc+1)SHIFT);
+         #endif
+      #else
+         blk2c(b, b, alpha, wC, beta, c, ldc);
+      #endif
+   }
+   else  /* Upper syrk needs to copy from copy made above */
+   {
+      size_t k;
+      #ifdef TCPLX
+         const size_t ldc2 = ldc+ldc;
+      #else
+         #define ldc2 ldc
+      #endif
+      #ifdef Conj_  /* must zero imag part of diag for HERK */
+         for (k=0; k < b; k++, w += 2, c += ldc2)
+         {
+            Mjoin(PATL,axpbyConj)(k+1, ONE, w, b, beta, c, 1);
+            C[((k+1)<<1)-1] = ATL_rzero;
+         }
+      #else
+         if (SCALAR_IS_ZERO(beta))
+            for (k=0; k < b; k++, w += (1 SHIFT), c += ldc2)
+               Mjoin(PATL,copy)(k+1, w, b, c, 1);
+         else
+            for (k=0; k < b; k++, w += (1 SHIFT), c += ldc2)
+               Mjoin(PATL,axpby)(k+1, ONE, w, b, beta, c, 1);
+      #endif
+      #ifndef TCPLX
+         #undef ldc2
+      #endif
    }
    ATL_mutex_unlock(pd->Cdmuts[dblk]);
 }
@@ -15845,6 +16002,8 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
 /*
  * Compute size of private workspace based on whether we'll be using syrk or
  * gemm for diagonal blks
+ * Note this code currently wrong.  You can find the probs with:
+ *   valgrind --leak-check=yes ./xdl3blastst_pt -R syrk -n 4
  */
    if (0)
    {
