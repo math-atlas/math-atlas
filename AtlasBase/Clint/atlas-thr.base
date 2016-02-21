@@ -1074,6 +1074,9 @@ typedef struct ATL_tsyrk_ammN ATL_tsyrk_ammN_t;
 struct ATL_tsyrk_ammN
 {
    ipinfo_t *ip;
+   ablk2cmat_t syblk2c;
+   ablk2cmat_t syblk2c_b1;
+   cm2am_t sya2blk;
    const TYPE *A;    /* input matrix */
    TYPE *C;          /* output matrix */
    TYPE *wC;         /* ATL_NTHREADS thread-local nb*nb workspaces */
@@ -1091,8 +1094,7 @@ struct ATL_tsyrk_ammN
    void **KbegCtr;   /* K-counters for dealing out diagonal blocks */
    void **KdonCtr;   /* K-counters for completed diagonal blocks */
    void **Cdmuts;    /* mutex locks for each diagonal block of C */
-@skip   void *CdonCtr;    /* non-diag computation finished when we reach 0 */
-   size_t panszA;    /* nkblks * blkszA */
+   size_t wrksz;     /* total elts in each threads' wC array */
    size_t lda, ldc;  /* gap between columns (stride within rows) */
    #ifndef TCPLX
       TYPE beta;
@@ -1108,13 +1110,13 @@ struct ATL_tsyrk_ammN
       int BoffC;
    #endif
    VINT cpydone;     /* set when all A/A' copying complete */
+   uint sysz;        /* 0: use mm, else gap to SYRK workspace */
    int LOWER;        /* set true if lower triangular C */
    int TA;           /* 0: noTrans; 1: Trans */
    int ndiag;        /* # of diagonal blocks */
    int ncblks;       /* # of non-diagonal blocks left to be assigned */
    int nkblks;       /* # of k blocks, including any partial block */
    int NODWORK;      /* set to 1 by first thread to find all work started */
-   int nbnb;         /* nb * nb */
 };
 /*
  * This data structure for doing access-major threaded gemm for moderately
@@ -14816,6 +14818,8 @@ int Mjoin(PATL,tammm)
 #define ATL_INDX    1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
+#include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+
 /* 
  * Translates C coordinate in lower triangular matrix to Cblk #.
  * nm is the number of Mblocks, 
@@ -15322,7 +15326,7 @@ static void DoNonDiagChunk(const int rank, ATL_tsyrk_ammN_t *pd)
    const unsigned crank = rank / pd->ncores;  /* my context rank */
    int ic;
 
-   TYPE *wC = pd->wC + (rank+rank)*(pd->nbnb);
+   TYPE *wC = pd->wC + rank*pd->wrsk);
    volatile int *chkin;
 
    ic = rank - crank*pd->ncores;  /* What core am I on? */
@@ -15438,7 +15442,7 @@ static void DoNonDiagChunk(const int rank, ATL_tsyrk_ammN_t *pd)
 static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 {
    ipinfo_t *ip=pd->ip;
-   TYPE *wC = pd->wC + (rank+rank)*(pd->nbnb), *wA = pd->wA, *wB = pd->wAt;
+   TYPE *wC = pd->wC + rank*pd->wrksz, *wA = pd->wA, *wB = pd->wAt;
    TYPE *C = pd->C;
    #ifdef TCPLX
       const TYPE *beta=pd->beta;
@@ -15481,7 +15485,7 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
    const unsigned int ncntxts=pd->ncntxts;
    unsigned int nnuC, nr;
    int ic, k;
-   TYPE *wC = pd->wC + (rank+rank)*(pd->nbnb);
+   TYPE *wC = pd->wC + rank*pd->wrksz;
    volatile int *chkin;
    int mycnt;
    chkin = (volatile int*) (((volatile char *)pd->chkin)+ATL_Cachelen*ic);
@@ -15554,7 +15558,17 @@ static void DoBlkWtCpy
          ATL_mutex_unlock(pd->cdmut);
       }
    }
-   Mjoin(PATL,ipCompBlk)(ip, dblk, dblk, kblk, ibeta, wA, wB, wC, wA, wB, wC);
+   if (pd->sysz)
+   {
+      ATL_assert(0);
+   #if 0
+      if (pd->sya2blk != ip->a2blk)
+         wA = wC + pd->sysz;
+      a2blk(kb, nb, ATL_rone, A, lda, wA);
+   #endif
+   }
+   else
+      Mjoin(PATL,ipCompBlk)(ip, dblk, dblk, kblk, ibeta, wA, wB, wC, wA,wB,wC);
 }
 
 static void DoBlksWtCpy
@@ -15657,7 +15671,7 @@ static void DoBlksWtCpy
 static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 {
    int DIAG=1, k;
-   TYPE *myC = pd->wC + (rank+rank)*(pd->ip->szC);
+   TYPE *myC = pd->wC + rank*pd->wrksz;
    while (!(pd->NODWORK))
    {
        int d=0;
@@ -15752,7 +15766,7 @@ int Mjoin(PATL,tsyrk_amm_N)
 )
 {
    void *vp;
-   size_t sz, szA;
+   size_t sz, szA, szP;
    #ifdef Conj_
       const enum ATLAS_TRANS TB = (TA == AtlasNoTrans) ?
                                   AtlasConjTrans : AtlasNoTrans;
@@ -15823,18 +15837,89 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
       Mjoin(PATL,syrk)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       return(0);
    }
-   ndiag = ip.nfnblks + ip.npnblks;
-   ncblks = ((ndiag-1)*ndiag)>>1;
 /*
  * Set up parallel data structure
  */
+   ndiag = ip.nfnblks + ip.npnblks;
+   ncblks = ((ndiag-1)*ndiag)>>1;
+/*
+ * Compute size of private workspace based on whether we'll be using syrk or
+ * gemm for diagonal blks
+ */
+   if (0)
+   {
+      szP = ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+         * ATL_SYRKK_VLEN;
+      szP *= ((ip.nnu+1)*ip.nnu)>>1;
+      szP = ATL_DivBySize(ATL_MulByCachelen(ATL_DivByCachelen(
+                          ATL_MulBySize(szP)+ATL_Cachelen-1)));
+      pd.sysz = szP SHIFT;
+      szP += ip.szA;
+      pd.sya2blk = (TA == AtlasNoTrans) ? 
+                   Mjoin(PATL,a2blk_syrkT) : Mjoin(PATL,a2blk_syrkN);
+      if (Uplo == AtlasLower)
+      {
+         if (SCALAR_IS_NONE(alpha))
+         {
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+            if (SCALAR_IS_ONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b1);
+            else if (SCALAR_IS_NONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_an_bn);
+            else if (SCALAR_IS_ZERO(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b0);
+            else
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_an_bn);
+         }
+         else if (SCALAR_IS_ONE(alpha))
+         {
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+            if (SCALAR_IS_ONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b1);
+            else if (SCALAR_IS_NONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_bn);
+            else if (SCALAR_IS_ZERO(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b0);
+            else
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_bn);
+         }
+         else  /* alpha = X */
+         {
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+            if (SCALAR_IS_ONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b1);
+            else if (SCALAR_IS_NONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_bn);
+            else if (SCALAR_IS_ZERO(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b0);
+            else
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_bn);
+         }
+      }
+      else  /* Upper must use workspace */
+      {
+         if (SCALAR_IS_NONE(alpha))
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b0);
+         else
+            pd.syblk2c = SCALAR_IS_ONE(alpha) ?
+               Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+      }
+   }
+   else
+   {
+      pd.sysz = 0;   /* use amm for diagonal blocks */
+      szP = ip.szC + ip.nb * ip.nb;
+   }
+   szP = ATL_MulByCachelen(ATL_DivByCachelen(ATL_MulBySize(szP) + 
+                           2*ATL_Cachelen-1));
    nkblks = ip.nfkblks + 1;
    szA = nkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
    sz = (ndiag+ndiag+ndiag)*sizeof(void*);    /* space for Ctr & mut arrays */
-   sz += 2*P*ATL_MulBySize(ip.szC);           /* local C wrkspc */
+   sz += P*szP;                               /* local C wrkspc */
    sz += ATL_MulBySize(szA+szA);              /* A/At workspace */
    sz += ATL_MulBySize((ip.mu<<1)*ip.nu);     /* advance load buffer */
    sz += 3*ATL_Cachelen;                      /* room for alignment */
+   pd.wrksz = szP = ATL_DivBySize(szP)SHIFT;  /* make elts, not bytes */
    #ifdef ATL_PHI_SORTED
       if (pd.ncntxts > 1)
          sz += ATL_Cachelen*(pd.ncores+1);
@@ -15867,9 +15952,7 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    pd.LOWER = (Uplo == AtlasLower);
    pd.ndiag = ndiag;
    pd.ncblks = ncblks;
-   pd.panszA = nkblks*ip.szA;
    pd.nkblks = nkblks;
-   pd.nbnb = nb*nb;
    pd.beta = beta;
       
    pd.cpydone = pd.NODWORK = 0;
