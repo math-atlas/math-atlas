@@ -1114,7 +1114,6 @@ struct ATL_tsyrk_ammN
    int ncblks;       /* # of non-diagonal blocks left to be assigned */
    int nkblks;       /* # of k blocks, including any partial block */
    int NODWORK;      /* set to 1 by first thread to find all work started */
-   int nb;           /* N blocking used for all but remainder block */
    int nbnb;         /* nb * nb */
 };
 /*
@@ -15249,6 +15248,7 @@ static int GetCBlkChunk(const int rank, ATL_tsyrk_ammN_t *pd)
    return(ib);
 }
 #endif
+#endif
 
 static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
 {
@@ -15313,88 +15313,6 @@ static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
    }
    while(1);
    return(-1);
-}
-
-/*
- * computes (i,j) non-diagonal block of C
- */
-#ifndef ATL_PHI_SORTED2
-static void DoCblk(const int rank, ATL_tsyrk_ammN_t *pd, TYPE *wC, int i, int j)
-#else
-static void DoCblk(const int rank, ATL_tsyrk_ammN_t *pd, TYPE *wC, int i, int j,
-                   cont int crank)
-#endif
-{
-   const ammkern_t amm = pd->amm_b1;
-   const unsigned int nkblks=pd->nkblks, bs=pd->blkszA, kb=pd->kb, NB=pd->nb;
-   unsigned int nmu, nnu, mb, nb;
-   #ifdef ATL_PHI_SORTED2
-      unsigned int nnuC, nr;  /* nnu / ncntxts */
-   #endif
-   const TYPE *wA, *wB, *wAn, *wBn;
-   TYPE *c;
-   int k;
-
-   if (!(pd->LOWER))
-   {
-      k = i;
-      i = j;
-      j = k;
-   }
-   if (j != pd->ndiag-1)
-   {
-      nnu = pd->nnu;
-      nb = pd->nb;
-   }
-   else
-   {
-      nnu = pd->nnuf;
-      nb = pd->nbf;
-   }
-   if (i != pd->ndiag-1)
-   {
-      nmu = pd->nmu;
-      mb = pd->nb;
-   }
-   else
-   {
-      nmu = pd->nmuf;
-      mb = pd->nbf;
-   }
-   wA = pd->wA + i*pd->panszA;
-   wB = pd->wAt + j*pd->panszA;
-   wA = pd->wA + i*pd->panszA;
-   wB = pd->wAt + j*pd->panszA;
-   #ifdef ATL_PHI_SORTED2
-      nnuC = nnu / pd->ncntxts;
-      nr = nnu - nnuC * pd->ncntxts;
-      if (crank == 1)
-         pB +=
-      else if (crank == 2)
-      else if (crank == 3)
-      pB += bs / pd->ncntxts;
-      if (crank < nr)
-         nnuC++;
-   #endif
-   wAn = wA + bs;
-   wBn = wB + bs;
-   #ifdef DEBUG2
-      if (!ATL_IsBitSetBV(pd->cpydonBV, i) || !ATL_IsBitSetBV(pd->cpydonBV, j))
-          fprintf(stderr, "%d: ndiag=%d, i=%d, j=%d\n", rank, pd->ndiag, i, j);
-      ATL_assert(ATL_IsBitSetBV(pd->cpydonBV, i));
-      ATL_assert(ATL_IsBitSetBV(pd->cpydonBV, j));
-   #endif
-   pd->ammK(nmu, nnu, pd->KB0, wA, wB, wC, wAn, wBn, wC);
-   for (k=1; k < nkblks; k++)
-   {
-      wA = wAn;
-      wB = wBn;
-      wAn += bs;
-      wBn += bs;
-      amm(nmu, nnu, kb, wA, wB, wC, wAn, wBn, wC);
-   }
-   pd->blk2c(mb, nb, *(pd->alpha), wC, *(pd->beta), 
-             pd->C+ NB*(j*(size_t)(pd->ldc) + i), pd->ldc);
 }
 
 #ifdef ATL_PHI_SORTED
@@ -15519,21 +15437,44 @@ static void DoNonDiagChunk(const int rank, ATL_tsyrk_ammN_t *pd)
 #ifndef ATL_PHI_SORTED2
 static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 {
-   const unsigned int ndiag = pd->ndiag;
-   int ic;
-   TYPE *wC = pd->wC + (rank+rank)*(pd->nbnb);
+   ipinfo_t *ip=pd->ip;
+   TYPE *wC = pd->wC + (rank+rank)*(pd->nbnb), *wA = pd->wA, *wB = pd->wAt;
+   TYPE *C = pd->C;
+   #ifdef TCPLX
+      const TYPE *beta=pd->beta;
+      TYPE *rC = wC + ip->szC;
+   #else
+      const TYPE beta=pd->beta;
+      #define rC wC
+   #endif
+   const size_t ndiag = pd->ndiag;
+   size_t ic;
+   const int LOWER=pd->LOWER;
+   const ablk2cmat_t blk2c=ip->blk2c;
 
 //   fprintf(stderr, "%d: START DoNonDiag: ndiag=%d, ncblks=%d\n", 
 //           rank, ndiag, pd->ncblks);
    while ((ic = GetCBlk(rank, pd)) != -1)
    {
-      int i, j;
-      Mcblk2coord(ndiag, ic, i, j);
+      size_t i, j;
+      if (LOWER)
+      {
+         Mcblk2coord(ndiag, ic, i, j);
+      }
+      else
+      {
+         Mcblk2coord(ndiag, ic, j, i);
+      }
 //      fprintf(stderr, "%d: ic=%d, i=%d, j=%d\n", rank, ic, i, j);
-      DoCblk(rank, pd, wC, i, j);
+      Mjoin(PATL,iploopsK)(ip, i, j, NULL, NULL, IdxC_ip(ip, C, i, j), 3,
+                           IdxAw_ip(ip, wA, i, 0), IdxBw_ip(ip, wB, 0, j),
+                           rC, wC, beta, blk2c);
    }
 }
-#else
+#ifndef TCPLX
+   #undef rC
+#endif
+#else  /* PHI_SORTED2 */
 static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 {
    const unsigned int ndiag = pd->ndiag, crank = rank/pd->ncores;
@@ -15581,7 +15522,6 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 }
 #endif
 
-#endif
 /*
  * This routine computes one block C += A * B step, C diagonal block dblk
  */
@@ -15638,7 +15578,7 @@ static void DoBlksWtCpy
    #endif
    const int TRANS = (pd->TA == AtlasTrans);
    int kblk = pd->nkblks - kctr;
-   int b = (dblk == pd->ndiag-1) ? ip->nF : pd->nb;
+   int b;
    TYPE *wA, *wB, *w, *c;
    if (dblk != pd->ndiag-1)
       b = (dblk < ip->nfnblks) ? ip->nb : ip->pnb;
@@ -15654,7 +15594,8 @@ static void DoBlksWtCpy
  * Since I'm done with this blk of C, copy it to block-major storage, and
  * scale by alpha (blk2c won't access only triangle, so must cpy first)
  */
-   w = wC + pd->nbnb;
+   w = wC + (ip->szC SHIFT);
+   Mjoin(PATL,zero)(b*b, w, 1);
    #ifdef TCPLX
       ip->blk2c(b, b, ip->alpC, wC, wC+ip->szC, ZERO, w, b);
    #else
@@ -15716,7 +15657,7 @@ static void DoBlksWtCpy
 static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 {
    int DIAG=1, k;
-   TYPE *myC = pd->wC + (rank+rank)*(pd->nbnb);
+   TYPE *myC = pd->wC + (rank+rank)*(pd->ip->szC);
    while (!(pd->NODWORK))
    {
        int d=0;
@@ -15819,16 +15760,17 @@ int Mjoin(PATL,tsyrk_amm_N)
       const enum ATLAS_TRANS TB = (TA == AtlasNoTrans) ?
                                   AtlasTrans : AtlasNoTrans;
    #endif
-   int NB, nb, mu, nu, ku, ndiag, nkblks, ncnt, nkcnt, blkszA, nbf;
-   int ncblks, kb, kb0, KB0, i, P, idx;
+   size_t ndiag, nkblks, ncblks;
+   int i, P, idx;
+   ATL_UINT nb;
    ATL_tsyrk_ammN_t pd;
    ipinfo_t ip;
 
-   idx = Mjoin(PATL,tGetParTriCIndx)(&ip, ATL_NTHREADS, N, N, K);
+   idx = Mjoin(PATL,tGetParTriCIndx)(ATL_NTHREADS, N, K, &nb);
    Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc,
-                              alpha, beta,
-                              ip.nfmblks, ip.npmblks, ip.mb, ip.pmb,
-                              ip.nfnblks, ip.npnblks, ip.nb, ip.pnb);
+                              alpha, beta, nb);
+printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks, 
+       ip.nb, ip.pnb, ip.mF, ip.nF, ip.nmuF, ip.nnuF);
    ncblks = ip.nfnblks;
    ncblks = (ncblks*(ncblks-1))>>1;
    #ifdef ATL_PHI_SORTED2
@@ -15876,7 +15818,7 @@ int Mjoin(PATL,tsyrk_amm_N)
    #else
       P = (ncblks < ATL_NTHREADS) ? ncblks : ATL_NTHREADS;
    #endif
-   if (P < 2)
+   if (0 && P < 2)
    {
       Mjoin(PATL,syrk)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       return(0);
@@ -15886,13 +15828,12 @@ int Mjoin(PATL,tsyrk_amm_N)
 /*
  * Set up parallel data structure
  */
-   blkszA = kb * nb;
    nkblks = ip.nfkblks + 1;
-   szA = ndiag*nkblks*ip.szA;                 /* space for A & A' */
+   szA = nkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
    sz = (ndiag+ndiag+ndiag)*sizeof(void*);    /* space for Ctr & mut arrays */
-   sz += ATL_MulBySize(nb)*nb*2*P;            /* local C wrkspc */
+   sz += 2*P*ATL_MulBySize(ip.szC);           /* local C wrkspc */
    sz += ATL_MulBySize(szA+szA);              /* A/At workspace */
-   sz += ATL_MulBySize((ip.mu<<1)*nu);        /* advance load buffer */
+   sz += ATL_MulBySize((ip.mu<<1)*ip.nu);     /* advance load buffer */
    sz += 3*ATL_Cachelen;                      /* room for alignment */
    #ifdef ATL_PHI_SORTED
       if (pd.ncntxts > 1)
@@ -15921,6 +15862,7 @@ int Mjoin(PATL,tsyrk_amm_N)
    else
    #endif
       pd.KbegCtr = vp;
+   pd.ip = &ip;
    pd.TA = (TA == AtlasTrans);
    pd.LOWER = (Uplo == AtlasLower);
    pd.ndiag = ndiag;
@@ -15932,7 +15874,6 @@ int Mjoin(PATL,tsyrk_amm_N)
       
    pd.cpydone = pd.NODWORK = 0;
    pd.dCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ndiag, P), ndiag, 0);
-   nkcnt = ATL_EstNctr(nkblks, P);
    pd.KdonCtr = pd.KbegCtr + ndiag;
    pd.Cdmuts = pd.KdonCtr + ndiag;
    pd.wA = (TYPE*)(pd.Cdmuts+ndiag);
@@ -15946,10 +15887,11 @@ int Mjoin(PATL,tsyrk_amm_N)
    pd.lda = lda;
    pd.C = C;
    pd.ldc = ldc;
+   idx = ATL_EstNctr(nkblks, P);
    for (i=0; i < ndiag; i++)
    {
-      pd.KbegCtr[i] = ATL_SetGlobalAtomicCount(nkcnt, nkblks, 0);
-      pd.KdonCtr[i] = ATL_SetGlobalAtomicCountDown(nkcnt, nkblks);
+      pd.KbegCtr[i] = ATL_SetGlobalAtomicCount(idx, nkblks, 0);
+      pd.KdonCtr[i] = ATL_SetGlobalAtomicCountDown(idx, nkblks);
       pd.Cdmuts[i] = ATL_mutex_init();
    }
    pd.cdmut = ATL_mutex_init();
@@ -15995,8 +15937,8 @@ void Mjoin(PATL,tsyrk_amm)
    #else
       #define ONE ATL_rone
    #endif
-   ATL_assert(N > ATL_sqAMM_LASTNB);
 @beginskip
+   ATL_assert(N > ATL_sqAMM_LASTNB);
    if (N <= Mmax(ATL_sqAMM_LASTMB,ATL_sqAMM_LASTNB))
    {
       if (!Mjoin(PATL,tsyrk_amm_K)(Uplo, Trans, N, K, alpha, A, lda, 

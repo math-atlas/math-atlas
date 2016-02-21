@@ -645,24 +645,29 @@ struct rkinfo
 enum ATL_AMMALG {ATL_amm1b, ATL_ammrkK, ATL_NMK};
 
 int Mjoin(PATL,geGetAmmmIndx)(size_t M, size_t N, size_t K);
-@whiledef sh ge
-void Mjoin(PATL,@(sh)FillInIPInfo)
+void Mjoin(PATL,geFillInIPInfo)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta, 
     size_t nfmblks, size_t npmblks, ATL_UINT mb, ATL_UINT pmb,
     size_t nfnblks, size_t npnblks, ATL_UINT nb, ATL_UINT pnb);
-@endwhile
+void Mjoin(PATL,sqFillInIPInfo)
+   (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta, ATL_UINT nb);
 int Mjoin(PATL,tGetParCIndx)(ipinfo_t *ip, int P, size_t M, size_t N, size_t K);
+int Mjoin(PATL,tGetParTriCIndx)(int P, size_t N, size_t K, int *NB);
 
 int Mjoin(PATL,tGetIPInfo_tMN)
    (ipinfo_t *ip, int P, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
     size_t M, size_t N, size_t K, const SCALAR alpha, size_t lda, size_t ldb,
     const SCALAR beta, size_t ldc);
-void Mjoin(PATL,geComputeIPInfo)
+@whiledef sh ge sq
+void Mjoin(PATL,@(sh)ComputeIPInfo)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc, 
     const SCALAR alpha, const SCALAR beta);
+@endwhile
 @whiledef rt iploopsMK iploopsK
 void Mjoin(PATL,@(rt))
    (ipinfo_t *ip, size_t i, size_t j, const TYPE *A, const TYPE *B, TYPE *C, 
@@ -22130,42 +22135,25 @@ int Mjoin(PATL,@(sh)GetAmmInfoInt)(char wh, int idx)
  * Designed for parallelism mainly on C blocks, K > LASTKB (ipinfo, not opinfo)
  * C is known to be Upper or Lower.  Fills in only M/N blocking info in ipinfo.
  */
-int Mjoin(PATL,tGetParTriCIndx)(ipinfo_t *ip, int P, size_t N, size_t K)
+int Mjoin(PATL,tGetParTriCIndx)(int P, size_t N, size_t K, int *NB)
 {
-   unsigned int ik=ATL_AMM_NCASES-1, nb0, nb, mu, nu;
+   unsigned int ik=ATL_sqAMM_NCASES-1, nb0, nb, mu, nu, U;
    size_t nmblks, nnblks, ncblks;
 
    if (K < ATL_@(sh)AMM_LASTKB)
-      for (ik=0; ik < ATL_AMM_NCASES && ATL_AMM_KBs[ik] < K; ik++);
+      for (ik=0; ik < ATL_sqAMM_NCASES && ATL_AMM_KBs[ik] < K; ik++);
    mu = ATL_AMM_MUs[ik];
    nu = ATL_AMM_NUs[ik];
+   U = ATL_lcm(mu,nu);
    nb0 = nb = ATL_AMM_NBs[ik];
 /*
  * If blocking tuned to KB provides enough parallelism, just use it
  */
    nnblks = N/nb;
-   ncblks = ((nnblks-1)*nnblks)>>1 + nnblks;
+   ncblks = (((nnblks-1)*nnblks)>>1) + nnblks;
    if (ncblks >= P)  /* standard blocking provides enough parallelism */
    {
-      unsigned int n;
-      n = N - nb*nnblks;
-      if (n)
-      {
-         ip->nfnblks = nnblks;
-         ip->npnblks = 1;
-         ip->nb = nb;
-         ip->pnb = ((n+nu-1)/nu)*nu;
-      }
-      else
-      {
-         ip->nfnblks = nnblks;
-         ip->npnblks = 0;
-         ip->nb = ip->pnb = nb;
-      }
-      ip->nfmblks = ip->nfnblks;
-      ip->npmblks = 0;
-      ip->mb = ip->nb
-      ip->pmb = ip->pnb;
+      *NB = nb;
       return(ik);
    }
 /*
@@ -22173,41 +22161,16 @@ int Mjoin(PATL,tGetParTriCIndx)(ipinfo_t *ip, int P, size_t N, size_t K)
  * NB that gets 66% of original perf (better to reduce P)
  */
    if (N <= ATL_sqAMM_66NB)
-      nb = nu*((N+nu-1)/nu);
-   else if (ATL_sqAMM_66NB <= ATL_sqAMM_50NB + nu)
-      nb = nu*((ATL_sqAMM_66NB+nu-1)/nu);
+      nb = U*((N+U-1)/U);
+   else if (ATL_sqAMM_66NB <= ATL_sqAMM_50NB + U)
+      nb = U*((ATL_sqAMM_66NB+U-1)/U);
    else
-      nb = nu*(ATL_sqAMM_66NB/nu);
+      nb = U*(ATL_sqAMM_66NB/U);
    nnblks = N/nb;
    ncblks = (((nnblks-1)*nnblks)>>1 + nnblks);
    if (ncblks < P)  /* nb at min, so reduce parallelism */
    {
-      unsigned int n;
-      n = N - nb*nnblks;
-      if (!n)
-      {
-         ip->pnb = ip->nb = nb;
-         ip->npnblks = 0;
-         ip->nfnblks = nnblks;
-      }
-      else if (n < nu || n+nb <= nb0)
-      {
-         ip->nb = nb + ((n+nu-1)/nu)*nu;
-         ip->pnb = nb;
-         ip->nfnblks = 1;
-         ip->npnblks = (nnblks) ? nnblks - 1 : 0;
-      }
-      else
-      {
-         ip->nb = nb;
-         ip->nfnblks = nnblks;
-         ip->npnblks = 1;
-         ip->pnb = n;
-      }
-      ip->nfmblks = ip->nfnblks;
-      ip->npmblks = 0;
-      ip->mb = ip->nb
-      ip->pmb = ip->pnb;
+      *NB = nb;
       return(ik);
    }
 /*
@@ -22217,14 +22180,14 @@ int Mjoin(PATL,tGetParTriCIndx)(ipinfo_t *ip, int P, size_t N, size_t K)
  * to increase block performance back up towards maximum for KB.
  */
    if (nb0 > N)
-      nb0 = ((N+nu-1)/nu)*nu;
+      nb0 = ((N+U-1)/U)*U;
    while (1)
    {
       unsigned int nbN=nb;
       size_t cblks, nblks;
       if (nb < nb0)
       {
-         nbN += nu;
+         nbN += U;
          nblks = N / nbN;
          cblks = ((nblks-1)*nblks)>>1 + nblks;
          if (cblks < P)
@@ -22236,31 +22199,7 @@ int Mjoin(PATL,tGetParTriCIndx)(ipinfo_t *ip, int P, size_t N, size_t K)
       nb = nbN;
       ncblks = cblks;
    }
-   nb0 = N - nnblks * nb;
-   if (nb0 > nu)
-   {
-      ip->nfnblks = nnblks;
-      ip->npnblks = 1;
-      ip->nb = nb;
-      ip->pnb = ((nb0+nu-1)/nu)*nu;
-   }
-   else if (!nb0)
-   {
-      ip->nfnblks = nnblks;
-      ip->npnblks = 0;
-      ip->pnb = ip->nb = nb;
-   }
-   else  /* N%nb <= nu */
-   {
-      ip->nfnblks = 1;
-      ip->npnblks = (nnblks) ? nnblks-1 : 0;
-      ip->nb = nb+nu;
-      ip->pnb = nb;
-   }
-   ip->nfmblks = ip->nfnblks;
-   ip->npmblks = 0;
-   ip->mb = ip->nb
-   ip->pmb = ip->pnb;
+   *NB = nb;
    return(ik);
 }
 @ROUT ATL_GetAmmmInfo
@@ -22569,12 +22508,7 @@ void Mjoin(PATL,@(sh)FillInIPInfo)
    ATL_UINT nb,
    ATL_UINT pnb
 @ROUT ATL_GetAmmmInfoSQ
-   ATL_UINT nb,
-   ATL_UINT pnb,
-   size_t nfmblks,
-   size_t npmblks,
-   size_t nfnblks,
-   size_t npnblks
+   ATL_UINT nb
 @ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 )
 {
@@ -22609,23 +22543,45 @@ void Mjoin(PATL,@(sh)FillInIPInfo)
    ip->pnb = pnb;
    ip->nnu = nb / nu;
    ip->pnnu = pnb / nu;
-@ROUT ATL_GetAmmmInfoSQ
-   ip->mb = ip->nb = nb;
-   ip->pnb = ip->pmb = pnb;
-   ip->nnu = nb / nu;
-   ip->pnnu = pnb / nu;
-
-   if (npmblks)
-      ip->mF = M - nfmblks*nb - (npmblks-1)*pnb;
-   else
-      ip->mF = M - (nfmblks-1)*nb;
-   ip->nmuF = (ip->mF+mu-1) / mu;
-@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
    if (npnblks)
       ip->nF = N - nfnblks*nb - (npnblks-1)*pnb;
    else
       ip->nF = N - (nfnblks-1)*nb;
    ip->nnuF = (ip->nF+nu-1) / nu;
+@ROUT ATL_GetAmmmInfoSQ
+   ip->mF = ip->nF = ip->mb = ip->nb = nb;
+   ip->nfmblks = M / nb;
+   ip->nfnblks = N / nb;
+   ip->nnu = nb / nu;
+   ip->nmu = nb / mu;
+   kb0 = M - ip->nfmblks * nb;
+   if (kb0)
+   {
+      ip->mF = kb0;
+      ip->nmuF = ip->pnmu = (kb0+mu-1) / mu;
+      ip->pmb = ip->pnmu * mu;
+      ip->npmblks = 1;
+   }
+   else
+   {
+      ip->nmuF = ip->nmu;
+      ip->pnmu = ip->pmb = ip->npmblks = 0;
+   }
+   kb0 = N - ip->nfnblks * nb;
+   if (kb0)
+   {
+      ip->nF = kb0;
+      ip->nnuF = ip->pnnu = (kb0+nu-1) / nu;
+      ip->pnb = ip->pnnu * nu;
+      ip->npnblks = 1;
+   }
+   else
+   {
+      ip->nnuF = ip->nnu;
+      ip->pnnu = ip->pnb = ip->npnblks = 0;
+   }
+
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 
 /*
  * Compute K remainder block, and how it affects kernel to use
@@ -22811,30 +22767,39 @@ void Mjoin(PATL,@(sh)FillInIPInfo)
    {
       ip->incAk  = (kb SHIFT)*lda;
       ip->incAm  = (@(mb) SHIFT);
-      ip->pincAm = (p@(mb) SHIFT);
+@ROUT ATL_GetAmmmInfo `      ip->pincAm = (p@(mb) SHIFT);`
+@ROUT ATL_GetAmmmInfoSQ `      ip->pincAm = 0;`
    }
    else
    {
       ip->incAk  = (kb SHIFT);
       ip->incAm  = (@(mb) SHIFT)*lda;
-      ip->pincAm = (p@(mb) SHIFT)*lda;
+@ROUT ATL_GetAmmmInfo `      ip->pincAm = (p@(mb) SHIFT)*lda;`
+@ROUT ATL_GetAmmmInfoSQ `      ip->pincAm = 0;`
    }
    if (IS_COLMAJ(TB))
    {
       ip->incBk  = (kb SHIFT);
       ip->incBn  = (nb SHIFT)*ldb;
-      ip->pincBn = (pnb SHIFT)*ldb;
+@ROUT ATL_GetAmmmInfo `      ip->pincBn = (pnb SHIFT)*ldb;`
+@ROUT ATL_GetAmmmInfoSQ `      ip->pincBn = 0;`
    }
    else
    {
       ip->incBk  = (kb SHIFT)*ldb;
       ip->incBn  = (nb SHIFT);
-      ip->pincBn = (pnb SHIFT);
+@ROUT ATL_GetAmmmInfo `      ip->pincBn = (pnb SHIFT);`
+@ROUT ATL_GetAmmmInfoSQ `      ip->pincBn = 0;`
    }
-   ip->pszA = p@(mb)*kb;
    ip->szA = @(mb)*kb;
-   ip->pszB = kb*pnb;
    ip->szB = kb*nb;
+@ROUT ATL_GetAmmmInfoSQ
+   ip->pszA = ip->pmb*kb;
+   ip->pszB = kb*ip->pnb;
+@ROUT ATL_GetAmmmInfo
+   ip->pszA = p@(mb)*kb;
+   ip->pszB = kb*pnb;
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 }
 #ifndef TCPLX
    #undef ONE
@@ -22872,6 +22837,8 @@ int Mjoin(PATL,tGetIPInfo_tMN)
    #endif
    return(P);
 }
+@ROUT ATL_GetAmmmInfoSQ
+#if 0
 @ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 /*
  * Given a selected amm index, fill in ipinfo for using inner-product based
@@ -22936,6 +22903,9 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
                             nnblks, npnblks);
 @ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 }
+@ROUT ATL_GetAmmmInfoSQ
+#endif
+@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 
 @beginskip
 {
