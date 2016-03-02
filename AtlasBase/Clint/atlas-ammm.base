@@ -29626,6 +29626,117 @@ int main(int nargs, char **args)
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 
+@beginskip
+/*
+ * Service routine, particularly for parallel.  Takes its blocking from ip
+ * (assuming that is what is being used below diagonal blocks
+ * flag bits, meaning if set (opposite if unset):
+ * 0: C is upper
+ * 1: use beta=0 syrk kernel (else use beta=1)
+ */
+void Mjoin(PATL,syrkBlk)
+(
+   ipinfo_t *ip,
+   int flag,      /* bitvec: 0: set means C is upper */
+   size_t d,      /* which global diagonal blk of C is being computed */
+   size_t k,      /* which K block of A is being computed */
+   const TYPE *A, /* if non-NULL, base A ptr to copy */
+   cm2am_t sy2blk;/* copy A to syrk storage */
+   TYPE *C,       /* if non-NULL, which C to write to */
+   TYPE *wS,      /* space to store syrk A; */
+   TYPE *wA,      /* if non-NULL, ip-based A workspace */
+   TYPE *wAn,     /* next A wrkspc to be prefetched */
+   TYPE *wB,      /* if non-NULL ip-based At workspace */
+   TYPE *wBn,     /* next B wrkspc to be prefetched */
+   TYPE *wC       /* if non-NULL: ptr to syrk-storage C wrkspc */
+)
+{
+   ATL_CUINT kb = (k != ip->nfkblks) ? ip->kb : ip->kb0;
+   ATL_UINT nb, nbS, kbS;
+   size_t nfblks = ip->nfnblks;
+   #ifdef TCPLX 
+      ATL_UINT szC, szA;
+      TYPE *rA, *rB, *rS;
+   #endif
+   if (d == nfblks + ip->npnblks -1)
+   {
+      nb = ip->nF;
+      #ifdef TCPLX
+         if (d < nfblks)
+         {
+            rA = wA + ip->szA;
+            rB = wB + ip->szB;
+         }
+         else
+         {
+            rA = op->pszA;
+            rB = op->pszB;
+         }
+      #endif
+   }
+   else if (d < nfblks)
+   {
+      nb = ip->nb;
+      #ifdef TCPLX
+         rA = wA + ip->szA;
+         rB = wB + ip->szB;
+      #endif
+   }
+   else
+   {
+      nb = ip->pnb;
+      #ifdef TCPLX
+         rA = wA + op->pszA;
+         rB = wB + op->pszB;
+      #endif
+   }
+   nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
+   kbS = ((kb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   #ifdef TCPLX
+   szA = 
+   if (wC)
+   {
+      szC = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;    /* szC hold nnu */
+      szC = ((szC+1)*szC)>>1;  /* only need lower tri blks, not full nnu*nnu */
+      szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+             * ATL_SYRKK_VLEN;
+      rC = wC + szC;
+   }
+   #endif
+   if (A)  /* want to copy input array */
+   {
+      A = IdxA_ip(ip, A, d, k);
+      if (wA)  /* want to copy A to gemm storage too! */
+      {
+         #ifdef TCPLX
+            ip->a2blk(kb, nb, ip->alpA, A, ip->lda, rA, wA);
+         #else
+            ip->a2blk(kb, nb, ip->alpA, A, ip->lda, wA);
+         #endif
+         if (ip->a2blk == sy2blk)
+            wS = wA;
+      }
+      if (wB)  /* want to copy At to gemm storage too! */
+      {
+         #ifdef TCPLX
+            ip->b2blk(kb, nb, ip->alpB, A, ip->ldb, rA, wA);
+         #else
+            ip->b2blk(kb, nb, ip->alpB, A, ip->ldb, wA);
+         #endif
+         if (ip->b2blk == sy2blk)
+            wS = wB;
+      }
+      if (wS != wA && wS != wB)
+      {
+         #ifdef TCPLX
+            sy2blk(kb, nb, ip->ONE, A, lda, rA, wS);
+         #else
+            sy2blk(kb, nb, ATL_rone, A, lda, wS);
+         #endif
+      }
+   }
+}
+@endskip
 static INLINE void ATL_syr1
 (
    const enum ATLAS_UPLO Uplo,
