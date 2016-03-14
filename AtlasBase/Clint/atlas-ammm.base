@@ -29637,7 +29637,7 @@ int main(int nargs, char **args)
 void Mjoin(PATL,syrkBlk)
 (
    ipinfo_t *ip,
-   int flag,      /* bitvec: 0: set means C is upper */
+   int flag,      /* bitvec: 0: set means C is upper, 1: set TA==AtlasNoTrans */
    size_t d,      /* which global diagonal blk of C is being computed */
    size_t k,      /* which K block of A is being computed */
    const TYPE *A, /* if non-NULL, base A ptr to copy */
@@ -29693,7 +29693,8 @@ void Mjoin(PATL,syrkBlk)
    nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
    kbS = ((kb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    #ifdef TCPLX
-   szA = 
+   szA = nbS * kbS;
+   rS = wS = szA;
    if (wC)
    {
       szC = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;    /* szC hold nnu */
@@ -29714,7 +29715,12 @@ void Mjoin(PATL,syrkBlk)
             ip->a2blk(kb, nb, ip->alpA, A, ip->lda, wA);
          #endif
          if (ip->a2blk == sy2blk)
+         {
             wS = wA;
+            #ifdef TCPLX
+               rS = rA;
+            #endif
+         }
       }
       if (wB)  /* want to copy At to gemm storage too! */
       {
@@ -29724,16 +29730,40 @@ void Mjoin(PATL,syrkBlk)
             ip->b2blk(kb, nb, ip->alpB, A, ip->ldb, wA);
          #endif
          if (ip->b2blk == sy2blk)
+         {
             wS = wB;
+            #ifdef TCPLX
+               rS = rB;
+            #endif
+         }
       }
       if (wS != wA && wS != wB)
       {
          #ifdef TCPLX
-            sy2blk(kb, nb, ip->ONE, A, lda, rA, wS);
+            sy2blk(kb, nb, ip->ONE, A, lda, rS, wS);
          #else
             sy2blk(kb, nb, ATL_rone, A, lda, wS);
          #endif
       }
+   }
+   if (wC)  /* want to compute SYRK on this block into wC */
+   {
+      #ifdef TCPLX
+         #ifdef Conj_
+            TYPE *crA=(flag&2)?rS:wS, *ciA=(flag&2)?wS:rS;
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, iA, iA, rC, crA, ciA, wC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, crA, ciA, wC, rA, rA, rC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, rA, rA, rC, ciA, crA, wC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, ciA, crA, wC, iA, iA, rC);
+         #else
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, wS, wS, rC, rS, wS, wC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, rS, wS, wC, rS, rS, rC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, rS, rS, rC, wS, rS, wC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, wS, rS, wC, wS, wS, rC);
+         #endif
+      #else
+         Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, wS, wS, wC, wS, wS, wC);
+      #endif
    }
 }
 @endskip
