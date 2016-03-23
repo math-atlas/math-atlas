@@ -29625,14 +29625,16 @@ int main(int nargs, char **args)
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+#define ATL_INDX 1
+#include "atlas_tlvl3.h"
 
-@beginskip
 /*
  * Service routine, particularly for parallel.  Takes its blocking from ip
  * (assuming that is what is being used below diagonal blocks
  * flag bits, meaning if set (opposite if unset):
- * 0: C is upper
- * 1: use beta=0 syrk kernel (else use beta=1)
+ * 0/1: C is upper
+ * 1/2: TA == AtlasNoTrans
+ * 2/4: use beta=0 syrk kernel (else use beta=1)
  */
 void Mjoin(PATL,syrkBlk)
 (
@@ -29641,8 +29643,10 @@ void Mjoin(PATL,syrkBlk)
    size_t d,      /* which global diagonal blk of C is being computed */
    size_t k,      /* which K block of A is being computed */
    const TYPE *A, /* if non-NULL, base A ptr to copy */
-   cm2am_t sy2blk;/* copy A to syrk storage */
-   TYPE *C,       /* if non-NULL, which C to write to */
+   cm2am_t sy2blk,/* copy A to syrk storage */
+   ablk2cmat_t blk2c, /* if non-NULL sy storage to C storage copy func */
+   const SCALAR beta, /* only needed if blk2c non-NULL */
+   TYPE *C,       /* if blk2c non-NULL, which C to write to, else ignored */
    TYPE *wS,      /* space to store syrk A; */
    TYPE *wA,      /* if non-NULL, ip-based A workspace */
    TYPE *wAn,     /* next A wrkspc to be prefetched */
@@ -29652,13 +29656,13 @@ void Mjoin(PATL,syrkBlk)
 )
 {
    ATL_CUINT kb = (k != ip->nfkblks) ? ip->kb : ip->kb0;
-   ATL_UINT nb, nbS, kbS;
+   ATL_UINT nb, nbS, kbS, nnu;
    size_t nfblks = ip->nfnblks;
    #ifdef TCPLX 
       ATL_UINT szC, szA;
       TYPE *rA, *rB, *rS;
    #endif
-   if (d == nfblks + ip->npnblks -1)
+   if (d == nfblks + ip->npnblks - 1)
    {
       nb = ip->nF;
       #ifdef TCPLX
@@ -29690,7 +29694,8 @@ void Mjoin(PATL,syrkBlk)
          rB = wB + op->pszB;
       #endif
    }
-   nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
+   nnu = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
+   nbS = nnu*ATL_SYRKK_NU;
    kbS = ((kb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    #ifdef TCPLX
    szA = nbS * kbS;
@@ -29740,9 +29745,9 @@ void Mjoin(PATL,syrkBlk)
       if (wS != wA && wS != wB)
       {
          #ifdef TCPLX
-            sy2blk(kb, nb, ip->ONE, A, lda, rS, wS);
+            sy2blk(kb, nb, ip->ONE, A, ip->lda, rS, wS);
          #else
-            sy2blk(kb, nb, ATL_rone, A, lda, wS);
+            sy2blk(kb, nb, ATL_rone, A, ip->lda, wS);
          #endif
       }
    }
@@ -29751,22 +29756,61 @@ void Mjoin(PATL,syrkBlk)
       #ifdef TCPLX
          #ifdef Conj_
             TYPE *crA=(flag&2)?rS:wS, *ciA=(flag&2)?wS:rS;
-            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, iA, iA, rC, crA, ciA, wC);
-            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, crA, ciA, wC, rA, rA, rC);
-            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, rA, rA, rC, ciA, crA, wC);
-            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, ciA, crA, wC, iA, iA, rC);
+            if (flag&4)
+            {
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, iA, iA, rC, crA, ciA, wC);
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, crA, ciA, wC, rA, rA, rC);
+            }
+            else
+            {
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, iA, iA, rC, crA, ciA, wC);
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, crA, ciA, wC, rA, rA, rC);
+            }
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, rA, rA, rC, ciA, crA, wC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, ciA, crA, wC, iA, iA, rC);
          #else
-            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, wS, wS, rC, rS, wS, wC);
-            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, rS, wS, wC, rS, rS, rC);
-            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kb, rS, rS, rC, wS, rS, wC);
-            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, wS, rS, wC, wS, wS, rC);
+            if (flag&4)
+            {
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, wS, wS, rC, rS, wS, wC);
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, rS, wS, wC, rS, rS, rC);
+            }
+            else
+            {
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, wS, wS, rC, rS, wS, wC);
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, rS, wS, wC, rS, rS, rC);
+            }
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, rS, rS, rC, wS, rS, wC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wS, rS, wC, wS, wS, rC);
          #endif
       #else
-         Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kb, wS, wS, wC, wS, wS, wC);
+         if (flag&4)
+            Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, wS, wS, wC, wS, wS, wC);
+         else
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wS, wS, wC, wS, wS, wC);
+      #endif
+   }
+   if (blk2c)
+   {
+      const size_t ldc=ip->ldc;
+      #ifdef TCPLX
+         const TYPE *alp = ip->alpC;
+      #else
+         TYPE alp = ip->alpC;
+      #endif
+      if (ip->alpA != ip->alpB)
+         alp = (ip->alpA != ip->alpC) ? ip->alpA : ip->alpB;
+      ATL_assert((flag&1) == 0);  // assume lower for now
+      #ifdef TCPLX
+         blk2c(nb, nb, alp, rC, iC, beta, C, ldc);
+         #ifdef Conj_  /* must zero complex part of diagonal! */
+            Mjoin(PATLU,zero)(N, C+1, (ldc+1)SHIFT);
+         #endif
+      #else
+         blk2c(nb, nb, alp, wC, beta, C, ldc);
       #endif
    }
 }
-@endskip
+
 static INLINE void ATL_syr1
 (
    const enum ATLAS_UPLO Uplo,
@@ -30151,6 +30195,62 @@ void Mjoin(PATL,syrk_IP)
       pC = ATL_AlignPtr(pC);
       c = pC + szC;
    #endif
+#if 0
+   ipinfo_t ip;
+   int i, flg;
+   i = Mjoin(PATL,geGetAmmmIndx)(N, N, K);
+   Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TA, N, N, K, lda, lda, ldc, 
+         alpha, beta);
+   flg = (Uplo == AtlasLower) ? 0 : 1;
+   if (TA == AtlasNoTrans)
+      flg |= 2;
+   if (Uplo == AtlasLower)
+   {
+      if (SCALAR_IS_ONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2c = Mjoin(PATL,syblk2cmat_an_b1);
+         else
+            blk2c = SCALAR_IS_ONE(alpha) ?
+                    Mjoin(PATL,syblk2cmat_a1_b1):Mjoin(PATL,syblk2cmat_aX_b1);
+      }
+      else if (SCALAR_IS_NONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2c = Mjoin(PATL,syblk2cmat_an_bn);
+         else
+            blk2c = SCALAR_IS_ONE(alpha) ?
+                    Mjoin(PATL,syblk2cmat_a1_bn):Mjoin(PATL,syblk2cmat_aX_bn);
+      }
+      else if (SCALAR_IS_ZERO(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2c = Mjoin(PATL,syblk2cmat_an_b0);
+         else
+            blk2c = SCALAR_IS_ONE(alpha) ?
+                    Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+      }
+      else
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2c = Mjoin(PATL,syblk2cmat_an_bX);
+         else
+            blk2c = SCALAR_IS_ONE(alpha) ?
+                    Mjoin(PATL,syblk2cmat_a1_bX):Mjoin(PATL,syblk2cmat_aX_bX);
+      }
+   }
+   else
+      ATL_assert(0);
+   Mjoin(PATL,syrkBlk)(&ip, flg|4, 0, 0, A, a2blk, K<=ip.kb?blk2c:NULL, beta, C,
+                       pA, NULL, NULL, NULL, NULL, pC);
+//   A += (kb0 SHIFT) * (IS_COLMAJ(TA) ? lda : 1);
+   nkb = K / ip.kb;
+   if (nkb * ip.kb == K)
+      nkb--;
+   for (k=0; k < nkb; k++)
+      Mjoin(PATL,syrkBlk)(&ip, flg, 0, k+1, A, a2blk, k == nkb-1 ? blk2c:NULL, 
+                          beta, C, pA, NULL, NULL, NULL, NULL, pC);
+#else
 
    #ifdef TCPLX
       a2blk(kb0, N, one, A, lda, rA, iA);
@@ -30264,6 +30364,7 @@ void Mjoin(PATL,syrk_IP)
             Mjoin(PATL,axpby)(k+1, one, c, N, beta, C, 1);
       #endif
    }
+#endif
    free(vp);
 }
 #undef one
