@@ -29635,6 +29635,10 @@ int main(int nargs, char **args)
  * 0/1: C is upper
  * 1/2: TA == AtlasNoTrans
  * 2/4: use beta=0 syrk kernel (else use beta=1)
+ *
+ * If (Uplo==Upper && sy2blk) 
+ *    (1) flag&1 == 1; (2) wU non-NULL; (3) sy2blk is beta=0.
+ * ==> wU can be aliased wt wS if you don't need correct wS on output
  */
 void Mjoin(PATL,syrkBlk)
 (
@@ -29652,7 +29656,8 @@ void Mjoin(PATL,syrkBlk)
    TYPE *wAn,     /* next A wrkspc to be prefetched */
    TYPE *wB,      /* if non-NULL ip-based At workspace */
    TYPE *wBn,     /* next B wrkspc to be prefetched */
-   TYPE *wC       /* if non-NULL: ptr to syrk-storage C wrkspc */
+   TYPE *wC,      /* if non-NULL: ptr to syrk-storage C wrkspc */
+   TYPE *wU       /* NBxNB wrkspc needed for Upper C storage & blk2c != NULL */
 )
 {
    ATL_CUINT kb = (k != ip->nfkblks) ? ip->kb : ip->kb0;
@@ -29799,15 +29804,51 @@ void Mjoin(PATL,syrkBlk)
       #endif
       if (ip->alpA != ip->alpB)
          alp = (ip->alpA != ip->alpC) ? ip->alpA : ip->alpB;
-      ATL_assert((flag&1) == 0);  // assume lower for now
-      #ifdef TCPLX
-         blk2c(nb, nb, alp, rC, iC, beta, C, ldc);
-         #ifdef Conj_  /* must zero complex part of diagonal! */
-            Mjoin(PATLU,zero)(N, C+1, (ldc+1)SHIFT);
+      if (flag&1)  /* Upper matrix */
+      {
+         #ifdef TCPLX
+            const TYPE zero[2] = {ATL_rzero, ATL_rzero};
+            blk2c(nb, nb, alpha, rC, iC, zero, wU, nb);
+            #ifdef Conj_  /* must zero imag part of diagonal for HERK */
+            {
+               ATL_CINT ldc2=ldc+ldc;
+               for (k=0; k < nb; k++, c += 2, C += ldc2)
+               {
+                  Mjoin(PATL,axpbyConj)(k+1, one, wU, nb, beta, C, 1);
+                  C[((k+1)<<1)-1] = ATL_rzero;
+               }
+            }
+            #endif
+         #else
+            blk2c(nb, nb, alp, wC, ATL_rzero, wU, nb);
          #endif
-      #else
-         blk2c(nb, nb, alp, wC, beta, C, ldc);
-      #endif
+/*
+ *       Copy matrix back to original C while applying beta
+ */
+         #ifndef Conj_
+         if (SCALAR_IS_ZERO(beta))
+            for (k=0; k < nb; k++, wU += (1 SHIFT), C += (ldc SHIFT))
+               Mjoin(PATL,copy)(k+1, wU, nb, C, 1);
+         else
+            for (k=0; k < nb; k++, wU += (1 SHIFT), C += (ldc SHIFT))
+            #ifdef TCPLX
+               Mjoin(PATL,axpby)(k+1, ip->ONE, wU, nb, beta, C, 1);
+            #else
+               Mjoin(PATL,axpby)(k+1, ATL_rone, wU, nb, beta, C, 1);
+            #endif
+         #endif
+      }
+      else
+      {
+         #ifdef TCPLX
+            blk2c(nb, nb, alp, rC, iC, beta, C, ldc);
+            #ifdef Conj_  /* must zero complex part of diagonal! */
+               Mjoin(PATLU,zero)(N, C+1, (ldc+1)SHIFT);
+            #endif
+         #else
+            blk2c(nb, nb, alp, wC, beta, C, ldc);
+         #endif
+      }
    }
 }
 
@@ -30174,6 +30215,9 @@ void Mjoin(PATL,syrk_IP)
    #else
       KB0 = kb0;
    #endif
+   szA = nnu*ATL_SYRKK_NU;
+   k = (Uplo == AtlasUpper) ? Mmax(kb,N) : kb;
+   szA *= k;
    szA = nnu*ATL_SYRKK_NU * kb;
    vp = malloc(ATL_MulBySize(szA + szC + szE) 
                + 2*ATL_Cachelen);
@@ -30195,7 +30239,7 @@ void Mjoin(PATL,syrk_IP)
       pC = ATL_AlignPtr(pC);
       c = pC + szC;
    #endif
-#if 0
+#if 1
    ipinfo_t ip;
    int i, flg;
    i = Mjoin(PATL,geGetAmmmIndx)(N, N, K);
@@ -30240,16 +30284,22 @@ void Mjoin(PATL,syrk_IP)
       }
    }
    else
-      ATL_assert(0);
+   {
+      if (SCALAR_IS_NONE(alpha))
+         blk2c = Mjoin(PATL,syblk2cmat_an_b0);
+      else
+         blk2c = SCALAR_IS_ONE(alpha) ?
+                 Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+   }
    Mjoin(PATL,syrkBlk)(&ip, flg|4, 0, 0, A, a2blk, K<=ip.kb?blk2c:NULL, beta, C,
-                       pA, NULL, NULL, NULL, NULL, pC);
+                       pA, NULL, NULL, NULL, NULL, pC, pA);
 //   A += (kb0 SHIFT) * (IS_COLMAJ(TA) ? lda : 1);
    nkb = K / ip.kb;
    if (nkb * ip.kb == K)
       nkb--;
    for (k=0; k < nkb; k++)
       Mjoin(PATL,syrkBlk)(&ip, flg, 0, k+1, A, a2blk, k == nkb-1 ? blk2c:NULL, 
-                          beta, C, pA, NULL, NULL, NULL, NULL, pC);
+                          beta, C, pA, NULL, NULL, NULL, NULL, pC, pA);
 #else
 
    #ifdef TCPLX
