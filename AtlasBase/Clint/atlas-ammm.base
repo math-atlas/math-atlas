@@ -29617,8 +29617,8 @@ int main(int nargs, char **args)
    free(outd);
    return(0);
 }
-@ROUT ATL_syrk_IP
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 
+@ROUT ATL_syrk_amm
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_misc.h"
 #include "atlas_level1.h"
 #include "atlas_level2.h"
@@ -29627,7 +29627,6 @@ int main(int nargs, char **args)
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #define ATL_INDX 1
 #include "atlas_tlvl3.h"
-
 /*
  * Service routine, particularly for parallel.  Takes its blocking from ip
  * (assuming that is what is being used below diagonal blocks
@@ -29851,6 +29850,188 @@ void Mjoin(PATL,syrkBlk)
       }
    }
 }
+
+/*
+ * This helper function computes one block of C by looping over the K dim.
+ * flag bits, meaning if set (opposite if unset):
+ * 0/1: C is upper
+ * 1/2: TA == AtlasNoTrans
+ */
+void Mjoin(PATL,syrk_KLoop)  /* inner-product based syrk loop over K */
+(
+   ipinfo_t *ip,
+   int flag,      /* bitvec: 0: set means C is upper, 1: set TA==AtlasNoTrans */
+   size_t d,      /* which global diagonal blk of C is being computed */
+   const TYPE *A, /* if non-NULL, base A ptr to copy */
+   cm2am_t sy2blk,/* copy A to syrk storage */
+   ablk2cmat_t blk2c, /* if non-NULL sy storage to C storage copy func */
+   const SCALAR beta, /* only needed if blk2c non-NULL */
+   TYPE *C,       /* if blk2c non-NULL, which C to write to, else ignored */
+   TYPE *wS,      /* space to store syrk A; */
+   TYPE *wA,      /* if non-NULL, ip-based A workspace */
+   TYPE *wB,      /* if non-NULL ip-based At workspace */
+   TYPE *wC,      /* if non-NULL: ptr to syrk-storage C wrkspc */
+   TYPE *wU       /* NBxNB wrkspc needed for Upper C storage & blk2c != NULL */
+)
+{
+   const size_t nfkblks = ip->nfkblks;
+   size_t k;
+   ATL_UINT szA = (nfkblks) ? ip->szA : ip->pszA;
+   #ifdef TCPLX
+      szA += szA;
+   #endif
+/*
+ * For first K block, use beta=0 kernel to init wC
+ */
+   if (nfkblks)
+      Mjoin(PATL,syrkBlk)(ip, flag|4, d, 0, A, sy2blk, NULL, beta, NULL, wS, 
+                          wA, wA+szA, wB, wB+szA, wC, wU);
+   else /* this is first & last block! */
+   {
+      Mjoin(PATL,syrkBlk)(ip, flag, d, 0, A, sy2blk, blk2c, beta, C, wS, 
+                          wA, wA, wB, wB, wC, wU);
+      return;
+   }
+/*
+ * Handle all blocks except first (handled above) & last (handled below)
+ */
+   for (k=1; k < nfkblks; k++)
+   {
+      TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szA : NULL;
+      Mjoin(PATL,syrkBlk)(ip, flag, d, k, A, sy2blk, NULL, beta, NULL, wS, 
+                          wA, wAn, wB, wBn, wC, wU);
+      wA = wAn;
+      wB = wAn;
+   }
+/*
+ * Last block actually writes to C
+ */
+   Mjoin(PATL,syrkBlk)(ip, flag, d, k, A, sy2blk, blk2c, beta, C, wS, 
+                       wA, wA, wB, wB, wC, wU);
+}
+#ifdef Conj_
+int Mjoin(PATL,herk_amm)
+#else
+int Mjoin(PATL,syrk_amm)
+#endif
+(
+   const enum ATLAS_UPLO  Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CSZT  N,
+   ATL_CSZT K,
+   #ifdef Conj_
+   const TYPE ralpha,
+   #else
+   const SCALAR alpha,
+   #endif
+   const TYPE *A,
+   ATL_CSZT lda,
+   #ifdef Conj_
+   const TYPE rbeta,
+   #else
+   const SCALAR beta,
+   #endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   size_t sz, szA, szC, szS, nnblks;
+   void *vp;
+   TYPE *wA, *wB, *wC, *wS, *wCs;
+   int nb, nbS, flg, i;
+   #ifdef Conj_
+      TYPE alpha={ralpha, ATL_rzero}, beta={rbeta, ATL_rzero};
+      const enum ATLAS_TRANS TB=(TA==AtlasNoTrans)?AtlasConjTrans:AtlasNoTrans;
+   #else
+      const enum ATLAS_TRANS TB = (TA==AtlasNoTrans) ? AtlasTrans:AtlasNoTrans;
+   #endif
+   ipinfo_t ip;
+/*
+ * Inner-product version calls nothing by SYRK kernels
+ */
+   #if 0
+   if (N < ATL_sqAMM_LASTNB)
+   {
+      #ifdef Conj_
+         Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         Mjoin(PATL,syrk_IP)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+      #endif
+      return(0);
+   }
+   #endif
+/*
+ * Need a special case for outer-product eventually.  Outer product is
+ * used in right-looking Cholesky
+ */
+#if 0
+   if (K < ATL_sqAMM_LASTKB)
+   {
+      return(0);
+   }
+#endif
+/*
+ * Will eventually need syrk timed for all square blocks to select best case.
+ * For now, just pretend syrk time doesn't matter
+ */
+//   i = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
+   i = 0;
+   Mjoin(PATL,sqComputeIPInfo)(&ip, i, TA, TB, N, N, K, lda, lda, ldc, 
+                               alpha, beta);
+   szA = (ip.KB0 + ip.kb * ip.nfkblks) * (ip.nfnblks*ip.nb + ip.npnblks*ip.pnb);
+   nb = (ip.nfnblks) ? ip.nb : ip.pnb;
+   nbS = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
+   if (Uplo == AtlasUpper)  /* need space for syrk C & square C */
+   {
+      szC = ((nbS+1)*nbS)>>1;  /* only need lower tri blks, not full nnu*nnu */
+      szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+             * ATL_SYRKK_VLEN;
+   }
+   else                     /* can use square C for syrk C */
+      szC = 0;
+   szS = nbS * ip.kb;
+   sz = ip.szC + szC + szS + szA+szA + 5*ATL_Cachelen;
+   if (sz < ATL_MaxMalloc)
+      vp = malloc(sz);
+   if (!vp)
+      return(1);  /* keep recurring, can't malloc space! */
+   wA = ATL_AlignPtr(vp);
+   wB = wA + szA;
+   wB = ATL_AlignPtr(wB);
+   wS = wB + szA;
+   wS = ATL_AlignPtr(wS);
+   wC = wS + szS;
+   wC = ATL_AlignPtr(wC);
+   if (szC)
+   {
+      wCs = wC + ip.szC;
+      wCs = ATL_AlignPtr(wCs);
+   }
+   else
+      wCs = wC;
+/*
+ * ============================================================================
+ * First, we compute diagonals of C, and in the process we will copy A/A^T
+ * for use in computing non-diaginal blocks using inner-product amm.
+ * ============================================================================
+ */
+   nnblks = ip.nfnblks + ip.npnblks;
+   flg = (Uplo == AtlasUpper);
+   flg |= (TA == AtlasNoTrans) ? 2 : 0;
+   free(vp);
+   return(0);
+}
+@ROUT ATL_syrk_IP
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+#include "atlas_level2.h"
+#include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+#define ATL_INDX 1
+#include "atlas_tlvl3.h"
+
 
 static INLINE void ATL_syr1
 (
@@ -30239,7 +30420,7 @@ void Mjoin(PATL,syrk_IP)
       pC = ATL_AlignPtr(pC);
       c = pC + szC;
    #endif
-#if 1
+#if 0
    ipinfo_t ip;
    int i, flg;
    i = Mjoin(PATL,geGetAmmmIndx)(N, N, K);
