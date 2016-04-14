@@ -776,6 +776,14 @@ void Mjoin(PATL,herk_IP)
    (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
     const TYPE, const TYPE*, ATL_CSZT, const TYPE, TYPE*,ATL_CSZT);
 #endif
+int Mjoin(PATL,syrk_amm)
+   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
+    const SCALAR, const TYPE*, ATL_CSZT, const SCALAR, TYPE*,ATL_CSZT);
+#ifdef TCPLX
+int Mjoin(PATL,herk_amm)
+   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
+    const TYPE, const TYPE*, ATL_CSZT, const TYPE, TYPE*,ATL_CSZT);
+#endif
 /*
  * Functions for testing Info return flag
  */
@@ -22837,8 +22845,6 @@ int Mjoin(PATL,tGetIPInfo_tMN)
    #endif
    return(P);
 }
-@ROUT ATL_GetAmmmInfoSQ
-#if 0
 @ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 /*
  * Given a selected amm index, fill in ipinfo for using inner-product based
@@ -22862,16 +22868,35 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
 {
    size_t npmblks, nmblks, npnblks, nnblks;
    ATL_UINT MB, NB, mb, nb, kb, mu, nu; 
+@ROUT ATL_GetAmmmInfoSQ `   ATL_UINT U;`
    ATL_UINT maxMB=ATL_@(sh)AMM_LASTMB, maxNB=ATL_@(sh)AMM_LASTNB;
+
+   mu = ATL_AMM_MUs[idx];
+   nu = ATL_AMM_NUs[idx];
 @ROUT ATL_GetAmmmInfoSQ
-   mb = nb = kb = ATL_AMM_KBs[idx];
+   U = ATL_lcm(mu, nu);
+   NB = nb = ATL_AMM_KBs[idx];
+   Mjoin(PATL,sqFillInIPInfo)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, 
+                              alpha, beta, nb);
+/*
+ * Eventually, we want ability to expand MB/NB past kb (kb fixed by idx)
+ * when operands don't even fill L1, but don't do this now;  Some square
+ * routines may need KB=MB, and then this would fail
+ */
+   #if 0
+   if (nb*nb < ATL_L1elts)   /* one operand fits in L1 */
+   {                         /* expand to fill L1 */
+      if ((nb+nb)*nb < ATL_L1elts)  /* fitting A & B into L1 */
+         NB = (ATL_L1elts/nb)>>1;
+      else
+         NB = (ATL_l1elts/nb);
+   }
+   #endif
+
 @ROUT ATL_GetAmmmInfo
    mb = ATL_AMM_MBs[idx];
    nb = ATL_AMM_NBs[idx];
    kb = ATL_AMM_KBs[idx];
-@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
-   mu = ATL_AMM_MUs[idx];
-   nu = ATL_AMM_NUs[idx];
 /*
  * Compute M and N blocking factors to use
  */
@@ -22885,7 +22910,6 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
 
    MB = ATL_CompBlkPart(M, maxMB, mb, mu, &mb, &npmblks, &nmblks);
    NB = ATL_CompBlkPart(N, maxNB, nb, nu, &nb, &npnblks, &nnblks);
-@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
    ip->npmblks = npmblks;
    ip->nfmblks = nmblks;
    ip->npnblks = npnblks;
@@ -22895,17 +22919,10 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
    if (!nnblks) /* all blks small */
       NB = nb;
    Mjoin(PATL,@(sh)FillInIPInfo)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
-@ROUT ATL_GetAmmmInfo
                             alpha, beta, nmblks, npmblks, MB, mb, 
                             nnblks, npnblks, NB, nb);
-@ROUT ATL_GetAmmmInfoSQ
-                            alpha, beta, nb, NB, nmblks, npmblks, 
-                            nnblks, npnblks);
 @ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 }
-@ROUT ATL_GetAmmmInfoSQ
-#endif
-@ROUT ATL_GetAmmmInfo ATL_GetAmmmInfoSQ
 
 @beginskip
 {
