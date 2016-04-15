@@ -29997,15 +29997,12 @@ int Mjoin(PATL,syrk_amm)
                                alpha, beta);
    szA = (ip.KB0 + ip.kb * ip.nfkblks) * (ip.nfnblks*ip.nb + ip.npnblks*ip.pnb);
    nb = (ip.nfnblks) ? ip.nb : ip.pnb;
-   nbS = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
-   if (Uplo == AtlasUpper)  /* need space for syrk C & square C */
-   {
-      szC = ((nbS+1)*nbS)>>1;  /* only need lower tri blks, not full nnu*nnu */
-      szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
-             * ATL_SYRKK_VLEN;
-   }
-   else                     /* can use square C for syrk C */
-      szC = 0;
+   nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
+   szC = ((nbS+1)*nbS)>>1;  /* only need lower tri blks, not full nnu*nnu */
+   szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+          * ATL_SYRKK_VLEN;
+   if (Uplo == AtlasLower)  /* need space for max(syrkC,gemmC) */
+      szC -= (szC > ip.szC) ? ip.szC : szC;
    szS = nbS * ip.kb;
    sz = ip.szC + szC + szS + szA+szA + 5*ATL_Cachelen;
    if (sz < ATL_MaxMalloc)
@@ -30019,13 +30016,13 @@ int Mjoin(PATL,syrk_amm)
    wS = ATL_AlignPtr(wS);
    wC = wS + szS;
    wC = ATL_AlignPtr(wC);
-   if (szC)
+   if (Uplo == AtlasLower)
+      wCs = wC;
+   else
    {
       wCs = wC + ip.szC;
       wCs = ATL_AlignPtr(wCs);
    }
-   else
-      wCs = wC;
 /*
  * ============================================================================
  * First, we compute diagonals of C, and in the process we will copy A/A^T
