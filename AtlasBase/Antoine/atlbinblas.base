@@ -11194,6 +11194,8 @@ static int NSAMP=1;
    #define  AP3      PATL
    #define  AP4      PATL
 #endif
+#include "atlas_bitvec.h"
+#include "atlas_amm.h"
 
 #ifdef THREADS_AvC
    #define test_gemm(TA, TB, M, N, K, al, A, lA, B, lB, be, C, lC) \
@@ -12203,6 +12205,7 @@ TYPE syrktst
    TYPE                       normA, normC, normD, resid;
    TYPE                       * A = NULL, * C = NULL, * C0, * a, * c; 
    int                        mA, nA, Aseed, Cseed;
+@ROUT l3blastst `   int *errBV=NULL;`
    enum ATLAS_TRANS           ta;
    const int DOFLUSH=(ATL_MulBySize((size_t)N*N + (size_t)N*K)
                       < ((size_t)CACHESIZE)*4);
@@ -12349,11 +12352,25 @@ TYPE syrktst
  * else perform error check
  */
    normA = Mjoin( PATL, genrm1 )( mA, nA, A, LDA );
+   if (N < 80)
+   {
+      #ifdef TREAL
+         double ferr= 2.0 * (Mabs(ALPHA) * 2.0*K*EPSILON + 
+                      Mabs(BETA) * EPSILON) + EPSILON;
+      #else
+         double ferr = Mabs(*ALPHA) + Mabs(ALPHA[1]);
+         ferr = 2.0 * (ferr*8.0*K*EPSILON + 
+                (Mabs(*BETA)+Mabs(BETA[1]))*EPSILON + EPSILON;
+      #endif
+      errBV = Mjoin(PATL,cmpmatBV)(0, ferr, N, N, C0, LDC, C, LDC);
+   }
 #ifdef TREAL
    if( Mabs1( ALPHA ) > ATL_rone ) normA *= Mabs1( ALPHA );
 #else
    if( ROUT == SYRK )
-   { if( Mabs1( ALPHA ) > ATL_rone ) normA *= Mabs1( ALPHA ); }
+   { 
+      if( Mabs1( ALPHA ) > ATL_rone ) normA *= Mabs1( ALPHA ); 
+   }
    else
    { if( Mabs( ALPHA[0] ) > ATL_rone ) normA *= Mabs( ALPHA[0] ); }
 #endif
@@ -12375,6 +12392,12 @@ TYPE syrktst
       Mjoin( PATL, geprint )( "C_trusted", N, N, C0, LDC );
       Mjoin( PATL, geprint )( "C_test",    N, N, C,  LDC );
 #endif
+   }
+   if (errBV)
+   {
+      if (ATL_FindFirstSetBitBV(errBV, 0) != -1)
+         ATL_print2dBV(N, N, errBV);
+      ATL_FreeBV(errBV);
    }
 
    free( C  );
