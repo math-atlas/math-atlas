@@ -29788,16 +29788,16 @@ void syrkBlk
             TYPE *crA=(flag&2)?rS:wS, *ciA=(flag&2)?wS:rS;
             if (flag&4)
             {
-               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, wA, wA, rC, crA, ciA, wC);
-               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, crA, ciA, wC, rA, rA, rC);
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, wS, wS, rC, crA, ciA, wC);
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, crA, ciA, wC, rS, rS, rC);
             }
             else
             {
-               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wA, wA, rC, crA, ciA, wC);
-               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, crA, ciA, wC, rA, rA, rC);
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wS, wS, rC, crA, ciA, wC);
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, crA, ciA, wC, rS, rS, rC);
             }
-            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, rA, rA, rC, ciA, crA, wC);
-            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, ciA, crA, wC, wA, wA, rC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, rS, rS, rC, ciA, crA, wC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, ciA, crA, wC, wS, wS, rC);
          #else
             if (flag&4)
             {
@@ -29902,7 +29902,7 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
 {
    const size_t nfkblks = ip->nfkblks;
    size_t k;
-   ATL_UINT szA = (nfkblks) ? ip->szA : ip->pszA;
+   ATL_UINT szA = (ip->nfnblks) ? ip->szA : ip->pszA;
    #ifdef TCPLX
       szA += szA;
    #endif
@@ -30005,18 +30005,20 @@ int syrk_amm
  * Will eventually need syrk timed for all square blocks to select best case.
  * For now, just pretend syrk time doesn't matter
  */
-//   idx = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
+#if 1
+   idx = Mjoin(PATL,sqGetAmmmIndx)(N, N, K);
+#else
    idx = 0;
+#endif
    Mjoin(PATL,sqComputeIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, 
                                alpha, beta);
 /*
  * Need space for only one column-panel of At
  */
-   szB = (ip.nfkblks+1) * ((ip.nfnblks) ? ip.szA : ip.pszA);
+   szB = ip.nfnblks ? ip.szA : ip.pszA;
+   szB *= (ip.nfkblks+1);
 /*
- * For A, Lower, will allocate unneeded row-panel of A to make indexing
- * same as for square matrices.  We won't copy to space, so only cost
- * is extra malloc size.
+ * A needs entire matrix minus one row/col panel
  */
    szA = szB * (ip.nfnblks + ip.npnblks - 1);
    nb = (ip.nfnblks) ? ip.nb : ip.pnb;
@@ -30049,7 +30051,11 @@ int syrk_amm
       wCs = wC + (szC SHIFT);
       wCs = ATL_AlignPtr(wCs);
    }
-   rC = wC;
+   #ifdef TCPLX
+      rC = wC + ip.szC;
+   #else
+      rC = wC;
+   #endif
 /*
  * ============================================================================
  * First, we compute diagonals of C, and in the process we will copy A/A^T
