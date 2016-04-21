@@ -30281,7 +30281,6 @@ void syrkBlk
    const TYPE *A, /* if non-NULL, base A ptr to copy */
    cm2am_t sy2blk,/* copy A to syrk storage */
    ablk2cmat_t blk2c, /* if non-NULL sy storage to C storage copy func */
-   const SCALAR beta, /* only needed if blk2c non-NULL */
    TYPE *C,       /* if blk2c non-NULL, which C to write to, else ignored */
    TYPE *wS,      /* space to store syrk A; */
    TYPE *wA,      /* if non-NULL, op-based A workspace */
@@ -30294,11 +30293,12 @@ void syrkBlk
 {
    ATL_CSZT lda = op->lda, nfblks = op->nfnblks;
    ATL_CUINT KB = op->KB, kb = op->kb;
-   ATL_UINT nb, nbS, kbS, nnu;
+   ATL_UINT nb, kbS, nnu;
    #ifdef TCPLX
       ATL_UINT szC, szA;
       TYPE *rA, *rB, *rS, *rC;
    #endif
+   const SCALAR beta=op->beta;
    if (d == nfblks + op->npnblks - 1)  /* last block is SYRK only */
    {
       nb = op->nF;
@@ -30332,10 +30332,9 @@ void syrkBlk
       #endif
    }
    nnu = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
-   nbS = nnu*ATL_SYRKK_NU;
    kbS = ((kb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    #ifdef TCPLX
-   szA = nbS * kbS;
+   szA = nnu * ATL_SYRKK_NU * kbS;
    rS = wS + szA;
    if (wC)
    {
@@ -30391,7 +30390,7 @@ void syrkBlk
       if (wS != wA && wS != wB)
       {
          #ifdef TCPLX
-            sy2blk(kb, nb, ap->ONE, A, lda, rS, wS);
+            sy2blk(kb, nb, op->ONE, A, lda, rS, wS);
          #else
             sy2blk(kb, nb, ATL_rone, A, lda, wS);
          #endif
@@ -30495,7 +30494,7 @@ int syrk_OP
    ATL_CSZT ldc
 )
 {
-   size_t sz, szA, szB, szC, szS, nnblks;
+   size_t sz, szA, szB, szC, szU, szS, nnblks;
    void *vp;
    TYPE *wA, *wB, *wC, *wS, *wU, *rC;
    int nb, nbS, flg, idx, extra;
@@ -30515,6 +30514,7 @@ int syrk_OP
       
    if (Uplo == AtlasLower)
    {
+      szU = 0;
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
@@ -30550,6 +30550,7 @@ int syrk_OP
    }
    else
    {
+      szU = N*N;
       if (SCALAR_IS_NONE(alpha))
          blk2sy = Mjoin(PATL,syblk2cmat_an_b0);
       else
@@ -30570,8 +30571,14 @@ int syrk_OP
       nbS *= ATL_SYRKK_NU;
       szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
              * ATL_SYRKK_VLEN;
-      szS = nbS * op.KB;
-      sz = ATL_MulBySize(op.szC + szC + szS + extra) + 3*ATL_Cachelen;
+      #if ATL_SYRKK_KVEC > 1
+         szS = ((K+ATL_SYRKK_KVEC-1)/ATL_SYRKK_KVEC)*ATL_SYRKK_KVEC;
+         szS *= nbS;
+      #else
+         szS = nbS * K;
+      #endif
+      szU = Mmax(op.szC, szU);
+      sz = ATL_MulBySize(szU + szC + szS + extra) + 3*ATL_Cachelen;
       vp = malloc(sz);
       if (!vp)
          return(1);
@@ -30581,8 +30588,9 @@ int syrk_OP
       wU = wC + (szC SHIFT);
       wU = ATL_AlignPtr(wU);
       flg |= (Uplo == AtlasUpper) ? 1 : 0;
-      syrkBlk(&op, flg, 0, A, sy2blk, blk2sy, op.beta, C, wS, 
+      syrkBlk(&op, flg, 0, A, sy2blk, blk2sy, C, wS, 
               NULL, NULL, NULL, NULL, wC, wU);
+      free(vp);
       return(0);
    }
    ATL_assert(0)
