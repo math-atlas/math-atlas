@@ -30273,6 +30273,9 @@ int syrk_amm
    #define syrk_OP Mjoin(PATL,syrk_OP)
 #endif
 
+/*
+ * Indexes both A and C from base ptrs according to d (diagonal blk)
+ */
 void syrkBlk
 (
    rkinfo_t *op,
@@ -30302,6 +30305,7 @@ void syrkBlk
    if (d == nfblks + op->npnblks - 1)  /* last block is SYRK only */
    {
       nb = op->nF;
+      nb = (nb) ? nb : op->nb;
       #ifdef TCPLX
          if (d < nfblks)
          {
@@ -30424,6 +30428,7 @@ void syrkBlk
       #else
          TYPE alp = (op->alpA == ATL_rone) ? op->alpB : op->alpA;
       #endif
+      C += d*op->nb*((ldc+1)SHIFT);
       if (flag&1)  /* Upper matrix */
       {
          #ifdef TCPLX
@@ -30494,7 +30499,7 @@ int syrk_OP
    ATL_CSZT ldc
 )
 {
-   size_t sz, szA, szB, szC, szU, szS, nnblks;
+   size_t sz, szA, szC, szU, szS, nnblks, szAblk;
    void *vp;
    TYPE *wA, *wB, *wC, *wS, *wU, *rC;
    int nb, nbS, flg, idx, extra;
@@ -30557,15 +30562,15 @@ int syrk_OP
          blk2sy = SCALAR_IS_ONE(alpha) ?
                   Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
    }
+   extra = (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU;
+   flg = (TA == AtlasNoTrans) ? 2 : 0;
+   if (TA == AtlasUpper)
+   {
+      flg |= 1;
+      extra -= Mmin(extra, szU);
+   }
    if (nnblks == 1)  /* we've got a 1 block of SYRK only! */
    {
-      extra = (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU;
-      flg = (TA == AtlasNoTrans) ? 2 : 0;
-      if (TA == AtlasUpper)
-      {
-         flg |= 1;
-         extra -= Mmin(extra, szC);
-      }
       nbS = (N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
       szC = ((nbS+1)*nbS)>>1;  /* only need lower tri blks, not full nnu*nnu */
       nbS *= ATL_SYRKK_NU;
@@ -30593,144 +30598,74 @@ int syrk_OP
       free(vp);
       return(0);
    }
-   ATL_assert(0)
-@beginskip
 /*
- * Need space for only one column-panel of At
+ * If we reach here, we have at rank-K SYRK update requiring both SYRK & GEMM
+ * Since nnblks > 1, nfnblks > 1 as well.
  */
-   szA = op.nfnblks ? ip.szA : ip.pszA;
-   szA *= nnblks;
-/*
- * A needs entire matrix minus one row/col panel
- */
-   szA = szB * (ip.nfnblks + ip.npnblks - 1);
-   nb = (ip.nfnblks) ? ip.nb : ip.pnb;
-   nbS = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
+   nbS = (op.nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
    szC = ((nbS+1)*nbS)>>1;  /* only need lower tri blks, not full nnu*nnu */
    nbS *= ATL_SYRKK_NU;
    szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
           * ATL_SYRKK_VLEN;
-   if (Uplo == AtlasLower)  /* need space for max(syrkC,gemmC) */
-      szC -= (szC > ip.szC) ? ip.szC : szC;
-   szS = nbS * ip.kb;
-   sz = ATL_MulBySize(ip.szC + szC + szS + szA+szB) + 5*ATL_Cachelen;
-   if (sz < ATL_MaxMalloc)
-      vp = malloc(sz);
+   #if ATL_SYRKK_KVEC > 1
+      szS = ((K+ATL_SYRKK_KVEC-1)/ATL_SYRKK_KVEC)*ATL_SYRKK_KVEC;
+      szS *= nbS;
+   #else
+      szS = nbS * K;
+   #endif
+   szU = Mmax(op.szC, szU);
+   szAblk = op.szA;
+   szA = szAblk * (nnblks-1);
+   sz = ATL_MulBySize(szA+szAblk + szS + szC + szU + extra) + 5*ATL_Cachelen;
+   vp = malloc(sz);
    if (!vp)
-      return(1);  /* keep recurring, can't malloc space! */
+      return(1);
    wA = ATL_AlignPtr(vp);
    wB = wA + (szA SHIFT);
    wB = ATL_AlignPtr(wB);
-   wS = wB + (szB SHIFT);
+   wS = wB + (szAblk SHIFT);
    wS = ATL_AlignPtr(wS);
    wC = wS + (szS SHIFT);
    wC = ATL_AlignPtr(wC);
-   if (!szA)
-      wA = NULL;
-   if (Uplo == AtlasLower)
-      wCs = wC;
-   else
-   {
-      wCs = wC + (szC SHIFT);
-      wCs = ATL_AlignPtr(wCs);
-   }
+   wU = wC + (szC SHIFT);
+   wU = ATL_AlignPtr(wU);
    #ifdef TCPLX
-      rC = wC + ip.szC;
+      rC = wC + op.szC;
    #else
       rC = wC;
    #endif
-/*
- * ============================================================================
- * First, we compute diagonals of C, and in the process we will copy A/A^T
- * for use in computing non-diaginal blocks using inner-product amm.
- * ============================================================================
- */
-   nnblks = ip.nfnblks + ip.npnblks;
-   flg = (TA == AtlasNoTrans) ? 2 : 0;
-/*
- * Upper doesn't need to copy first row panel of A or last col panel of At
- * to GEMM storage.  If C only block, should call syrk_IP instead!
- */
-   if (Uplo == AtlasUpper)
+   if (Uplo == AtlasLower)
    {
-      flg |= 1;
-      syrk_K(&ip, flg, 0, A, sy2blk, blk2sy, beta, C, wS, wB, NULL, wC, wCs);
-      if (N > nb)
+      size_t j;
+/*
+ *    Do first diagonal block, don't copy A blk to GEMM storage since it is
+ *    used only for this diagonal (SYRK)
+ */
+      syrkBlk(&op, flg, 0, A, sy2blk, blk2sy, C, wS, NULL,NULL, wB, wB, wC, wU);
+/*
+ *    Do rank-K update on ge blks beneath diag, copying entire A at same time
+ */
+      Mjoin(PATL,oploopsM)(&op, 1, 0, A, NULL, C, 1, wA, wB, rC, wC);
+/*
+ *    For remaining column panels of C, syrkBlk copies B, reusues wA
+ */
+      for (j=1; j < nnblks-1; j++)
       {
-         const size_t incC = nb*((ldc+1)SHIFT), incCn=nb*(ldc SHIFT);
-         size_t i;
-         TYPE *c;
-/*
- *       Compute all C blks within this rowpan of C, copy rest of At
- */
-         blk2c = ip.blk2c;
-         Mjoin(PATL,iploopsNK)(&ip, 0, 1, NULL, A, C, 11, wB, wA, rC, wC,
-                               beta, blk2c);
-/*
- *       Loop over all col-pans of C, excepting first & last;
- *       A already fully copied, B will be copied by syrk_Kloop call.
- */
-         c = C + incC;
-         for (i=1; i < nnblks-1; i++)
-         {
-            syrk_K(&ip, flg, i, A, sy2blk, blk2sy, beta, c, wS, wB, NULL, 
-                   wC, wCs);
-            wA += szB SHIFT;
-            Mjoin(PATL,iploopsNK)(&ip, i, i+1, NULL, NULL, C+i*(nb SHIFT), 11, 
-                                  wB, wA, rC, wC, beta, blk2c);
-            c += incC;
-         }
-/*
- *       Last colpan is only 1 diag blk, so don't copy A or B for gemm
- */
-         syrk_K(&ip, flg, i, A, sy2blk, blk2sy, beta, c, wS, NULL, NULL, 
-                wC, wCs);
+         syrkBlk(&op, flg, j, A, sy2blk, blk2sy, C, wS, NULL, NULL, wB, wB, 
+                 wC, wU);
+         wA += (szAblk SHIFT);
+         Mjoin(PATL,oploopsM)(&op, j+1, j, NULL, NULL, C, 1, wA, wB, rC, wC);
       }
-   }
 /*
- * Lower doesn't need to copy first row panel of A or last col panel of At
- * to GEMM storage.  If C only block, should call syrk_IP instead!
+ *    Last col panel is only one diagonal
  */
+      syrkBlk(&op, flg, j, A, sy2blk, blk2sy, C, wS, NULL, NULL, NULL, NULL, 
+              wC, wU);
+   }
    else
    {
-      const size_t incC = (ldc SHIFT) * nb;
-      size_t j;
-      TYPE *c;
-/*
- *    Compute first diag block, copying At to wB for use by all of this colpan
- *    of C's gemm computation
- */
-      syrk_K(&ip, flg, 0, A, sy2blk, blk2sy, beta, C, wS, NULL, wB, wC, wCs);
-      if (N > nb)
-      {
-/*
- *       Compute all C blks within this colpan of C, copying rest of A
- */
-         blk2c = ip.blk2c;
-         Mjoin(PATL,iploopsMK)(&ip, 1, 0, A, NULL, C, 7, wA, wB, rC, wC, 
-                               beta, blk2c);
-/* 
- *       Loop over all col-pans of C, excepting first & last;
- *       A already fully copied, B will be copied by syrk_Kloop call.
- */
-         c = C + incC;
-         for (j=1; j < nnblks-1; j++)
-         {
-            syrk_K(&ip, flg, j, A, sy2blk, blk2sy, beta, c+(nb SHIFT)*j, wS, 
-                   NULL, wB, wC, wCs);
-            wA += szB SHIFT;
-            Mjoin(PATL,iploopsMK)(&ip, j+1, j, NULL, NULL, c, 7, wA, wB, rC, wC,
-                                  beta, blk2c);
-            c += incC;
-         }
-/*
- *       Last colpan is only 1 diag blk, so don't copy A or B for gemm
- */
-         syrk_K(&ip, flg, j, A, sy2blk, blk2sy, beta, c+(nb SHIFT)*j, wS, 
-                NULL, NULL, wC, wCs);
-      }
+      ATL_assert(0)
    }
-@endskip
    free(vp);
    return(0);
 }
