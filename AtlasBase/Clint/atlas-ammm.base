@@ -692,6 +692,7 @@ void Mjoin(PATL,GetRKInfo)
    (rkinfo_t*, int, enum ATLAS_TRANS, enum ATLAS_TRANS,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
+int Mjoin(PATL,GetSyrkIdx)(unsigned int flg, ATL_CSZT N, ATL_CSZT K);
 int Mjoin(PATL,GetSyrkInfo)
    (amminfo_t*,int, enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,int);
 void Mjoin(PATL,GetSyrkOP)
@@ -12966,7 +12967,7 @@ void DoSyrkTim(char pre, int verb)
 {
    ATL_mmnode_t *tb, *tp, *sb, *syp, *syb=NULL;
    int mu, nu;
-   tb = ReadMMFileWithPath(pre, "res", "syrkK.tim");
+   tb = ReadMMFileWithPath(pre, "res", "syrkK.sum");
    if (tb)  /* already ran! */
    {
       for (tp=tb; tp; tp = tp->next)
@@ -12979,7 +12980,7 @@ void DoSyrkTim(char pre, int verb)
                printf("   syrkK %dx%d: %.2f\n", tp->mbB, tp->nbB, tp->mflop[0]);
          }
       }
-      WriteRefreshedMMFileWithPath(pre, "res", "syrkK.tim", tb);
+      WriteRefreshedMMFileWithPath(pre, "res", "syrkK.sum", tb);
       KillAllMMNodes(tb);
       return;
    }
@@ -13001,6 +13002,7 @@ void DoSyrkTim(char pre, int verb)
       nb = ((nb+nu-1)/nu)*nu;
       new->mbB = mb;
       new->nbB = nb;
+      new->kbB = tp->kbB;
       if (mb == tp->mbB && nb == tp->nbB)
          ratio = 1.0;
       else
@@ -13012,12 +13014,12 @@ void DoSyrkTim(char pre, int verb)
       new->next = syb;
       syb = new;
    }
+   KillAllMMNodes(tb);
    KillAllMMNodes(syp);
    syb = ReverseMMQ(syb);
-   WriteRefreshedMMFileWithPath(pre, "res", "syrkK.tim", tb);
+   WriteRefreshedMMFileWithPath(pre, "res", "syrkK.sum", syb);
    printf("DONE SYRK TIMING.\n");
    KillAllMMNodes(syb);
-   KillAllMMNodes(tb);
 }
 
 void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
@@ -20971,6 +20973,7 @@ int Mjoin(PATL,GetRankKInfo)
 @skip #include Mstr(Mjoin(ATLAS_PRE,sqamm_flag.h))
 #include Mstr(Mjoin(ATLAS_PRE,sqamm_kern.h))
 #include Mstr(Mjoin(ATLAS_PRE,sqamm_perf.h))
+#include Mstr(Mjoin(ATLAS_PRE,skamm_perf.h))
 
 #ifdef ATL_CAMM_MAXINDX
    #define ATL_MAXIDX ATL_CAMM_MAXINDX
@@ -21032,6 +21035,83 @@ static INLINE ablk2cmat_t GetBlk2C(int id, int ialp, int ibet)
          return(ATL_AMM_BLK2C_aX_bn[id]);
       return(ATL_AMM_BLK2C_aX_bX[id]);
    }
+}
+
+static double SyrkTime(int id, unsigned int flg, size_t N, size_t K)
+{
+   double tot, kfrac;
+   size_t nfnblks, nondiag, nfkblks;
+   unsigned int nb, kr;
+
+   nb = ATL_AMM_KBs[id];
+   nfkblks = K / nb;
+   kr = K - nfkblks*nb;
+   kfrac = (double)kr / (double)nb;
+   nfnblks = N/nb;
+   nondiag = (((nfnblks+1)*nfnblks)>>1) - nfnblks;
+/*
+ * Find total time to compute full GEMM & SYRK blocks
+ */
+   tot = nondiag * ATL_sqAMM_TIME[id] * (nfkblks + kfrac/ATL_sqAMM_K1RATIO[id]);
+   tot += nfnblks * ATL_skAMM_TIME[id] * (nfkblks + kfrac);
+   kr = N - nfnblks*nb;
+   if (kr)  /* have partial GEMM panel & SYRK block */
+   {
+      size_t nkb, nnb;
+      int i;
+      double pen;
+      const unsigned int U = (flg) ? ATL_AMM_NUs[id] :ATL_AMM_MUs[id];
+      const unsigned int NR = ((kr+U-1)/U)*U;
+/*
+ *    pen: penalty for doing useless flops
+ */
+      pen = (double)NR / (double)kr;
+      pen *= pen;
+/*
+ *    Try to find similar size to estimate speed for cleanup dim
+ */
+      for (i=0; i < ATL_sqAMM_NCASES-1 && ATL_AMM_KBs[i] < NR; i++);
+      if (i && ATL_AMM_KBs[i] > NR)
+         i--;
+      nb = ATL_AMM_KBs[i];
+      nkb = (K+nb-1) / nb;
+      nnb = (N+nb-1) / nb;
+      tot += nkb*ATL_skAMM_TIME[i]; /* SYRK cleanup */
+      tot += nkb*pen*nnb*ATL_sqAMM_TIME[i];
+   }
+
+#if 0
+printf("   D%03d=(%d,%d:%d), time=%e, mf=%.0f\n", 
+       id, N, K, nb, tot, 1.0e-6*N*N*K / tot);
+#endif
+   return(tot);
+}
+
+int Mjoin(PATL,GetSyrkIdx) /* returns square amm index to use */
+(
+   unsigned int flg,     /* bit 0 set: Upper, else Lower */
+   ATL_CSZT N,           /* size of triangular matrix */
+   ATL_CSZT K            /* K dim of A/A^T */
+)
+{
+   double timB;
+   int i, iB=0;
+
+   timB = SyrkTime(0, flg, N, K);
+   for (i=1; i < ATL_sqAMM_NCASES; i++)
+   {
+      double tim;
+      tim = SyrkTime(i, flg, N, K);
+      if (tim < timB)
+      {
+         timB = tim;
+         iB = i;
+      }
+      if (ATL_AMM_KBs[i] > N)
+         break;
+   }
+   printf("IDX=%d, NB=%d, tim=%e, mf=%.0f\n", iB, ATL_AMM_KBs[iB], timB, 1.0e-6*N*N*K / timB);
+   return(iB);
 }
 
 int Mjoin(PATL,GetSyrkInfo)  /* returns nb */
@@ -28505,7 +28585,7 @@ int main(int nargs, char **args)
 #include "atlas_mmgen.h"
 #include "atlas_sys.h"
 
-#define NMMLISTS 7
+#define NMMLISTS 8
 #define IGE   0
 #define IGEK1 1
 #define ISQ   2
@@ -28513,6 +28593,7 @@ int main(int nargs, char **args)
 #define IRKK  4
 #define ITRSM 5
 #define ISYRK 6
+#define ISYRKT 7
 
 @extract -b @(basd)/atlas.base rout=Mylcm
 void PrintUsage(char *name, int ierr, char *flag)
@@ -28543,9 +28624,9 @@ char *GetFlags(int nargs, char **args, char *PRE, ATL_mmnode_t **lists)
    int i, j=0, n, k;
    char pre='d', cpre, ch;
    char *outd=NULL;
-   char *fn[7]={"geAMMRES.sum","geAMMKCLEAN.sum",
+   char *fn[8]={"geAMMRES.sum","geAMMKCLEAN.sum",
       "sqAMMRES.sum","sqAMMKCLEAN.sum", "rkAMMRES.sum", 
-      "tsAMMRES.sum","gAMSYRK.sum"};
+      "tsAMMRES.sum","gAMSYRK.sum", "syrkK.sum"};
 
    for (i=0; i < 2*NMMLISTS; i++)
       lists[i] = NULL;
@@ -28750,6 +28831,7 @@ double GenPerfH(char pre, char *outd, char *cn, double mfMax,
    ATL_mmnode_t *mpT[NTHRSH];
    const int FNDMAX = (mfMax == 0.0);
    int i, n, idxMax=0;
+   double fcnt;
 
    fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "perf", mb);
 /*
@@ -28840,9 +28922,15 @@ double GenPerfH(char pre, char *outd, char *cn, double mfMax,
    fprintf(fp, "static const float ATL_%sAMM_TIME[%d] =\n", cn, n);
    fprintf(fp, "{  /* actual seconds to compute one block */\n");
    for (i=0,mp=mb; mp; i++,mp = mp->next)
+   {
+      if (mp->blask == 0)
+         fcnt = (2.0*mp->mbB)*mp->nbB*mp->kbB;  /* gemm flop count */
+      else
+         fcnt = (1.0*mp->mbB)*mp->nbB*mp->kbB;  /* roughly right */
       fprintf(fp, "   %e%c  /* IDX=%d, B=(%d,%d,%d) */\n",
-              2.0*mp->mbB*mp->nbB*mp->kbB / (mp->mflop[0]*1.0e6),
+              fcnt / (mp->mflop[0]*1.0e6),
               (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
+   }
    fprintf(fp, "};\n#endif\n");
    CloseGenHeader(fp);
    return(mfMax);
@@ -29252,6 +29340,12 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
          GenPerfH(pr, outd, "ts", mfMax, lists[k+ITRSM], NULL);
       KillAllMMNodes(lists[k+ITRSM]);  /* done with these! */
       lists[k+ITRSM] = NULL;
+@skip      if (lists[k+ISYRKT])
+@skip      {
+      GenPerfH(pr, outd, "sk", mfMax, lists[k+ISYRKT], NULL);
+      KillAllMMNodes(lists[k+ISYRKT]);  /* done with these! */
+      lists[k+ISYRKT] = NULL;
+@skip      }
       GenSyrkH(pr, outd, lists[k+ISYRK], SKSAME);
 
       GenPerfH(pr, outd, "sq", 0.0, lists[k+ISQ], lists[k+ISQK1]);
@@ -29734,12 +29828,13 @@ int main(int nargs, char **args)
  * ->auth  : kernel name without _b[1,n,0] suffix
  * ->genstr: for ID=0: genstr, else user kernel name (came in ->rout)
  * ->rout  : correct present filename
- * TRSM entries we just set all these to NULL, since not needed.
- * TRSM used to tsamm_perf.h, needs perf,NB,IDX
+ * TRSM/SYRKT entries we just set all these to NULL, since not needed.
+ * TRSM/SYRKT used to [ts,sk]amm_perf.h, needs perf,NB,IDX
  */
    for (i=0; i < 2*NMMLISTS; i++)
    {
-      if (i == ITRSM || i == ITRSM+NMMLISTS)
+      if (i == ITRSM || i == ITRSM+NMMLISTS ||
+          i == ISYRKT || i == ISYRKT+NMMLISTS)
          KillAllMMStrings(lists[i]);
       else if (i == ISYRK || i == ISYRK+NMMLISTS)
          PrepMMForGen((i==ISYRK)?pre:cpr, outd, "syrk", lists[i]);
@@ -30114,9 +30209,10 @@ int syrk_amm
  * For now, just pretend syrk time doesn't matter
  */
 #if 1
-   idx = Mjoin(PATL,sqGetAmmmIndx)(N, N, K);
+//   idx = Mjoin(PATL,sqGetAmmmIndx)(N, N, K);
+   idx = Mjoin(PATL,GetSyrkIdx)((Uplo == AtlasUpper), N, K);
 #else
-   idx = 0;
+   idx = 14;
 #endif
    Mjoin(PATL,sqComputeIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, 
                                alpha, beta);
