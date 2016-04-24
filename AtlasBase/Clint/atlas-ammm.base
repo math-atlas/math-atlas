@@ -796,6 +796,85 @@ int Mjoin(PATL,herk_@(rt))
  */
 #define ATL_AMMFLG_KRUNTIME(flg_) ((flg_) & 1)
 #define ATL_AMMFLG_KMAJOR(flg_) ((flg_) & 2)
+/*
+ * Helper functions we'd like to inline
+ */
+#ifdef ATL_GLOBIDX
+static TYPE INLINE *IdxAw_rkK(rkinfo_t *op, TYPE *A, size_t i)
+{  /* index A workspace for ith block for rank-K (only 1 kb) */
+   size_t m;
+
+   m = op->nfmblks;
+   m = Mmin(m, i);
+   i -= m;
+   A += (m * op->szA + i * op->pszA)SHIFT;
+   return(A);
+}
+
+static TYPE INLINE *IdxAw_ip(ipinfo_t *ip, TYPE *A, size_t i, size_t k)
+{  /* index A workspace for inner-product gemm */
+   const size_t nfmblks = ip->nfmblks, szA = (i < nfmblks) ? ip->szA:ip->pszA;
+   size_t m;
+
+   m = Mmin(nfmblks, i);
+   i -= m;
+   m = (m * ip->szA + i * szA) * (ip->nfkblks+1);  /* offset to kpan */
+   m = (m+k*szA)SHIFT;
+   return(A+m);
+}
+
+static TYPE INLINE *IdxBw_ip(ipinfo_t *ip, TYPE *B, size_t k, size_t j)
+{  /* index B workspace for inner-product gemm */
+   const size_t nfnblks = ip->nfnblks, szB = (j < nfnblks) ? ip->szB:ip->pszB;
+   size_t n;
+
+   n = Mmin(nfnblks, j);
+   j -= n;
+   n = (n * ip->szB + j * szB) * (ip->nfkblks+1);  /* offset to kpan */
+   n = (n+k*szB)SHIFT;
+   return(B+n);
+}
+
+static const TYPE INLINE *IdxA_ip
+   (ipinfo_t *ip, const TYPE *A, size_t i, size_t k)
+{  /* index global A base-pointer to find (i,k) block for inner-product gemm */
+   size_t m;
+
+   m = ip->nfmblks;
+   m = Mmin(m, i);
+   i -= m;
+   A += m * ip->incAm + i * ip->pincAm;
+   A += k * ip->incAk;
+   return(A);
+}
+
+static const INLINE TYPE *IdxB_ip
+   (ipinfo_t *ip, const TYPE *B, size_t k, size_t j)
+{  /* index global A base-pointer to find (i,k) block for inner-product gemm */
+   size_t n;
+
+   n = ip->nfnblks;
+   n = Mmin(n, j);
+   j -= n;
+   B += ip->incBn * n + ip->pincBn * j;
+   B += k * ip->incBk;
+   return(B);
+}
+static INLINE TYPE *IdxC_ip(ipinfo_t *ip, TYPE *C, size_t i, size_t j)
+{
+   size_t n;
+
+   n = ip->nfmblks;
+   n = Mmin(n, i);
+   i -= n;
+   C += (ip->mb * n + ip->pmb * i)SHIFT;
+   n = ip->nfnblks;
+   n = Mmin(n, j);
+   j -= n;
+   C += (ip->nb * n + ip->pnb * j)*((ip->ldc) SHIFT);
+   return(C);
+}
+#endif
 
 #endif  /* end include file guard */
 @ROUT emit_uamm
@@ -29849,14 +29928,13 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_syrk_amm
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#define ATL_GLOBIDX 1
 #include "atlas_misc.h"
 #include "atlas_level1.h"
 #include "atlas_level2.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
-#define ATL_INDX 1
-#include "atlas_tlvl3.h"
 /*
  * Service routine, particularly for parallel.  Takes its blocking from ip
  * (assuming that is what is being used below diagonal blocks
@@ -30849,15 +30927,13 @@ int syrk_OP
 }
 @ROUT ATL_syrk_IP
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2015 
+#define ATL_GLOBIDX 1
 #include "atlas_misc.h"
 #include "atlas_level1.h"
 #include "atlas_level2.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
-#define ATL_INDX 1
-#include "atlas_tlvl3.h"
-
 
 static INLINE void ATL_syr1
 (

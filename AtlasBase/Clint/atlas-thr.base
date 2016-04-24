@@ -8,6 +8,7 @@
 #ifndef ATLAS_TTYPES_H
    #define ATLAS_TTYPES_H
 #include "atlas_amm.h"
+#include "atlas_bitvec.h"
 typedef volatile int VINT;
 /*
  * This structure is for a TRSM that uses ATL_trsm as its compute kernel,
@@ -44,7 +45,7 @@ struct ATL_ttrsm_amm
    cm2am_t a2blk, b2blk;
    void *AblkCtr;      /* deals out copy of A blocks column-wise */
    void *rhsCtr;       /* deals out column panels of Right Hand Side (B/X) */
-   int *AcpyBV;        /* nablks-len BV; 0: A blk not yet copied */
+   ATL_BV_t *AcpyBV;   /* nablks-len BV; 0: A blk not yet copied */
    void *Acpymut;      /* mutex protecting AcpyBV */
    TYPE *wA;           /* ptr to start of shared A workspace */
    TYPE *w;            /* nthr separate blkszB+panszB workspace */
@@ -88,6 +89,7 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
    #define ATLAS_THREADS_H
 #include "atlas_ttypes.h"
 #include "atlas_taffinity.h"
+#include "atlas_bitvec.h"
 #define ATL_chkgap 128
 #define ATL_chksh  7
 /*
@@ -270,8 +272,8 @@ struct ATL_ThreadPool
  * (which need only be set when doing a combine)
  */
    void *combmut;         /* mutex for doing optional combine op */
-   int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
-   int *combDoneBV;       /* 1: thr of that rank's data already combined */
+   ATL_BV_t *combReadyBV; /* 1: thr of that rank is ready to do combine */
+   ATL_BV_t *combDoneBV;  /* 1: thr of that rank's data already combined */
    void *tpmut;           /* mutex protecting above pool info */
    void *cbcmut;          /* mutex used for cbc ops on weakly-ord caches */
 /*
@@ -300,8 +302,8 @@ struct ATL_ThreadPool
  * (which need only be set when doing a combine)
  */
    void *combmut;         /* mutex for doing optional combine op */
-   int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
-   int *combDoneBV;       /* 1: thr of that rank's data already combined */
+   ATL_BV_t *combReadyBV; /* 1: thr of that rank is ready to do combine */
+   ATL_BV_t *combDoneBV;  /* 1: thr of that rank's data already combined */
    void *tpmut;           /* mutex protecting above pool info */
    void *cbcmut;          /* mutex used for cbc ops on weakly-ord caches */
 /*
@@ -339,8 +341,8 @@ struct ATL_ThreadPool
    volatile char *bchkin; /* nthr*128-len boolean checkin array */
    volatile int *icomm;   /* nthr-long integer communication array */
    void *combmut;         /* mutex for doing optional combine op */
-   int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
-   int *combDoneBV;       /* 1: thr of that rank's data already combined */
+   ATL_BV_t *combReadyBV; /* 1: thr of that rank is ready to do combine */
+   ATL_BV_t *combDoneBV;  /* 1: thr of that rank's data already combined */
    void *tpmut;           /* mutex protecting above pool info */
    void *cbcmut;          /* mutex used for cbc ops on weakly-ord caches */
 /* 
@@ -778,11 +780,11 @@ struct ATL_tamm_gOOO
    #ifdef TCPLX
       const TYPE *beta;
    #endif
-   int *cpyAdBV;     /* nmblks BV, set means K-panel of A has been copied */
-   int *cpyBdBV;     /* nnblks BV, set means K-panel of A has been copied */
-   int *cCblkBV;     /* nMNblks BV for dealing C blks while copying */
-   int *cbetaBV;     /* nMNblks BV: unset means beta not yet applied */
-   int *lbetaBV;     /* ncK BV: unset means beta not yet applied */
+   ATL_BV_t *cpyAdBV;/* nmblks BV, set means K-panel of A has been copied */
+   ATL_BV_t *cpyBdBV;/* nnblks BV, set means K-panel of A has been copied */
+   ATL_BV_t *cCblkBV;/* nMNblks BV for dealing C blks while copying */
+   ATL_BV_t *cbetaBV;/* nMNblks BV: unset means beta not yet applied */
+   ATL_BV_t *lbetaBV;/* ncK BV: unset means beta not yet applied */
    void *cpmut;      /* mutex protecting cpyA/BdBV & cCblkBV */
    void *cbetamut;   /* mutex protecting cbetaBV */
    void *lbetamut;   /* mutex protecting lbetaBV */
@@ -1077,25 +1079,25 @@ struct ATL_tsyrk_ammN
    ablk2cmat_t syblk2c;
    ablk2cmat_t syblk2c_b1;
    cm2am_t sya2blk;
-   const TYPE *A;    /* input matrix */
-   TYPE *C;          /* output matrix */
-   TYPE *wC;         /* ATL_NTHREADS thread-local nb*nb workspaces */
+   const TYPE *A;      /* input matrix */
+   TYPE *C;            /* output matrix */
+   TYPE *wC;           /* ATL_NTHREADS thread-local nb*nb workspaces */
    #ifdef TCPLX
       const TYPE *beta;
    #endif
-   TYPE *wA, *wAt;   /* workspaces for storing A & A' */
-   int *cpydonBV;    /* nnblks BV set means A & A' copy is done */
-   int *cblkBV;      /* ncblks BV for dealing out cblks */
-   int *dbetaBV;     /* nnblks BV: unset means beta not yet applied */
-   int *cbetaBV;     /* ncblks BV: unset means beta not yet applied */
-   void *cdmut;      /* mutex protecting cpydonBV */
-   void *cwmut;      /* mutex protecting non-diag work */
-   void *dCtr;       /* AtomicCtr for dealing out diagonal blocks */
-   void **KbegCtr;   /* K-counters for dealing out diagonal blocks */
-   void **KdonCtr;   /* K-counters for completed diagonal blocks */
-   void **Cdmuts;    /* mutex locks for each diagonal block of C */
-   size_t wrksz;     /* total elts in each threads' wC array */
-   size_t lda, ldc;  /* gap between columns (stride within rows) */
+   TYPE *wA, *wAt;     /* workspaces for storing A & A' */
+   ATL_BV_t *cpydonBV; /* nnblks BV set means A & A' copy is done */
+   ATL_BV_t *cblkBV;   /* ncblks BV for dealing out cblks */
+   ATL_BV_t *dbetaBV;  /* nnblks BV: unset means beta not yet applied */
+   ATL_BV_t *cbetaBV;  /* ncblks BV: unset means beta not yet applied */
+   void *cdmut;        /* mutex protecting cpydonBV */
+   void *cwmut;        /* mutex protecting non-diag work */
+   void *dCtr;         /* AtomicCtr for dealing out diagonal blocks */
+   void **KbegCtr;     /* K-counters for dealing out diagonal blocks */
+   void **KdonCtr;     /* K-counters for completed diagonal blocks */
+   void **Cdmuts;      /* mutex locks for each diagonal block of C */
+   size_t wrksz;       /* total elts in each threads' wC array */
+   size_t lda, ldc;    /* gap between columns (stride within rows) */
    #ifndef TCPLX
       TYPE beta;
    #endif
@@ -1145,10 +1147,10 @@ struct ATL_tgemm_ammG
    SCALAR alpA;      /* alpha to apply to A */
    SCALAR alpB;      /* alpha to apply to B */
    SCALAR alpC;      /* alpha to apply to C */
-   int *cpyAdBV;     /* nmblks BV, set means K-panel of A has been copied */
-   int *cpyBdBV;     /* nnblks BV, set means K-panel of A has been copied */
-   int *cCblkBV;     /* nMNblks BV for dealing C blks while copying */
-   int *cbetaBV;     /* nMNblks BV: unset means beta not yet applied */
+   ATL_BV_t *cpyAdBV; /* nmblks BV, set means K-panel of A has been copied */
+   ATL_BV_t *cpyBdBV; /* nnblks BV, set means K-panel of A has been copied */
+   ATL_BV_t *cCblkBV; /* nMNblks BV for dealing C blks while copying */
+   ATL_BV_t *cbetaBV; /* nMNblks BV: unset means beta not yet applied */
    void *cpmut;      /* mutex protecting cpyA/BdBV & cCblkBV */
    void *cbetamut;   /* mutex protecting cbetaBV */
    void *ccCtr;      /* nMNblks ctr for dealing out (diagonal) blocks wt copy */
@@ -1563,82 +1565,8 @@ TYPE *Mjoin(PATL,ipcopyB)
 /*
  * Helper functions we'd like to inline
  */
-#ifdef ATL_INDX
-static TYPE INLINE *IdxAw_rkK(rkinfo_t *op, TYPE *A, size_t i)
-{  /* index A workspace for ith block for rank-K (only 1 kb) */
-   size_t m;
-
-   m = op->nfmblks;
-   m = Mmin(m, i);
-   i -= m;
-   A += (m * op->szA + i * op->pszA)SHIFT;
-   return(A);
-}
-
-static TYPE INLINE *IdxAw_ip(ipinfo_t *ip, TYPE *A, size_t i, size_t k)
-{  /* index A workspace for inner-product gemm */
-   const size_t nfmblks = ip->nfmblks, szA = (i < nfmblks) ? ip->szA:ip->pszA;
-   size_t m;
-
-   m = Mmin(nfmblks, i);
-   i -= m;
-   m = (m * ip->szA + i * szA) * (ip->nfkblks+1);  /* offset to kpan */
-   m = (m+k*szA)SHIFT;
-   return(A+m);
-}
-
-static TYPE INLINE *IdxBw_ip(ipinfo_t *ip, TYPE *B, size_t k, size_t j)
-{  /* index B workspace for inner-product gemm */
-   const size_t nfnblks = ip->nfnblks, szB = (j < nfnblks) ? ip->szB:ip->pszB;
-   size_t n;
-
-   n = Mmin(nfnblks, j);
-   j -= n;
-   n = (n * ip->szB + j * szB) * (ip->nfkblks+1);  /* offset to kpan */
-   n = (n+k*szB)SHIFT;
-   return(B+n);
-}
-
-static const TYPE INLINE *IdxA_ip
-   (ipinfo_t *ip, const TYPE *A, size_t i, size_t k)
-{  /* index global A base-pointer to find (i,k) block for inner-product gemm */
-   size_t m;
-
-   m = ip->nfmblks;
-   m = Mmin(m, i);
-   i -= m;
-   A += m * ip->incAm + i * ip->pincAm;
-   A += k * ip->incAk;
-   return(A);
-}
-
-static const INLINE TYPE *IdxB_ip
-   (ipinfo_t *ip, const TYPE *B, size_t k, size_t j)
-{  /* index global A base-pointer to find (i,k) block for inner-product gemm */
-   size_t n;
-
-   n = ip->nfnblks;
-   n = Mmin(n, j);
-   j -= n;
-   B += ip->incBn * n + ip->pincBn * j;
-   B += k * ip->incBk;
-   return(B);
-}
-static INLINE TYPE *IdxC_ip(ipinfo_t *ip, TYPE *C, size_t i, size_t j)
-{
-   size_t n;
-
-   n = ip->nfmblks;
-   n = Mmin(n, i);
-   i -= n;
-   C += (ip->mb * n + ip->pmb * i)SHIFT;
-   n = ip->nfnblks;
-   n = Mmin(n, j);
-   j -= n;
-   C += (ip->nb * n + ip->pnb * j)*((ip->ldc) SHIFT);
-   return(C);
-}
 @beginskip
+#ifdef ATL_INDX
 const TYPE *IdxA_rkK(rkinfo_t *op, const TYPE *A, size_t i)
 {
    size_t m;
@@ -1674,8 +1602,8 @@ TYPE *IdxC_rkK(rkinfo_t *op, TYPE *C, size_t i, size_t j)
    C += (op->nb * n + op->pnb * j)*((op->ldc) SHIFT);
    return(C);
 }
-@endskip
 #endif
+@endskip
 #ifdef ATL_ESTNCTR
    #ifdef __GNUC__
    static inline int ATL_EstNctr    /* RETURNS: good # of global ctrs */
@@ -12100,9 +12028,9 @@ DONE:
       ATL_thread_yield();
 }
 @ROUT ATL_tammm_tMN
+#define ATL_GLOBIDX  1
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
-#define ATL_INDX    1
 #include "atlas_level1.h"
 #include "atlas_tlvl3.h"
 
@@ -13220,9 +13148,9 @@ int Mjoin(PATL,ttrsm_amm)
    return(1);
 }
 @ROUT ATL_tgemm_amm ATL_tammm_tNK ATL_tammm_G ATL_tammm_tK ATL_tammm_sK
+#define ATL_GLOBIDX 1
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
-#define ATL_INDX    1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
 #include "atlas_cbc.h"
@@ -14813,9 +14741,9 @@ int Mjoin(PATL,tammm)
    return(1);
 }
 @ROUT ATL_tsyrk_amm
+#define ATL_GLOBIDX 1
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
-#define ATL_INDX    1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
@@ -17744,9 +17672,9 @@ Mjoin(PATL,comb_sum)
    return(val);
 }
 @ROUT ATL_tammm_gMNK
+#define ATL_GLOBIDX 1
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
-#define ATL_INDX    1
 #include "atlas_cbc.h"
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
@@ -18050,9 +17978,9 @@ int Mjoin(PATL,tammm_gMNK)
    return(0);
 }
 @ROUT ATL_tammm_sNK
+#define ATL_GLOBIDX 1
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
-#define ATL_INDX    1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
 #include "atlas_cbc.h"
@@ -18423,9 +18351,9 @@ printf("snk:P=%d, M=(%d,%d; %d,%d) N=(%d,%d; %d,%d)\n",
    return(0);
 }
 @ROUT ATL_tammm_sMK
+#define ATL_GLOBIDX 1
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
-#define ATL_INDX    1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
 #include "atlas_cbc.h"
@@ -18944,13 +18872,13 @@ int Mjoin(PATL,tammm_gK)
    return(ATL_recur_gK(ip, A, B, C));
 }
 @ROUT ATL_tsyrk_tN
+#define ATL_GLOBIDX 1
 #include "atlas_misc.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,sqamm_perf.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #define ATL_ESTNCTR 1
-#define ATL_INDX    1
 #include "atlas_tlvl3.h"
 
 
