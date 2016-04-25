@@ -1,0 +1,1073 @@
+@ROUT atlas_bitvec.h
+#ifndef ATLAS_BITVEC_H
+   #define ATLAS_BITVEC_H
+   #include "atlas_misc.h"
+   #include "atlas_type.h"
+
+/*
+ * Macros for number of bits in array entry, shift value to div/mul by nbits,
+ * mask to do modulo(bpiBV), and all bits set
+ */
+#if ATL_LSIZE == 8
+   #define bpiBV 64  /* # bits per integral type */
+   #define shBV 6
+   #define modmskBV 0x3FL
+   #define allsetBV 0xFFFFFFFFFFFFFFFFL
+#elif ATL_LSIZE == 4
+   #define bpiBV 32  /* # bits per integral type */
+   #define shBV 5
+   #define modmskBV 0x1F
+   #define allsetBV 0xFFFFFFFF
+#else
+   #error "LONG is neither 8 or 4 bytes!"
+#endif
+#define ATL_BV_t unsigned long
+/*
+ * A bitvector consists of an integral array.  The first element of the
+ * array indicates the number bits stored in the bitvec array.
+ */
+#define ATL_FreeBV(bv_) free(bv_)  /* bitvec just an integral array */
+ATL_BV_t *ATL_NewBV(unsigned int nbits);
+ATL_BV_t *ATL_ExpandBV(ATL_BV_t *bv, unsigned int newbits);
+unsigned int ATL_GetTotBitsBV(ATL_BV_t *bv);
+ATL_BV_t ATL_SetEltBV
+   (ATL_BV_t *bv, unsigned int ielt, ATL_BV_t val);
+ATL_BV_t ATL_GetEltBV(ATL_BV_t *bv, unsigned int ielt);
+int ATL_SetBitBV(ATL_BV_t *bv, unsigned int pos);
+int ATL_UnsetBitBV(ATL_BV_t *bv, unsigned int pos);
+int ATL_IsBitSetBV(ATL_BV_t *bv, unsigned int bpos);
+int ATL_FindFirstSetBitBV(ATL_BV_t *bv, unsigned int bs);
+int ATL_FindFirstUnsetBitBV(ATL_BV_t *bv, unsigned int bs);
+void ATL_ReverseAllBitsBV(ATL_BV_t *bv);
+void ATL_SetAllBitsBV(ATL_BV_t *bv);
+void ATL_UnsetAllBitsBV(ATL_BV_t *bv);
+int ATL_IsBitRangeSetBV(ATL_BV_t *bv, unsigned int b0, unsigned int bN);
+
+#endif
+@ROUT testBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include "atlas_bitvec.h"
+
+int RangeSet(ATL_BV_t *bv, unsigned int b0, unsigned int b1)
+{
+   unsigned int i;
+   if (b0 > b1 || b1 >= ATL_GetTotBitsBV(bv) || !bv)
+      return(0);
+   for (i=b0; i <= b1; i++)
+      if (!ATL_IsBitSetBV(bv, i))
+         return(0);
+   return(1);
+}
+int TestRandRange
+(
+   unsigned int nbits,
+   unsigned int ntest
+)
+{
+   const unsigned int N=(nbits+bpiBV-1)>>shBV;
+   unsigned int nerr=0, t;
+   ATL_BV_t *bv;
+   printf("\nRunning %lu random tests on %u-bit IsBitRangeSetBV:\n",
+          ((unsigned long)ntest)*nbits*nbits, nbits);
+   srand48(nbits+(ntest<<7));  // make test repeatable for each N,ntest pair
+   bv = ATL_NewBV(nbits);
+/*
+ * Check error cases 
+ */
+   assert(ATL_IsBitRangeSetBV(NULL, 0, 0) == 0);
+   assert(ATL_IsBitRangeSetBV(bv, 1, 0) == 0);
+   assert(ATL_IsBitRangeSetBV(bv, nbits, nbits) == 0);
+   assert(ATL_IsBitRangeSetBV(bv, nbits<<1, nbits<<2) == 0);
+
+   for (t=0; t < ntest; t++)
+   {
+      unsigned int k, b0, b1;
+/*
+ *    Randomly choose bit patterns for whole vector
+ */
+      for (k=0; k < N; k++)
+         ATL_SetEltBV(bv, k, lrand48());
+/*
+ *    Now try all possible legal pairs
+ */
+      for (b0=0; b0 < nbits; b0++)
+      {
+         for (b1=b0; b1 < nbits; b1++)
+         {
+            int good, chk;
+            chk = ATL_IsBitRangeSetBV(bv, b0, b1); 
+            good = RangeSet(bv, b0, b1);
+            if (chk != good)
+            {
+               printf("ERROR: nbits=%d, [%d,%d], expected=%d, got=%d\n",
+                      nbits, b0, b1, good, chk);
+               nerr++;
+            }
+         }
+      }
+   }
+   ATL_FreeBV(bv);
+   if (nerr)
+      fprintf(stderr, "NFAILURES=%d\n\n", nerr);
+   else
+      printf("ALL CASES PASSED\n\n");
+   return(nerr);
+}
+int TestRandPos
+(
+   unsigned int nbits,   // total number of bits to have in array
+   unsigned int ntest,   // # of tests to run
+   int set               // test FindFirst: 0: Unset : else : Set
+)
+{
+   ATL_BV_t *bv;
+   int i, b;
+   unsigned int nelt, t, b0, b1, i0, i1, p0, p1, nerr=0;
+   int (*findFirst)(ATL_BV_t *bv, unsigned int bs);
+   int (*chgBit)(ATL_BV_t *bv, unsigned int pos);
+
+   printf("\nRunning %u random tests on %u-bit findFirst%sBV:\n", ntest, nbits,
+          set ? "Set":"Unset");
+   srand(nbits+(ntest<<7));  // make test repeatable for each N,ntest pair
+   bv = ATL_NewBV(nbits);
+   if (set)
+   {
+      findFirst = ATL_FindFirstSetBitBV;
+      chgBit = ATL_SetBitBV;
+   }
+   else
+   {
+      findFirst = ATL_FindFirstUnsetBitBV;
+      chgBit = ATL_UnsetBitBV;
+      ATL_SetAllBitsBV(bv);
+   }
+   nelt = (nbits + bpiBV-1)/bpiBV;
+
+   assert(findFirst(NULL, 0) == -1);  // test NULL handling
+   assert(findFirst(bv, nbits) == -1);  // test out-of-range
+   assert(findFirst(bv, nbits+1) == -1);  // test out-of-range
+   assert(findFirst(bv, 2*nbits) == -1);  // test out-of-range
+   assert(findFirst(bv, 0) == -1);  // test no unset bits found
+   for (t=0; t < ntest; t++)
+   {
+/*
+ *    Randomly generate two bits to unset, put smallest in b0
+ */
+      b0 = rand() % nbits;   
+      b1 = rand() % nbits;
+      if (b0 > b1)
+      {
+         unsigned int b=b0;
+         b0 = b1;
+         b1 = b;
+      }
+/*
+ *    From global bit number, compute integer index (i0/1) and pos (p0/1)
+ *    zero out two bits so we can test that least sig is returned.
+ */
+      i0 = b0 / bpiBV;
+      p0 = b0 - i0*bpiBV;
+      i1 = b1 / bpiBV;
+      p1 = b1 - i1*bpiBV;
+      chgBit(bv, b0);
+      chgBit(bv, b1);
+/*
+ *    Test we find first unset bit
+ */
+      b = findFirst(bv, 0);
+      if (b != b0)
+      {
+         fprintf(stderr, "   FAILED %d: expected=%u, got=%d\n", 
+                 __LINE__, b0, b);
+         if (b == b1)
+            fprintf(stderr, "     Are you returning the MOST sig bit?\n");
+         nerr++;
+      }
+/*
+ *    Test that skipping unused elements doesn't change answer
+ */
+      b = findFirst(bv, i0*bpiBV);
+      if (b != b0)
+      {
+      b = findFirst(bv, i0*bpiBV);
+         fprintf(stderr, "   FAILED %d: expected=%u, got=%d\n", 
+                 __LINE__, b0, b);
+         fprintf(stderr, "     Is your skp working correctly?\n");
+         nerr++;
+      }
+/*
+ *    Test that skipping i0 means we find p1
+ */
+      if (b1 > b0)
+      {
+         b = findFirst(bv, b0+1);
+         if (b != b1)
+         {
+         b = findFirst(bv, b0+1);
+            fprintf(stderr, "   FAILED %d: expected=%u, got=%d\n", 
+                    __LINE__, b1, b);
+            fprintf(stderr, "     Is your skp working correctly PART 2?\n");
+            nerr++;
+         }
+      }
+      if (set)
+         ATL_UnsetAllBitsBV(bv);  // revert to all unset
+      else
+         ATL_SetAllBitsBV(bv);    // revert to all set
+   }
+/*
+ * Now see if we can find a value in very last element, which will be partial
+ * if N%bpiBV != 0
+ */
+   b0 = nbits-1;
+   i0 = nelt-1;
+   p0 = b0 - i0*bpiBV;
+   if (set)
+      ATL_SetBitBV(bv, b0);
+   else
+      ATL_UnsetBitBV(bv, b0);
+   b = findFirst(bv, 0);
+   if (b != b0)
+   {
+      fprintf(stderr, "   FAILED %d: expected=%u, got=%d\n", __LINE__, b0, b);
+      if (nbits%bpiBV)
+         fprintf(stderr, "     Are you handling partial last int?\n");
+      nerr++;
+   }
+/*
+ * Try partial last int with random location
+ */
+   i1 = nbits%bpiBV;
+   if (i1 > 1)
+   {
+      p0 = rand()%(i1-1);
+      b0 = i0*bpiBV + p0;
+      if (set)
+         ATL_SetBitBV(bv, b0);
+      else
+         ATL_UnsetBitBV(bv, b0);
+      b = findFirst(bv, 0);
+      if (b != b0)
+      {
+         fprintf(stderr, "   FAILED %d: expected=%u, got=%d\n", 
+                 __LINE__, b0, b);
+         fprintf(stderr, "     Are you handling partial last int PART 2?\n");
+         nerr++;
+      }
+   }
+/*
+ * Put unset bits past end of bv and make sure they are not returned!
+ */
+   if (i1)
+   {
+      ATL_BV_t msk=0;
+      for (i=0; i < i1; i++)
+         msk |= (1L<<i);
+      if (set)
+         msk = ~msk;
+      ATL_SetEltBV(bv, i0, msk);
+      b = findFirst(bv, 0);
+      if (b != -1)
+      {
+         fprintf(stderr, "   FAILED %d: expected=%d, got=%d\n", 
+                 __LINE__, -1, b);
+         fprintf(stderr, "     Are you handling partial last int as full?\n");
+         nerr++;
+      }
+   }   
+/*
+ * Need to make test cases for partial first element
+ */
+   ATL_FreeBV(bv);
+   if (nerr)
+      fprintf(stderr, "NFAILURES=%d\n\n", nerr);
+   else
+      printf("ALL CASES PASSED\n\n");
+   return(nerr);
+}
+int TestAllPos  // returns # of errors found
+(
+   int nwords,  // will alloc bv of size nwords*bpiBV
+   int word,    // will exhaustively test this word
+   int set      // test FindFirst: 0: Unset : else : Set
+)
+{
+   ATL_BV_t *bv, mask;
+   int k, i;
+   unsigned int nerr=0, skip = word<<shBV;
+   int (*findFirst)(ATL_BV_t *bv, unsigned int bs);
+
+   assert(nwords > word);
+   bv = ATL_NewBV(nwords<<shBV);
+   if (!set)
+      ATL_SetAllBitsBV(bv);
+   findFirst = (set) ? ATL_FindFirstSetBitBV : ATL_FindFirstUnsetBitBV;
+   mask = allsetBV;
+   if (set)
+      mask = ~mask;
+   ATL_SetEltBV(bv, word, mask);
+   if (findFirst(bv, skip) != -1)
+   {
+      fprintf(stderr, "All bits set does not return -1!\n");
+      nerr++;
+   }
+/*
+ * Test we can get correct answer with only one unset bit at each loc
+ */
+   for (i=0; i < bpiBV-1; i++)
+   {
+      mask = allsetBV & ~(1L<<i);
+      if (set)
+         mask = ~mask;
+      ATL_SetEltBV(bv, word, mask);
+      k = findFirst(bv, skip);
+      if (k != i+skip)
+      {
+      k = findFirst(bv, skip);
+         fprintf(stderr, "EXPECTED=%d, GOT=%d, skip=%d\n", i+skip, k, skip);
+         nerr++;
+      }
+   }
+   if (nerr)            // don't test ties (confusing)
+      return(nerr);     // until we can get right ans wt only 1 bit set
+/*
+ * Make sure that when we have two locations unset, we always pick least sig
+ */
+   mask = 0;
+   if (set)
+      mask = ~mask;
+   ATL_SetEltBV(bv, word, mask);
+   k = findFirst(bv, skip);
+   if (k != skip)
+   {
+      fprintf(stderr, "TIE: EXPECTED=%d, GOT=%d\n", skip, k);
+      nerr++;
+   }
+/*
+ * Test all combinations of two bits set, ensure smallest always picked
+ */
+   for (i=0; i < bpiBV-1; i++)
+   {
+      int j;
+      mask = allsetBV & ~(1L<<i);
+      ATL_SetEltBV(bv, word, mask);
+      for (j=i; j < bpiBV; j++)
+      {
+         ATL_BV_t msk;
+         msk = mask & ~(1L<<j);
+         if (set)
+            msk = ~msk;
+         ATL_SetEltBV(bv, word, msk);
+         k = findFirst(bv, skip);
+         if (k != i+skip)
+         {
+            fprintf(stderr, "TIE: EXPECTED=%d, GOT=%d\n", i+skip, k);
+            nerr++;
+         }
+      }
+   }
+   ATL_FreeBV(bv);
+/*
+ * Test that the AllBits funcs don't mess with remainder values
+ */
+   for (i=0; i < bpiBV; i++)
+   {
+      bv = ATL_NewBV((2<<shBV)+i);
+      assert(ATL_GetEltBV(bv, 0) == 0);
+      assert(ATL_GetEltBV(bv, 1) == 0);
+      if (i)
+         assert(ATL_GetEltBV(bv, 2) == 0);
+      ATL_SetAllBitsBV(bv);
+      assert(ATL_GetEltBV(bv, 0) == allsetBV);
+      assert(ATL_GetEltBV(bv, 1) == allsetBV);
+      if (i)  /* should have i bits set, rest unset */
+      {
+         ATL_BV_t v;
+         v = ATL_GetEltBV(bv, 2);
+         for (k=0; k < i; k++)
+            assert(v&(1L<<k));
+         for (k=i; k < bpiBV; k++)
+            assert(!(v&(1L<<k)));
+      }
+/*
+ *    Set all bits (even past end)
+ */
+      ATL_SetEltBV(bv, 0, allsetBV);
+      ATL_SetEltBV(bv, 1, allsetBV);
+      if (i)
+         ATL_SetEltBV(bv, 2, allsetBV);
+      ATL_UnsetAllBitsBV(bv);
+      assert(ATL_GetEltBV(bv, 0) == 0);
+      assert(ATL_GetEltBV(bv, 1) == 0);
+      if (i)  /* should have i bits unset, rest set */
+      {
+         ATL_BV_t v;
+         v = ATL_GetEltBV(bv, 2);
+         for (k=0; k < i; k++)
+            assert(!(v&(1L<<k)));
+         for (k=i; k < bpiBV; k++)
+            assert(v&(1L<<k));
+      }
+/*
+ *    Set all bits (even past end)
+ */
+      ATL_SetEltBV(bv, 0, allsetBV);
+      ATL_SetEltBV(bv, 1, allsetBV);
+      if (i)
+         ATL_SetEltBV(bv, 2, allsetBV);
+      ATL_ReverseAllBitsBV(bv);
+      assert(ATL_GetEltBV(bv, 0) == 0);
+      assert(ATL_GetEltBV(bv, 1) == 0);
+      if (i)  /* should have i bits unset, rest set */
+      {
+         ATL_BV_t v;
+         v = ATL_GetEltBV(bv, 2);
+         for (k=0; k < i; k++)
+            assert(!(v&(1L<<k)));
+         for (k=i; k < bpiBV; k++)
+            assert(v&(1L<<k));
+      }
+      ATL_ReverseAllBitsBV(bv);  /* all bits set again */
+      assert(ATL_GetEltBV(bv, 0) == allsetBV);
+      assert(ATL_GetEltBV(bv, 1) == allsetBV);
+      if (i)
+         assert(ATL_GetEltBV(bv, 2) == allsetBV);
+      ATL_FreeBV(bv);
+   }
+   if (nerr)
+      fprintf(stderr, "FindFirst%sBit: NFAILURES=%d\n", 
+              set ? "Set":"Unset", nerr);
+   else
+      printf("FindFirst%sBit: ALL CASES PASSED\n", set ? "Set":"Unset");
+   return(nerr);
+}
+int main(int nargs, char **args)
+{
+   ATL_BV_t *bv, *bv0, vv;
+   unsigned int i;
+   unsigned int k;
+/*
+ * First, we will sanity-check basic routs
+ */
+   bv = ATL_NewBV(4);
+   assert(bv);          /* did it return a non-NULL ptr? */
+   assert(ATL_GetTotBitsBV(bv) == 4);  /* 4-bit length? */
+/*
+ * Basic set/GetElt test
+ */
+   assert(ATL_SetEltBV(NULL, 0, 0) == 0);
+   assert(ATL_SetEltBV(bv, 1, 0) == 0);
+   assert(ATL_SetEltBV(bv, 2, 0) == 0);
+   k = bpiBV+4;
+   bv = ATL_ExpandBV(bv, k);    // expand bv to require 2 ints to store
+   assert(bv);
+   assert(ATL_GetTotBitsBV(bv) == k);  /* k-bit length? */
+/*
+ * -1 is just a bitpattern, that is all bits set, is why this should work
+ * even though argument is unsigned!
+ */
+   ATL_SetEltBV(bv, 0, ~((ATL_BV_t)(0)));
+   assert(ATL_GetEltBV(bv, 0) == allsetBV);
+   assert(ATL_GetEltBV(bv, 1) == 0);
+   bv0 = bv;
+/*
+ * Check that "expanding" vec to smaller size has no affect
+ */
+   bv = ATL_ExpandBV(bv, 4);
+   assert(bv == bv0);
+   assert(ATL_GetTotBitsBV(bv) == k);
+
+   ATL_SetAllBitsBV(NULL);
+   ATL_SetAllBitsBV(bv);
+   assert(ATL_GetEltBV(bv, 0) == allsetBV);
+   assert(ATL_GetEltBV(bv, 1) == 0xF);
+
+   ATL_UnsetAllBitsBV(NULL);
+   ATL_SetEltBV(bv, 1, -1);              // partial vec to all bits set
+   ATL_UnsetAllBitsBV(bv);
+   assert(ATL_GetEltBV(bv, 0) == 0);     // all bits unset for full int is 0
+   vv = ATL_GetEltBV(bv, 1);
+   if (vv != ~0xFL)                      /* only low 4 bits should change */
+   {
+      printf("expected=%lx, got=%lx!\n", vv, ~0xFL);
+      assert(vv == ~(0xFL)); // only low 4 bits changed
+   }
+   ATL_FreeBV(bv);                       // try to free bitvec
+/*
+ * Let's see if your ATL_GetTotBitsBV works!
+ */
+   bv = ATL_NewBV(5);
+   i = ATL_GetTotBitsBV(bv);
+   if (i != 5)
+   {
+      fprintf(stderr, "ATL_GetTotBitsBV: expected=5, got=%d!\n", i);
+      assert(i == 5);
+   }
+   bv = ATL_ExpandBV(bv, 31);
+   i = ATL_GetTotBitsBV(bv);
+   if (i != 31)
+   {
+      fprintf(stderr, "ATL_GetTotBitsBV: expected=31, got=%d!\n", i);
+      assert(i == 31);
+   }
+   bv = ATL_ExpandBV(bv, bpiBV+1);
+   assert(ATL_GetTotBitsBV(bv) == bpiBV+1);
+   ATL_FreeBV(bv);
+
+   bv = ATL_NewBV(8);
+   assert(ATL_GetEltBV(bv, 0) == 0);
+   ATL_SetAllBitsBV(bv);
+   assert(ATL_GetEltBV(bv, 0) == 0xFF);
+   ATL_FreeBV(bv);
+/*
+ * Note this code section tests ATL_IsBitSetBV & ATL_SetBitBV
+ */
+   bv = ATL_NewBV(33);
+   assert(ATL_SetEltBV(bv, 0, 0xAC73B2E1) == 0); 
+                            // 0b1010 1100 0111 0011 1011 0010 1110 0001
+   @iexp i 0 0 +
+   @define rt @IsBitSetBV@
+   @iwhile i < 2
+      @iif @(i) = 1
+         @undef rt
+         @define rt @SetBitBV@
+      @endiif
+   assert(ATL_@(rt)(bv, 0) == 1); // 0001
+   assert(ATL_@(rt)(bv, 1) == 0);
+   assert(ATL_@(rt)(bv, 2) == 0);
+   assert(ATL_@(rt)(bv, 3) == 0);
+
+   assert(ATL_@(rt)(bv, 4) == 0); // 1110
+   assert(ATL_@(rt)(bv, 5) == 1);
+   assert(ATL_@(rt)(bv, 6) == 1);
+   assert(ATL_@(rt)(bv, 7) == 1);
+
+   assert(ATL_@(rt)(bv, 8) == 0); // 0010
+   assert(ATL_@(rt)(bv, 9) == 1);
+   assert(ATL_@(rt)(bv,10) == 0);
+   assert(ATL_@(rt)(bv,11) == 0);
+
+   assert(ATL_@(rt)(bv,12) == 1); // 1011
+   assert(ATL_@(rt)(bv,13) == 1);
+   assert(ATL_@(rt)(bv,14) == 0);
+   assert(ATL_@(rt)(bv,15) == 1);
+
+   assert(ATL_@(rt)(bv,16) == 1); // 0011 
+   assert(ATL_@(rt)(bv,17) == 1);
+   assert(ATL_@(rt)(bv,18) == 0);
+   assert(ATL_@(rt)(bv,19) == 0);
+
+   assert(ATL_@(rt)(bv,20) == 1); // 0111
+   assert(ATL_@(rt)(bv,21) == 1);
+   assert(ATL_@(rt)(bv,22) == 1);
+   assert(ATL_@(rt)(bv,23) == 0);
+
+   assert(ATL_@(rt)(bv,24) == 0); // C=1100  
+   assert(ATL_@(rt)(bv,25) == 0);
+   assert(ATL_@(rt)(bv,26) == 1);
+   assert(ATL_@(rt)(bv,27) == 1);
+
+   assert(ATL_@(rt)(bv,28) == 0); // A=1010
+   assert(ATL_@(rt)(bv,29) == 1);
+   assert(ATL_@(rt)(bv,30) == 0);
+   assert(ATL_@(rt)(bv,31) == 1);
+
+   assert(ATL_@(rt)(bv, 32) == 0);
+   @iif @(i) = 1
+   #if bpiBV == 64
+      assert(ATL_GetEltBV(bv, 0) == 0x1FFFFFFFF);
+   #else
+      assert(ATL_GetEltBV(bv, 0) == 0xFFFFFFFF);
+   #endif
+   @endiif
+      @iexp i @(i) 1 +
+   @endiwhile
+   @undef rt
+   #if bpiBV > 32
+   bv = ATL_ExpandBV(bv, bpiBV+1);
+   ATL_SetEltBV(bv, 0, 0xF854B36D00000000L); 
+   assert(ATL_GetEltBV(bv, 0) ==  0xF854B36D00000000L); 
+   for (i=0; i < 32; i++)
+   {
+      if (ATL_IsBitSetBV(bv, i+32))
+         assert(ATL_SetBitBV(bv, i) == 0);
+   }
+   assert(ATL_GetEltBV(bv, 0) ==  0xF854B36DF854B36DL); 
+   assert((ATL_GetEltBV(bv, 0)>>32) == 0xF854B36D);
+   #endif
+   ATL_FreeBV(bv);
+/*
+ * Check error exits of accessor functions
+ */
+   bv = ATL_NewBV(65);
+   @whiledef rt SetBit UnsetBit
+   assert(ATL_@(rt)BV(NULL, 100000) == -1);
+   assert(ATL_@(rt)BV(bv, 100000) == -1);
+   assert(ATL_@(rt)BV(bv, 65) == -1);
+   @endwhile
+   @whiledef rt IsBitSet GetElt
+   assert(ATL_@(rt)BV(NULL, 100000) == 0);
+   assert(ATL_@(rt)BV(bv, 100000) == 0);
+   assert(ATL_@(rt)BV(bv, 65) == 0);
+   @endwhile
+   ATL_FreeBV(bv);
+   assert(TestAllPos(6,  5, 1) == 0);
+   assert(TestAllPos(6,  3, 1) == 0);
+   assert(TestAllPos(6,  0, 1) == 0);
+   assert(TestAllPos(6,  5, 0) == 0);
+   assert(TestAllPos(6,  3, 0) == 0);
+   assert(TestAllPos(6,  0, 0) == 0);
+
+   assert(TestRandPos(7777, 8000, 1) == 0);
+   assert(TestRandPos(6400, 8000, 1) == 0);
+   assert(TestRandPos(5555, 8000, 0) == 0);
+   assert(TestRandPos(3200, 8000, 0) == 0);
+   assert(TestRandRange(7777, 2) == 0);
+/*
+ * If no assertion failed, print success and return 0 for no error!
+ */
+   printf("\nSUCCESS!\n\n");
+   return(0);
+}
+@ROUT ATL_NewBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+/*
+ * A bitvector consists of an integer array.  The first element of the
+ * array indicates the number of bitvecs stored in the array, while any
+ * following array entries store 32-bit ints that comprise the full bitvec.
+ * Assume 32 bits per int for portability.
+ */
+ATL_BV_t *ATL_NewBV
+(
+   unsigned int nmax                /* max # of bits BV needs to store */
+)
+{
+   ATL_BV_t *bv=NULL, nelt;
+
+   if (nmax)
+   {
+      nelt = (nmax+bpiBV-1) >> shBV;       /* nelt = CEIL(nmax/nbits(ATL_BV_t)) */
+      bv = calloc(nelt+1, sizeof(ATL_BV_t)); /* vector begins all unset */
+      ATL_assert(bv);                     
+      *bv = nmax;                       /* 1st array elt max # of bits for BV */
+   }
+   return(bv);
+}
+@ROUT ATL_ExpandBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+ATL_BV_t *ATL_ExpandBV(ATL_BV_t *bv, unsigned int newbits)
+{
+   ATL_BV_t *v;
+   unsigned int i, nbit;
+   unsigned int neltO, neltN;  /* old and new # ints to store BV */
+
+   if (bv)
+      nbit = *bv;
+   else
+      nbit = 0;
+   if (newbits <= nbit)           /* if it already has the required length */
+      return(bv);                 /* return same BV */
+   neltO = (nbit+bpiBV-1)>>shBV;  /* present # of ints in BV part of array */
+   neltN = (newbits+bpiBV)>>shBV; /* how many ints are needed for new nbits? */
+/*
+ * If increased length doesn't need more ints to store, just change maxbits
+ * and return present BV.  New bits were zeroed in original malloc.
+ */
+   if (neltO == neltN)   
+   {
+      *bv = newbits;
+      return(bv);
+   }
+/*
+ * If I reach here, I have to get a longer bitvec, use realloc.
+ */
+   bv = realloc(bv, sizeof(ATL_BV_t)*(neltN+1));
+   *bv = newbits;
+/*
+ * Any remainder bits in original BV are already 0 by original calloc.  
+ * realloc does not zero memory, however, so any new elements must now be 
+ * manually zeroed so that all bits start unset.
+ */
+   v = bv + 1 + neltO;
+   for (i=neltN-neltO; i; i--)
+      *v++ = 0;
+   return(bv);
+}
+@ROUT ATL_GetTotBitsBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+unsigned int ATL_GetTotBitsBV(ATL_BV_t *bv)
+{
+   if (bv)
+      return(bv[0]);
+   return(0);
+}
+@ROUT ATL_SetEltBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+ATL_BV_t ATL_SetEltBV
+   (ATL_BV_t *bv, unsigned int ielt, ATL_BV_t val)
+{
+   if (bv)
+   {
+      if ((ielt<<shBV) < bv[0])
+      {
+         ATL_BV_t ret=bv[ielt+1];
+         bv[ielt+1] = val;
+         return(ret);
+      }
+   }
+   return(0);
+}
+@ROUT ATL_GetEltBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+ATL_BV_t ATL_GetEltBV(ATL_BV_t *bv, unsigned int ielt)
+{
+   if (bv)
+      if ((ielt<<shBV) < bv[0])
+         return(bv[ielt+1]);
+   return(0);
+}
+@ROUT ATL_SetAllBitsBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+void ATL_SetAllBitsBV(ATL_BV_t *bv)
+{
+   if (bv)
+   {
+      const ATL_BV_t nbits=bv[0], n=nbits>>shBV, nr=nbits&modmskBV;
+      ATL_BV_t i;
+      for(bv++,i=0; i < n; i++)
+         bv[i] = allsetBV;
+      if (nr)
+         bv[i] |= (1L<<nr)-1;
+   }
+}
+@ROUT ATL_UnsetAllBitsBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+void ATL_UnsetAllBitsBV(ATL_BV_t *bv)
+{
+   if (bv)
+   {
+      const ATL_BV_t nbits=bv[0], n=nbits>>shBV, nr=nbits-(n<<shBV);
+      ATL_BV_t i;
+      for(bv++,i=0; i < n; i++)
+         bv[i] = 0;
+      if (nr)
+         bv[i] &= ~((1L<<nr)-1);
+   }
+}
+@ROUT ATL_SetBitBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+int ATL_SetBitBV(ATL_BV_t *bv, unsigned int pos)
+{
+   if (bv && bv[0] > pos)
+   {
+      ATL_BV_t v;
+      const unsigned int iv=(pos>>shBV)+1, il=pos&modmskBV;
+      v = bv[iv];
+      bv[iv] = v | (1L<<il);
+      return((v>>il)&1);
+   }
+   return(-1);
+}
+@ROUT ATL_UnsetBitBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+int ATL_UnsetBitBV(ATL_BV_t *bv, unsigned int pos)
+{
+   if (bv && bv[0] > pos)
+   {
+      ATL_BV_t v;
+      const unsigned int iv=pos>>shBV, il=pos&modmskBV;
+      v = bv[iv+1];
+      bv[iv+1] = v & ~(1L<<il);
+      return((v>>il)&1L);
+   }
+   return(-1);
+}
+@ROUT ATL_IsBitSetBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+int ATL_IsBitSetBV(ATL_BV_t *bv, unsigned int pos)
+{
+   if (bv && bv[0] > pos)
+   {
+      const unsigned int iv=(pos>>shBV)+1, il=pos&modmskBV;
+      return((bv[iv]>>il)&1L);
+   }
+   return(0);
+}
+@ROUT ATL_FindFirstSetBitBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+@beginskip
+/*
+ * Helper routine looking for first set bit.  Assumes at least one bit is set.
+ */
+static int findFirstBit(ATL_BV_t b)
+{
+   ATL_BV_t mask=allsetBV;
+   unsigned char shift=bpiBV, pos=0;
+/*
+ * Written in this funky way so that the number of taken branches is at
+ * most log2(#of bits in ATL_BV_t).  I write it as a loop to decrease code
+ * size, at cost of having two branches/iteration, only one of which is
+ * taken (straight-line code has half as many conditional branches, but
+ * worst case of same number taken).
+ */
+   BLOOP:
+      shift >>= 1;
+      if (!shift)
+         goto DONE
+      mask >>= shift;
+      if (mask & b)  /* if set bit is in lower shift bits */
+         goto BLOOP
+      pos += shift;
+      b >>= shift;
+   goto BLOOP
+DONE:
+   return(pos);
+}
+@endskip
+int ATL_FindFirstSetBitBV(ATL_BV_t *bv, unsigned int bs)
+{
+   ATL_BV_t ibv;
+   if (bv)
+   {
+      ATL_BV_t n=bv[0], ln=n&modmskBV, lpos=bs&modmskBV, i;
+
+      if (bs >= n)
+         return(-1);
+      n >>= shBV;            /* does not include any partial end block */
+      bs >>= shBV;
+      bv++;
+      if (lpos)
+      {
+         ibv = bv[bs];
+         if (lpos)  /* mask out skipped bits of first entry, if any */
+            ibv &= ~((1L<<lpos)-1L);
+         if (bs == n)  /* 1st elt also last, maybe partial high bits! */
+         {
+            if (ln)
+               ibv &= allsetBV>>(bpiBV-ln);
+            if (ibv)
+               goto DONE_SRCH;
+            return(-1);
+         }
+         else if (ibv)
+            goto DONE_SRCH;
+         bs++;
+      }
+/*
+ *    Look through all full integral elts
+ */
+      while (bs < n)
+      {
+         ibv = bv[bs];
+         if (ibv)
+            goto DONE_SRCH;
+         bs++;
+      }
+/*
+ *    Search last, possibly partial, entry
+ */
+      if (ln)
+      {
+         ibv = bv[bs];
+         ibv &= allsetBV>>(bpiBV-ln);
+         if (ibv)
+            goto DONE_SRCH;
+      }
+   }
+   return(-1);
+DONE_SRCH:  /* if we reach here, at least one bit is set! */
+   bs <<= shBV;
+   #if bpiBV == 64
+   if (ibv & 0xFFFFFFFF)
+      goto IN_LOW32;
+   ibv >>= 32;
+   bs += 32;
+   IN_LOW32:
+   #endif
+   if (ibv & 0xFFFFL)
+      goto IN_LOW16;
+   ibv >>= 16;
+   bs += 16;
+   IN_LOW16:
+   if (ibv & 0xFFL)
+      goto IN_LOW8;
+   ibv >>= 8;
+   bs += 8;
+   IN_LOW8:
+   if (ibv & 0xFL)
+      goto IN_LOW4;
+   ibv >>= 4;
+   bs += 4;
+   IN_LOW4:
+   if (ibv & 0x3L)
+      goto IN_LOW2;
+   ibv >>= 2;
+   bs += 2;
+   IN_LOW2:
+      if (ibv&1L)
+         return(bs);
+   return(bs+1);
+}
+@ROUT ATL_FindFirstUnsetBitBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+int ATL_FindFirstUnsetBitBV(ATL_BV_t *bv, unsigned int bs)
+{
+   ATL_BV_t ibv;
+   if (bv)
+   {
+      ATL_BV_t n=bv[0], i;
+      const ATL_BV_t allset=allsetBV, ln=n&modmskBV, lpos=bs&modmskBV;
+
+      if (bs >= n)
+         return(-1);
+      n >>= shBV;            /* does not include any partial end block */
+      bs >>= shBV;
+      bv++;
+      if (lpos)
+      {
+         ibv = bv[bs];
+         ibv |= (1L<<lpos)-1L;  /* set skipped bits of first entry */
+         if (bs == n)  /* 1st elt also last, maybe partial high bits! */
+         {
+            if (ln)
+               ibv |= ~(allset>>(bpiBV-ln));
+            if (ibv != allset)
+               goto DONE_SRCH;
+            return(-1);
+         }
+         else if (ibv != allset)
+            goto DONE_SRCH;
+         bs++;
+      }
+/*
+ *    Look through all full integral elts
+ */
+      while (bs < n)
+      {
+         ibv = bv[bs];
+         if (ibv != allset)
+            goto DONE_SRCH;
+         bs++;
+      }
+/*
+ *    Search last, possibly partial, entry
+ */
+      if (ln)
+      {
+         ibv = bv[bs];
+         ibv |= ~(allsetBV>>(bpiBV-ln));
+         if (ibv != allset)
+            goto DONE_SRCH;
+      }
+   }
+   return(-1);
+DONE_SRCH:  /* if we reach here, at least one bit is set! */
+   bs <<= shBV;
+   ibv = ~ibv;
+   #if bpiBV == 64
+   if (ibv & 0xFFFFFFFF)
+      goto IN_LOW32;
+   ibv >>= 32;
+   bs += 32;
+   IN_LOW32:
+   #endif
+   if (ibv & 0xFFFFL)
+      goto IN_LOW16;
+   ibv >>= 16;
+   bs += 16;
+   IN_LOW16:
+   if (ibv & 0xFFL)
+      goto IN_LOW8;
+   ibv >>= 8;
+   bs += 8;
+   IN_LOW8:
+   if (ibv & 0xFL)
+      goto IN_LOW4;
+   ibv >>= 4;
+   bs += 4;
+   IN_LOW4:
+   if (ibv & 0x3L)
+      goto IN_LOW2;
+   ibv >>= 2;
+   bs += 2;
+   IN_LOW2:
+      if (ibv&1L)
+         return(bs);
+   return(bs+1);
+}
+@ROUT ATL_IsBitRangeSetBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+/*
+ * RETURNS: 1 if all bits in range [b0,bn] are set, 0 otherwise
+ */
+int ATL_IsBitRangeSetBV(ATL_BV_t *bv, unsigned int b0, unsigned int bN)
+{
+/*
+ * False if range includes bits that don't exist, or bad range
+ */
+   if (bv && bN < bv[0] && b0 <= bN)
+   {
+      const ATL_BV_t n=bN>>shBV, nr=(bN+1)&modmskBV, fskip=b0&modmskBV;
+      const ATL_BV_t allset=allsetBV;
+      b0 >>= shBV;
+      bv++;
+      if (fskip)  /* partial first result */
+      {
+         ATL_BV_t v;
+         v = bv[b0] | ((1L<<fskip)-1);  /* set 1st fskip bits */
+         if (b0 == n && nr) /* 1st is also last with remainder */
+         {
+            v |= ~(allset>>(bpiBV-nr));
+            return(v == allset);
+         }
+         if (v != allset)
+            return(0);
+         b0++;
+      }
+      while (b0 < n)  /* handle full blocks */
+      {
+         if (bv[b0] != allset)
+            return(0);
+         b0++;
+      }
+      if (nr)  /* partial result */
+      {
+         ATL_BV_t v;
+         v = bv[b0] | (~(allset>>(bpiBV-nr)));
+         return(v == allset);
+      }
+   }
+   return(0);
+}
+@ROUT ATL_ReverseAllBitsBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_bitvec.h"
+void ATL_ReverseAllBitsBV(ATL_BV_t *bv)
+{
+  ATL_BV_t n=bv[0], nl=n&modmskBV, i;
+  bv++;
+  n >>= shBV;
+  for (i=0; i < n; i++)
+     bv[i] = ~bv[i];
+  if (nl)
+  {
+     ATL_BV_t msk = allsetBV>>(bpiBV-nl), v=bv[i];
+     bv[i] = ((~v) & msk) | (v & ~msk);
+  }
+}
