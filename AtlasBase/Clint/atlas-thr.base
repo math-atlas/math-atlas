@@ -2191,34 +2191,34 @@ void ATL_ResetThreadPoolInit(void)
  */
 @ROUT ATL_AndAtomicMask_arm64 ATL_OrAtomicMask_arm64 
 /*
- * w0                          x0                  x1
- * int ATL_@(nop)AtomicMask(void *vp, unsigned long mask)
+ * w0                          x0                  w1
+ * int ATL_@(nop)AtomicMask(void *vp, unsigned char mask)
  */
-#define vp x0
-#define msk x1
-#define val x2
-#define new x3
+#define vp  x0
+#define msk w1
+#define val w2
+#define new w3
 .global ATL_asmdecor(ATL_@(nop)AtomicMask)
 ATL_asmdecor(ATL_@(nop)AtomicMask):
    ATOMIC_LOOP:
-      ldxr val, [vp]       /* exclusive read of val */
+      ldxrb val, [vp]       /* exclusive read of val */
       @(op) new, val, msk    /* mask val to produce changed code */
       cmp new, val         /* if (mask didn't change anything) */
       b.eq ZERO_RET        /*    return(0) */
-      stxr w4, new, [vp]   /* store updated val, w4 0 on exclsive success */
+      stxrb w4, new, [vp]   /* store updated val, w4 0 on exclsive success */
    cbnz w4, ATOMIC_LOOP    /* if (w3 != 0) try again */
-   movi w0, #1
+   mov w0, #1
    ret
 ZERO_RET:
    eor w0, w0, w0
    ret
 @ROUT ATL_AndAtomicMask_ia32 ATL_OrAtomicMask_ia32
 #define vp %esi
-#define mask %edx
-#define chng %ecx
+#define mask %dl
+#define chng %cl
 /*
  * eax                          4(esp)              8(%esp)
- * int int ATL_DecAtomicCount(void *vp, unsigned long mask)
+ * int int ATL_DecAtomicCount(void *vp, unsigned char mask)
  */
 #define FSZ 4
 .text
@@ -2227,12 +2227,12 @@ ATL_asmdecor(ATL_@(nop)AtomicMask):
    sub $FSZ, %esp             /* space to callee-saved regs */
    movl %esi, (%esp)          /* save caller's esi */
    movl FSZ+4(%esp), vp       /* load bitvec address */
-   movl FSZ+8(%esp), mask     /* load mask to apply */
+   movb FSZ+8(%esp), mask     /* load mask to apply */
    ATOMIC_LOOP:
-      movl (%edx), %eax       /* read bitvec from memory */
-      movl %eax, chng         /* chng = unsigned long from mem */
+      movb (%edx), %al        /* read bitvec from memory */
+      mov  %al, chng          /* chng = unsigned long from mem */
       @3l@(op) mask, chng          /* apply mask to chng */
-      cmp chng, %eax          /* if (mask didn't change value) */
+      cmp chng, %al           /* if (mask didn't change value) */
       je ZERO_RET             /*   return(0) */
       lock                    /* make cmpxchg atomic */
       cmpxchg chng, (vp)      /* put ecx in mem if mem still == eax */
@@ -2245,21 +2245,25 @@ ZERO_RET:
    xor %eax, %eax
    ret
 @ROUT ATL_AndAtomicMask_amd64 ATL_OrAtomicMask_amd64
+#define new %cl
+#define vp  %rdi
+#define msk %dl
 /*
- * rax                           rdi                 rsi
- * int ATL_@(op)AtomicCount(void *vp, unsigned long mask)
+ * rax                          rdi                 rsi
+ * int ATL_@(op)AtomicMask(void *vp, unsigned char mask)
  */
 .text
 .global ATL_asmdecor(ATL_@(nop)AtomicMask)
 ATL_asmdecor(ATL_@(nop)AtomicMask):
+   mov %si, %dx
    ATOMIC_LOOP:
-      movq (%rdi), %rax       /* read ul from memory */
-      movq %rax, %rcx         /* rcx = unsigned long from mem */
-      @3l@(op) %rsi, %rcx          /* apply mask to rcx */
-      cmp %rcx, %rax          /* if (mask didn't change value) */
+      movb (%rdi), %al        /* read ul from memory */
+      mov  %al, new           /* rcx = unsigned long from mem */
+      @3l@(op) msk, new            /* apply mask to rcx */
+      cmp new, %al            /* if (mask didn't change value) */
       je ZERO_RET             /*   return(0) */
       lock                    /* make cmpxchg atomic */
-      cmpxchg %rcx, (%rdi)    /* put rcx in mem if mem still == rax */
+      cmpxchg new, (%rdi)     /* put new in mem if mem still == al */
       je DONE                 /* ZF set if cmpxchg wrote to mem */
    jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
 DONE:

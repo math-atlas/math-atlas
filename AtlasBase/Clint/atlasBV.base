@@ -1139,9 +1139,9 @@ int ATL_tSetBitBV(void *vp, unsigned int bit)
 {
    if (bv)
    {
-      unsigned int elt = (bit>>shBV), lbit=bit&modmskBV;
-      ATL_BV_t msk = (1<<lbit), *bv=vp+1;
-      return(ATL_OrAtomicMask(bv+elt, msk));
+      unsigned int elt = (bit>>3), lbit=bit&7;
+      unsigned char msk = (1<<lbit), *bv=vp+1;
+      return(ATL_OrAtomicMask(cp+elt, msk));
    }
    return(0);
 }
@@ -1181,8 +1181,8 @@ int ATL_tUnsetFirstSetBV(void *bv, unsigned int skp);
  * a global bitvec with one mutex and no array elements to store anything.
  */
 #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
-   int ATL_AndAtomicMask(void *vp, unsigned long mask);
-   int ATL_OrAtomicMask(void *vp, unsigned long mask);
+   int ATL_AndAtomicMask(void *vp, unsigned char mask);
+   int ATL_OrAtomicMask(void *vp, unsigned char mask);
    #define ATL_ATOM_MASK 1
 #endif
 
@@ -1199,8 +1199,9 @@ int ATL_tUnsetBitBV(void *bv, unsigned int pos);
  * have a write barrier, so both these cases just use the no-barrier versions.
  */
 #if ATL_CBC_STRONG || ATL_CBC_NOBAR
-   #define ATL_tSetBitBV_wbar ATL_tSetBitBV
-   #define ATL_tUnsetBitBV_wbar ATL_tUnsetBitBV
+   @whiledef rt SetBit UnsetBit UnsetFirstSet SetFirstUnset
+   #define ATL_t@(rt)BV_wbar ATL_t@(rt)BV
+   @endwhile
 #else
    #if ATL_CBC_WBAR
       #define my_bar ATL_wmembar
@@ -1209,11 +1210,11 @@ int ATL_tUnsetBitBV(void *bv, unsigned int pos);
    #else
       #error "No mem barrier defined!"
    #endif
-   @whiledef op Set Unset
-   static int INLINE ATL_t@(op)BitBV_wbar(void *bv, unsigned int pos)
+   @whiledef rt SetBit UnsetBit UnsetFirstSet SetFirstUnset
+   static int INLINE ATL_t@(rt)BV_wbar(void *bv, unsigned int pos)
    {
       my_bar;  /* make changes globally visible */
-      return(ATL_t@(op)BitBV(vp, mask));
+      return(ATL_t@(rt)BV(vp, mask));
    }
    @endwhile
    #undef my_bar
