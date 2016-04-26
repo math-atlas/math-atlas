@@ -30063,7 +30063,7 @@ void syrkBlk
          #endif
       }
    }
-   if (wC)  /* want to compute SYRK on this block into wC */
+   if (wC && wS)  /* want to compute SYRK on this block into wC */
    {
       #ifdef TCPLX
          #ifdef Conj_
@@ -30118,38 +30118,9 @@ void syrkBlk
          #ifdef TCPLX
             const TYPE zero[2] = {ATL_rzero, ATL_rzero};
             blk2c(nb, nb, alp, rC, wC, zero, wU, nb);
-            #ifdef Conj_
-            if (C)
-            {
-               ATL_CINT ldc2=ldc+ldc;
-               for (k=0; k < nb; k++, C += ldc2, wU += 2)
-               {
-                  Mjoin(PATL,axpbyConj)(k+1, ip->ONE, wU, nb, beta, C, 1);
-                  C[((k+1)<<1)-1] = ATL_rzero;
-               }
-            }
-            #endif
          #else
             blk2c(nb, nb, alp, wC, ATL_rzero, wU, nb);
          #endif
-/*
- *       Copy matrix back to original C while applying beta
- */
-         if (C)
-         {
-            #ifndef Conj_
-            if (SCALAR_IS_ZERO(beta))
-               for (k=0; k < nb; k++, wU += (1 SHIFT), C += (ldc SHIFT))
-                  Mjoin(PATL,copy)(k+1, wU, nb, C, 1);
-            else
-               for (k=0; k < nb; k++, wU += (1 SHIFT), C += (ldc SHIFT))
-               #ifdef TCPLX
-                  Mjoin(PATL,axpby)(k+1, ip->ONE, wU, nb, beta, C, 1);
-               #else
-                  Mjoin(PATL,axpby)(k+1, ATL_rone, wU, nb, beta, C, 1);
-               #endif
-            #endif
-         }
       }
       else if (C)
       {
@@ -30162,6 +30133,28 @@ void syrkBlk
             blk2c(nb, nb, alp, wC, beta, C, ldc);
          #endif
       }
+   }
+   if ((flag&1) && C && wU)  /* need to reflect from Lower to Upper */
+   {
+      size_t ldc2=(ip->ldc)SHIFT;
+      #ifdef Conj_
+         for (k=0; k < nb; k++, C += ldc2, wU += 2)
+         {
+            Mjoin(PATL,axpbyConj)(k+1, ip->ONE, wU, nb, beta, C, 1);
+            C[((k+1)<<1)-1] = ATL_rzero;
+         }
+      #else
+         if (SCALAR_IS_ZERO(beta))
+            for (k=0; k < nb; k++, wU += (1 SHIFT), C += ldc2)
+               Mjoin(PATL,copy)(k+1, wU, nb, C, 1);
+         else
+            for (k=0; k < nb; k++, wU += (1 SHIFT), C += ldc2)
+            #ifdef TCPLX
+               Mjoin(PATL,axpby)(k+1, ip->ONE, wU, nb, beta, C, 1);
+            #else
+               Mjoin(PATL,axpby)(k+1, ATL_rone, wU, nb, beta, C, 1);
+            #endif
+      #endif
    }
 }
 

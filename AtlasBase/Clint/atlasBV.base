@@ -1071,3 +1071,143 @@ void ATL_ReverseAllBitsBV(ATL_BV_t *bv)
      bv[i] = ((~v) & msk) | (v & ~msk);
   }
 }
+@ROUT ATL_tFreeBV
+#include "atlas_tbitvec.h"
+#if ATL_ATOM_MASK == 0
+void ATL_tFreeBV(void *abv)
+{
+   unsigned char *cp = abv;
+   const unsigned int nmut = 1 << *((unsigned char*)abv);
+   void **vp = ((void**)abv)+nmut+1;
+   unsigned int i;
+   for (i=0; i < nmut; i++)
+      free(vp[i]);
+   free(abv);
+}
+#endif
+@ROUT ATL_tExpandBV
+#include "atlas_tbitvec.h"
+#if ATL_ATOM_MASK == 0
+void *ATL_tExpandBV(void *bv, unsigned int nbits)
+{
+}
+#endif
+@ROUT ATL_tNewBV
+#include "atlas_tbitvec.h"
+#if ATL_ATOM_MASK == 0
+void *ATL_tNewBV(unsigned int nbits, unsigned int nmut)
+{
+   size_t szM, szB;
+   unsigned char *cp;
+   void **vp;
+   ATL_BV_t *bv;
+   const unsigned int nelt=(nbits+bpiBV-1)>>shBV;
+   unsigned int i, pw2;
+/*
+ * Find power of 2 < (nmut,256)
+ */
+   for (i=0; i < 8; i++)
+      if ((1<<i) > nmut)
+         break;
+   pw2 = (i) ? i-1 : i;
+   nmut = 1 << pw2;  /* now power of 2 <= Mmin(256,orig_nmut) */
+   szM = (nmut+1)*sizeof(void*);
+   szB = (nelt+1)*sizeof(ATL_BV_t);
+   cp = malloc(szM+szB);
+   ATL_assert(cp);
+
+   *cp = pw2;                 /* write log2(nmut) to first allocated byte */
+   vp = cp + sizeof(void*);   /* skip at least 2 bytes (16-bit sys) */
+   for (i=0; i < nmut; i++)   /* init mutexes */
+       vp[i] = ATL_mutex_init();
+/*
+ * Entire bitvec starts out unset
+ */
+   bv = cp + (nmut+1)*sizeof(void*);
+   *bv++ = nbits;
+   for (i=0; i < nelt; i++)
+      bv[i] = 0;
+   return(cp);
+}
+#endif
+@ROUT atlas_tbitvec.h
+#ifndef ATLAS_TBITVEC_H
+   #define ATLAS_TBITVEC_H
+   #include "atlas_bitvec.h"
+   #include "atlas_cbc.h"
+
+/*
+ * Threaded bitvecs have mutexes built into the the functions that change
+ * bits (but not those that read!). The data structure depends on whether
+ * ATLAS has ATL_[And,Or]AtomicMask written for your system or not.
+ * If ATLAS has these functions, then the threaded bitvec data structure
+ * is the same as the unthreaded.  Otherwise, the data structure looks like:
+ * <log2(nmut)> <mut1> ... <mutN> <serial bitvec>
+ * The serial bitvec array is N=CEIL(nbits/(sizeof(long)*8)) long, and each
+ * mutex protects N/nmut entries.  A tNewBV with nbits=0 will result in
+ * a global bitvec with one mutex and no array elements to store anything.
+ */
+#if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
+   int ATL_AndAtomicMask(void *vp, unsigned long mask);
+   int ATL_OrAtomicMask(void *vp, unsigned long mask);
+   #define ATL_ATOM_MASK 1
+#endif
+
+int ATL_tSetBitBV(void *bv, unsigned int pos);
+int ATL_tUnsetBitBV(void *bv, unsigned int pos);
+
+/*
+ * When you want all your changes posted before the bit change, you need
+ * to do a write barrier on weakly ordered systems, which is what the 
+ * BV_wbar codes do.  For strongly-ordered caches this is true already,
+ * and for weakly ordered caches w/o barriers we use a mutex which must
+ * have a write barrier, so both these cases just use the no-barrier versions.
+ */
+#if ATL_CBC_STRONG || ATL_CBC_NOBAR
+   #define ATL_tSetBitBV_wbar ATL_tSetBitBV
+   #define ATL_tUnsetBitBV_wbar ATL_tUnsetBitBV
+#else
+   #if ATL_CBC_WBAR
+      #define my_bar ATL_wmembar
+   #elif ATL_CBC_RWBAR
+      #define my_bar ATL_membar
+   #else
+      #error "No mem barrier defined!"
+   #endif
+   @whiledef op Set Unset
+   static int INLINE ATL_t@(op)BitBV_wbar(void *bv, unsigned int pos)
+   {
+      my_bar;  /* make changes globally visible */
+      return(ATL_t@(op)BitBV(vp, mask));
+   }
+   @endwhile
+   #undef my_bar
+#endif
+
+#if ATL_ATOM_MASK
+   #define ATL_tNewBV(nbit_, m_) ATL_NewBV(nbit_)
+   @multidef rt IsBitRangeSet
+   @whiledef rt Free GetTotBits FindFirstSetBit FindFirstUnsetBit
+   #define ATL_t@(rt)BV ATL_@(rt)BV
+   @endwhile
+#else
+/*
+ * Maxmut is an upper bound on the number of mutexes to use to protect the
+ * entire bitvector.  If it is larger than nbits/(sizeof(long)*8), it is
+ * ignored.  For systems with AtomicMask functions, it is ignored.
+ */
+   void *ATL_tNewBV(unsigned int nbits, unsigned int maxmut);
+@skip   void *ATL_tExpandBV(void *bv, unsigned int nbits);
+   void ATL_tFreeBV(void *bv);
+/*
+ * Avoid function call.  You are welcome for the eye-candy.
+ */
+   #define ATL_tGetTotBitsBV(bv_) ATL_GetTotBitsBV( (void*) \
+      ((char*)(bv_)) + ((1 << *((unsigned char*)(bv_)))+1)*sizeof(void*) )
+   @whiledef rt FindFirstSetBit FindFirstUnsetBit
+   #define ATL_t@(rt)BV(bv_, p_) ATL_@(rt)BV((void*) \
+      (((char*)(bv_))+((1 << *((unsigned char*)(bv_)))+1)*sizeof(void*), p_ )
+   @endwhile rt
+#endif
+
+#endif

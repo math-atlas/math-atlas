@@ -2168,6 +2168,106 @@ void ATL_ResetThreadPoolInit(void)
    ATL_ResetAtomicCount((void*)ilck, 1);
 #endif
 }
+@ROUT ATL_AndAtomicMask_amd64 ATL_AndAtomicMask_ia32
+  @define nop @And@
+  @define op @and@
+@ROUT ATL_OrAtomicMask_amd64 ATL_OrAtomicMask_ia32
+  @define nop @Or@
+  @define op @or@
+@ROUT ATL_AndAtomicMask_arm64
+  @define nop @And@
+  @define op @and@
+@ROUT ATL_OrAtomicMask_arm64
+  @define nop @Or@
+  @define op @orr@
+@ROUT ATL_AndAtomicMask_amd64 ATL_OrAtomicMask_amd64 @\
+      ATL_AndAtomicMask_ia32 ATL_OrAtomicMask_ia32 @\
+      ATL_AndAtomicMask_arm64 ATL_OrAtomicMask_arm64 
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2016
+#include "atlas_asm.h"
+/*
+ * Applies mask atomically to long stored at vp.
+ * RETURNS: 0 if mask did not change value, 1 if it did
+ */
+@ROUT ATL_AndAtomicMask_arm64 ATL_OrAtomicMask_arm64 
+/*
+ * w0                          x0                  x1
+ * int ATL_@(nop)AtomicMask(void *vp, unsigned long mask)
+ */
+#define vp x0
+#define msk x1
+#define val x2
+#define new x3
+.global ATL_asmdecor(ATL_@(nop)AtomicMask)
+ATL_asmdecor(ATL_@(nop)AtomicMask):
+   ATOMIC_LOOP:
+      ldxr val, [vp]       /* exclusive read of val */
+      @(op) new, val, msk    /* mask val to produce changed code */
+      cmp new, val         /* if (mask didn't change anything) */
+      b.eq ZERO_RET        /*    return(0) */
+      stxr w4, new, [vp]   /* store updated val, w4 0 on exclsive success */
+   cbnz w4, ATOMIC_LOOP    /* if (w3 != 0) try again */
+   movi w0, #1
+   ret
+ZERO_RET:
+   eor w0, w0, w0
+   ret
+@ROUT ATL_AndAtomicMask_ia32 ATL_OrAtomicMask_ia32
+#define vp %esi
+#define mask %edx
+#define chng %ecx
+/*
+ * eax                          4(esp)              8(%esp)
+ * int int ATL_DecAtomicCount(void *vp, unsigned long mask)
+ */
+#define FSZ 4
+.text
+.global ATL_asmdecor(ATL_@(nop)AtomicMask)
+ATL_asmdecor(ATL_@(nop)AtomicMask):
+   sub $FSZ, %esp             /* space to callee-saved regs */
+   movl %esi, (%esp)          /* save caller's esi */
+   movl FSZ+4(%esp), vp       /* load bitvec address */
+   movl FSZ+8(%esp), mask     /* load mask to apply */
+   ATOMIC_LOOP:
+      movl (%edx), %eax       /* read bitvec from memory */
+      movl %eax, chng         /* chng = unsigned long from mem */
+      @3l@(op) mask, chng          /* apply mask to chng */
+      cmp chng, %eax          /* if (mask didn't change value) */
+      je ZERO_RET             /*   return(0) */
+      lock                    /* make cmpxchg atomic */
+      cmpxchg chng, (vp)      /* put ecx in mem if mem still == eax */
+      je DONE                 /* ZF set if cmpxchg wrote to mem */
+   jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
+DONE:
+   mov $1, %eax
+   ret
+ZERO_RET:
+   xor %eax, %eax
+   ret
+@ROUT ATL_AndAtomicMask_amd64 ATL_OrAtomicMask_amd64
+/*
+ * rax                           rdi                 rsi
+ * int ATL_@(op)AtomicCount(void *vp, unsigned long mask)
+ */
+.text
+.global ATL_asmdecor(ATL_@(nop)AtomicMask)
+ATL_asmdecor(ATL_@(nop)AtomicMask):
+   ATOMIC_LOOP:
+      movq (%rdi), %rax       /* read ul from memory */
+      movq %rax, %rcx         /* rcx = unsigned long from mem */
+      @3l@(op) %rsi, %rcx          /* apply mask to rcx */
+      cmp %rcx, %rax          /* if (mask didn't change value) */
+      je ZERO_RET             /*   return(0) */
+      lock                    /* make cmpxchg atomic */
+      cmpxchg %rcx, (%rdi)    /* put rcx in mem if mem still == rax */
+      je DONE                 /* ZF set if cmpxchg wrote to mem */
+   jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
+DONE:
+   mov $1, %rax
+   ret
+ZERO_RET:
+   xor %rax, %rax
+   ret
 @ROUT ATL_FreeAtomicCount_mut
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2015 -define cwdate 2014
 #include <stdlib.h>
@@ -15671,7 +15771,7 @@ static void DoBlksWtCpy
    const size_t pansz0=pd->pansz0, nkblks=pd->nkblks, ndiag=pd->ndiag;
    int kblk = pd->nkblks - kctr;
    int b;
-   TYPE *wA, *wB;
+   TYPE *wA=pd->wA, *wB=pd->wAt;
    const TYPE *A = pd->A;
 
 @skip   DoBlkWtCpy(rank, pd, dblk, kblk, 0, wC);
@@ -15870,10 +15970,11 @@ int Mjoin(PATL,tsyrk_amm_N)
 
    pd.flg = (Uplo == AtlasUpper);
    pd.flg |= (TA == AtlasNoTrans) ? 2 : 0;
-   #if 1
+   #if 0
    idx = Mjoin(PATL,tGetParTriCIndx)(ATL_NTHREADS, pd.flg, N, K, &nb);
    #else
    idx=0;
+   nb = 4;
    #endif
    Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc,
                               alpha, beta, nb);
@@ -15930,6 +16031,7 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    #endif
 @endskip
    P = (ncblks < ATL_NTHREADS) ? ncblks : ATL_NTHREADS;
+   P = 1;
    if (0 && P < 2)
    {
       Mjoin(PATL,syrk)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
@@ -15985,6 +16087,61 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    pd.szCs = szC;
    pd.szS = szS;
       
+   pd.sya2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT):Mjoin(PATL,a2blk_syrkN);
+   if (Uplo == AtlasLower)
+   {
+      if (SCALAR_IS_NONE(alpha))
+      {
+         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+         if (SCALAR_IS_ONE(beta))
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b1);
+         else if (SCALAR_IS_NONE(beta))
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_an_bn);
+         else 
+            pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
+               Mjoin(PATL,syblk2cmat_an_b0) : Mjoin(PATL,syblk2cmat_an_bX);
+      }
+      else if (SCALAR_IS_ONE(alpha))
+      {
+         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+         if (SCALAR_IS_ONE(beta))
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b1);
+         else if (SCALAR_IS_NONE(beta))
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_bn);
+         else 
+            pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
+               Mjoin(PATL,syblk2cmat_a1_b0) : Mjoin(PATL,syblk2cmat_a1_bX);
+      }
+      else
+      {
+         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+         if (SCALAR_IS_ONE(beta))
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b1);
+         else if (SCALAR_IS_NONE(beta))
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_bn);
+         else 
+            pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
+               Mjoin(PATL,syblk2cmat_aX_b0) : Mjoin(PATL,syblk2cmat_aX_bX);
+      }
+   }
+   else
+   {
+      if (SCALAR_IS_NONE(alpha))
+      {
+         pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b0);
+         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+      }
+      else if (SCALAR_IS_ONE(alpha))
+      {
+         pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b0);
+         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+      }
+      else
+      {
+         pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b0);
+         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+      }
+   }
    pd.cpydone = pd.NODWORK = 0;
    pd.dCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ndiag, P), ndiag, 0);
    pd.KdonCtr = pd.KbegCtr + ndiag;
