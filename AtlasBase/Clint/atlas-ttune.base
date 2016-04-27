@@ -531,15 +531,27 @@ int main(int nargs, char **args)
 size_t GNREP=0;
 ATL_BV_t *GBV=NULL;
 double timearr[ATL_NTHREADS];
+void *GMUT=NULL;
+
 void PrintUsage(char *exe)
 {
    fprintf(stderr, "USAGE: %s [-r <reps>] [-n <nbits]\n", exe);
    exit(-1);
 }
 
+double GetMax(int P)
+{
+   double max=timearr[0];
+   int i;
+   for (i=1; i < P; i++)
+      if (timearr[i] > max)
+         max = timearr[i];
+
+   return(max);
+}
 size_t GetFlags(int nargs, char **args, size_t *NREP)
 {
-   size_t nbits = 80000, nrep = 5;
+   size_t nbits = 1000, nrep = 5555;
    int i;
    for (i=1; i < nargs; i++)
    {
@@ -572,35 +584,124 @@ size_t GetFlags(int nargs, char **args, size_t *NREP)
    return(nbits);
 }
 
-void DoWork_ser(void *vpp, int rank, int vrank)
+@whiledef nm ser thr mut
+   @addkeys name=@(nm)
+void DoWork_@(nm)(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp=vpp;
    double t0;
    const size_t nrep=GNREP;
    ATL_BV_t *bv=GBV;
-   size_t i, b, nbits;
+   size_t i, nbits, nbitsP=1, ibeg=0;
+   unsigned int P;
+@NAME ser mut
    int (*changeBit)(ATL_BV_t *, unsigned int);
+   int (*findBit)(ATL_BV_t *, unsigned int);
+@NAME thr
+   int (*fndChgBit)(void *, unsigned int);
+@NAME !
 
    nbits = ATL_GetTotBitsBV(bv);
+   P = (pp) ? pp->nworkers : 1;
+   nbitsP = nbits / P;
+   ibeg = nbitsP*rank;
    t0 = ATL_walltime();
    for (i=0; i < nrep; i++)
    {
-      changeBit = (i&1) ?  ATL_UnsetBitBV : ATL_SetBitBV;
-      for (b=0; b < nbits; b++)
-         changeBit(bv, b);
+      int b=ibeg;
+      if (i&1)
+      {
+@NAME ser mut
+         changeBit = ATL_UnsetBitBV;
+         findBit = ATL_FindFirstSetBitBV;
+@NAME thr
+         fndChgBit = ATL_tSetFirstUnsetBV;
+         
+@NAME !
+      }
+      else
+      {
+@NAME ser mut
+         changeBit = ATL_SetBitBV;
+         findBit = ATL_FindFirstUnsetBitBV;
+@NAME thr
+         fndChgBit = ATL_tUnsetFirstSetBV;
+@NAME !
+      }
+      do
+      {
+@NAME ser
+         b = findBit(bv, b);
+         if (b == -1)
+            b=findBit(bv, 0);
+         if (b != -1)
+            changeBit(bv, b);
+@NAME mut
+         b = findBit(bv, b);
+         if (b == -1)
+            b=findBit(bv, 0);
+         if (b != -1)
+         {
+            ATL_mutex_lock(GMUT);
+            b = findBit(bv, b);
+            if (b == -1)
+               b=findBit(bv, 0);
+            if (b != -1)
+               changeBit(bv, b);
+            ATL_mutex_unlock(GMUT);
+         }
+@NAME thr
+         b = fndChgBit(bv, b);
+         if (b == -1)
+            b = fndChgBit(bv, 0);
+@NAME !
+      }
+      while (b != -1);
    }
    timearr[rank] = ATL_walltime() - t0;
 }
 
+@endwhile
 int main(int nargs, char **args)
 {
    size_t nbit;
-   double tser_s;
+   double tser_s, tthr_s, tmut_s;
+   double tser, tthr, tmut;
    nbit = GetFlags(nargs, args, &GNREP);
+   GBV = ATL_NewBV(nbit);
+   assert(ATL_FindFirstSetBitBV(GBV, 0) == -1); /* bring into cache */
+   GMUT = ATL_mutex_init();
+
    DoWork_ser(NULL, 0, 0);
    tser_s = timearr[0];
-   printf("   serial bitset time = %e\n", tser_s);
-//   ATL_goParallel(ATL_NTHREADS, DoWork, NULL, NULL, NULL);
+   printf("   serial  BV time = %e\n", tser_s);
+
+   DoWork_thr(NULL, 0, 0);
+   tthr_s = timearr[0];
+   printf("   serial tBV time = %e\n", tthr_s);
+
+   DoWork_mut(NULL, 0, 0);
+   tmut_s = timearr[0];
+   printf("   serial mut time = %e\n", tmut_s);
+   printf("SPEEDUP OVER MUTEX: tBV=%.2f, unsafeBV=%.2f\n\n", 
+          tmut_s/tthr_s, tmut_s/tser_s);
+
+   ATL_goParallel(ATL_NTHREADS, DoWork_ser, NULL, NULL, NULL);
+   tser = GetMax(ATL_NTHREADS);
+   printf("   P=%4d  BV time = %e\n", ATL_NTHREADS, tser);
+
+   ATL_goParallel(ATL_NTHREADS, DoWork_thr, NULL, NULL, NULL);
+   tthr = GetMax(ATL_NTHREADS);
+   printf("   P=%4d tBV time = %e\n", ATL_NTHREADS, tthr);
+
+   ATL_goParallel(ATL_NTHREADS, DoWork_mut, NULL, NULL, NULL);
+   tmut = GetMax(ATL_NTHREADS);
+   printf("   P=%4d mut time = %e\n", ATL_NTHREADS, tmut);
+
+   printf("SERIAL SPEEDUP: unsf=%.2f, iBV=%.2f, mut=%.2f\n",
+          tser/tser_s, tthr/tthr_s, tmut/tmut_s);
+   printf("SPEEDUP OVER MUTEX: tBV=%.2f, unsafeBV=%.2f\n\n", 
+          tmut/tthr, tmut/tser);
    return(0);
 }
 @ROUT test_count
