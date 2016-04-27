@@ -523,6 +523,86 @@ int main(int nargs, char **args)
              tpt/tlin, tlin/tpt);
    return(0);
 }
+@ROUT tune_tbv
+#include "atlas_threads.h"
+#include "assert.h"
+#include "atlas_tbitvec.h"
+
+size_t GNREP=0;
+ATL_BV_t *GBV=NULL;
+double timearr[ATL_NTHREADS];
+void PrintUsage(char *exe)
+{
+   fprintf(stderr, "USAGE: %s [-r <reps>] [-n <nbits]\n", exe);
+   exit(-1);
+}
+
+size_t GetFlags(int nargs, char **args, size_t *NREP)
+{
+   size_t nbits = 80000, nrep = 5;
+   int i;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'n':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         nbits = atoll(args[i]);
+         break;
+      case 'r':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         nrep = atoll(args[i]);
+         break;
+      #if 0
+      case 'o':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         *outfile = args[i];
+         break;
+      #endif
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   *NREP = nrep;
+   return(nbits);
+}
+
+void DoWork_ser(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   double t0;
+   const size_t nrep=GNREP;
+   ATL_BV_t *bv=GBV;
+   size_t i, b, nbits;
+   int (*changeBit)(ATL_BV_t *, unsigned int);
+
+   nbits = ATL_GetTotBitsBV(bv);
+   t0 = ATL_walltime();
+   for (i=0; i < nrep; i++)
+   {
+      changeBit = (i&1) ?  ATL_UnsetBitBV : ATL_SetBitBV;
+      for (b=0; b < nbits; b++)
+         changeBit(bv, b);
+   }
+   timearr[rank] = ATL_walltime() - t0;
+}
+
+int main(int nargs, char **args)
+{
+   size_t nbit;
+   double tser_s;
+   nbit = GetFlags(nargs, args, &GNREP);
+   DoWork_ser(NULL, 0, 0);
+   tser_s = timearr[0];
+   printf("   serial bitset time = %e\n", tser_s);
+//   ATL_goParallel(ATL_NTHREADS, DoWork, NULL, NULL, NULL);
+   return(0);
+}
 @ROUT test_count
 #include "atlas_threads.h"
 #include "atlas_misc.h"
@@ -564,13 +644,13 @@ int GetFlags(int nargs, char **args, int *nreps)
    return(cnt);
 }
 
-void TestDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+void TestDoWork(void *vpp, int rank, int vrank)
 {
    int i;
-   ATL_thread_t *tp = vp;
-   void *acnt = lp->opstruct;
+   ATL_tpool_t *pp=vpp;
+   void *acnt = pp->PD;
    #ifdef ATL_GLOBAL
-      const int iam = tp->rank;
+      const int iam = vrank;
    #endif
    do
    {
@@ -604,7 +684,7 @@ int main(int nargs, char **args)
       #endif
       for (k=0; k < cnt; k++)
          checkin[k] = 0;
-      ATL_goparallel(ATL_NTHREADS, TestDoWork, vp, NULL);
+      ATL_goParallel(ATL_NTHREADS, TestDoWork, NULL, vp, NULL);
 @skip      ATL_thread_launch(vp, 0, NULL, TestDoWork, NULL);
       for (k=0; k < cnt; k++)
          assert(checkin[k] == 1);
