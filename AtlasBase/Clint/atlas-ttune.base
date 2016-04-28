@@ -584,7 +584,42 @@ size_t GetFlags(int nargs, char **args, size_t *NREP)
    return(nbits);
 }
 
-@whiledef nm ser thr mut
+#ifdef SET_ATOM
+int setFirst(void *vp, unsigned int skp)
+{
+   int was;
+   int ATL_SetBitAtomic(void *bv, unsigned char pos);
+   do
+   {
+      ATL_BV_t *bv=vp;
+      skp = ATL_FindFirstUnsetBitBV(bv, skp);
+      if (skp == -1)
+         return(-1);
+      bv += (skp>>shBV) + 1;
+      was = ATL_SetBitAtomic(bv, skp&modmskBV);
+   }
+   while(was == 1);
+   return(0);
+}
+
+int unsetFirst(void *vp, unsigned int skp)
+{
+   int was;
+   int ATL_UnsetBitAtomic(void *bv, unsigned char pos);
+   do
+   {
+      ATL_BV_t *bv=vp;
+      skp = ATL_FindFirstSetBitBV(bv, skp);
+      if (skp == -1)
+         return(-1);
+      bv += (skp>>shBV) + 1;
+      was = ATL_UnsetBitAtomic(bv, skp&modmskBV);
+   }
+   while(was == 0);
+   return(0);
+}
+#endif
+@whiledef nm ser thr mut ast
    @addkeys name=@(nm)
 void DoWork_@(nm)(void *vpp, int rank, int vrank)
 {
@@ -597,7 +632,7 @@ void DoWork_@(nm)(void *vpp, int rank, int vrank)
 @NAME ser mut
    int (*changeBit)(ATL_BV_t *, unsigned int);
    int (*findBit)(ATL_BV_t *, unsigned int);
-@NAME thr
+@NAME thr ast
    int (*fndChgBit)(void *, unsigned int);
 @NAME !
 
@@ -614,9 +649,10 @@ void DoWork_@(nm)(void *vpp, int rank, int vrank)
 @NAME ser mut
          changeBit = ATL_UnsetBitBV;
          findBit = ATL_FindFirstSetBitBV;
+@NAME ast
+         fndChgBit = setFirst;
 @NAME thr
          fndChgBit = ATL_tSetFirstUnsetBV;
-         
 @NAME !
       }
       else
@@ -624,6 +660,8 @@ void DoWork_@(nm)(void *vpp, int rank, int vrank)
 @NAME ser mut
          changeBit = ATL_SetBitBV;
          findBit = ATL_FindFirstUnsetBitBV;
+@NAME ast
+         fndChgBit = unsetFirst;
 @NAME thr
          fndChgBit = ATL_tUnsetFirstSetBV;
 @NAME !
@@ -650,6 +688,10 @@ void DoWork_@(nm)(void *vpp, int rank, int vrank)
                changeBit(bv, b);
             ATL_mutex_unlock(GMUT);
          }
+@NAME ast
+         b = fndChgBit(bv, b);
+         if (b == -1)
+            b = fndChgBit(bv, 0);
 @NAME thr
          b = fndChgBit(bv, b);
          if (b == -1)
@@ -665,8 +707,8 @@ void DoWork_@(nm)(void *vpp, int rank, int vrank)
 int main(int nargs, char **args)
 {
    size_t nbit;
-   double tser_s, tthr_s, tmut_s;
-   double tser, tthr, tmut;
+   double tser_s, tthr_s, tmut_s, tast_s;
+   double tser, tthr, tmut, tast;
    nbit = GetFlags(nargs, args, &GNREP);
    GBV = ATL_NewBV(nbit);
    assert(ATL_FindFirstSetBitBV(GBV, 0) == -1); /* bring into cache */
@@ -675,33 +717,59 @@ int main(int nargs, char **args)
    DoWork_ser(NULL, 0, 0);
    tser_s = timearr[0];
    printf("   serial  BV time = %e\n", tser_s);
+   ATL_UnsetAllBitsBV(GBV);
 
    DoWork_thr(NULL, 0, 0);
    tthr_s = timearr[0];
    printf("   serial tBV time = %e\n", tthr_s);
+   ATL_UnsetAllBitsBV(GBV);
 
    DoWork_mut(NULL, 0, 0);
    tmut_s = timearr[0];
    printf("   serial mut time = %e\n", tmut_s);
+   ATL_UnsetAllBitsBV(GBV);
+
+#ifndef SET_ATOM
    printf("SPEEDUP OVER MUTEX: tBV=%.2f, unsafeBV=%.2f\n\n", 
           tmut_s/tthr_s, tmut_s/tser_s);
+#else
+   DoWork_ast(NULL, 0, 0);
+   tast_s = timearr[0];
+   printf("   serial ast time = %e\n", tast_s);
+   printf("SPEEDUP OVER MUTEX: tBV=%.2f, ast=%.2f, unsafeBV=%.2f\n\n", 
+          tmut_s/tthr_s, tmut_s/tast_s, tmut_s/tser_s);
+   ATL_UnsetAllBitsBV(GBV);
+#endif
+
 
    ATL_goParallel(ATL_NTHREADS, DoWork_ser, NULL, NULL, NULL);
    tser = GetMax(ATL_NTHREADS);
    printf("   P=%4d  BV time = %e\n", ATL_NTHREADS, tser);
+   ATL_UnsetAllBitsBV(GBV);
 
    ATL_goParallel(ATL_NTHREADS, DoWork_thr, NULL, NULL, NULL);
    tthr = GetMax(ATL_NTHREADS);
    printf("   P=%4d tBV time = %e\n", ATL_NTHREADS, tthr);
+   ATL_UnsetAllBitsBV(GBV);
 
    ATL_goParallel(ATL_NTHREADS, DoWork_mut, NULL, NULL, NULL);
    tmut = GetMax(ATL_NTHREADS);
    printf("   P=%4d mut time = %e\n", ATL_NTHREADS, tmut);
-
+#ifdef SET_ATOM
+   ATL_UnsetAllBitsBV(GBV);
+   ATL_goParallel(ATL_NTHREADS, DoWork_ast, NULL, NULL, NULL);
+   tast = GetMax(ATL_NTHREADS);
+   printf("   P=%4d ast time = %e\n", ATL_NTHREADS, tast);
+   printf("SERIAL SPEEDUP: unsf=%.2f, iBV=%.2f, ast=%.2f, mut=%.2f\n",
+          tser/tser_s, tthr/tthr_s, tast/tast_s, tmut/tmut_s);
+   printf("SPEEDUP OVER MUTEX: tBV=%.2f, ast=%.2f, unsafeBV=%.2f\n\n", 
+          tmut/tthr, tmut/tast, tmut/tser);
+#else
    printf("SERIAL SPEEDUP: unsf=%.2f, iBV=%.2f, mut=%.2f\n",
           tser/tser_s, tthr/tthr_s, tmut/tmut_s);
    printf("SPEEDUP OVER MUTEX: tBV=%.2f, unsafeBV=%.2f\n\n", 
           tmut/tthr, tmut/tser);
+#endif
    return(0);
 }
 @ROUT test_count
