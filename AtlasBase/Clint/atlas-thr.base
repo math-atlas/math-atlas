@@ -189,7 +189,19 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
       int affID;     /* < 0: not set, affID=1-affID, else affID */
    } ATL_thread_t;
 #endif
-
+/*
+ * Define ATLAS mutex type.  For Windows, we presently assume you are on
+ * x86, so we can use ATLAS's x86-specific routs.  This will break Win/ARM,
+ * so we'll need to change this when we support Windows+ARM.
+ * For OSX, their mutexes have horrific scaling, so use homebrew code on x86.
+ */
+#if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
+   typedef void* ATL_mutex_t;  // this not right!
+#elif defined(ATL_OMP_THREADS)
+   #define ATL_mutex_t omp_lock_t
+#else
+   #define ATL_mutex_t pthread_mutex_t
+#endif
 typedef struct ATL_LaunchStruct ATL_LAUNCHSTRUCT_t;
 struct ATL_LaunchStruct
 {
@@ -202,7 +214,19 @@ struct ATL_LaunchStruct
    volatile int *chkin;                 /* nthr-len checkin array */
    void **acounts;                      /* var-len array of atomic counters */
 };
-
+/*
+ * Define ATLAS mutex type.  For Windows, we presently assume you are on
+ * x86, so we can use ATLAS's x86-specific routs.  This will break Win/ARM,
+ * so we'll need to change this when we support Windows+ARM.
+ * For OSX, their mutexes have horrific scaling, so use homebrew code on x86.
+ */
+#if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
+   typedef void* ATL_mutex_t;  // this not right!
+#elif defined(ATL_OMP_THREADS)
+   #define ATL_mutex_t omp_lock_t
+#else
+   #define ATL_mutex_t pthread_mutex_t
+#endif
 /*
  * Constants for use in chkin array
  */
@@ -1895,31 +1919,33 @@ int ATL_mutex_trylock(void *vp)
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 
-void *ATL_SetAtomicCount(int cnt)
+void *ATL_SetAtomicCount(unsigned long cnt)
 {
+   size_t sz;
+   my_lock_t *mp;
+   unsigned long *cntp;
+   #if defined(ATL_OMP_THREADS)
+      #define my_lock_t omp_lock_t
+   #else
+      #define my_lock_t pthread_mutex_t
+   #endif
+   sz = sizeof(omp_lock_t) + Mmax(8,sizeof(unsigned long));
+   if (sz > 129)
+      sz = 128 + (sz+127)&(~(127L));/* sz=128+128*CEIL(sizeof(lock+long)/128) */
+   else
+      sz = 256;
+   sz = (size_t)malloc(sz);
+   ATL_assert(sz);
+
+   cntp = (unsigned long) ((sz+127)&(~(127L)));  /* 128-byte aligned */
+   *cntp = cnt;
+   mp = (omp_lock_t)(((size_t)cntp)+8); /* maintain expected 8-byte alignment */
 #if defined(ATL_OMP_THREADS)
-   char *cp;
-   omp_lock_t *mp;
-   int *cntp;
-   cp = malloc(256+sizeof(int) + sizeof(omp_lock_t));
-   ATL_assert(cp);
-   cntp = (int*)(cp+128);  /* avoid false sharing wt 128-byte guard */
-   mp = (omp_lock_t*)(cntp+2);
    omp_init_lock(mp);
-   *cntp = cnt;
-   return((void*)cp);
 #else
-   char *cp;
-   pthread_mutex_t *mp;
-   int *cntp;
-   cp = malloc(256+sizeof(int) + sizeof(pthread_mutex_t));
-   ATL_assert(cp);
-   cntp = (int*)(cp+128);  /* avoid false sharing wt 128-byte guard */
-   mp = (pthread_mutex_t*)(cntp+2);
    ATL_assert(!pthread_mutex_init(mp, NULL));
-   *cntp = cnt;
-   return((void*)cp);
 #endif
+   return((void*)sz);
 }
 
 @ROUT ATL_SetGlobalAtomicCountDown ATL_DecGlobalAtomicCountDown @\
@@ -2366,8 +2392,27 @@ int ATL_ResetAtomicCount(void *vp, int cnt)
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2015 -define cwdate 2014
 #include "atlas_misc.h"
 
-void *ATL_SetAtomicCount(int cnt)
+void *ATL_SetAtomicCount(unsigned long cnt)
 {
+   size_t sz;
+   my_lock_t *mp;
+   unsigned long *cntp;
+   #if defined(ATL_OMP_THREADS)
+      #define my_lock_t omp_lock_t
+   #else
+      #define my_lock_t pthread_mutex_t
+   #endif
+   sz = sizeof(omp_lock_t) + Mmax(8,sizeof(unsigned long));
+   if (sz > 129)
+      sz = 128 + (sz+127)&(~(127L));/* sz=128+128*CEIL(sizeof(lock+long)/128) */
+   else
+      sz = 256;
+   sz = (size_t)malloc(sz);
+   ATL_assert(sz);
+
+   cntp = (unsigned long) ((sz+127)&(~(127L)));  /* 128-byte aligned */
+   *cntp = cnt;
+   mp = (omp_lock_t)(((size_t)cntp)+8); /* maintain expected 8-byte alignment */
    int *ip;
 
    ip = malloc(260); /* make false sharing unlikely by */
@@ -2391,6 +2436,7 @@ int ATL_GetAtomicCount(void *vp)
 }
 @ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64 ATL_ResetAtomicCount_win64
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2015 -define cwdate 2014
+   return((void*)sz);
 #include "atlas_asm.h"
 /*
 @ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
