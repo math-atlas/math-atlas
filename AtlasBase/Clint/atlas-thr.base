@@ -3,14 +3,17 @@
    #define ATLAS_TPRIM_H
 #include "atlas_cbc.h"
 
+#define ATL_lock_t unsigned char
 void ATL_lock(void *lck);
 int ATL_trylock(void *lck);
 void ATL_unlock(void *lck);
+void ATL_init_lock(void *lck);
 void *ATL_newLocks(unsigned int nlocks);
 void *ATL_freeLocks(unsigned int nlocks, void *vp);
 
-#define ATL_LCKALG 128L
-#define ATL_AlignLock(vp_) (((size_t)(vp_)+ATL_LCKALG-1L)&(~(ATL_LCKALG-1L)))
+#define ATL_SAFELS 128L
+#define ATL_SAFELS_SH 7
+#define ATL_AlignSafeLS(vp_) (((size_t)(vp_)+ATL_SAFELS-1L)&(~(ATL_SAFELS-1L)))
 #if ATL_CBC_STRONG
    @whiledef rt lock unlock trylock
       #define ATL_@(rt)_mbar ATL_@(rt)
@@ -19642,7 +19645,7 @@ void Mjoin(PATL,tsyrk_tN)
 /*
  * This routine allocates the data structure for dealing out parallel jobs
  * with minimal overhead.  The idea each thread has 3 areas, each of which
- * is rounded up to ATL_LCKALG in size to avoid false sharing.  The three
+ * is rounded up to ATL_SAFELS in size to avoid false sharing.  The three
  * areas are: 
  * 1. lock storage area
  * 2. locBV area (unsigned long): <nleft> <nbits> <bitvec>
@@ -19653,12 +19656,16 @@ void Mjoin(PATL,tsyrk_tN)
  * (the global bit positon is stored as a long task number).  If <nleft>
  * is less than P, getTask may instead move some tasks back from local buff
  * to locBV, so it can be stolen by other threads.
- * We also have a header block (aligned to LCKALG) that contains:
- * <P> <max sz loc1-3> <nbigblks> <B> <nsmlblks> <b>
- * Totsz = LCKALG*(1+3*P), assuming sizeof(BV) < 128, else rounded up.
+ * We also have a header block (aligned to SAFELS) that contains:
+ * <P> <lckSz> <bvSz> <buffSz> <nbigblks> <B> nsmallblks> <b>
+ * Totsz = SAFELS*(1+3*P), assuming sizeof(BV) < 128, else rounded up.
  */
 void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
 {
-   unsigned long
-   P = Mmin(P, (ntasks>>1));
+   unsigned long i, lckSz, bvSz, buffSz;
+
+   i = ntasks >> 1;
+   P = Mmin(P, i);
+   lckSz = sizeof(ATL_lock_t);
+   lckSz = ATL_AlignSafeLS(lckSz);
 }

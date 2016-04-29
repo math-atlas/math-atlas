@@ -1134,14 +1134,33 @@ void *ATL_tNewBV(unsigned int nbits, unsigned int nmut)
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_tbitvec.h"
 
-#if ATL_ATOM_MASK == 1
 int ATL_tSetBitBV(void *vp, unsigned int bit)
+/*     0       1     2       3      4       5         6          7
+ * 1. <P> <gnbits> <sumSz> <lckSz> <bvSz> <nLrgBlks> <nSmlBlks> <b>
+ * 2. local lock storage area : *each lock* rounded up to 128 bytes
+ * 3. locBV area: <nunset> [serial BV] -> <nleft> <nbits> <BV> => 128 rounded 
+ */
 {
    if (vp)
    {
-      unsigned int elt = (bit>>3), lbit=bit&7;
-      unsigned char msk = (1<<lbit), *bv=(unsigned char*)(((ATL_BV_t*)vp)+1);
-      return(ATL_OrAtomicMask(bv+elt, msk));
+      unsigned long *lp = ATL_AlignSafeLS(lp), *lck, *bv;
+      const unsigned long P=lp[0], ngbits=lp[1], sumSz=lp[2], lckSz=lp[3], 
+                          bvSz=lp[4], nlrg=lp[5], nsml=lp[6], B=lp[7];
+      const unsigned long bigN=nlrg*(B+1), idx;
+
+      ATL_assert(bit < ngbits);
+      if (bit > bigN)
+         idx = nlrg + (bit - bitN)/B;
+      else if (bit == bigN)
+         idx = nlrg;
+      else
+         idx = bit/(B+1);
+      lck = (unsigned long*)(((char*)(lp + sumSz)) + (idx<<ATL_SAFELS_SH));
+      bv = lp + lckSz*P + bvSz*idx;
+      ATL_lock(lck);
+      idx = ATL_SetBitBV(bv+1);
+      ATL_unlock(lck);
+      return(idx);
    }
    return(0);
 }
@@ -1157,8 +1176,6 @@ int ATL_tSetFirstUnsetBV(void *bv, unsigned int skp)
    while (ATL_tSetBitBV(bv, skp) == 0);
    return(skp);
 }
-#else
-#endif
 @ROUT ATL_tUnsetFirstSetBV
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_tbitvec.h"
@@ -1187,29 +1204,107 @@ int ATL_tUnsetFirstSetBV(void *bv, unsigned int skp)
 }
 #else
 #endif
+@ROUT ATL_tGetLocalOffBV
+#include "atlas_tbitvec.h"
+int ATL_tGetLocalOffBV(void *vp, unsigned int rank)
+{
+   unsigned long *lp = ATL_AlignSafeLS(lp);
+   const unsigned long P=lp[0], nlrg=lp[5], nsml=lp[6], B=lp[7];
+   unsigned long off;
+
+   rank = rank - (rank/P)*P;
+   nlrg = Mmin(rank, nlrg);
+   off = Mmin(rank, nlrg);
+   off *= B+1;
+   off *= (rank-nlrg)*B;
+   return(off);
+}
+@ROUT ATL_tNewGlobBV
+/*
+ * 3 areas, each rounded up to 128 bytes:
+ * 1. summary area: 
+ *    <P> <gnbits> <sumSz> <lckSz> <bvSz> <nLrgBlks> <nSmlBlks> <b>
+ * 2. local lock storage area : *each lock* rounded up to 128 bytes
+ * 3. locBV area: <nunset> [serial BV] -> <nleft> <nbits> <BV> => 128 rounded 
+ */
+void *ATL_tNewGlobBV(unsigned long nbits, unsigned int P);
+{
+   unsigned long sumSz, lckSz, bvSz, bvElts, lnbits, nlrg, nsml, i;
+   void *vp;
+   long *lp;
+
+   bvSz = nbits >> 2;
+   P = Mmin(P,bvSz);   /* want at least 4 bits per locBV! */
+   lnbits = nbits / P;
+   nlrg = nbits - lnbits * P;
+   nsml = P - nlrg;
+   sumSz = 8 << shBV;
+   sumSz = ATL_AlignSafeLS(sumSz);
+   bvElts = (nlrg) ? lnbits+1 : lnbits;
+   bvElts = (bvElts+bpiBV-1)>>shBV;
+   bvSz = (bvElts + 2) << shBV;
+   bvSz = ATL_AlignSafeLS(bvSz);
+   lckSz = sizeof(ATL_lock_t);
+   lckSz = Mmax(lckSz, ATL_SAFELS);
+/*
+ * Allocate memory, and fill in summary area 
+ */
+   vp = malloc(sumSz + P*(lckSz + bvSz) + ATL_SAFELS); 
+   ATL_assert(vp);
+
+   lp = ATL_AlignSafeLS(vp);
+   sumSz >>= shBV;
+   lckSz >>= shBV;
+   bvSz >>= shBV;
+   lp[0] = P;
+   lp[1] = nbits;
+   lp[2] = sumSz;
+   lp[3] = lckSz;
+   lp[4] = bvSz;
+   lp[5] = nlrg;
+   lp[6] = nsml;
+   lp[7] = lnbits;
+/*
+ * Initialize all locks
+ */
+   lp += sumSz;
+   for (i=0; i < P; i++, lp += lckSz)
+       ATL_init_lock(lp);
+/*
+ * Initialize all locBVs & return
+ */
+   for (i=0; i < P; i++, lp += bvSz)
+   {
+      unsigned long k;
+      lp[0] = lp[1] = (i < nlrg) ? lnbits+1 : lnbits;
+      for (k=0; k < bvElts; k++)
+         lp[k+2] = 0;
+   }
+   return(vp);
+}
 @ROUT atlas_tbitvec.h
 #ifndef ATLAS_TBITVEC_H
    #define ATLAS_TBITVEC_H
    #include "atlas_bitvec.h"
    #include "atlas_cbc.h"
+   #include "atlas_tprim.h"
 
 /*
- * Threaded bitvecs have mutexes built into the the functions that change
- * bits (but not those that read!). The data structure depends on whether
- * ATLAS has ATL_[And,Or]AtomicMask written for your system or not.
- * If ATLAS has these functions, then the threaded bitvec data structure
- * is the same as the unthreaded.  Otherwise, the data structure looks like:
- * <log2(nmut)> <mut1> ... <mutN> <serial bitvec>
- * The serial bitvec array is N=CEIL(nbits/(sizeof(long)*8)) long, and each
- * mutex protects N/nmut entries.  A tNewBV with nbits=0 will result in
- * a global bitvec with one mutex and no array elements to store anything.
+ * Global bitvecs distribute the BV amongst at most P areas that are all
+ * accessed with separate locks, minimizing contention during normal access.
+ * The accessor functions all take a rank, which will be used to select the
+ * native BV to scope first.  Only when the native BV is empty will we look
+ * at other's BVs.  This gives us work stealing while minimizing contention.
+ * The main source of contention is from false sharing, which is hugely
+ * magnficed with bitvecs.  To prevent this, we expand all independent accessor
+ * areas to multiples of a safe linesize (currently 128bytes, set in 
+ * atlas_tprim.h).  The data structure then looks like, each rounded to 128:
+ * 1. summary area
+ * 2. local lock storage area : *each lock* rounded up to 128 bytes
+ * 3. locBV area: <nunset> [serial BV] -> <nleft> <nbits> <BV> => 128 rounded 
  */
-#if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
-   int ATL_AndAtomicMask(void *vp, unsigned char mask);
-   int ATL_OrAtomicMask(void *vp, unsigned char mask);
-   #define ATL_ATOM_MASK 1
-#endif
-
+void *ATL_tNewGlobBV(unsigned long nbits, unsigned int P);
+int ATL_tGetLocalOffBV(void *bv, unsigned int rank);
 int ATL_tSetFirstUnsetBV(void *bv, unsigned int skp);
 int ATL_tUnsetFirstSetBV(void *bv, unsigned int skp);
 int ATL_tSetBitBV(void *bv, unsigned int pos);
