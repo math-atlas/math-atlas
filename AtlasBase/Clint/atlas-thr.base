@@ -2230,6 +2230,80 @@ ATL_UnsetBitAtomic:
    btr %si, (bv)    /* CF set to old value */
    cmovC %dx, %ax   /* if (bit set in memory) return(1); */
    ret
+@ROUT ATL_trylock_amd64 ATL_trylock_ia32
+#include "atlas_asm.h"
+/*
+ * 1 at memory means locked, 0 means unlocked
+ *  ax                 4/rdi
+ * int ATL_trylock(void *lck);
+ * RETURNS: 0 if lock was obtained, else 1
+ */
+.global ATL_asmdecor(ATL_trylock)
+ATL_asmdecor(ATL_trylock):
+@ROUT ATL_trylock_amd64
+   mov $1, %rax
+@ROUT ATL_trylock_ia32
+   mov $1, %eax
+@ROUT ATL_trylock_amd64 ATL_trylock_ia32
+   xchg %al, (%rdi)
+   ret
+@ROUT ATL_lock_amd64 ATL_lock_ia32
+#include "atlas_asm.h"
+/*
+ * 1 at memory means locked, 0 means unlocked
+ *                   4/rdi
+ * void ATL_lock(void *lck);
+ * RETURNS: 0 if lock was obtained, else 1
+ */
+.global ATL_asmdecor(ATL_lock)
+ATL_asmdecor(ATL_lock):
+   .local LOOP
+   LOOP:
+@ROUT ATL_lock_amd64
+      mov $1, %rax
+@ROUT ATL_lock_ia32
+      mov $1, %eax
+@ROUT ATL_lock_amd64 ATL_lock_ia32
+      xchg %al, (%rdi)
+      bt $1, %al        /* if (already locked) */
+      jc WAIT           /*    kill some time & try again */
+   ret
+   .local FAIL
+WAIT:
+   pause
+   jmp LOOP
+@ROUT ATL_lock
+#include "atlas_tprim.h"
+void ATL_lock(void *lck)
+{
+   int fail;
+   TRY:
+      fail = ATL_trylock(lck);
+      if (fail)
+      {
+        ATL_thread_yield();  /* don't magnify contention */
+        goto TRY;
+      }
+}
+@ROUT ATL_unlock_amd64 ATL_unlock_ia32
+#include "atlas_asm.h"
+/*
+ * 1 at memory means locked, 0 means unlocked
+ *  ax                 4/rdi
+ * int ATL_unlock(void *lck);
+ */
+.global ATL_asmdecor(ATL_unlock)
+ATL_asmdecor(ATL_unlock):
+@ROUT ATL_unlock_amd64
+   xor %rax, %rax
+   xchg %al, (%rdi)
+@ROUT ATL_unlock_ia32
+   movL 4(%esp), %ecx
+   xor %eax, %eax
+   xchg %al, (%ecx)
+@ROUT ATL_unlock_amd64 ATL_unlock_ia32
+   dec %al            /* signal error if it wasn't locked */
+   ret
 @ROUT ATL_AndAtomicMask_amd64 ATL_AndAtomicMask_ia32
   @define nop @And@
   @define op @and@
@@ -19563,4 +19637,28 @@ void Mjoin(PATL,tsyrk_tN)
    if (pd.jobCtr)
       ATL_FreeGlobalAtomicCount(pd.jobCtr);
    free(vp);
+}
+@ROUT 
+/*
+ * This routine allocates the data structure for dealing out parallel jobs
+ * with minimal overhead.  The idea each thread has 3 areas, each of which
+ * is rounded up to ATL_LCKALG in size to avoid false sharing.  The three
+ * areas are: 
+ * 1. lock storage area
+ * 2. locBV area (unsigned long): <nleft> <nbits> <bitvec>
+ * 3. local buff: <N> <ngrab> <nused> <idx> [loc1] ... [locN]
+ *
+ * All work initially resides in the locBV area.  When the thread calls
+ * getTask, up to <ngrab> jobs will be moved from locBV to local buff
+ * (the global bit positon is stored as a long task number).  If <nleft>
+ * is less than P, getTask may instead move some tasks back from local buff
+ * to locBV, so it can be stolen by other threads.
+ * We also have a header block (aligned to LCKALG) that contains:
+ * <P> <max sz loc1-3> <nbigblks> <B> <nsmlblks> <b>
+ * Totsz = LCKALG*(1+3*P), assuming sizeof(BV) < 128, else rounded up.
+ */
+void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
+{
+   unsigned long
+   P = Mmin(P, (ntasks>>1));
 }
