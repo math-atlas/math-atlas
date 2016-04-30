@@ -1131,39 +1131,6 @@ void *ATL_tNewBV(unsigned int nbits, unsigned int nmut)
 }
 #endif
 @ROUT ATL_tSetFirstUnsetBV
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
-#include "atlas_tbitvec.h"
-
-int ATL_tSetBitBV(void *vp, unsigned int bit)
-/*     0       1     2       3      4       5         6          7
- * 1. <P> <gnbits> <sumSz> <lckSz> <bvSz> <nLrgBlks> <nSmlBlks> <b>
- * 2. local lock storage area : *each lock* rounded up to 128 bytes
- * 3. locBV area: <nunset> [serial BV] -> <nleft> <nbits> <BV> => 128 rounded 
- */
-{
-   if (vp)
-   {
-      unsigned long *lp = ATL_AlignSafeLS(lp), *lck, *bv;
-      const unsigned long P=lp[0], ngbits=lp[1], sumSz=lp[2], lckSz=lp[3], 
-                          bvSz=lp[4], nlrg=lp[5], nsml=lp[6], B=lp[7];
-      const unsigned long bigN=nlrg*(B+1), idx;
-
-      ATL_assert(bit < ngbits);
-      if (bit > bigN)
-         idx = nlrg + (bit - bitN)/B;
-      else if (bit == bigN)
-         idx = nlrg;
-      else
-         idx = bit/(B+1);
-      lck = (unsigned long*)(((char*)(lp + sumSz)) + (idx<<ATL_SAFELS_SH));
-      bv = lp + lckSz*P + bvSz*idx;
-      ATL_lock(lck);
-      idx = ATL_SetBitBV(bv+1);
-      ATL_unlock(lck);
-      return(idx);
-   }
-   return(0);
-}
 
 int ATL_tSetFirstUnsetBV(void *bv, unsigned int skp)
 {
@@ -1204,22 +1171,77 @@ int ATL_tUnsetFirstSetBV(void *bv, unsigned int skp)
 }
 #else
 #endif
-@ROUT ATL_tGetLocalOffBV
+@ROUT ATL_tGetLocalBoundsBV
 #include "atlas_tbitvec.h"
-int ATL_tGetLocalOffBV(void *vp, unsigned int rank)
+unsigned long ATL_tGetLocalBoundsBV(void *vp, unsigned int rank, 
+                                    unsigned long *LB)
 {
-   unsigned long *lp = ATL_AlignSafeLS(lp);
+   unsigned long *lp = ATL_AlignSafeLS(vp);
    const unsigned long P=lp[0], nlrg=lp[5], nsml=lp[6], B=lp[7];
    unsigned long off;
 
    rank = rank - (rank/P)*P;
-   nlrg = Mmin(rank, nlrg);
    off = Mmin(rank, nlrg);
    off *= B+1;
    off *= (rank-nlrg)*B;
+   *LB = off + ((rank < nlrg) ? B : B-1);
    return(off);
 }
-@ROUT ATL_tNewGlobBV
+@ROUT ATL_tSetBitBV
+  @define op @Set@
+@ROUT ATL_tUnsetBitBV
+  @define op @Unset@
+@ROUT ATL_tSetBitBV ATL_tUnsetBitBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_tbitvec.h"
+
+int ATL_t@(op)BitBV(void *vp, unsigned int bit)
+/*     0       1     2       3      4       5         6          7
+ * 1. <P> <gnbits> <sumSz> <lckSz> <bvSz> <nLrgBlks> <nSmlBlks> <b>
+ * 2. local lock storage area : *each lock* rounded up to 128 bytes
+ * 3. locBV area: <nunset> [serial BV] -> <nleft> <nbits> <BV> => 128 rounded 
+ */
+{
+   if (vp)
+   {
+      unsigned long *lp = ATL_AlignSafeLS(lp), *lck, *bv;
+      const unsigned long P=lp[0], ngbits=lp[1], sumSz=lp[2], lckSz=lp[3], 
+                          bvSz=lp[4], nlrg=lp[5], nsml=lp[6], B=lp[7];
+      const unsigned long bigN=nlrg*(B+1), idx;
+      int obit;
+
+      ATL_assert(bit < ngbits);
+      if (bit > bigN)
+         idx = nlrg + (bit - bitN)/B;
+      else if (bit == bigN)
+         idx = nlrg;
+      else
+         idx = bit/(B+1);
+      lck = (unsigned long*)(((char*)(lp + sumSz)) + (idx<<ATL_SAFELS_SH));
+      bv = lp + lckSz*P + bvSz*idx;
+      ATL_lock(lck);
+      obit = ATL_@(op)BitBV(bv+1);
+      ATL_unlock(lck);
+      return(obit);
+   }
+   return(0);
+}
+@undef op
+@ROUT ATL_tFreeBV
+void ATL_tFreeBV(void *bv);
+{
+   if (bv)
+   {
+      unsigned long *lp = ATL_AlignSafeLS(bv);
+      const unsigned long P=lp[0], sumSz=lp[2], lckSz=lp[3];
+      unsigned int i;
+      lp += sumSz;
+      for (i=0; i < P; i++, lp += lckSz)
+         ATL_lock_destroy(lp);
+      free(bv);
+   }
+}
+@ROUT ATL_tNewBV
 /*
  * 3 areas, each rounded up to 128 bytes:
  * 1. summary area: 
@@ -1269,7 +1291,7 @@ void *ATL_tNewGlobBV(unsigned long nbits, unsigned int P);
  */
    lp += sumSz;
    for (i=0; i < P; i++, lp += lckSz)
-       ATL_init_lock(lp);
+       ATL_lock_init(lp);
 /*
  * Initialize all locBVs & return
  */
@@ -1299,16 +1321,37 @@ void *ATL_tNewGlobBV(unsigned long nbits, unsigned int P);
  * magnficed with bitvecs.  To prevent this, we expand all independent accessor
  * areas to multiples of a safe linesize (currently 128bytes, set in 
  * atlas_tprim.h).  The data structure then looks like, each rounded to 128:
- * 1. summary area
+ * 1. summary area:
+ *     0     1        2       3      4        5          6       7
+ *    <P> <gnbits> <sumSz> <lckSz> <bvSz> <nLrgBlks> <nSmlBlks> <b>
  * 2. local lock storage area : *each lock* rounded up to 128 bytes
  * 3. locBV area: <nunset> [serial BV] -> <nleft> <nbits> <BV> => 128 rounded 
  */
-void *ATL_tNewGlobBV(unsigned long nbits, unsigned int P);
-int ATL_tGetLocalOffBV(void *bv, unsigned int rank);
-int ATL_tSetFirstUnsetBV(void *bv, unsigned int skp);
-int ATL_tUnsetFirstSetBV(void *bv, unsigned int skp);
-int ATL_tSetBitBV(void *bv, unsigned int pos);
-int ATL_tUnsetBitBV(void *bv, unsigned int pos);
+void *ATL_tNewBV(unsigned long nbits, unsigned int P);
+void ATL_tFreeBV(void *bv);
+/*
+ * Change bit at position pos, and return old value
+ */
+int ATL_tSetBitBV(void *bv, unsigned long pos);
+int ATL_tUnsetBitBV(void *bv, unsigned long pos);
+/*
+ * These functions find a [set,unset] bit, and complement it.
+ * They return the global bit position that was changed.  They first look
+ * at the bits "owned" by the given rank, and if those bits are all [unset,set],
+ * they look at other thread's local BV, and try to change those bits.
+ * Thus, this method can be used for work stealing, for instance.  These
+ * functions may need to await locks, and so they can be delayed in returning
+ * while they wait on locks held by other threads.
+ * A return of -1 indicates that all bits are [unset,set].
+ */
+long ATL_tSetUnsetBitBV(void *bv, unsigned int rank);
+long ATL_tUnsetSetBitBV(void *bv, unsigned int rank);
+/*
+ * sets *lastbit to the last global bit "owned" by thread rank, and
+ * RETURNS: first global bit owned by thread rank.
+ */
+unsigned long ATL_tGetLocalBoundsBV(void *bv, unsigned int rank, 
+                                    unsigned long *lastbit);
 
 /*
  * When you want all your changes posted before the bit change, you need
@@ -1318,7 +1361,7 @@ int ATL_tUnsetBitBV(void *bv, unsigned int pos);
  * have a write barrier, so both these cases just use the no-barrier versions.
  */
 #if ATL_CBC_STRONG || ATL_CBC_NOBAR
-   @whiledef rt SetBit UnsetBit UnsetFirstSet SetFirstUnset
+   @whiledef rt SetBit UnsetBit UnsetSetBit SetUnsetBit
    #define ATL_t@(rt)BV_wbar ATL_t@(rt)BV
    @endwhile
 #else
@@ -1329,7 +1372,7 @@ int ATL_tUnsetBitBV(void *bv, unsigned int pos);
    #else
       #error "No mem barrier defined!"
    #endif
-   @whiledef rt SetBit UnsetBit UnsetFirstSet SetFirstUnset
+   @whiledef rt SetBit UnsetBit UnsetSetBit SetUnsetBit
    static int INLINE ATL_t@(rt)BV_wbar(void *bv, unsigned int pos)
    {
       my_bar;  /* make changes globally visible */
@@ -1337,32 +1380,6 @@ int ATL_tUnsetBitBV(void *bv, unsigned int pos);
    }
    @endwhile
    #undef my_bar
-#endif
-
-#if ATL_ATOM_MASK
-   #define ATL_tNewBV(nbit_, m_) ATL_NewBV(nbit_)
-   @multidef rt IsBitRangeSet
-   @whiledef rt Free GetTotBits FindFirstSetBit FindFirstUnsetBit
-   #define ATL_t@(rt)BV ATL_@(rt)BV
-   @endwhile
-#else
-/*
- * Maxmut is an upper bound on the number of mutexes to use to protect the
- * entire bitvector.  If it is larger than nbits/(sizeof(long)*8), it is
- * ignored.  For systems with AtomicMask functions, it is ignored.
- */
-   void *ATL_tNewBV(unsigned int nbits, unsigned int maxmut);
-@skip   void *ATL_tExpandBV(void *bv, unsigned int nbits);
-   void ATL_tFreeBV(void *bv);
-/*
- * Avoid function call.  You are welcome for the eye-candy.
- */
-   #define ATL_tGetTotBitsBV(bv_) ATL_GetTotBitsBV( (void*) \
-      ((char*)(bv_)) + ((1 << *((unsigned char*)(bv_)))+1)*sizeof(void*) )
-   @whiledef rt FindFirstSetBit FindFirstUnsetBit
-   #define ATL_t@(rt)BV(bv_, p_) ATL_@(rt)BV((void*) \
-      (((char*)(bv_))+((1 << *((unsigned char*)(bv_)))+1)*sizeof(void*), p_ )
-   @endwhile rt
 #endif
 
 #endif
