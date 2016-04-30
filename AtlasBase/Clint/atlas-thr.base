@@ -1,16 +1,84 @@
 @ROUT atlas_tprim.h
 #ifndef ATLAS_TPRIM_H
    #define ATLAS_TPRIM_H
+/*
+ * This file defines just a few primitive threading routines necessary
+ * for us to perform the parallel runs necessary to test/time ATLAS.
+ * Therefore, all of the files prototyped here can be built prior to any 
+ * ATLAS tuning, other than the creation of the two files in BLDdir/include:
+ * 1. atlas_pthreads.h  : defines ATL_NTHREAD/NTHRPOW2
+ * 2. atlas_taffinity.h : defines how to support affinity
+ */
+#define ATL_MEMBAR_ONLY 1
 #include "atlas_cbc.h"
 
-#define ATL_lock_t unsigned char
+#if defined(ATL_OS_Win64) || defined(ATL_OS_WinNT)
+   #ifdef ATL_USE64BITS
+      #define ATL_WIN64THREADS 1
+      #define ATL_WINTHREADS 1
+   #else
+      #define ATL_WIN32THREADS 1
+      #define ATL_WINTHREADS 1
+   #endif
+#endif
+#include "atlas_pthreads.h" /* gened file defs ATL_NTHREADS & ATL_NTHRPOW2 */
+#ifdef ATL_WINTHREADS
+   #include <windows.h>
+   typedef struct
+   {
+      void *vp;      /* ptr to extra info */
+      HANDLE thrH;   /* handle to thread */
+      int rank;      /* my rank */
+      int P;         /* # of processors in this call */
+      int affID;     /* affinity id for this core */
+   } ATL_thread_t;
+   #ifndef CREATE_SUSPENDED
+      #define CREATE_SUSPENDED 0x00000004
+   #endif
+   #ifndef WAIT_FAILED
+      #define WAIT_FAILED (~0)
+   #endif
+#elif defined(ATL_OMP_THREADS)
+   #include <omp.h>
+   typedef struct
+   {
+      void *vp;      /* ptr to extra info */
+      int rank;      /* my rank */
+      int P;         /* # of processors in this call */
+      int affID;     /* < 0: not set, affID=1-affID, else affID */
+   } ATL_thread_t;
+  #ifndef ATL_lock_t
+     #define ATL_lock_t omp_lock_t
+  #endif
+#else
+   #define ATL_USE_POSIXTHREADS 1
+   #include <pthread.h>
+   typedef struct
+   {
+      pthread_t thrH;/* handle of thread */
+      void *vp;      /* ptr to extra info */
+      int rank;      /* my rank */
+      int P;         /* # of processors in this call */
+      int affID;     /* < 0: not set, affID=1-affID, else affID */
+   } ATL_thread_t;
+  #ifndef ATL_lock_t
+     #define ATL_lock_t pthread_mutex_t
+  #endif
+#endif
+
+int ATL_thread_start
+   (ATL_thread_t *thr, int proc, int JOINABLE, void *(*rout)(void*), void*);
+int ATL_thread_join(ATL_thread_t*); /* waits on completion of thread */
+
 void ATL_lock(void *lck);
 int ATL_trylock(void *lck);
 void ATL_unlock(void *lck);
 void ATL_lock_init(void *lck);
 void ATL_lock_destroy(void *lck);
+#if 0
 void *ATL_newLocks(unsigned int nlocks);
 void *ATL_freeLocks(unsigned int nlocks, void *vp);
+#endif
 
 #define ATL_SAFELS 128L
 #define ATL_SAFELS_SH 7
@@ -30,6 +98,42 @@ void *ATL_freeLocks(unsigned int nlocks, void *vp);
          ATL_wmembar;
       return(gotIt);
    }
+#endif
+/*
+ * Helper function that starts P threads, waits for them to complete,
+ * and returns.  Used in initial tuning before we've set up full thread
+ * framework.
+ */
+#ifdef ATL_DEF_RUNTHR
+#include <assert.h>
+static void ATL_runThreads(int P, void *(*rout)(void*), void *arg)
+{
+   int i;
+   ATL_thread_t tp[ATL_NTHREADS];
+#ifdef ATL_OMP_THREADS
+   omp_set_num_threads(P);
+   #pragma omp parallel
+   {
+      assert(omp_get_num_threads() == P);
+      i = omp_get_thread_num();
+      #ifdef ATL_PAFF_SELF
+         ATL_setmyaffinity(i);
+      #endif
+      tp[i].vp = arg;
+      tp[i].rank = i;
+      tp[i].P = P;
+      rout(tp+i);
+   }
+#else
+   for (i=0; i < P; i++)
+   {
+      tp[i].vp = arg;
+      assert(!ATL_thread_start(tp+i, i, 1, rout, tp+i));
+   }
+   for (i=0; i < P; i++)
+      assert(!ATL_thread_join(tp+i));
+#endif
+}
 #endif
 
 #endif
@@ -421,10 +525,12 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
 void ATL_goparallel(const unsigned int P, void *DoWork, void *opstruct, void*);
 void ATL_goparallel_prank(const unsigned int P, void *DoWork, void *opstruct,
                           void *DoComb);
+@beginskip
 /*  Starts a thread running, and sets its affinity to proc if possible */
 int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE, 
                      void *(*rout)(void*), void*);
 int ATL_thread_join(ATL_thread_t*); /* waits on completion of thread */
+@endskip
 void ATL_thread_exit(void*);        /* exits currently executing thread */
 void *ATL_log2tlaunch(void *vp);    /* min spanning tree launch */
 void *ATL_lin0tlaunch(void *vp);    /* 0 linear launches all threads */
@@ -2828,6 +2934,7 @@ ATL_thread_t *ATL_launch_threads(int P, void *vp)
    return(tp);
 }
 @ROUT ATL_thread_start
+#include <stdlib.h>
 #ifndef ATL_NOAFFINITY
 #include "atlas_taffinity.h"
 #endif
@@ -2851,8 +2958,9 @@ ATL_thread_t *ATL_launch_threads(int P, void *vp)
 #else
    #define ATL_PAFF_SELF
 #endif
-#include "atlas_misc.h"
-#include "atlas_threads.h"
+@skip #include "atlas_misc.h"
+@skip #include "atlas_threads.h"
+#include "atlas_tprim.h"
 int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
                      void *(*rout)(void*), void *arg)
 /*
@@ -3101,8 +3209,9 @@ int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
    return(0);
 }
 @ROUT ATL_thread_join
-#include "atlas_misc.h"
-#include "atlas_threads.h"
+@skip #include "atlas_misc.h"
+@skip #include "atlas_threads.h"
+#include "atlas_tprim.h"
 int ATL_thread_join(ATL_thread_t *thr)   /* waits on completion of thread */
 {
 #ifdef ATL_WINTHREADS
