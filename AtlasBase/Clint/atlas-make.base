@@ -1032,6 +1032,18 @@ xtune_count : tune_count.o tlib mutcnt iFind_atomic_arch
 	$(MAKE) $(acnt_arch)
 	$(CC) $(CCFLAGS) -o $@ tune_count.o $(acnt_arch) $(acnt_mut) \
               $(ATLASlib) $(LIBS)
+xtest_lock_mut : $(mySRCdir)/test_lock.c $(INCSdir)/atlas_tprim.h \
+        $(myTHRdir)/ATL_lock_mut.c $(myTHRdir)/ATL_unlock_mut.c
+	$(CC) $(CCFLAGS) -DATL_lock_t="unsigned char"  -o $@ \
+        $(mySRCdir)/test_lock.c $(myTHRdir)/ATL_lock_mut.c \
+        $(myTHRdir)/ATL_unlock_mut.c $(ATLASlib) $(LIBS)
+@whiledef ar amd64 arm64 ia32
+xtest_lock_@(ar) : $(mySRCdir)/test_lock.c $(INCSdir)/atlas_tprim.h \
+        $(myTHRdir)/ATL_lock_@(ar).S $(myTHRdir)/ATL_unlock_@(ar).S
+	$(CC) $(CCFLAGS) -DATL_lock_t="unsigned char"  -o $@ \
+        $(mySRCdir)/test_lock.c $(myTHRdir)/ATL_lock_@(ar).S \
+        $(myTHRdir)/ATL_unlock_@(ar).S $(ATLASlib) $(LIBS)
+@endwhile
 @whiledef rt test_count test_count_glb
 x@(rt) : @(rt).o tlib  # mutcnt arccnt
 	$(CC) $(CCFLAGS) -o x@(rt) @(rt).o $(ATLASlib) $(LIBS)
@@ -3254,6 +3266,7 @@ mySRCdir = $(SRCdir)/bin
 
 scalf = $(mflop_l1)
 
+LOCK=mut
 ammidx=0
 pre=j
 nb = 88
@@ -3351,8 +3364,18 @@ IBuildPtlibs0:
 	- cd $(BLDdir)/interfaces/blas/F77/src/ ; $(MAKE) ptlib
 	cd $(BLDdir)/src/lapack ; $(MAKE) ptlib
 
-ITprim:
+Tprim_mut :
+	cp $(SRCdir)/makes/Make.tprim $(BLDdir)/src/threads/Make.tprim
+@whiledef ar ia32 amd64 arm64
+Tprim_@(ar) : 
+	- rm -f $(BLDdir)/src/threads/Make.tprim
+	cat $(SRCdir)/makes/Make.tprim | sed -e "s/LNG=c/LNG=S/" \
+        -e "s/ARC=mut/ARC=@(ar)/" > $(BLDdir)/src/threads/Make.tprim
+@endwhile
+	
+ITprim: Tprim_$(LOCK)
 	cd $(BLDdir)/tune/threads ; $(MAKE) IRun_nthr
+	cd $(BLDdir/src/threads ; $(MAKE) -f Make.tprim lib
 IPTtune:
 	cd $(BLDdir)/tune/threads ; $(MAKE) IThreadTune
 	$(MAKE) INSTALL_LOG/atlas_tcacheedge.h
@@ -7246,6 +7269,43 @@ auxlib : force_build
 @endwhile
 clean :
 	rm -rf *.o *.grd
+@ROUT Make.tprim
+include Make.inc
+mySRCdir = $(SRCdir)/src/threads
+INCS = $(INCSdir)/atlas_tprim.h \
+       $(INCAdir)/atlas_taffinity.h $(INCAdir)/atlas_pthreads.h
+LNG=c
+ARC=mut
+@multidef rt 
+   thread_start thread_join lock_init lock_destroy lock trylock unlock 
+@endmultidef
+@declare "obj = " y n
+   @whiledef rt
+      ATL_@(rt).o
+   @endwhile
+@enddeclare
+
+lib : tprim.grd
+tprim.grd : $(obj)
+	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)
+	$(RANLIB) $(ATLASlib)
+	touch lib.grd
+
+@whiledef rt thread_start thread_join 
+ATL_@(rt).o : $(INCS) $(mySRCdir)/ATL_@(rt).c
+	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_@(rt).c
+@endwhile
+
+@whiledef rt lock_init lock_destroy
+ATL_@(rt).o : $(INCS) $(mySRCdir)/ATL_@(rt).c
+	$(KC) $(KCFLAGS) -DATL_USE_$(ARC)=1 -o $@ -c $(mySRCdir)/ATL_@(rt).c
+@endwhile
+
+@whiledef rt lock trylock unlock 
+ATL_@(rt).o : $(INCS) $(mySRCdir)/ATL_@(rt)_$(ARC).$(LNG)
+	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_@(rt)_$(ARC).$(LNG)
+@endwhile
+
 @ROUT Make.thr
 include Make.inc
 
@@ -7256,8 +7316,10 @@ dep = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_pthreads.h \
       $(INCSdir)/atlas_threads.h
 
 @multidef rt 
-   thread_join thread_exit thread_start goparallel
+   thread_exit goparallel
    cond_bcast cond_init cond_wait cond_free cond_signal
+@skip thread_join thread_start
+@skip   lock trylock unlock lock_init lock_destroy
    mutex_init mutex_lock mutex_unlock mutex_trylock mutex_free thread_yield
    IsFirstThreadedCall threadpool threadpool_misc
    SetGlobalAtomicCount ResetGlobalAtomicCount DecGlobalAtomicCount
@@ -7293,7 +7355,9 @@ killaobj:
 	- rm -f $(aobj)
 	- ar d $(ATLASlib) $(aobj)
 
-lib.grd : $(obj)
+tprim.grd : 
+	$(MAKE) -f Make.tprim tprim.grd
+lib.grd : $(obj) tprim.grd
 	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)
 	$(RANLIB) $(ATLASlib)
 	touch lib.grd

@@ -11,6 +11,8 @@
  */
 #define ATL_MEMBAR_ONLY 1
 #include "atlas_cbc.h"
+#include "atlas_pthreads.h"
+#include "atlas_taffinity.h"
 
 #if defined(ATL_OS_Win64) || defined(ATL_OS_WinNT)
    #ifdef ATL_USE64BITS
@@ -70,9 +72,14 @@ int ATL_thread_start
    (ATL_thread_t *thr, int proc, int JOINABLE, void *(*rout)(void*), void*);
 int ATL_thread_join(ATL_thread_t*); /* waits on completion of thread */
 
-void ATL_lock(void *lck);
+int ATL_lock(void *lck);
 int ATL_trylock(void *lck);
-void ATL_unlock(void *lck);
+/*
+ * On weakly-ordered systems, unlock must flush store buffs before or at
+ * same time as lock is written, and must prevent local reads from moving
+ * above the unlock
+ */
+int ATL_unlock(void *lck);
 void ATL_lock_init(void *lck);
 void ATL_lock_destroy(void *lck);
 #if 0
@@ -83,22 +90,6 @@ void *ATL_freeLocks(unsigned int nlocks, void *vp);
 #define ATL_SAFELS 128L
 #define ATL_SAFELS_SH 7
 #define ATL_AlignSafeLS(vp_) (((size_t)(vp_)+ATL_SAFELS-1L)&(~(ATL_SAFELS-1L)))
-#if ATL_CBC_STRONG
-   @whiledef rt lock unlock trylock
-      #define ATL_@(rt)_mbar ATL_@(rt)
-   @endwhile
-#else
-   #define ATL_lock_mbar(lck_) { ATL_wmembar ; ATL_lock(lck_); }
-   #define ATL_unlock_mbar(lck_) { ATL_lock(lck_); ATL_rmembar; }
-   static INLINE int ATL_trylock_mbar(void *lck)
-   {
-      int gotIt;
-      gotIt = ATL_trylock(lck);
-      if (gotIt)
-         ATL_wmembar;
-      return(gotIt);
-   }
-#endif
 /*
  * Helper function that starts P threads, waits for them to complete,
  * and returns.  Used in initial tuning before we've set up full thread
@@ -226,8 +217,8 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
 @rout atlas_threads.h
 #ifndef ATLAS_THREADS_H
    #define ATLAS_THREADS_H
+#include "atlas_tprim.h"
 #include "atlas_ttypes.h"
-#include "atlas_taffinity.h"
 #include "atlas_bitvec.h"
 #define ATL_chkgap 128
 #define ATL_chksh  7
@@ -279,54 +270,6 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
    #define ATL_POLL
 #else
    #define ATL_POLL ATL_thread_yield()
-#endif
-
-#if defined(ATL_OS_Win64) || defined(ATL_OS_WinNT)
-   #ifdef ATL_USE64BITS
-      #define ATL_WIN64THREADS 1
-      #define ATL_WINTHREADS 1
-   #else
-      #define ATL_WIN32THREADS 1
-      #define ATL_WINTHREADS 1
-   #endif
-#endif
-#include "atlas_pthreads.h" /* gened file defs ATL_NTHREADS & ATL_NTHRPOW2 */
-#ifdef ATL_WINTHREADS
-   #include <windows.h>
-   typedef struct
-   {
-      void *vp;      /* ptr to extra info */
-      HANDLE thrH;   /* handle to thread */
-      int rank;      /* my rank */
-      int P;         /* # of processors in this call */
-      int affID;     /* affinity id for this core */
-   } ATL_thread_t;
-   #ifndef CREATE_SUSPENDED
-      #define CREATE_SUSPENDED 0x00000004
-   #endif
-   #ifndef WAIT_FAILED
-      #define WAIT_FAILED (~0)
-   #endif
-#elif defined(ATL_OMP_THREADS)
-   #include <omp.h>
-   typedef struct
-   {
-      void *vp;      /* ptr to extra info */
-      int rank;      /* my rank */
-      int P;         /* # of processors in this call */
-      int affID;     /* < 0: not set, affID=1-affID, else affID */
-   } ATL_thread_t;
-#else
-   #define ATL_USE_POSIXTHREADS 1
-   #include <pthread.h>
-   typedef struct
-   {
-      pthread_t thrH;/* handle of thread */
-      void *vp;      /* ptr to extra info */
-      int rank;      /* my rank */
-      int P;         /* # of processors in this call */
-      int affID;     /* < 0: not set, affID=1-affID, else affID */
-   } ATL_thread_t;
 #endif
 
 typedef struct ATL_LaunchStruct ATL_LAUNCHSTRUCT_t;
@@ -2340,6 +2283,93 @@ ATL_UnsetBitAtomic:
    btr %si, (bv)    /* CF set to old value */
    cmovC %dx, %ax   /* if (bit set in memory) return(1); */
    ret
+@ROUT ATL_lock_mut
+#include "atlas_tprim.h"
+int ATL_lock(void *vp)
+{
+#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
+   #error "should not compile this file under Windows!"
+@skip   while(!ATL_DecAtomicCount(vp));
+#elif 0 & defined(ATL_OS_OSX) && defined(ATL_SSE1)  /* assume OSX better? */
+   #error "should not compile this file under OS X in x86!"
+@skip   while(!ATL_DecAtomicCount(vp))
+@skip      ATL_thread_yield();
+#elif defined(ATL_OMP_THREADS)
+   omp_set_lock(vp);
+   return(0);
+#else
+   return(pthread_mutex_lock(vp));
+#endif
+}
+@ROUT ATL_trylock_mut
+#include "atlas_tprim.h"
+int ATL_mutex_trylock(void *vp)
+/*
+ * return 0 if lock not required, else return non-zero
+ */
+{
+#if defined(ATL_WINTHREADS) /*  || (defined(ATL_OS_OSX) && defined(ATL_SSE1)) */
+   #error "should not compile this file under Windows!"
+   return(ATL_DecAtomicCount(vp));
+#elif defined(ATL_OMP_THREADS)
+   return(omp_test_lock(vp));
+#else
+   return(!pthread_mutex_trylock(vp));
+#endif
+}
+@ROUT ATL_unlock_mut
+#include "atlas_tprim.h"
+int ATL_unlock(void *vp)
+{
+#if defined(ATL_WINTHREADS) /* || (defined(ATL_OS_OSX) && defined(ATL_SSE1)) */
+   #error "should not compile this file under Windows!"
+@skip   ATL_ResetAtomicCount(vp, 1);
+#elif defined(ATL_OMP_THREADS)
+   omp_unset_lock(vp);
+   return(0);
+#else
+   return(pthread_mutex_unlock(vp));
+#endif
+}
+@ROUT ATL_lock_init
+#include "atlas_threads.h"
+void ATL_lock_init(void *vp)
+{
+/*
+ * On Windows, use known-good x86 code.  OS X's mutex have horrible scaling,
+ * so use homebrewed code instead
+ */
+#ifdef ATL_USE_mut
+   #if defined(ATL_WINTHREADS) /* || (defined(ATL_OS_OSX)&&defined(ATL_SSE1)) */
+   #error "should not compile this file under Windows!"
+   @skip   return(ATL_SetAtomicCount(1)); 
+   #elif defined(ATL_OMP_THREADS)
+      omp_init_lock(vp);
+   #else
+      ATL_assert(!pthread_mutex_init(vp, NULL));
+   #endif
+#else
+   *((unsigned char)vp) = 0;
+#endif
+}
+@ROUT ATL_lock_destroy
+#include "atlas_threads.h"
+void ATL_lock_destroy(void *vp)
+{
+#ifdef ATL_USE_mut
+   #if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
+      #error "should not compile this file under Windows!"
+   @skip   ATL_FreeAtomicCount(vp);
+   #elif defined(ATL_OMP_THREADS)
+      omp_destroy_lock(vp);
+   #else
+      ATL_assert(!pthread_mutex_destroy(vp));
+   #endif
+#else
+   *((unsigned char)vp) = 0;
+#endif
+}
+
 @ROUT ATL_trylock_amd64 ATL_trylock_ia32
 #include "atlas_asm.h"
 /*
@@ -2348,6 +2378,7 @@ ATL_UnsetBitAtomic:
  * int ATL_trylock(void *lck);
  * RETURNS: 0 if lock was obtained, else 1
  */
+.text
 .global ATL_asmdecor(ATL_trylock)
 ATL_asmdecor(ATL_trylock):
 @ROUT ATL_trylock_amd64
@@ -2365,23 +2396,73 @@ ATL_asmdecor(ATL_trylock):
  * void ATL_lock(void *lck);
  * RETURNS: 0 if lock was obtained, else 1
  */
+#define one %cl
+.text
 .global ATL_asmdecor(ATL_lock)
 ATL_asmdecor(ATL_lock):
+@ROUT ATL_lock_amd64
+   xor %rax, %rax
+@ROUT ATL_lock_ia32
+   xor %eax, %eax
+@ROUT ATL_lock_amd64 ATL_lock_ia32
+   mov $1, one
    .local LOOP
    LOOP:
-@ROUT ATL_lock_amd64
-      mov $1, %rax
-@ROUT ATL_lock_ia32
-      mov $1, %eax
-@ROUT ATL_lock_amd64 ATL_lock_ia32
+      mov one, %al
       xchg %al, (%rdi)
-      bt $1, %al        /* if (already locked) */
-      jc WAIT           /*    kill some time & try again */
+      cmp one, %al      /* if (already locked) */
+      je  WAIT          /*    kill some time & try again */
    ret
    .local FAIL
 WAIT:
    pause
    jmp LOOP
+@ROUT ATL_lock_arm64
+#include "atlas_asm.h"
+/*
+ * 1 at memory means locked, 0 means unlocked
+ * w0                x0
+ * int ATL_lock(void *lck);
+ * RETURNS: 0 if lock was obtained, else 1
+ */
+#define one %cl
+.text
+.global ATL_asmdecor(ATL_lock)
+ATL_asmdecor(ATL_lock):
+   .local LOOP
+   mov x1, x0
+   mov w2, 1
+   LOOP:
+      ldxrb w0, [x1]     /* exclusive read of 0/1 into reg reg */
+      stxrb w3, w2, [x1] /* store 1, w3 0 on exclusive success */
+   cbnz w3, WAIT         /* if exclusive failed, wait & try again */
+   cbnz w0, WAIT         /* if already locked, wait & try again */
+   ret
+.local WAIT:
+WAIT:
+   YIELD
+   jmp LOOP
+@ROUT ATL_unlock_arm64
+#include "atlas_asm.h"
+/*
+ * 1 at memory means locked, 0 means unlocked
+ * w0                x0
+ * int ATL_lock(void *lck);
+ * RETURNS: 0 if lock was obtained, else 1
+ */
+#define one %cl
+.text
+.global ATL_asmdecor(ATL_unlock)
+ATL_asmdecor(ATL_unlock):
+   .local LOOP
+   mov x1, x0
+   eor w2, w2, w2
+   LOOP:
+      ldaxrb w0, [x1]     /* exclusive read of 0/1 into reg reg */
+      stlxrb w3, w2, [x1] /* store 1, w3 0 on exclusive success */
+   cbnz w3, LOOP         /* if exclusive failed, try again */
+   sub w0, w0, 1         /* make zero if was locked, else non-zere for error */
+   ret
 @ROUT ATL_lock
 #include "atlas_tprim.h"
 void ATL_lock(void *lck)
@@ -2402,6 +2483,7 @@ void ATL_lock(void *lck)
  *  ax                 4/rdi
  * int ATL_unlock(void *lck);
  */
+.text
 .global ATL_asmdecor(ATL_unlock)
 ATL_asmdecor(ATL_unlock):
 @ROUT ATL_unlock_amd64
@@ -2934,6 +3016,16 @@ ATL_thread_t *ATL_launch_threads(int P, void *vp)
    return(tp);
 }
 @ROUT ATL_thread_start
+#define Mstr2(m) # m
+#define Mstr(m) Mstr2(m)
+#define ATL_assert(n_) \
+{ \
+   if (!(n_)) \
+   { \
+      ATL_xerbla(0, __FILE__, "assertion %s failed, line %d of file %s\n", \
+                 Mstr(n_), __LINE__, __FILE__); \
+   } \
+}
 #include <stdlib.h>
 #ifndef ATL_NOAFFINITY
 #include "atlas_taffinity.h"
