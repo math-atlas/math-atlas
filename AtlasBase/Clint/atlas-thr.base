@@ -19872,3 +19872,42 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
    lckSz = sizeof(ATL_lock_t);
    lckSz = ATL_AlignSafeLS(lckSz);
 }
+@ROUT ATL_gatmctr.h
+#ifndef ATLAS_GATMCTR_H
+   #define ATLAS_GATMCTR_H
+
+/*
+ * These function used to deal out unordered work dynamically with work 
+ * stealing.  They are initialized with a bound N, which is then split up
+ * into an initial range of numbers for each core.  
+ * data structure:
+ *    ATL_lock_t gmut;          // mutex protecting gSml,gBig (for _mbar vs)
+ *    unsigned long gSml, gBig; // range available for stealing
+ *    unsigned long lSml, lBig; // private (cheap access) range
+ *    local increments lSml, and we use AtomicDec on gBig.
+ * local vars on different ATL_SAFELS from g vars.
+ * For gDecAtmCtr (only func wt no need of mutex protection):
+ * 1. A return of 0 means that the global range is exhausted.  
+ * 2. The last global item returned is always 1, regardless of range splitting.
+ * 3. Otherwise return value ordering is not reproducable.
+ * 4. Start with gBig-gSml = 2*P rest local.
+ * 5. If gBig-gSml < P, will put P range on it, reserving one for local
+ * 6. If all my range empty, will attempt to steal numbers from other's range
+ */
+#define ATL_atmctr_t unsigned long
+ATL_atmctr_t ATL_gResetAtmCtr_mbar(void *ac, ATL_atmctr_t N);
+void *ATL_gNewAtmCtr_mbar(ATL_atmctr_t N, unsigned int P);
+void ATL_gFreeAtmCtr_mbar(void *ac);
+ATL_atmctr_t ATL_gDecAtmCtr_mbar(void *ac, unsigned int rank);
+#if ATL_GotAtomic
+ATL_atmctr_t ATL_gResetAtmCtr(void *ac, ATL_atmctr_t N);
+void *ATL_gNewAtmCtr(ATL_atmctr_t N, unsigned int P);
+void ATL_gFreeAtmCtr(void *ac);
+ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank);
+#else
+   @whiledef rt Reset New Free Dec
+      #define ATL_g@(rt)AtmCtr  ATL_g@(rt)AtmCtr_mbar
+   @endwhile
+#endif
+
+#endif  /* end ifndef ATLAS_GATMCTR_H */
