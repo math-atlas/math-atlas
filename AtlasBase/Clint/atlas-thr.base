@@ -2304,7 +2304,7 @@ int ATL_lock(void *vp)
 }
 @ROUT ATL_trylock_mut
 #include "atlas_tprim.h"
-int ATL_mutex_trylock(void *vp)
+int ATL_trylock(void *vp)
 /*
  * return 0 if lock not required, else return non-zero
  */
@@ -19872,14 +19872,16 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
    lckSz = sizeof(ATL_lock_t);
    lckSz = ATL_AlignSafeLS(lckSz);
 }
-@ROUT ATL_gatmctr.h
+@ROUT atlas_gatmctr.h
 #ifndef ATLAS_GATMCTR_H
    #define ATLAS_GATMCTR_H
 
+#include "atlas_threads.h"
 /*
  * These function used to deal out unordered work dynamically with work 
  * stealing.  They are initialized with a bound N, which is then split up
  * into an initial range of numbers for each core.  
+@beginskip
  * data structure:
  *    ATL_lock_t gmut;          // mutex protecting gSml,gBig (for _mbar vs)
  *    unsigned long gSml, gBig; // range available for stealing
@@ -19893,11 +19895,14 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
  * 4. Start with gBig-gSml = 2*P rest local.
  * 5. If gBig-gSml < P, will put P range on it, reserving one for local
  * 6. If all my range empty, will attempt to steal numbers from other's range
+@endskip
  */
 #define ATL_atmctr_t unsigned long
-ATL_atmctr_t ATL_gResetAtmCtr_mbar(void *ac, ATL_atmctr_t N);
 void *ATL_gNewAtmCtr(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t ngrab)
-void ATL_gFreeAtmCtr_mbar(void *ac);
+void ATL_gFreeAtmCtr(void *ac);
+ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank);
+@beginskip
+ATL_atmctr_t ATL_gResetAtmCtr_mbar(void *ac, ATL_atmctr_t N);
 ATL_atmctr_t ATL_gDecAtmCtr_mbar(void *ac, unsigned int rank);
 #if ATL_GotAtomic
 ATL_atmctr_t ATL_gResetAtmCtr(void *ac, ATL_atmctr_t N);
@@ -19909,9 +19914,12 @@ ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank);
       #define ATL_g@(rt)AtmCtr  ATL_g@(rt)AtmCtr_mbar
    @endwhile
 #endif
+@endskip
 
 #endif  /* end ifndef ATLAS_GATMCTR_H */
 @ROUT ATL_gNewAtmCtr
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2016
+#include "atlas_gatmctr.h"
 /*
  *  [<P><N><ngrab><inc>][<nwait><lock>]
  *  P*([<lowPrv><cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>])
@@ -19972,7 +19980,7 @@ void *ATL_gNewAtmCtr
 /*
  *  P*([<lowPrv><cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>])
  */
-   cnt = 1;
+   cnt = 0;
    for (i=0; i < P; i++)
    {
       ATL_atmctr_t mypub, myprv;
@@ -19991,11 +19999,65 @@ void *ATL_gNewAtmCtr
    }
    return(vp);
 }
+@ROUT ATL_gDecAtmCtr
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2016
+/*
+ * Helper function that steals work from another thread
+ * rank < P
+ */
+static ATL_atmctr_t 
+   pollCnt(unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
+{
+   const ATL_atmctr_t P=gp[0], inc=lp[3];
+   unsigned int i;
+
+   while (*gp)
+   {
+/*
+ *  P*([<lowPrv><cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>])
+ */
+      for (i=0; i < P; i++)
+      {
+         volatile ATL_atmctr_t *cntp;
+         unsigned int vrk = rank+i;
+         rank = (vrk > P) vrk-P : vrk;
+         cntp = (ATL_atmctr_t*)(((char*)(lp+inc*vrk))+ATL_SAFELS);
+         if (*cntp)
+         {
+            char *lck=((char*)cntp)+ATL_SAFELS;
+            if (ATL_trylock(lck))  /* I can lock this public ctr */
+            {
+               ATL_atmctr_t *lowp=(ATL_atmctr_t*)(((char*)cntp)-ATL_SAFELS);
+               ATL_atmctr_t cnt;
+               cnt = *cntp;
+               if (cnt)
+               {
+                  *cntp = cnt - 1;
+                  cnt += *lowp;
+                  ATL_unlock(lck);
+                  return(cnt);
+               }
+               else 
+                  ATL_unlock(lck);
+            }
+         }
+      }
+      if (*gp)
+         ATL_thread_yield();
+   }
+   return(0);
+}
+static ATL_atmctr_t 
+   prvPubCnt(unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
+{
+   return(0);
+}
 /*
  * return a number between [N,low]
  * Each [] is 128-byte region; 
  *  use lastGcnt to see if wrk taken since last time -> if so, may put more on
- *  [<P><low><N><inc>], P*([<cntPrv><lastPubCnt>][<cntPub>][<lowPub>][<lock>])
+ *  [<P><N><ngrab><inc>][<nwait><lock>]
+ *  P*([<lowPrv><cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>])
  *  totSz = ATL_SAFE_LS + P*inc, inc=3*ATL_SAFE_LS+CEIL(sizeof(lock)/SAFE_LS)
  *  Public jobs [<N>,<lowPub>], count down.
  *  Private jobs are numbered between [<low>,<lowPub>-1] count up.
@@ -20004,10 +20066,21 @@ void *ATL_gNewAtmCtr
  */
 ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank)
 {
-   long *pDesc = ATL_AlignSafeLS(ac);
-   long *pPub = (long*)(((char*)pDesc)+ATL_SAFELS);
-   if (rank < P) /* I'm an owner, can move jobs private<-->public */
-      return(pubPrvWork(pDesc, pPub));
-   else          /* can only take public jobs owned by someone else */
-      return(pollForWork(pDesc, pPub));
+   if (ac)
+   {
+      ATL_atmctr_t *gp=ATL_AlignSafeLS(ac);
+      ATL_atmctr_t P=gp[0];
+      if (P)
+      {
+         ATL_atmctr_t *lp=(ATL_atmctr_t*)(((char*)gp)+ATL_SAFELS);
+         if (rank >= P)
+         {
+            rank = rank - (rank/P)*P;
+            return(pollCnt(rank, gp, lp));
+         }
+         else
+            return(prvPubCnt(rank, gp, lp));
+      }
+   }
+   return(0);
 }
