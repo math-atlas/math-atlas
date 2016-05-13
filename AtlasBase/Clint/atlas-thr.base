@@ -19896,7 +19896,7 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
  */
 #define ATL_atmctr_t unsigned long
 ATL_atmctr_t ATL_gResetAtmCtr_mbar(void *ac, ATL_atmctr_t N);
-void *ATL_gNewAtmCtr_mbar(ATL_atmctr_t N, unsigned int P);
+void *ATL_gNewAtmCtr(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t ngrab)
 void ATL_gFreeAtmCtr_mbar(void *ac);
 ATL_atmctr_t ATL_gDecAtmCtr_mbar(void *ac, unsigned int rank);
 #if ATL_GotAtomic
@@ -19911,3 +19911,103 @@ ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank);
 #endif
 
 #endif  /* end ifndef ATLAS_GATMCTR_H */
+@ROUT ATL_gNewAtmCtr
+/*
+ *  [<P><N><ngrab><inc>][<nwait><lock>]
+ *  P*([<lowPrv><cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>])
+ *  totSz = ATL_SAFE_LS + P*inc, inc=4*ATL_SAFE_LS+CEIL(sizeof(lock)/SAFE_LS)
+ *
+ *  For problems with very little work, set ngrab > 1, so that we don't
+ *  pay mutex overhead for each job.  May have worse load balance.
+ */
+void *ATL_gNewAtmCtr
+(
+   unsigned int P,    /* # of worker threads  */
+   ATL_atmctr_t N,    /* Count from [N,1] (0: already done) */
+   ATL_atmctr_t ngrab /* how many public jobs to grab at once */
+)
+{
+   size_t sz;
+   void *vp;
+   ATL_atmctr_t *lp;
+   char *cp;
+   ATL_atmctr_t inc, cntPrv, lowPub, cntPub, cnt;
+
+   if (!N)
+      return(NULL);
+   if (!P)
+      P = 1;
+   else if (P > N)  /* not even one job per core */
+      P = N;
+   cntPub = P;      /* assume we've got P*P jobs */
+   cntPub *= P;     /* to do via public tasks */
+   if (cntPub > (N>>1) ) /* not best case, refine cntPub */
+   {
+      cntPub = P+P;
+      cntPub = (N >= cntPub) ? cntPub : N;
+   }
+   cntPrv = N - cntPub;
+   lcntPub = cntPub / P;
+   remPub = cntPub - lcntPub*P;
+   lcntPrv = cntPrv / P;
+   remPrv = cntPrv - lcntPrv*P;
+   inc = sizeof(ATL_lock_t);
+   inc = (unsigned long)ATL_AlignSafeLS(inc);
+   inc += ATL_SAFE_LS<<2;
+   sz = inc;
+   sz = P*sz + ATL_SAFE_LS;
+   vp = malloc(sz + ATL_SAFE_LS);
+   ATL_assert(vp);
+   lp = ATL_AlignSafeLS(vp);
+   inc /= sizeof(unsigned long);
+   lp[0] = P;
+   lp[1] = N;
+   lp[2] = ngrab;
+   lp[3] = inc;
+   cp = ((char*)lp) + ATL_SAFE_LS;
+   *((ATL_atmctr_t*)cp) = 0;
+   cp += ATL_SAFE_LS;
+   ATL_lock_init((void*)cp);
+   cp += ATL_SAFE_LS;
+/*
+ *  P*([<lowPrv><cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>])
+ */
+   cnt = 1;
+   for (i=0; i < P; i++)
+   {
+      ATL_atmctr_t mypub, myprv;
+      lp = (ATL_atmctr_t*) cp;
+      lp[0] = cnt;
+      lp[1] = myprv = (i < remPrv) ? lcntPrv+1 : lcntPrv;
+      lp[2] = mypub = (i < remPub) ? lcntPub+1 : lcntPub;
+      cp += ATL_SAFE_LS;
+      *((ATL_atmctr_t*)cp) = cnt + myprv;
+      cp += ATL_SAFE_LS;
+      *((ATL_atmctr_t*)cp) = mypub;
+      cp += ATL_SAFE_LS;
+      ATL_lock_init((void*)cp);
+      cp += ATL_SAFE_LS;
+      cnt += myprv + mypub;
+   }
+   return(vp);
+}
+/*
+ * return a number between [N,low]
+ * Each [] is 128-byte region; 
+ *  use lastGcnt to see if wrk taken since last time -> if so, may put more on
+ *  [<P><low><N><inc>], P*([<cntPrv><lastPubCnt>][<cntPub>][<lowPub>][<lock>])
+ *  totSz = ATL_SAFE_LS + P*inc, inc=3*ATL_SAFE_LS+CEIL(sizeof(lock)/SAFE_LS)
+ *  Public jobs [<N>,<lowPub>], count down.
+ *  Private jobs are numbered between [<low>,<lowPub>-1] count up.
+ *  -> Start wt P jobs in public, rest private
+ *  -> Once cntPub starts to change, we try to keep P cntPub jobs available
+ */
+ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank)
+{
+   long *pDesc = ATL_AlignSafeLS(ac);
+   long *pPub = (long*)(((char*)pDesc)+ATL_SAFELS);
+   if (rank < P) /* I'm an owner, can move jobs private<-->public */
+      return(pubPrvWork(pDesc, pPub));
+   else          /* can only take public jobs owned by someone else */
+      return(pollForWork(pDesc, pPub));
+}
