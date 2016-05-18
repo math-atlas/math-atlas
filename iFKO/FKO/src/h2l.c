@@ -226,48 +226,72 @@ static void FixDeref(short ptr)
  */
 {
    short type;
+   short sta;
 
    ptr--;
    type = FLAG2TYPE(STflag[SToff[ptr].sa[0]-1]);
 /* fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", SToff[ptr].sa[0], 
  *         SToff[ptr].sa[1], SToff[ptr].sa[2], SToff[ptr].sa[3]); */
 /*
- * Load beginning of array
+ * FIXED: incase of optimized 2D ptr, we want to keep the DT intact.
+ * it is applied only on x86. so, it's safe to keep that unchanged
+ * NOTE: mulitplying offset with datatype is done while creating the DT entry.
  */
-   SToff[ptr].sa[0] = -LocalLoad(SToff[ptr].sa[0]);
-/*
- * Multiply constant by mul
- */
-   if (SToff[ptr].sa[2]) SToff[ptr].sa[3] *= SToff[ptr].sa[2];
-/*
- * Load index register if needed
- */
-   if (SToff[ptr].sa[1])
+   sta = STarrColPtrlookup(SToff[ptr].sa[0]); 
+   if ( (FKO_FLAG & IFF_OPT2DPTR) 
+         && sta && STarr[sta-1].ndim > 1)
    {
-      SToff[ptr].sa[1] = -LocalLoad(SToff[ptr].sa[1]);
 /*
- *    Some architectures cannot multiply the index register by some (or any)
- *    constants, and in this case generate an extra shift instruction
+ *    Load beginning of array
  */
-      if (!ArchHasLoadMul(SToff[ptr].sa[2]))
+      SToff[ptr].sa[0] = -LocalLoad(SToff[ptr].sa[0]);
+/*
+ *    Load index register if needed
+ *    we kept mul and con intact 
+ */
+      if (SToff[ptr].sa[1])
+         SToff[ptr].sa[1] = -LocalLoad(SToff[ptr].sa[1]);      
+   }
+   else /* kept the old code and logic unchanged for all other case*/
+   {
+/*
+ *    Load beginning of array
+ */
+      SToff[ptr].sa[0] = -LocalLoad(SToff[ptr].sa[0]);
+/*
+ *    Multiply constant by mul
+ */
+      if (SToff[ptr].sa[2]) SToff[ptr].sa[3] *= SToff[ptr].sa[2];
+/*
+ *    Load index register if needed
+ */
+      if (SToff[ptr].sa[1])
       {
-         InsNewInst(NULL, NULL, NULL, SHL, SToff[ptr].sa[1], SToff[ptr].sa[1], 
-                    STiconstlookup(type2shift(type)));
-         SToff[ptr].sa[2] = 1;
-      }
+         SToff[ptr].sa[1] = -LocalLoad(SToff[ptr].sa[1]);
 /*
- *    On machines with fixed-size instructions, you usually need to choose
- *    _either_ an index register, _or_ a constant addition.  If we have both
- *    on such a machine, add the constant to the index register
+ *       Some architectures cannot multiply the index register by some (or any)
+ *       constants, and in this case generate an extra shift instruction
  */
-      #ifndef ArchConstAndIndex
-         if (SToff[ptr].sa[3])
+         if (!ArchHasLoadMul(SToff[ptr].sa[2]))
          {
-            InsNewInst(NULL, NULL, NULL, ADD, SToff[ptr].sa[1], 
-                       SToff[ptr].sa[1], STiconstlookup(SToff[ptr].sa[3]));
-            SToff[ptr].sa[3] = 0;
+            InsNewInst(NULL, NULL, NULL, SHL, SToff[ptr].sa[1], SToff[ptr].sa[1], 
+                       STiconstlookup(type2shift(type)));
+            SToff[ptr].sa[2] = 1;
          }
-      #endif
+/*
+ *       On machines with fixed-size instructions, you usually need to choose
+ *       _either_ an index register, _or_ a constant addition.  If we have both
+ *       on such a machine, add the constant to the index register
+ */
+         #ifndef ArchConstAndIndex
+            if (SToff[ptr].sa[3])
+            {
+               InsNewInst(NULL, NULL, NULL, ADD, SToff[ptr].sa[1], 
+                          SToff[ptr].sa[1], STiconstlookup(SToff[ptr].sa[3]));
+               SToff[ptr].sa[3] = 0;
+            }
+         #endif
+      }
    }
 }
 
