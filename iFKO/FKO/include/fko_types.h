@@ -344,9 +344,9 @@ struct looppath    /* data structure for paths in loop */
    short *vsoflag;              /* info array for output vscal */
 };
 
-#define PK_INIT 1
-#define PK_INIT_ACTIVE  2
-#define PK_INIT_SCATTER 4
+#define PK_INIT_MEM 1
+#define PK_INIT_MEM_ACTIVE  2
+#define PK_INIT_VLIST 4
 #define PK_MEM_LOAD 8
 #define PK_MEM_STORE 16
 #define PK_ARITH_OP 32
@@ -378,8 +378,15 @@ struct slpvector
    short vec;
    short redvar;      /* reduction var for svars, needed for vvrsums */
    int vlen;
-   short *svars;
+   short *svars;      /* consecutive svars which this vector represented*/
    struct slpvector *next;
+};
+
+typedef struct lplist LPLIST;
+struct lplist
+{
+   LOOPQ *loop;         /* loopq */
+   struct lplist *next; 
 };
 
 #if 0

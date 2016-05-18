@@ -3675,6 +3675,59 @@ int IsAlignLoopSpecNeeded(LOOPQ *lp)
    return(1);
 }
 
+int IsSimpleLoopNestVec(int vflag)
+{
+   int lpnest = 0;
+   int vsize;
+   LOOPQ *lpq;
+   extern LOOPQ *optloop;
+   
+   lpq = optloop;
+
+   while (lpq)
+   {
+      lpnest++;
+      lpq = lpq->preheader->loop;
+   }
+/*
+ * we don't have loopnest, return false
+ */
+   if (lpnest < 2)
+      return(0);
+/*
+ * if we want to apply loopnest vectorization on rolled loop (not by SLP), we 
+ * can't have cleanup and loop peeling for alignment right now
+ */
+#ifdef X86
+/*
+ * should have a function in arch.c ... will check that later
+ */
+   #ifdef AVX
+      vsize=32;
+   #elif defined(SSE3) || defined(SSE41)
+      vsize=16;
+   #else
+      fko_error(__LINE__, "Unknown SIMD unit!!!");
+   #endif
+#else
+   return(0);
+#endif
+   if ( !(vflag & VECT_SLP) )
+   {
+      if ( !(optloop->LMU_flag & LMU_NO_CLEANUP) )
+      {
+         if (!optloop->aaligned || !optloop->abalign 
+               || optloop->abalign[1] < vsize)
+            return(0);
+      }
+   }
+/*
+ * passed all conditions
+ */
+   return(1);
+}
+
+
 int main(int nargs, char **args)
 /*
  * ==========================================================================
@@ -3769,7 +3822,7 @@ int main(int nargs, char **args)
  *       1. Generate 1st LIL after parsing the HIL (Simple ld/st LIL).
  *       2. No CFG, No Prolgue/Epilogue, no extra info
  *==========================================================================*/
-#if 1
+#if 0
    FKO_FLAG |= IFF_OPT2DPTR; /* applying optimize 2d array access by default */
 #endif
    yyin = fpin;
@@ -3941,6 +3994,7 @@ int main(int nargs, char **args)
  *
  *    NOTE: for speculative vectorization, unrolling is not implemented yet
  *===========================================================================*/
+
 /*
  * we need to update vflag, varrs etc for HIL intrinsic vector loop
  */
@@ -3950,12 +4004,20 @@ int main(int nargs, char **args)
          fko_warn(__LINE__, "Already vectorize by HIL intrinsic\n");
       UpdateVecLoop(optloop);
    }
+/*
+ * Vectorization for Simple loop nest 
+ */   
+   else if ( (FKO_FLAG & IFF_VECTORIZE) && IsSimpleLoopNestVec(VECT_FLAG))
+   {
+      assert(!LoopNestVec());
+   }
    else if ( (FKO_FLAG & IFF_VECTORIZE) && (VECT_FLAG & VECT_SLP) )
    {
 /*
  *    apply SLP vectorization method 
  */
-      assert(!SlpVectorization());
+      /*assert(!SlpVectorization());*/
+      assert(!LoopNestVec());
       CheckUseSet();
 #if 0
       fprintf(stdout, "LIL after SLP Vec\n");

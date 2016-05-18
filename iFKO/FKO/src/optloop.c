@@ -4710,7 +4710,8 @@ OPTLOOP=1
                FindLoops(); 
                CheckFlow(bbbase, __FILE__, __LINE__);
 
-               Vslp = !SlpVectorization();
+               /*Vslp = !SlpVectorization();*/
+               Vslp = !LoopNestVec();
                iVecMethod[SLP] = Vslp;
 
             }
@@ -8153,7 +8154,6 @@ int Get_OL_NEINC()
  *       Unroll All the way
  *
  *============================================================================*/
-
 
 int CountUnrollFactor(LOOPQ *lp)
 {
