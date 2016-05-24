@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  07/31/15.                           */
+/*  Last modified by the author on  11/20/15.                           */
 /************************************************************************/
 
 #include <stdio.h>
@@ -762,7 +762,8 @@ int GetLn(EXTENV *EE, char *line)
 {
    if (ExtDone) return(0);
    EE->FpIn->LineNo++;
-   return( (int) fgets(line, LNLEN, EE->FpIn->Fp) );
+/*   return( (int) fgets(line, LNLEN, EE->FpIn->Fp) ); */
+   return( (fgets(line, LNLEN, EE->FpIn->Fp) != NULL) );
 }
 
 FILE2 *OpenFile(EXTENV *EE, char *Fnam, char *mode)
@@ -1321,6 +1322,14 @@ EXTMAC *FindMac(char *handle)
             if( ptr->Handle[i+2] == ')' ) break;
    }
    return(ptr);
+}
+
+int CountMacros(void)
+{
+   EXTMAC *p;
+   int i;
+   for (i=0,p=MacroBase; p; i++,p = p->next);
+   return(i);
 }
 
 /************************************************************************/
@@ -2097,11 +2106,11 @@ int icalc(EXTENV *EE, char line[])
             istack[k-1] = (istack[k] > istack[k-1]);
             k--;
             break;
-         case 'e': /* less than or equal boolean comparison */
+         case '{': /* less than or equal boolean comparison */
             istack[k-1] = (istack[k] >= istack[k-1]);
             k--;
             break;
-         case 'E': /* greater than or equal boolean comparison */
+         case '}': /* greater than or equal boolean comparison */
             istack[k-1] = (istack[k] >= istack[k-1]);
             k--;
             break;
@@ -2120,11 +2129,11 @@ int icalc(EXTENV *EE, char line[])
          case '~':  /* bitwise complement */
             istack[k] = ~(istack[k]);
             break;
-         case 'L': /* bitwise left shift */
+         case 'l': /* bitwise left shift */
             istack[k-1] = (istack[k] << istack[k-1]);
             k--;
             break;
-         case 'R': /* bitwise right shift */
+         case 'r': /* bitwise right shift */
             istack[k-1] = (istack[k] >> istack[k-1]);
             k--;
             break;
@@ -2237,7 +2246,8 @@ void HandleIfdef(EXTENV *EE, char line[])
    }
    for(i=k; !Mciswspace(line[i]); i++) tline[i-k] = line[i];
    tline[i-k] = '\0';
-   defined = (int) FindMac(tline);
+/*   defined = (int) FindMac(tline); */
+   defined = (FindMac(tline) != NULL);
    if (line[7] == '!') defined = !defined;
    if (GetLn(EE, line)) KeepOn = 1;
    else KeepOn = 0;
@@ -2589,8 +2599,8 @@ char GetIntComp(EXTENV *EE, char *ln, int *A1CONST, int *A2CONST,
    if (wp->next->word[0] == '>') { wp1 = wp; wp0 = wp->next->next; }
    else if (wp->next->word[0] == '=') comp = '=';
    else if (wp->next->word[0] == '!') comp = '!';
-   else if (wp->next->word[0] == 'e') comp = 'e';
-   else if (wp->next->word[0] == 'E') comp = 'E';
+   else if (wp->next->word[0] == '{') comp = '{';
+   else if (wp->next->word[0] == '}') comp = '}';
    else if (wp->next->word[0] != '<')
       ExtErr(EE, "Invalid integer condition: '%s'\n", ln);
 
@@ -2700,17 +2710,22 @@ void HandleMIf(EXTENV *EE, char *ln)
 
 void HandleIIf(EXTENV *EE, char *ln)
 /*
- * Expects ln of @iif int1 [<,>,=,!] int2
+ * Expects ln of @iif int1 [<,>,},{,=,] int2
  */
 {
    char ch;
    int i, j, ia1, ia2;
-   ch = GetIntComp(EE, ln+5, &i, &j, &ia1, &ia2, NULL, NULL);
-   if (ch == '=') i = (ia1 == ia2);
-   else if (ch == '!') i = (ia1 != ia2);
-   else if (ch == '<') i = (ia1 < ia2);
-   else if (ch == 'e') i = (ia1 <= ia2);
-   else if (ch == 'E') i = (ia1 >= ia2);
+   if (WstrcmpN(ln+5, "@iexp ",6)) /* rest of line is @iexp, */
+      i = icalc(EE, ln+5+6);
+   else
+   {
+      ch = GetIntComp(EE, ln+5, &i, &j, &ia1, &ia2, NULL, NULL);
+      if (ch == '=') i = (ia1 == ia2);
+      else if (ch == '!') i = (ia1 != ia2);
+      else if (ch == '<') i = (ia1 < ia2);
+      else if (ch == '{') i = (ia1 <= ia2);
+      else if (ch == '}') i = (ia1 >= ia2);
+   }
    if (!i) /* skip */
       DumpSkip(EE, NULL, "@iif ", "@endiif ");
    else
@@ -2748,6 +2763,8 @@ void HandleIwhile(EXTENV *EE, char *ln)
    if (comp == '<') KeepOn = (ia1 < ia2);
    else if (comp == '=') KeepOn = (ia1 == ia2);
    else if (comp == '!') KeepOn = (ia1 != ia2);
+   else if (comp == '{') KeepOn = (ia1 <= ia2);
+   else if (comp == '}') KeepOn = (ia1 >= ia2);
    while (KeepOn)
    {
       rewind(tfp.Fp);
@@ -2755,6 +2772,8 @@ void HandleIwhile(EXTENV *EE, char *ln)
       ia1 = Getiarg(EE, A1CONST, ia1, mac1);
       ia2 = Getiarg(EE, A2CONST, ia2, mac2);
       if (comp == '<') KeepOn = (ia1 < ia2);
+      else if (comp == '{') KeepOn = (ia1 <= ia2);
+      else if (comp == '}') KeepOn = (ia1 >= ia2);
       else if (comp == '=') KeepOn = (ia1 == ia2);
       else if (comp == '!') KeepOn = (ia1 != ia2);
    }
@@ -3244,7 +3263,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Store where my macros begin
  */
-   sprintf(line, "@__MyMacBeg__%d", (int) &EE);
+   sprintf(line, "@__MyMacBeg__%p", &EE);
    PushMacro2(&EE, 0, line, "");
    EE.MyMacBeg = MacroBase;
 
@@ -3300,7 +3319,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Pop MyMacBeg
  */
-   sprintf(line, "__MyMagBeg__%d", (int)&EE);
+   sprintf(line, "@__MyMacBeg__%p", &EE);
    PopMacro2(&EE, line);
 
 /*
@@ -3526,6 +3545,13 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
 
    switch(i)
    {
+   case 4:  /* alias for @skip does not work in middle of line! */
+      if (WstrcmpN(tline, "@// ", 3))
+      {
+         if ( !Use[EC_Skip] ) return(0);
+      }
+      else DONE = 0;
+      break;
    case 5:
       if (WstrcmpN(tline, "@iif ", 4))
       {
@@ -3788,6 +3814,13 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
          if ( Use[EC_Dec] ) ExtWarn(EE, "unmatched @enddeclare");
          else return(0);
       }
+      if (WstrcmpN(tline, "@print@nmac ", 12))
+      {
+         if (Use[EC_Print])
+            fprintf(Warn, "%d:%s", CountMacros(), tline+12);
+         else
+            return(0);
+      }
       else if (WstrcmpN(tline, "@endextract ", 12))
       {
          if ( Use[EC_EndExt] ) ExtDone = 1;
@@ -3807,6 +3840,24 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
             AddIndent(EE, j, k);
          }
          else return(0);
+      }
+      else DONE = 0;
+      break;
+   case 15:
+      if (WstrcmpN(tline, "@print@allmacs ", 15))
+      {
+         if (Use[EC_Print])
+         {
+            int i;
+            EXTMAC *p;
+            for (i=0, p=MacroBase; p; i++,p=p->next)
+            {
+               fprintf(Warn, "'%10s' -> '%s'\n", p->Handle, p->Sub);
+            }
+            fprintf(Warn, "Done %d macros.\n\n", i);
+         }
+         else
+            return(0);
       }
       else DONE = 0;
       break;
