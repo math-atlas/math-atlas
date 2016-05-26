@@ -1,0 +1,1997 @@
+@ROUT atlas_simd.h
+#ifndef ATLAS_SIMD_H
+   #define  ATLAS_SIMD_H 1
+#ifdef ATL_GAS_ARM64
+   #define ATL_VECARM1 1
+/*
+ * On 32-bit ARM, disable SIMD unless NONIEEE flag is thrown
+ */
+#elif defined(ATL_GAS_ARM)
+   #if !defined(ATL_NONIEEE) || !(defined(SREAL) || defined(SCPLX))
+      #ifdef ATL_VLEN
+         #undef ATL_VLEN
+      #endif
+      #define ATL_VLEN 1
+   #else
+      #define ATL_NEON 1
+   #endif
+#endif
+//#undef ATL_AVX
+//#undef ATL_SSE3
+//#undef ATL_SSE2
+//#undef ATL_SSE1
+//#define ATL_FRCGNUVEC 1
+//#define ATL_VLEN 32
+/*
+ * This header files contains wrappers to allow you to use SIMD vector
+ * extensions in a very simplified way in a type-independent manner.
+ * ATL_VLEN is treated differently, depending on whether we are using
+ * system-dependent vectorization (eg., AVX, VSX, etc.) or gnu vectorization:
+ * - For gnu vectorization, ATL_VLEN must be defined as a power of 2.
+ * - For non-gnu vec ATL_VLEN should match the system, or be undefined.
+* All macro funcs first arg is the destination.  vr stands for vector register.
+ * We support the following miscellaneous instructions:
+ *    ATL_vzero(vr)       : zero all vr entries
+ *    ATL_vcopy(vrd, vrs) : vrd = vrs
+ *
+ * We support 5 load/store operations (where p is a pointer):
+ *    ATL_vbcast(vr, p) : broadcast pointed-to scalar to all vr entries
+ *    ATL_vuld(vr, p)   : unaligned load from ptr to vr
+ *    ATL_vld(vr, p)    : aligned load from ptr to vr
+ *    ATL_vust(p, vr)   : unaligned store to ptr from vr
+ *    ATL_vst(p, vr)    : aligned store to ptr from vr
+ * NOTE: if VLEN < native length, all  usually assume unaligned data,
+ *       and (except bcast) become a series of instructions rather than one.
+ *
+ * We support 3 computational macros:
+ * ATL_vadd(vrd, vrs1, vrs2) : vrd = vrs1 + vrs2
+ * ATL_vsub(vrd, vrs1, vrs2) : vrd = vrs1 - vrs2
+ * ATL_vmul(vrd, vrs1, vrs2) : vrd = vrs1 * vrs2
+ * ATL_vmac(vrd, vrs1, vrs2) : vrd += vrs1 * vrs2
+ *
+ * For L1BLAS, we support a vector being summed to a scalar.
+ * NOTE: srd must be a scalar reg
+ *    ATL_vrsum1(srd, vrs)        : srd = sum(vrs[:])
+ * For k-vec amm, we need to support summing up VLEN different accumulators,
+ * and placing the result in one destination.  This requires the using code
+ * to know VLEN (perhaps with a cpp if/else chain), but allows us to get
+ * high performance on C stores.  We show the answer for vvrsum2 & 4, but
+ * remember that only vvrsumVLEN will actually exist:
+ *    ATL_vvrsum2(d, s0, s1) : d[0] = sum(s0[:]), d[1] = sum(s1[:])
+ *    ATL_vvrsum4(d, s1, s2, s3, s4) : d[0:3] = sum(s0:4)
+ */
+/*
+ * If ATL_VLEN is set, force gnuvec if it isn't set to the native length
+ */
+#ifdef ATL_VLEN
+   #ifdef ATL_VSX
+      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != 4) || \
+          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2)
+         #define ATL_FRCGNUVEC
+      #endif
+   #elif defined(ATL_NEON)
+      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != 4) || \
+          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 1)
+         #define ATL_FRCGNUVEC
+      #endif
+@multidef vl    2   2    4      4       2
+@whiledef sv SSE1 SSE2 AVX AVXMAC VECARM1
+   @iexp vl2 @(vl) @(vl) +
+   #elif defined(ATL_@(sv))
+      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != @(vl2)) || \
+          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != @(vl))
+         #define ATL_FRCGNUVEC
+      #endif
+   @undef vl
+@endwhile
+   #endif
+/*
+ * Compute ATL_VLEN based on SIMD extension & TYPE, if not already set
+ */
+#else
+   #ifdef ATL_VSX
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLEN 4
+      #else
+         #define ATL_VLEN 2
+      #endif
+   #elif defined(ATL_NEON)
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLEN 4
+      #else
+         #define ATL_VLEN 1
+      #endif
+@multidef vl    2   2    4      4       2
+@whiledef sv SSE1 SSE2 AVX AVXMAC VECARM1
+   @iexp vl2 @(vl) @(vl) +
+   #elif defined(ATL_@(sv))
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLEN @(vl2)
+      #else
+         #define ATL_VLEN @(vl)
+      #endif
+   @undef vl
+@endwhile
+   #endif
+#endif
+/*
+ * Derive ATL_VLENb (veclen in bytes) from ATL_VLEN
+ */
+#ifndef ATL_VLEN
+   #error "ATL_VLEN not defined!"
+#else
+   #if ATL_VLEN == 1
+      #define ATL_VLSH 0
+      #define ATL_DivByVLEN(i_) (i_)
+      #define ATL_MulByVLEN(i_) (i_)
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLENb 4
+      #else
+         #define ATL_VLENb 8
+      #endif
+   @define i @1@
+   @define p @2@
+   @iwhile i < 6
+   #elif ATL_VLEN == @(p)
+      #define ATL_VLSH @(i)
+      #define ATL_DivByVLEN(i_) ((i_)>>@(i))
+      #define ATL_MulByVLEN(i_) ((i_)<<@(i))
+      @iexp vl @(p) 4 *
+      @iexp vl2 @(p) 8 *
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLENb @(vl)
+      #else
+         #define ATL_VLENb @(vl2)
+      #endif
+      @iexp p @(p) 2 *
+      @iexp i @(i) 1 +
+   @endiwhile
+   #else
+      #define ATL_DivByVLEN(i_) ((i_)/ATL_VLEN)
+      #define ATL_MulByVLEN(i_) ((i_)*ATL_VLEN)
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLENb (ATL_VLEN*4)
+      #else
+         #define ATL_VLENb (ATL_VLEN*8)
+      #endif
+   #endif
+#endif
+/*
+ * We may want to force use of GNU vectorization on any platform.  If so,
+ * undefine any defined system-specific vectorization.  
+ * Undefine all vectorization if VLEN=1 (scalar code)!
+ */
+#if defined(ATL_FRCGNUVEC) || ATL_VLEN < 2
+@whiledef sv VSX AVXMAC AVX SSE3 SSE2 SSE1 VECARM1 NEON
+   #ifdef ATL_@(sv)
+      #undef ATL_@(sv)
+   #endif
+@endwhile
+   #if ATL_VLEN < 2 && defined(ATL_FRCGNUVEC)
+       #undef ATL_FRCGNUVEC
+   #endif
+#endif
+/*
+ * Now set computational macros based on ATL_VLEN & SIMD defines
+ */
+#if defined(ATL_VSX)
+   #include <altivec.h>
+/*
+ * Older gcc don't support don't support xxpermdi, merge[o,e], xxsel
+ */
+   #if (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ > 9) || \
+        (__GNUC__ == 4 && __GNUC_MINOR__ == 9 && __GNU_PATHLEVEL__ > 1) || \
+        !defined(__GNUC__)
+      #define ATL_FULLGCCVSX 1
+   #else
+      #define ATL_FULLGCCVSX 0
+   #endif
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_VTYPE vector float
+      #if ATL_VLEN != 4
+         #error "VSX supports only VLEN = 4 for floats!"
+      #endif
+   #else        /* double precision */
+      #define ATL_VTYPE vector double
+      #if ATL_VLEN != 2
+         #error "VSX supports only VLEN = 2 for doubles!"
+      #endif
+   #endif
+   #define ATL_vzero(v_) v_ = vec_splats((TYPE)0.0)
+   #define ATL_vcopy(d_, s_) d_ = s_
+   #define ATL_vbcast(v_, p_) v_ =  vec_splats(*((TYPE*)(p_)))
+   #define ATL_vuld(v_, p_) v_ = vec_vsx_ld(0, (ATL_VTYPE*)(p_))
+   #define ATL_vld(v_, p_) v_ = vec_ld(0, (ATL_VTYPE*)(p_))
+   #define ATL_vust(p_, v_) vec_vsx_st(v_, 0, (ATL_VTYPE*)(p_))
+   #define ATL_vst(p_, v_)  vec_st(v_, 0, (ATL_VTYPE*)(p_))
+   #define ATL_vadd(d_, s1_, s2_) d_ =  vec_add(s1_, s2_)
+   #define ATL_vsub(d_, s1_, s2_) d_ =  vec_sub(s1_, s2_)
+   #define ATL_vmul(d_, s1_, s2_) d_ =  vec_mul(s1_, s2_)
+   #define ATL_vmac(d_, s1_, s2_) d_ = vec_madd(s1_, s2_, d_)
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         VTYPE t_; \
+         d_ = vec_splat(s_, 1); \
+         d_ = vec_add(d_, s_) ; \
+         t_ = vec_splat(s_, 2); \
+         d_ = vec_add(d_, t_) ; \
+         t_ = vec_splat(s_, 3); \
+         d_ = vec_add(d_, t_) ; \
+      }
+      #if ATL_FULLGCCVSX
+         #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+            t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
+            s0_ = vec_vmrglw(s0_, s1_);          /* s1d,s0d,s1c,s0c}*/ \
+            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
+            h_ = vec_vmrghw(s2_, s3_);           /*{s3b,s2b,s3a,s2a}*/\
+            s2_ = vec_vmrglw(s2_, s3_);          /*{s3d,s2d,s3c,s2c}*/ \
+            s2_ = ATL_vadd(s2_, s2_, h_);        /*{s3bd,s2bd,s3ac,s2ac}*/\
+            t_ =  vec_xxpermdi(s0_, s2_, 0);     /*{s3ac,s2ac,s1ac,s0ac}*/\
+            s0_ = vec_xxpermdi(s0_, s2_, 3);     /*{s3bd,s2bd,s1bd,s0bd}*/ \
+            ATL_vadd(s0_, s0_, t_); \
+            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+         }
+         #define ATL_vvrsum2(s0_, s1_) \
+         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+            t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
+            s0_ = vec_vmrglw(s0_, s1_);          /*{s1d,s0d,s1c,s0c}*/ \
+            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
+            t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s1ac,s0ac,s1ac,s0ac}*/\
+            s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s1bd,s0bd,s1bd,s0bd}*/ \
+            ATL_vadd(s0_, s0_, t_); \
+            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+         }
+         #define ATL_vvrsum1(s0_) \
+         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+            t_ = vec_vmrghw(s0_, s0_);           /*{s0b,s0b,s0a,s0a}*/\
+            s0_ = vec_vmrglw(s0_, s0_);          /*{s0d,s0d,s0c,s0c}*/ \
+            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s0bd,s0bd,s0ac,s0ac}*/\
+            t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s0ac,s0ac,s0ac,s0ac}*/\
+            s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s0bd,s0bd,s0bd,s0bd}*/ \
+            ATL_vadd(s0_, s0_, t_); \
+            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+         }
+      #endif
+   @iexp i 0 0 +
+   @iwhile i < 4
+      #define ATL_vsplat@(i)(d_, s_) d_ = vec_splat(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
+   #else
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         d_ = vec_splat(s_, 1); \
+         d_ = vec_add(d_, s_) ; \
+      }
+      #if ATL_FULLGCCVSX 
+         #define ATL_vvrsum2(s0_, s1_) \
+         {  ATL_VTYPE t_;\
+            t_ =  vec_xxpermdi(s0_, s1_, 0); \
+            s0_ = vec_xxpermdi(s0_, s1_, 3); \
+            ATL_vadd(s0_, s0_, t_); \
+            s0_ = vec_xxpermdi(s0_, s0_, 2); /* pwr8 endian-insanity */ \
+         }
+         #define ATL_vvrsum1(s0_) \
+         {  ATL_VTYPE t_;\
+            t_ =  vec_xxpermdi(s0_, s0_, 0); \
+            ATL_vadd(s0_, s0_, t_); \
+         }
+      #else
+         #define ATL_vvrsum1(s0_) \
+         {  ATL_VTYPE t_;\
+            t_ = vec_splat(s0_, 1); \
+            ATL_vadd(s0_, s0_, t_); \
+         }
+      #endif
+   @iexp i 0 0 +
+   @iwhile i < 2
+      #define ATL_vsplat@(i)(d_, s_) d_ = vec_splat(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
+   #endif
+#elif defined(ATL_NEON) && (defined(SREAL) || defined(SCPLX))
+   #include "arm_neon.h"
+   #define ATL_VTYPE float32x4_t
+  #define ATL_vzero(v_) v_ = vdupq_n_f32(0.0f)
+   #define ATL_vbcast(v_, p_) v_ =  vdupq_n_f32(*(p_));
+   #define ATL_vld(v_, p_) v_ = vld1q_f32(p_)
+   #define ATL_vst(p_, v_) vst1q_f32(p_, v_)
+   #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f32(s1_, s2_)
+   #define ATL_vsub(d_, s1_, s2_) d_ = vsubq_f32(s1_, s2_)
+   #define ATL_vmul(d_, s1_, s2_) d_ = vmulq_f32(s1_, s2_)
+   #define ATL_vmac(d_, s1_, s2_) d_ = vmlaq_f32(d_, s1_, s2_)
+   #define ATL_vrsum1(d_, s_) \
+   {  ATL_VTYPE t4_; float32x2_t t2_, t1_; \
+      t1_ = vget_high_f32(s_); \
+      t2_ = vget_low_f32(s_); \
+      t2_ = vpadd_f32(t1_, t2_); \
+      d_ = vget_lane_f32(t2_, 0); \
+      d_ += vget_lane_f32(t2_, 1); \
+   }
+   #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+   { ATL_VTYPE t0_, t1_; \
+      t0_[0] = s0_[0]; \
+      t0_[1] = s1_[0]; \
+      t0_[2] = s2_[0]; \
+      t0_[3] = s3_[0]; \
+      t1_[0] = s0_[1]; \
+      t1_[1] = s1_[1]; \
+      t1_[2] = s2_[1]; \
+      t1_[3] = s3_[1]; \
+      t0_ = vaddq_f32(t0_, t1_); \
+      t1_[0] = s0_[2]; \
+      t1_[1] = s1_[2]; \
+      t1_[2] = s2_[2]; \
+      t1_[3] = s3_[2]; \
+      t0_ = vaddq_f32(t0_, t1_); \
+      t1_[0] = s0_[3]; \
+      t1_[1] = s1_[3]; \
+      t1_[2] = s2_[3]; \
+      t1_[3] = s3_[3]; \
+      s0_ = vaddq_f32(t0_, t1_); \
+   }
+   @beginskip
+   #define ATL_vsplat0(d_, s_) d_[0] = d_[1] = d_[2] = d_[3] = s_[0]
+   #define ATL_vsplat1(d_, s_) d_[0] = d_[1] = d_[2] = d_[3] = s_[1]
+   #define ATL_vsplat2(d_, s_) d_[0] = d_[1] = d_[2] = d_[3] = s_[2]
+   #define ATL_vsplat3(d_, s_) d_[0] = d_[1] = d_[2] = d_[3] = s_[3]
+   @endskip
+   #define ATL_vsplat0(d_, s_) d_ = vmovq_n_f32(vgetq_lane_f32(s_, 0))
+   #define ATL_vsplat1(d_, s_) d_ = vmovq_n_f32(vgetq_lane_f32(s_, 1))
+   #define ATL_vsplat2(d_, s_) d_ = vmovq_n_f32(vgetq_lane_f32(s_, 2))
+   #define ATL_vsplat3(d_, s_) d_ = vmovq_n_f32(vgetq_lane_f32(s_, 3))
+   #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
+   #define ATL_vust(p_, v_) ATL_vst(p_, v_)
+#elif defined(ATL_VECARM1)
+   #include "arm_neon.h"
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_VTYPE float32x4_t
+   #else
+      #define ATL_VTYPE float64x2_t
+   #endif
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_vzero(v_) v_ = vdupq_n_f32(0.0f)
+      #define ATL_vbcast(v_, p_) v_ =  vld1q_dup_f32(p_)
+      #define ATL_vld(v_, p_) v_ = vld1q_f32(p_)
+      #define ATL_vst(p_, v_) vst1q_f32(p_, v_)
+      #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f32(s1_, s2_)
+      #define ATL_vsub(d_, s1_, s2_) d_ = vsubq_f32(s1_, s2_)
+      #define ATL_vmul(d_, s1_, s2_) d_ = vmulq_f32(s1_, s2_)
+      #define ATL_vmac(d_, s1_, s2_) d_ = vfmaq_f32(d_, s1_, s2_)
+      #define ATL_vrsum1(d_, s_) \
+      {  ATL_VTYPE t4_; float32x2_t t2_, t1_; \
+         t1_ = vget_high_f32(s_); \
+         t2_ = vget_low_f32(s_); \
+         t2_ = vpadd_f32(t1_, t2_); \
+         d_ = vget_lane_f32(t2_, 0); \
+         d_ += vget_lane_f32(t2_, 1); \
+      }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      { ATL_VTYPE t0_, t1_; \
+         t0_[0] = s0_[0]; \
+         t0_[1] = s1_[0]; \
+         t0_[2] = s2_[0]; \
+         t0_[3] = s3_[0]; \
+         t1_[0] = s0_[1]; \
+         t1_[1] = s1_[1]; \
+         t1_[2] = s2_[1]; \
+         t1_[3] = s3_[1]; \
+         t0_ = vaddq_f32(t0_, t1_); \
+         t1_[0] = s0_[2]; \
+         t1_[1] = s1_[2]; \
+         t1_[2] = s2_[2]; \
+         t1_[3] = s3_[2]; \
+         t0_ = vaddq_f32(t0_, t1_); \
+         t1_[0] = s0_[3]; \
+         t1_[1] = s1_[3]; \
+         t1_[2] = s2_[3]; \
+         t1_[3] = s3_[3]; \
+         s0_ = vaddq_f32(t0_, t1_); \
+      }
+   @iexp i 0 0 +
+   @iwhile i < 4
+      #define ATL_vsplat@(i)(d_, s_) d_ = vdupq_laneq_f32(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
+   #else  /* double */
+      #define ATL_vzero(v_) v_ = vdupq_n_f64(0.0)
+@skip      #define ATL_vbcast(v_, p_) v_ =  vdupq_n_f64((*p_))
+      #define ATL_vbcast(v_, p_) v_ =  vld1q_dup_f64(p_)
+      #define ATL_vld(v_, p_) v_ = vld1q_f64(p_)
+      #define ATL_vst(p_, v_) vst1q_f64(p_, v_)
+      #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f64(s1_, s2_)
+      #define ATL_vsub(d_, s1_, s2_) d_ = vsubq_f64(s1_, s2_)
+      #define ATL_vmul(d_, s1_, s2_) d_ = vmulq_f64(s1_, s2_)
+      #define ATL_vmac(d_, s1_, s2_) d_ = vfmaq_f64(d_, s1_, s2_)
+      #define ATL_vrsum1(d_, s_) d_ = vget_low_f64(vpaddq_f64(s_, s_))
+      #define ATL_vvrsum2(s0_, s1_) s0_ = vpaddq_f64(s0_, s1_)
+   @iexp i 0 0 +
+   @iwhile i < 2
+      #define ATL_vsplat@(i)(d_, s_) d_ = vdupq_laneq_f64(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
+   #endif
+   #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
+   #define ATL_vust(p_, v_) ATL_vst(p_, v_)
+#elif defined(ATL_AVXMAC) || defined(ATL_AVX)
+   #include <immintrin.h>
+   #if defined(SREAL) || defined(SCPLX)
+      #if ATL_VLEN != 8
+         #error "VLEN != 8 not supported for AVX or AVX2!"
+      #endif
+      #define ATL_VTYPE __m256
+      #define ATL_vzero(v_) v_ = _mm256_setzero_ps()
+      #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_ss(p_)
+      #define ATL_vuld(v_, p_) v_ = _mm256_loadu_ps(p_)
+      #define ATL_vld(v_, p_) v_ = _mm256_load_ps(p_)
+      #define ATL_vust(p_, v_) _mm256_storeu_ps(p_, v_)
+      #define ATL_vst(p_, v_) _mm256_store_ps(p_, v_)
+      #define ATL_vadd(d_, s1_, s2_) d_ =  _mm256_add_ps(s1_, s2_)
+      #define ATL_vsub(d_, s1_, s2_) d_ =  _mm256_sub_ps(s1_, s2_)
+      #define ATL_vmul(d_, s1_, s2_) d_ =  _mm256_mul_ps(s1_, s2_)
+      #ifdef ATL_AVXMAC
+         #define ATL_vmac(d_, s1_, s2_) \
+            d_ = _mm256_fmadd_ps(s1_, s2_, d_)
+      #else
+         #define ATL_vmac(d_, s1_, s2_) \
+         { ATL_VTYPE t_; \
+            t_ = _mm256_mul_ps(s1_, s2_); \
+            d_ = _mm256_add_ps(t_, d_); \
+         }
+      #endif
+      #define ATL_vvrsum8(s0_, s1_, s2_, s3_, s4_, s5_, s6_, s7_) \
+      { \
+         s0_ = _mm256_hadd_ps(s0_, s1_); \
+            /*{s1gh,s1ef,s0gh,s0ef,s1cd,s1ab,s0cd,s0ab}*/\
+         s2_ = _mm256_hadd_ps(s2_, s3_); \
+            /*{s3gh,s3ef,s2gh,s2ef,s3cd,s3ab,s2cd,s2ab}*/\
+         s4_ = _mm256_hadd_ps(s4_, s5_); \
+            /*{s5gh,s5ef,s4gh,s4ef,s5cd,s5ab,s4cd,s4ab}*/\
+         s6_ = _mm256_hadd_ps(s6_, s7_); \
+            /*{s7gh,s7ef,s6gh,s6ef,s7cd,s7ab,s6cd,s6ab}*/\
+         s0_ = _mm256_hadd_ps(s0_, s2_); \
+            /*{s3e-h,s2e-h,s1e-h,s0e-g,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         s4_ = _mm256_hadd_ps(s4_, s6_); \
+            /*{s7e-h,s6e-h,s5e-h,s4e-g,s7a-d,s6a-d,s5a-d,s4a-d}*/\
+         s1_ = _mm256_permute2f128_ps(s0_, s4_, 0x31); \
+            /*{s7e-h,s6e-h,s5e-h,s4e-g,s3e-h,s2e-h,s1e-h,s0e-g}*/\
+         s0_ = _mm256_permute2f128_ps(s0_, s4_, 0x20); \
+            /*{s7a-d,s6a-d,s5a-d,s4a-d,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      { \
+         s0_ = _mm256_hadd_ps(s0_, s1_); \
+            /*{s1gh,s1ef,s0gh,s0ef,s1cd,s1ab,s0cd,s0ab}*/\
+         s2_ = _mm256_hadd_ps(s2_, s3_); \
+            /*{s3gh,s3ef,s2gh,s2ef,s3cd,s3ab,s2cd,s2ab}*/\
+         s0_ = _mm256_hadd_ps(s0_, s2_); \
+            /*{s3e-h,s2e-h,s1e-h,s0e-g,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         s1_ = _mm256_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s3e-h,s2e-h,s1e-h,s0e-g,s3e-h,s2e-h,s1e-h,s0e-g}*/\
+         s0_ = _mm256_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s3a-d,s2a-d,s1a-d,s0a-d,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_ = _mm256_hadd_ps(s0_, s1_); \
+            /*{s1gh,s1ef,s0gh,s0ef,s1cd,s1ab,s0cd,s0ab}*/\
+         s0_ = _mm256_hadd_ps(s0_, s0_); \
+            /*{s1e-h,s0e-h,s1e-h,s0e-g,s1a-d,s0a-d,s1a-d,s0a-d}*/\
+         s1_ = _mm256_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s1e-h,s0e-h,s1e-h,s0e-g,s1e-h,s0e-h,s1e-h,s0e-g}*/\
+         s0_ = _mm256_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum1(s0_) \
+      {  ATL_VTYPE t1_; \
+         s0_ = _mm256_hadd_ps(s0_, s0_); \
+            /*{s0gh,s0ef,s0gh,s0ef,s0cd,s0ab,s0cd,s0ab}*/\
+         s0_ = _mm256_hadd_ps(s0_, s0_); \
+            /*{s0e-h,s0e-h,s0e-h,s0e-g,s0a-d,s0a-d,s0a-d,s0a-d}*/\
+         t1_ = _mm256_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s0e-h,s0e-h,s0e-h,s0e-g,s0e-h,s0e-h,s0e-h,s0e-g}*/\
+         s0_ = _mm256_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, t1_); \
+      }
+      #define ATL_vsplat0(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat1(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0x55); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat2(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0xAA); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat3(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0xFF); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat4(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat5(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0x55); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat6(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0xAA); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat7(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0xFF); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
+      }
+   #else        /* double precision */
+      #if ATL_VLEN != 4
+         #error "AVX SUPPORTS ONLY VLEN=4 FOR DOUBLE!"
+      #endif
+      #define ATL_VTYPE __m256d
+      #define ATL_vzero(v_) v_ = _mm256_setzero_pd()
+      #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_sd(p_)
+      #define ATL_vuld(v_, p_) v_ = _mm256_loadu_pd(p_)
+      #define ATL_vld(v_, p_) v_ = _mm256_load_pd(p_)
+      #define ATL_vust(p_, v_) _mm256_storeu_pd(p_, v_)
+      #define ATL_vst(p_, v_) _mm256_store_pd(p_, v_)
+      #define ATL_vadd(d_, s1_, s2_) d_ =  _mm256_add_pd(s1_, s2_)
+      #define ATL_vsub(d_, s1_, s2_) d_ =  _mm256_sub_pd(s1_, s2_)
+      #define ATL_vmul(d_, s1_, s2_) d_ =  _mm256_mul_pd(s1_, s2_)
+      #ifdef ATL_AVXMAC
+         #define ATL_vmac(d_, s1_, s2_) \
+            d_ = _mm256_fmadd_pd(s1_, s2_, d_)
+      #else
+         #define ATL_vmac(d_, s1_, s2_) \
+         { ATL_VTYPE t_; \
+            t_ = _mm256_mul_pd(s1_, s2_); \
+            d_ = _mm256_add_pd(t_, d_); \
+         }
+      #endif
+      #define ATL_vrsum1(d_, s_) \
+      {  __m128d t_; \
+         t_ = _mm_add_pd(_mm256_extractf128_pd(s_, 0), \
+                         _mm256_extractf128_pd(s_, 1)); \
+         t_ = _mm_hadd_pd(t_, t_); \
+         d_ = _mm_cvtsd_f64(t_); \
+      }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      { \
+         s0_ = _mm256_hadd_pd(s0_, s1_); /*{s1cd,s0cd,s1ab,s0ab}*/ \
+         s2_ = _mm256_hadd_pd(s2_, s3_); /*{s3cd,s2cd,s3ab,s2ab}*/ \
+         s1_ = _mm256_permute2f128_pd(s0_, s2_,0x31);/*{s3cd,s2cd,s1cd,s0cd}*/ \
+         s0_ = _mm256_permute2f128_pd(s0_, s2_,0x20);/*{s3ab,s2ab,s1ab,s0ab}*/ \
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_ = _mm256_hadd_pd(s0_, s1_); /*{s1cd,s0cd,s1ab,s0ab}*/ \
+         s1_ = _mm256_permute2f128_pd(s0_, s1_,0x31);/*{s3cd,s2cd,s1cd,s0cd}*/ \
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum1(s0_) \
+      { ATL_VTYPE s1_; \
+         s0_ = _mm256_hadd_pd(s0_, s0_); /*{s0cd,s0cd,s0ab,s0ab}*/ \
+         s1_ = _mm256_permute2f128_pd(s0_, s1_,0x31);/*{s0cd,s0cd,s0cd,s0cd}*/ \
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vsplat0(d_, s_) \
+      { \
+         d_ = _mm256_unpacklo_pd(s_, s_); \
+         d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,0), 1); \
+      }
+      #define ATL_vsplat2(d_, s_) \
+      { \
+         d_ = _mm256_unpacklo_pd(s_, s_); \
+         d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,1), 0); \
+      }
+      #define ATL_vsplat1(d_, s_) \
+      { \
+         d_ = _mm256_unpackhi_pd(s_, s_); \
+         d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,0), 1); \
+      }
+      #define ATL_vsplat3(d_, s_) \
+      { \
+         d_ = _mm256_unpackhi_pd(s_, s_); \
+         d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,1), 0); \
+      }
+   #endif
+#elif defined(ATL_SSE2) && (defined(DREAL) || defined(DCPLX))
+   #include <xmmintrin.h>
+   #if defined(ATL_SSE3)
+      #include <pmmintrin.h>
+      #include <tmmintrin.h>
+   #endif
+   #define ATL_VTYPE __m128d
+   #if ATL_VLEN != 2
+      #error "VLEN == 2 only supported size for double precision SSE!"
+   #endif
+   #define ATL_vzero(v_) v_ = _mm_setzero_pd()
+   #define ATL_vbcast(v_, p_) v_ =  _mm_load1_pd(p_)
+   #define ATL_vuld(v_, p_) v_ = _mm_loadu_pd(p_)
+   #define ATL_vld(v_, p_) v_ = _mm_load_pd(p_)
+   #define ATL_vust(p_, v_) _mm_storeu_pd(p_, v_)
+   #define ATL_vst(p_, v_) _mm_store_pd(p_, v_)
+   #define ATL_vadd(d_, s1_, s2_) d_ =  _mm_add_pd(s1_, s2_)
+   #define ATL_vsub(d_, s1_, s2_) d_ =  _mm_sub_pd(s1_, s2_)
+   #define ATL_vmul(d_, s1_, s2_) d_ =  _mm_mul_pd(s1_, s2_)
+   #define ATL_vmac(d_, s1_, s2_) \
+   { ATL_VTYPE t_; \
+      t_ = _mm_mul_pd(s1_, s2_); \
+      d_ = _mm_add_pd(t_, d_); \
+   }
+   #ifdef ATL_SSE3
+      #define ATL_vrsum1(d_, s_) d_ = _mm_cvtsd_f64(_mm_hadd_pd(s_, s_))
+      #define ATL_vvrsum2(s0_, s1_) s0_ = _mm_hadd_pd(s0_, s1_)
+      #define ATL_vvrsum1(s0_) s0_ = _mm_hadd_pd(s0_, s0_)
+      #define ATL_vsplat0(d_, s_) d_ = _mm_movedup_pd(s_)
+      #define ATL_vsplat1(d_, s_) d_ = (ATL_VTYPE) \
+         _mm_shuffle_epi32((__m128i)(s_), 0xEE)
+   #else
+      #define ATL_vrsum1(d_, s_) \
+         d_ = _mm_cvtsd_f64(_mm_add_sd(_mm_unpackhi_pd(s_, s_), s_))
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         __m128d t0_; \
+         t0_ = _mm_unpackhi_pd(s0_, s1_); \
+         s0_ = _mm_unpacklo_pd(s0_, s1_); \
+         ATL_vadd(s0_, s0_, t0_); \
+      }
+      #define ATL_vvrsum1(s0_) \
+      { \
+         __m128d t0_; \
+         t0_ = _mm_unpackhi_pd(s0_, s0_); \
+         s0_ = _mm_unpacklo_pd(s0_, s0_); \
+         ATL_vadd(s0_, s0_, t0_); \
+      }
+      #define ATL_vsplat0(d_, s_) d_ = (ATL_VTYPE) \
+         _mm_shuffle_epi32((__m128i)(s_), 0x0)
+      #define ATL_vsplat1(d_, s_) d_ = (ATL_VTYPE) \
+         _mm_shuffle_epi32((__m128i)(s_), 0x55)
+      #define ATL_vsplat2(d_, s_) d_ = (ATL_VTYPE) \
+         _mm_shuffle_epi32((__m128i)(s_), 0xAA)
+      #define ATL_vsplat3(d_, s_) d_ = (ATL_VTYPE) \
+         _mm_shuffle_epi32((__m128i)(s_), 0xFF)
+   #endif
+#elif defined(ATL_SSE1)
+   #include <xmmintrin.h>
+   #if defined(ATL_SSE3)
+      #include <tmmintrin.h>
+   #endif
+   #define ATL_VTYPE __m128
+   #if defined(ATL_VLEN) && ATL_VLEN != 4
+      #error "VLEN == 4 only supported size for single precision SSE!"
+   #elif !defined(ATL_VLEN)
+      #define ATL_VLEN 4
+   #endif
+   #define ATL_vzero(v_) v_ = _mm_setzero_ps()
+   #define ATL_vbcast(v_, p_) v_ =  _mm_load1_ps(p_)
+   #define ATL_vuld(v_, p_) v_ = _mm_loadu_ps(p_)
+   #define ATL_vld(v_, p_) v_ = _mm_load_ps(p_)
+   #define ATL_vust(p_, v_) _mm_storeu_ps(p_, v_)
+   #define ATL_vst(p_, v_) _mm_store_ps(p_, v_)
+   #define ATL_vadd(d_, s1_, s2_) d_ =  _mm_add_ps(s1_, s2_)
+   #define ATL_vsub(d_, s1_, s2_) d_ =  _mm_sub_ps(s1_, s2_)
+   #define ATL_vmul(d_, s1_, s2_) d_ =  _mm_mul_ps(s1_, s2_)
+   #define ATL_vmac(d_, s1_, s2_) \
+   { ATL_VTYPE t_; \
+      t_ = _mm_mul_ps(s1_, s2_); \
+      d_ = _mm_add_ps(t_, d_); \
+   }
+   #ifdef ATL_SSE3
+      #define ATL_vrsum1(d_, s_) \
+      {  ATL_VTYPE t_; \
+         t_ = _mm_hadd_ps(s_, s_); \
+         d_ = _mm_cvtss_f32(_mm_hadd_ps(t_, t_)); \
+      }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      { \
+         s0_ = _mm_hadd_ps(s0_, s1_); /*{s1cd,s1ab,s0cd,s0ab}*/ \
+         s2_ = _mm_hadd_ps(s2_, s3_); /*{s3cd,s3ab,s2cd,s2ab}*/ \
+         s0_ = _mm_hadd_ps(s0_, s2_); /*{s3a-d,s2a-d,s1a-d,s0a-d}*/ \
+      }
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_ = _mm_hadd_ps(s0_, s1_); /*{s1cd,s1ab,s0cd,s0ab}*/ \
+         s0_ = _mm_hadd_ps(s0_, s0_); /*{s1a-d,s0a-d,s1a-d,s0a-d}*/ \
+      }
+      #define ATL_vvrsum1(s0_) \
+      { \
+         s0_ = _mm_hadd_ps(s0_, s0_); /*{s0cd,s0ab,s0cd,s0ab}*/ \
+         s0_ = _mm_hadd_ps(s0_, s0_); /*{s0a-d,s0a-d,s0a-d,s0a-d}*/ \
+      }
+   #else
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         ATL_VTYPE t_; \
+         t_ = _mm_movehl_ps(s_, s_); \
+         t_ = _mm_add_ps(t_, s_); \
+         t_ = _mm_add_ps(t_, _mm_shuffle_ps(t_, t_, 1)); \
+         d_ = _mm_cvtss_f32(t_); \
+      }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+         ATL_VTYPE t0_; \
+         t0_ = _mm_unpackhi_ps(s0_,s1_);     /*{s1d,  s0d,  s1c,  s0c}*/\
+         s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{s1b,  s0b,  s1a,  s0a}*/\
+         s1_ = _mm_unpackhi_ps(s2_,s3_);     /*{s3d,  s2d,  s3c,  s2c}*/\
+         ATL_vadd(s0_, s0_, t0_);            /*{s1bd, s0bd, s1ac, s0ac}*/\
+         s2_ = _mm_unpacklo_ps(s2_,s3_);     /*{s3b,  s2b,  s3a,  s2a}*/\
+         ATL_vadd(s2_, s2_, s1_);            /*{s3bd, s2bd, s3ac, s2ac}*/\
+         t0_ = _mm_shuffle_ps(s0_,s2_,0xEE); /*{s3bd, s2bd, s1bd, s0bd}*/\
+         s0_ = _mm_shuffle_ps(s0_,s2_,0x44); /*{s3ac, s2ac, s1ac, s0ac}*/\
+         ATL_vadd(s0_,s0_,t0_);              /*{s3a-d,s2a-d,s1a-d,s0a-d}*/\
+      }
+      #define ATL_vvrsum2(s0_, s1_) \
+      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+         ATL_VTYPE t0_; \
+         t0_ = _mm_unpackhi_ps(s0_,s1_);     /*{s1d,  s0d,  s1c,  s0c}*/\
+         s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{s1b,  s0b,  s1a,  s0a}*/\
+         ATL_vadd(s0_, s0_, t0_);            /*{s1bd, s0bd, s1ac, s0ac}*/\
+         t0_ = _mm_shuffle_ps(s0_,s0_,0xEE); /*{s1bd, s0bd, s1bd, s0bd}*/\
+         s0_ = _mm_shuffle_ps(s0_,s0_,0x44); /*{s1ac, s0ac, s1ac, s0ac}*/\
+         ATL_vadd(s0_,s0_,t0_);              /*{s1a-d,s0a-d,s1a-d,s0a-d}*/\
+      }
+      #define ATL_vvrsum1(s0_) \
+      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+         ATL_VTYPE t0_; \
+         t0_ = _mm_unpackhi_ps(s0_,s0_);     /*{s0d,  s0d,  s0c,  s0c}*/\
+         s0_ = _mm_unpacklo_ps(s0_,s0_);     /*{s0b,  s0b,  s0a,  s0a}*/\
+         ATL_vadd(s0_, s0_, t0_);            /*{s0bd, s0bd, s0ac, s0ac}*/\
+         t0_ = _mm_shuffle_ps(s0_,s0_,0xEE); /*{s0bd, s0bd, s0bd, s0bd}*/\
+         s0_ = _mm_shuffle_ps(s0_,s0_,0x44); /*{s0ac, s0ac, s0ac, s0ac}*/\
+         ATL_vadd(s0_,s0_,t0_);              /*{s0a-d,s0a-d,s0a-d,s0a-d}*/\
+      }
+   #endif
+#elif ATL_VLEN > 1  /* use gnuvec when atlas knows no VEC ISA */
+@skip   typedef TYPE ATL_gnuvec_t  __attribute__ ((vector_size (ATL_VLENb)))
+@skip   #define ATL_VTYPE ATL_gnuvec_t
+   #define ATL_VTYPE TYPE __attribute__ ((vector_size (ATL_VLENb)))
+@skip   #define ATL_UPVTYPE TYPE __attribute__ ((vector_size (ATL_VLENb))) \
+@skip                           __attribute__ ((aligned(8)))
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_VITYPE int  __attribute__ ((vector_size (ATL_VLENb)))
+   #else
+      #define ATL_VITYPE long long  __attribute__ ((vector_size (ATL_VLENb)))
+   #endif
+   #define ATL_vzero(d_) d_ = (ATL_VTYPE)(((ATL_VITYPE)(d_))^((ATL_VITYPE)(d_)))
+   #define ATL_vcopy(d_, s_) d_ = s_
+   #ifndef ATL_vbcast
+      #if 0
+         #define ATL_vbcast(v_, p_) v_ = *((TYPE*)(p_));
+      #elif 0
+         #define ATL_vbcast(v_, p_) \
+         { \
+            (v_)[0] = p_; \
+            v_ =  __builtin_shuffle(v_, (ATL_VITYPE){0}); \
+         }
+      #endif
+   #endif
+@skip   #define ATL_vuld(v_, p_) \
+@skip      v_ = *((ATL_UPVTYPE*)(p_))
+   #define ATL_vld(v_, p_) \
+      v_ = *((ATL_VTYPE*)__builtin_assume_aligned(p_,ATL_VLENb))
+   #define ATL_vust(p_, v_) *((ATL_VTYPE*)(p_)) = v_
+   #define ATL_vst(p_, v_) \
+      *((ATL_VTYPE*)__builtin_assume_aligned(p_,ATL_VLENb)) = v_
+   #define ATL_vadd(d_, s1_, s2_) d_ =  s1_ + s2_
+   #define ATL_vsub(d_, s1_, s2_) d_ =  s1_ - s2_
+   #define ATL_vmul(d_, s1_, s2_) d_ =  s1_ * s2_
+   #define ATL_vmac(d_, s1_, s2_) d_ += s1_ * s2_
+   #if ATL_VLEN == 1
+      #define ATL_vbcast(v_, p_) v_ = *(p_)
+      #ifndef ATL_vuld
+         #define ATL_vuld(v_, p_) v_ = {*(p_)}
+      #endif
+      #ifndef ATL_vrsum1
+         #define ATL_vrsum1(d_, s_) d_ = (s_)
+      #endif
+   #elif ATL_VLEN == 2
+      #define ATL_vbcast(v_, p_) v_ = (ATL_VTYPE){*(p_), *(p_)}
+      #ifndef ATL_vuld
+         #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE){*(p_), (p_)[1]}
+      #endif
+      #ifndef ATL_vrsum1
+         #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1])
+      #endif
+   #elif ATL_VLEN == 4
+      #define ATL_vbcast(v_, p_) v_ = (ATL_VTYPE){*(p_), *(p_), *(p_), *(p_)}
+      #ifndef ATL_vuld
+      #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE){*(p_),(p_)[1],(p_)[2],(p_)[3]}
+      #endif
+      #ifndef ATL_vrsum1
+         #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3])
+      #endif
+   #elif ATL_VLEN == 8
+      #ifndef ATL_vuld
+      #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
+         {*(p_), (p_)[1], (p_)[2], (p_)[3], (p_)[4], (p_)[5], (p_)[6], (p_)[7]}
+      #endif
+      #define ATL_vbcast(v_, p_) v_ = (ATL_VTYPE){*(p_), *(p_), *(p_), *(p_), \
+               *(p_), *(p_), *(p_), *(p_)}
+      #ifndef ATL_vrsum1
+      #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3] + \
+                                       (s_)[4] + (s_)[5] + (s_)[6] + (s_)[7])
+      #endif
+   #elif ATL_VLEN == 16
+      #ifndef ATL_vuld
+      #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
+         {*(p_),(p_)[1],(p_)[2],(p_)[3],(p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+          (p_)[8],(p_)[9],(p_)[10],(p_)[11],(p_)[12],(p_)[13],(p_)[14],(p_)[15]}
+      #endif
+      #ifndef ATL_vrsum1
+      #define ATL_vrsum1(d_, s_) d_ = \
+      ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] +\
+       (s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15])
+      #endif
+   #elif ATL_VLEN == 32
+      #ifndef ATL_vuld
+      #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
+      {*(p_),(p_)[1],(p_)[2],(p_)[3],(p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+       (p_)[8],(p_)[9],(p_)[10],(p_)[11],(p_)[12],(p_)[13],(p_)[14],(p_)[15],\
+       (p_)[16],(p_)[17],(p_)[18],(p_)[19],(p_)[20],(p_)[21],(p_)[22],(p_)[23],\
+       (p_)[24],(p_)[25],(p_)[26],(p_)[27],(p_)[28],(p_)[29],(p_)[30],(p_)[31]}
+      #endif
+      #define ATL_vrsum1(d_, s_) d_ = \
+      ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] \
+      +(s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15] \
+      +(s_)[16]+(s_)[17]+(s_)[18]+(s_)[19]+(s_)[20]+(s_)[21]+(s_)[22]+(s_)[23] \
+      +(s_)[24]+(s_)[25]+(s_)[26]+(s_)[27]+(s_)[28]+(s_)[29]+(s_)[30]+(s_)[31])
+   #else
+      #error "Unsupported ATL_VLEN"
+   #endif
+#else
+   #if defined(ATL_VLEN) && ATL_VLEN != 1
+      #error "For systems without vector support, only ATL_VLEN=1 supported!"
+   #elif !defined(ATL_VLEN)
+      #define ATL_VLEN 1
+   #endif
+   #define ATL_VTYPE TYPE
+
+   #define ATL_vzero(d_) d_ = 0.0
+   #define ATL_vcopy(d_, s_) d_ = s_
+   #define ATL_vbcast(d_, p_) d_ = *(p_)
+   #define ATL_vuld(v_, p_) v_ = *(p_)
+   #define ATL_vld(v_, p_) v_ = *(p_)
+   #define ATL_vust(p_, s_) *(p_) = s_
+   #define ATL_vst(p_, s_) *(p_) = s_
+   #define ATL_vadd(d_, s1_, s2_) d_ =  (s1_) + (s2_)
+   #define ATL_vsub(d_, s1_, s2_) d_ =  (s1_) - (s2_)
+   #define ATL_vmul(d_, s1_, s2_) d_ =  (s1_) * (s2_)
+   #define ATL_vmac(d_, s1_, s2_) d_ += (s1_) * (s2_)
+   #define ATL_vrsum1(d_, s_) d_ = s_
+#endif
+@beginskip
+@iexp p 1 0 +
+@iexp j 0 0 +
+@iwhile p < 64
+   #if ATL_VLEN == @(p)
+      #define ATL_VLSH @(j)
+      #if defined(SREAL) || defined(SCPLX)
+         @iexp i @(p) 4 *
+         #define ATL_VLENb @(i)
+      #else
+         @iexp i @(p) 8 *
+         #define ATL_VLENb @(i)
+      #endif
+   #endif
+   @iexp j @(j) 1 +
+   @iexp p @(p) 2 *
+@endiwhile
+@endskip
+@SKIP produce a list of numbered args on 1 line, like: <nm>#<sf>
+@BEGINPROC arglst n nm sf
+   @define i @1@
+   @define at @@(nm)0@(sf)@
+   @iwhile i < @(n)
+      @define nat @@(at)@
+      @undef at
+      @define at @@(nat), @(nm)@(i)@(sf)@
+      @undef nat
+      @iexp i @(i) 1 +
+   @endiwhile
+   @define arglst @@(at)@
+   @undef at
+   @undef i
+@ENDPROC
+@BEGINPROC addarr n nm
+   @define i @1@
+   @define at @@(nm)[0]@
+   @iwhile i < @(n)
+      @define nat @@(at)@
+      @undef at
+      @define at @@(nat)+@(nm)[@(i)]@
+      @undef nat
+      @iexp i @(i) 1 +
+   @endiwhile
+   @define addarr @@(at)@
+   @undef at
+   @undef i
+@ENDPROC
+@BEGINPROC asgarr n nm
+   @define i @1@
+   @define at @@(nm)[0]@
+   @iwhile i < @(n)
+      @define nat @@(at)@
+      @undef at
+      @define at @@(nat)=@(nm)[@(i)]@
+      @undef nat
+      @iexp i @(i) 1 +
+   @endiwhile
+   @define asgarr @@(at)@
+   @undef at
+   @undef i
+@ENDPROC
+/* 
+ * If it isn't already defined (fast system-specific version), define vvrsumX
+ * This may be horribly slow or great, depending on how smart the compiler is.
+ */
+#if ATL_VLEN == 2
+   #ifndef ATL_vvrsum1
+      #define ATL_vvrsum1(s0_) s0_[0] += s0_[1]
+   #endif
+   #ifndef ATL_vvrsum2
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_[0] += s0_[1]; \
+         s0_[1] = s1_[0] + s1_[1]; \
+      }
+   #endif
+#endif
+@iexp vl 2 2 +
+@iwhile vl < 64
+#if ATL_VLEN == @(vl)
+   @iexp n 1
+   @iexp kk @(vl) 1 +
+   @iwhile n < kk
+   @CALLPROC arglst @(n) s _
+   #ifndef ATL_vvrsum@(n)
+      #define ATL_vvrsum@(n)(@(arglst))\
+   @undef arglst
+      { \
+      @iexp i 0 0 +
+      @iwhile i < @(n)
+         @CALLPROC addarr @(vl) s@(i)_
+         s0_[@(i)] = @(addarr); \
+         @undef addarr
+         @iexp i @(i) 1 +
+      @endiwhile
+      }
+   #endif
+      @iexp n @(n) @(n) +
+   @endiwhile
+#endif
+   @iexp vl @(vl) @(vl) +
+@endiwhile
+/*
+ * If it isn't defined already (fast sys-spec vers), define 
+ *    vsplatI (0 <= I < VL) using vector indexing.  
+ * This may be horribly slow or great, depending on how smart the compiler is.
+ */
+#if ATL_VLEN == 2
+   #ifndef ATL_vsplat0
+   #define ATL_vsplat0(d_, s_) d_[0] = d_[1] = s_[0]
+   #endif
+   #ifndef ATL_vsplat1
+   #define ATL_vsplat1(d_, s_) d_[0] = d_[1] = s_[1]
+   #endif
+@iexp vl 2 2 +
+@iwhile vl < 64
+#elif ATL_VLEN == @(vl)
+   @iexp k 0 0 +
+   @iwhile k < @(vl)
+      @CALLPROC asgarr @(vl) d_ s_[@(k)]
+   #ifndef ATL_vsplat@(k)
+   #define ATL_vsplat@(k)(d_, s_) \
+      @(asgarr) = s_[@(k)]
+      @iexp k @(k) 1 +
+   #endif
+   @endiwhile
+@beginskip
+   @CALLPROC arglst @(vl) s _
+   #ifndef ATL_vvrsum@(vl)
+   #define ATL_vvrsum@(vl)(@(arglst))\
+   @undef arglst
+   { \
+   @iexp i 0 0 +
+   @iwhile i < @(vl)
+      @CALLPROC addarr @(vl) s@(i)_
+      s0_[@(i)] = @(addarr); \
+      @undef addarr
+      @iexp i @(i) 1 +
+   @endiwhile
+   }
+   #endif
+@endskip
+   @iexp vl @(vl) @(vl) +
+@endiwhile
+#endif
+/*
+ * If we don't have one defined, write slow version that should work with
+ * any gcc-compatible compiler
+ */
+#ifndef ATL_vrsum1
+   #define ATL_vrsum1(d_, s_) \
+   {  TYPE mem_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
+      int i_; \
+      ATL_vst(mem_, s_); \
+      d_ = *mem_; \
+      for (i_=1; i_ < ATL_VLEN; i_++) \
+         d_ += mem_[i_]; \
+   }
+#endif
+@beginskip
+/*
+ * If no special case, do vrsum2/4 slow way by calling vrsum1
+ * THESE ARE WRONG: vrsum2 should put 1st ans in d[0], 2nd in d[1], so on,
+ *                  not add them all up!  Leave until needed (kvec).
+ */
+#ifndef ATL_vrsum2
+   #define ATL_vrsum2(d_, s1_, s2_) \
+   { \
+      ATL_VTYPE t0_; \
+      ATL_vrsum1(d_, s1_); \
+      ATL_vrsum1(s1_, s2_); \
+      ATL_vadd(d_, d_, s1_); \
+   }
+#endif
+#ifndef ATL_vrsum4
+   #define ATL_vrsum4(d_, s1_, s2_, s3_, s4_) \
+   { \
+      ATL_vrsum2(d_, s1_, s2_); \
+      ATL_vrsum2(s1_, s3_, s4_); \
+      ATL_vadd(d_, d_, s1_); \
+   }
+#endif
+#ifndef ATL_vrsum8
+   #define ATL_vrsum8(d_, s1_, s2_, s3_, s4_, s5_), s6_, s7_, s8_) \
+   { \
+      ATL_vrsum4(d_, s1_, s2_, s3_, s4); \
+      ATL_vrsum4(s1_, s3_, s5_, s6_, s7_, s8_); \
+      ATL_vadd(d_, d_, s1_); \
+   }
+#endif
+#ifndef ATL_vrsum16
+   #define ATL_vrsum16(d_, s1_, s2_, s3_, s4_, s5_), s6_, s7_, s8_, \
+                           s9_, s10_, s11_, s12_, s13_, s14_, s15_, s16_) \
+   { \
+      ATL_vrsum8(d_, s1_, s2_, s3_, s4_, s5_, s6_, s7_, s8_); \
+      ATL_vrsum8(s1_, s9_, s10_, s11_, s12_ s13_, s14_, s15_); \
+      ATL_vadd(d_, d_, s1_); \
+   }
+#endif
+@endskip
+
+#endif  /* end multiple-inclusion guard */
+@ROUT atlas_cplxsimd.h
+#ifndef ATLAS_CPLXSIMD_H
+   #define ATLAS_CPLXSIMD_H 1
+#include "atlas_simd.h"
+/*
+ *                          FUNCTIONALITY SUMMARY
+ * ============================================================================
+ * Constant integers: ATL_CXVLEN, ATL_CXSPLDb
+ * Load/store for partial vecs (replace I with 0 < I < VLEN/2, 1 always there):
+ *    ATL_vcxldI, ATL_vcxuldI, ATL_vcxustI, ATL_vcxustI
+ * Macros for axpy-based computation:
+ *    ATL_vcxsplitRIld,  ATL_vcxsplitRI, ATL_vcxPrepAlpha
+ * Macros for dot-based computation:
+ *    ATL_vcxswapRI, ATL_vcxdotcomb
+ * ============================================================================
+ */
+/*
+ * ============================================================================
+ * This file provides macros for doing the types complex computations 
+ * needed by ATLAS in a machine, precision and VLEN-independent manner
+ * (i.e., this file changes based on VLEN/SIMD ISA, float/double, VLEN,
+ *  but kernels implemented using work unchanged regardless of these variables).
+ * ATLAS essentially does dot-product based computations (dot,GEMVT,GEMM)
+ * and AXPY-based (AXPY,GER,GER2).  Both types of computation need both
+ * load and stores.  We just use the real load/store for full VLEN ops.
+ * However, we also need the ability to load/store a single complex number, 
+ * which means the ability to load/store pairs of real numbers.  In addition,
+ * if we want to be able perform vector cleanup, we need the ability to
+ * load/store I complex numbers (0 < I < ATL_VLEN/2), with loads zeroing any
+ * elements above the loaded values.  Therefore, this file provides 
+ * (ATL_VLEN/2 - 1)*4 routines for loading/store complex numbers:
+ *    ATL_vcxldI(r_, p_) : load lower 2*I elts of aligned p_ to r_, zero rest
+ *    ATL_vcxuldI(r_, p_): load lower 2*I elts of unaligned p_ to r_, zero rest
+ *    ATL_vcxstI(p_, r_) : store lower 2*I real elts of r_ to aligned p_
+ *    ATL_vcxustI(p_, r_): store lower 2*I real elts of r_ to unaligned p_
+ *
+ * There are numerous ways to do complex computations, but this file provides
+ * a particular approach for both dot- and axpy-based computations.  
+ *
+ * For AXPY-based computations, we are performance limited by load/store of Y,
+ * so we permute all other ops to allow us to keep Y in natural order.
+ * Not all SIMD ISAs allow one to do different operations to different
+ * vector elements (eg., ADDSUB), so instead we manipulate alpha outside
+ * the main loop so that it is is permuted and scaled appropriately to allow
+ * us to do MAC-based AXPY calculations.  We will split X into two vectors
+ * with duplicated entries:
+ *   {Xr, Xr}*(VLEN/2)          {Xi, Xi}*(VLEN/2)
+ * This permutation must be done inside the loop, and is thus expensive.
+ * We provide the following functions to accomplish this:
+ *    ATL_vcxsplitRIld(rR_, rI, p_): split&dup cplx #s from aligned p_
+      ATL_vcxsplitRI(rXr_, rXi_)  : split&dup from natural-order reg rXi_
+ * ATL_vcxsplitRIld can be built out of ATL_vld & ATL_vcxsplitRI, which is how
+ * it is done for cleanup, but on some systems it is more efficient to
+ * do it directly from memory, so we provide a specialized high-performance
+ * version.  On some systems, the alignment restrictions for this operation
+ * are lower than full VLEN, so we also provide the const macro:
+ *    ATL_CXSPLDb : required byte alignment for ATL_vcxsplitRIld.
+ * We use ATL_cxsplit for vector cleanup & when X is not aligned to ATL_CXSPLDb.
+ * axpy-based calcs are doing Y += alpha * X.  Alpha is loop-invariant, so we
+ * can manipulate it outside the loop, even if that manipulation is relatively
+ * inefficient.  In order to perform the two real MACs required for cplx MAC,
+ * alpha is split into two vectors that match up with our X vecs as in:
+ *   {Xr,   Xr}*(VLEN/2)          {Xi,    Xi}*(VLEN/2)
+ *   {ALi, Alr}*(VLEN/2)          {ALr, -ALi}*(VLEN/2
+ * The first of these is the natural order alpha (alN), and the second scaled 
+ * and permuted (alS).  First the scalar complex number is loaded to the
+ * register using ATL_cx[u]ld1, then it is transformed with:
+ *    ATL_vcxPrepAlpha(alN, alS): alN is input & output, alS output only
+ * 
+ * The naive approach to performing complex MAC (multiply and accumulate)
+ * requires permuting both X and Y inside the loop, which is very expensive.
+ * However, we notice that DOT (the accumulator) is loop invariant, so we
+ * can instead keep it in permuted & scaled form throughout the loop.  This
+ * allows us to avoid either the permute of X or Y (but not both).
+ * For DOT-based there is no performance difference between X and Y, so we
+ * can choose to permute either one (one must be computed to build the complex
+ * multiply and accumulate (MAC) out of real MACs).  In general you can only
+ * force one vector to be aligned (vecs may be mutually misaligned), and that
+ * load will be cheaper than the unaligned load.  We therefore perform loop
+ * peeling to force X to be aligned whenever that is possible, and then
+ * permute X rather than Y.  The permute adds to the dependence chain in the
+ * loop, so you want dependent it on the fastest load.
+ *
+ * The technique for DOT-based calculations is that the two half of the MACs
+ * are stored in two different dot variables throughout the loop, one storing
+ * partial results for the real result, and one for the imaginary result.
+ * The real/imag dot vectors must be internally summed up to produce the
+ * final answer (this operation performed outside the loop).  The imaginary
+ * dot looks like: {Xr*Yi, Xi*Yr}*(VLEN/2), so we add all elts to get the ans.
+ * Real looks:     {Xi*Yi, Xr*Yr}*(VLEN/2), so we must subtract the odd elts
+ * from the even.  We provide this macro to accomplish this:
+ *    ATL_cxdotcomb(rR, rI) : put final ans in low 2 elts of rR
+ *
+ * Inside the loop, we keep Y in natural order, and have X in both natural
+ * order (rN) and with imaginary and complex swapped (rS).  We provide:
+ *    ATL_cxriswap(rS, rN): swap imag & real components of rN, store in rS
+ *
+ * ============================================================================
+ */
+/*
+ * Define some length-specific constants.
+ * ATL_VONEPN is used to scale so even words are negated (imag*imag).
+@skip * ATL_VONENP is used to scale dot's odd words by -1 (i*i=-1).
+ */
+#if ATL_VLEN == 2
+   #define ATL_CXVLEN 1
+   #define ATL_CXVLSH 0
+   #define ATL_VONEPN ((ATL_VTYPE){ATL_rone, ATL_rnone})
+#elif ATL_VLEN == 4
+   #define ATL_CXVLEN 2
+   #define ATL_CXVLSH 1
+   #define ATL_VONEPN ((ATL_VTYPE){ATL_rone, ATL_rnone,ATL_rone, ATL_rnone})
+#elif ATL_VLEN == 8
+   #define ATL_CXVLEN 4
+   #define ATL_CXVLSH 2
+   #define ATL_VONEPN ((ATL_VTYPE){ATL_rone, ATL_rnone,ATL_rone, ATL_rnone,\
+                                   ATL_rone, ATL_rnone,ATL_rone, ATL_rnone})
+#elif ATL_VLEN == 16
+   #define ATL_CXVLEN 8
+   #define ATL_CXVLSH 3
+   #define ATL_VONEPN ((ATL_VTYPE){ATL_rone, ATL_rnone,ATL_rone, ATL_rnone,\
+                                   ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
+                                   ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
+                                   ATL_rone, ATL_rnone,ATL_rone, ATL_rnone})
+#elif ATL_VLEN == 32
+   #define ATL_CXVLEN 16
+   #define ATL_CXVLSH 4
+   #define ATL_VONEPN (ATL_VTYPE){ATL_rone, ATL_rnone,ATL_rone, ATL_rnone,\
+                                  ATL_rone, ATL_rnone,ATL_rone, ATL_rnone} \
+                                  ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
+                                  ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
+                                  ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
+                                  ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
+                                  ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
+                                  ATL_rone, ATL_rnone,ATL_rone, ATL_rnone}
+#else
+   #error "unsupported VLEN!"
+#endif
+
+/*
+ * Define ld/st I, 0 < I < VLEN/2, I=1 always present (scalar complex ld/st)
+ */
+#if ATL_VLEN == 2  /* 1 vec == 1 complex: DCPLX&(SSE2||VSX||ARM) or gnuvec */
+   #define ATL_vcxld1(r_, p_) ATL_vld(r_, p_)
+   #define ATL_vcxuld1(r_, p_) ATL_vuld(r_, p_)
+   #define ATL_vcxst1(p_, r_) ATL_vst(p_, r_)
+   #define ATL_vcxust1(p_, r_) ATL_vust(p_, r_)
+#elif ATL_VLEN >= 4   /* gnuvec or DCPLX & AVX or SCPLX & (VSX || SSE) */
+   #if (ATL_VSX) && defined(SCPLX)
+      #if 0 /* gnuvec works better for unaligned load */
+      #define ATL_vcxuld1(r_, p_) \
+      {  ATL_VTYPE t0_, t1_;\
+         t0_ = vec_splats(*(p_)); \
+         t1_ = vec_splats((p_)[1]); \
+         t0_ = vec_vmrglw(t0_, t1_); \
+         ATL_vzero(r_); \
+         r_ = vec_xxpermdi(t0_, r_, 0); \
+      }
+      #endif
+      #define ATL_vcxld1(r_, p_) r_ = (ATL_VTYPE) \
+         ((vector double){*((double*)(p_))})
+      #define ATL_vcxust1(p_, r_) { *(p_) = r_[0]; (p_)[1] = r_[1]; }
+      #define ATL_vcxst1(p_, r_) ATL_vcxust1(p_, r_)
+   #elif (defined(ATL_VECARM1) || defined(ATL_NEON)) && defined(SCPLX)
+      #define ATL_vcxuld1(r_, p_) \
+         r_ = vcombine_f32(vld1_f32(p_), vdup_n_f32(0.0f))
+      #define ATL_vcxust1(p_, r_) vst1_f32(p_, vget_low_f32(r_))
+      #define ATL_vcxld1(r_, p_) ATL_vcxuld1(r_, p_)
+      #define ATL_vcxst1(p_, r_) ATL_vcxust1(p_, r_)
+   #elif defined(ATL_AVX) && defined(DCPLX)
+      #define ATL_vcxld1(r_, p_) \
+      { \
+         ATL_vzero(r_); \
+         r_ = _mm256_insertf128_pd(r_, _mm_load_pd(p_), 0); \
+      }
+      #define ATL_vcxuld1(r_, p_) \
+      { \
+         ATL_vzero(r_); \
+         r_ = _mm256_insertf128_pd(r_, _mm_loadu_pd(p_), 0); \
+      }
+      #define ATL_vcxst1(p_, r_) _mm_store_pd(p_, _mm256_extractf128_pd(r_, 0))
+      #define ATL_vcxust1(p_, r_) _mm_storeu_pd(p_, _mm256_extractf128_pd(r_,0))
+   #elif defined(ATL_AVX) && defined(SCPLX)
+      #define ATL_vcxld1(r_, p_) \
+      {  __m128 t0_;\
+         ATL_vzero(r_); \
+         t0_ = _mm_setzero_ps(); \
+         r_ = _mm256_insertf128_ps(r_, _mm_loadl_pi(t0_,(void*)(p_)), 0); \
+      }
+      #define ATL_vcxuld1(r_, p_) \
+      {  __m128 t0_, t1_;\
+         ATL_vzero(r_); \
+         t0_ = _mm_load_ss(p_); \
+         t1_ = _mm_load_ss((p_)+1); \
+         t0_ = _mm_unpacklo_ps(t0_, t1_); \
+         r_ = _mm256_insertf128_ps(r_, t0_, 0); \
+      }
+      #define ATL_vcxst1(p_, r_) \
+         _mm_storel_pi((void*)(p_), _mm256_extractf128_ps(r_, 0))
+      #define ATL_vcxust1(p_, r_) \
+      {  __m128 t_;\
+         t_ = _mm256_extractf128_ps(r_,0); \
+         _mm_store_ss(p_, t_); \
+         _mm_store_ss((p_)+1, _mm_shuffle_ps(t_, t_, 1)); \
+      }
+   #elif defined(ATL_SSE1) && defined(SCPLX)
+      #define ATL_vcxld1(r_, p_) \
+      { \
+         ATL_vzero(r_); \
+         r_ = _mm_loadl_pi(r_, ((void*)(p_))); \
+      }
+      #define ATL_vcxuld1(r_, p_) \
+      {  ATL_VTYPE t_;\
+         r_ = _mm_load_ss(p_); \
+         t_ = _mm_load_ss((p_)+1); \
+         r_ = _mm_unpacklo_ps(r_, t_); \
+      }
+      #define ATL_vcxst1(p_, r_) _mm_storel_pi((void*)(p_), r_)
+      #define ATL_vcxust1(p_, r_) \
+      { \
+         _mm_store_ss(p_, r_); \
+         _mm_store_ss((p_)+1, _mm_shuffle_ps(r_, r_, 1)); \
+      }
+   #else  /* gnuvec */
+      #define ATL_vcxuld1(r_, p_) r_ = (ATL_VTYPE){*(p_), (p_)[1]}
+      #define ATL_vcxust1(p_, r_) \
+      { \
+         *(p_) = (r_)[0]; \
+         (p_)[1] = (r_)[1]; \
+      }
+      #define ATL_vcxld1 ATL_vcxuld1
+      #define ATL_vcxst1 ATL_vcxust1
+   #endif
+/*
+ * For VL == 8, is gnuvec or SCPLX&AVX or DCPLX&AVX512
+ * For VL > 8, can only be SCPLX&AVX512 or gnuvec
+ */
+   #if ATL_VLEN >= 8  /* VL>=8, must define add op[2,3] */
+      #if defined(SCPLX) && defined(ATL_AVX)
+         #define ATL_vcxld2(r_, p_) \
+         { \
+            ATL_vzero(r_); \
+            r_ = _mm256_insertf128_ps(r_, _mm_load_ps(p_), 0); \
+         }
+         #define ATL_vcxuld2(r_, p_) \
+         { \
+            ATL_vzero(r_); \
+            r_ = _mm256_insertf128_ps(r_, _mm_loadu_ps(p_), 0); \
+         }
+         #define ATL_vcxld3(r_, p_) \
+         { __m128 t_; \
+            r_ = _mm256_insertf128_ps(r_, _mm_load_ps(p_), 0); \
+            t_ = _mm_setzero_ps(); \
+            t_ = _mm_loadl_pi(t_, ((void*)((p_)+4))); \
+            r_ = _mm256_insertf128_ps(r_, t_, 1); \
+         }
+         #define ATL_vcxuld3(r_, p_) \
+         { __m128 t0_, t1_; \
+            r_ = _mm256_insertf128_ps(r_, _mm_loadu_ps(p_), 0); \
+            t0_ = _mm_load_ss((p_)+4); \
+            t1_ = _mm_load_ss((p_)+5); \
+            t0_ = _mm_unpacklo_ps(t0_, t1_); \
+            r_ = _mm256_insertf128_ps(r_, t0_, 1); \
+         }
+         #define ATL_vcxst2(p_, r_) \
+            _mm_store_ps(p_, _mm256_extractf128_ps(r_, 0))
+         #define ATL_vcxust2(p_, r_) \
+             _mm_storeu_ps(p_, _mm256_extractf128_ps(r_,0))
+         #define ATL_vcxst3(p_, r_) \
+         {  __m128 t_; \
+            ATL_vcxst2(p_, r_); \
+            t_ = _mm256_extractf128_ps(r_, 0); \
+            _mm_storel_pi((void*)((p_)+4), t_) ; \
+         }
+         #define ATL_vcxust3(p_, r_) \
+         {  __m128 t_; \
+            ATL_vcxust2(p_, r_); \
+            t_ = _mm256_extractf128_ps(r_, 1); \
+            _mm_store_ss((p_)+4, t_); \
+            _mm_store_ss((p_)+5, _mm_shuffle_ps(t_, t_, 1)); \
+         }
+      #elif defined(DCPLX) &&  defined(ATL_AVX512__00)
+         #error "AVX512 not presently supported"
+      #elif defined(SCPLX) &&  defined(ATL_AVX512__00)
+         #error "AVX512 not presently supported"
+      #else /* gnuvec */
+         #define ATL_vcxuld2(r_, p_) \
+            r_ = (ATL_VTYPE){*(p_), (p_)[1], (p_)[2], (p_)[3]}
+         #define ATL_vcxust2(p_, r_) \
+         { \
+            *(p_) = (r_)[0]; \
+         @iexp i 1 0 +
+         @iwhile i < 4
+            (p_)[@(i)] = (r_)[@(i)]; \
+            @iexp i @(i) 1 +
+         @endiwhile
+         }
+         #define ATL_vcxuld3(r_, p_) \
+            r_ = (ATL_VTYPE){*(p_), (p_)[1], (p_)[2], (p_)[3], (p_)[4], (p_)[5]}
+         #define ATL_vcxust3(p_, r_) \
+         { \
+            *(p_) = (r_)[0]; \
+         @iexp i 1 0 +
+         @iwhile i < 6
+            (p_)[@(i)] = (r_)[@(i)]; \
+            @iexp i @(i) 1 +
+         @endiwhile
+         }
+
+         @iexp i 2 0 +
+         @iwhile i < 4
+         #define ATL_vcxld@(i) ATL_vcxuld@(i)
+         #define ATL_vcxst@(i) ATL_vcxust@(i)
+            @iexp i @(i) 1 +
+         @endiwhile
+      #endif
+      #if ATL_VLEN >= 16  /* need [4-7]: gnuvec or SREAL&AVX512 */
+         #if defined(SCPLX__0) &&  defined(ATL_AVX512__0)
+         #else /* gnuvec */
+            #define ATL_vcxuld4(r_, p_) r_ = (ATL_VTYPE)\
+               {*(p_), (p_)[1], (p_)[2], (p_)[3], \
+                 (p_)[4],(p_)[5],(p_)[6],(p_)[7]}
+            #define ATL_vcxuld5(r_, p_) r_ = (ATL_VTYPE)\
+               {*(p_), (p_)[1], (p_)[2], (p_)[3], \
+                 (p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+                 (p_)[8],(p_)[9]}
+            #define ATL_vcxuld6(r_, p_) r_ = (ATL_VTYPE)\
+               {*(p_), (p_)[1], (p_)[2], (p_)[3], \
+                 (p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+                 (p_)[8],(p_)[9],(p_)[10],(p_)[11]}
+            #define ATL_vcxuld7(r_, p_) r_ = (ATL_VTYPE)\
+               {*(p_), (p_)[1], (p_)[2], (p_)[3], \
+                 (p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+                 (p_)[8],(p_)[9],(p_)[10],(p_)[11], \
+                 (p_)[12],(p_)[13]}
+   @iexp j 3 1 +
+   @iwhile j < 8
+            #define ATL_vcxust@(j)(p_, r_) \
+            { \
+               *(p_) = (r_)[0]; \
+         @iexp h @(j) @(j) +
+         @iexp i 1 0 +
+         @iwhile i < @(h)
+               (p_)[@(i)] = (r_)[@(i)]; \
+            @iexp i @(i) 1 +
+         @endiwhile
+            }
+      @iexp j @(j) 1 +
+   @endiwhile
+
+         @iexp i 4 0 +
+         @iwhile i < 8
+            #define ATL_vcxld@(i) ATL_vcxuld@(i)
+            #define ATL_vcxst@(i) ATL_vcxust@(i)
+            @iexp i @(i) 1 +
+         @endiwhile
+         #endif
+         #if ATL_VLEN >= 32
+
+   @iexp j 7 1 +
+   @iwhile j < 16
+         @iexp h @(j) @(j) +
+         #define ATL_vcxuld@(j)(r_, p_) r_ = (ATL_VTYPE){*(p_),\
+         @iexp i 1 0 +
+         @iwhile i < @(h)
+                                        (p_)[@(i)], \
+            @iexp i @(i) 1 +
+         @endiwhile
+                                     }
+            #define ATL_vcxust@(j)(p_, r_) \
+            { \
+               *(p_) = (r_)[0]; \
+         @iexp i 1 0 +
+         @iwhile i < @(h)
+               (p_)[@(i)] = (r_)[@(i)]; \
+            @iexp i @(i) 1 +
+         @endiwhile
+            }
+      @iexp j @(j) 1 +
+   @endiwhile
+         @iexp i 8 0 +
+         @iwhile i < 16
+            #define ATL_vcxld@(i) ATL_vcxuld@(i)
+            #define ATL_vcxst@(i) ATL_vcxust@(i)
+            @iexp i @(i) 1 +
+         @endiwhile
+            #if ATL_VLEN > 32 /* VLEN == 32, gnuvec only */
+               #error "Unsupported VLEN > 32"
+            #endif
+         #endif
+      #endif
+   #endif
+#endif
+/*
+ * Define ATL_vcxswapRI, ATL_vcxsplitRI.
+ * Define ATL_vcxsplitRIld if you dont want vld/splitRI version.
+ * Define ATL_vcxdotcomb & ATL_vcxPrepAlpha if you don't want to use 
+ * system-indep (slow) versions.  ATL_vcxdotcomb has a fast sys-indep
+ * version for VLEN==2.
+ */
+#ifdef ATL_VSX
+   #ifdef SCPLX
+      #define ATL_vcxswapRI(d_, s_) d_ = vec_perm(s_,s_,(vector unsigned char) \
+         {4, 5, 6, 7, 0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11})
+      #if ATL_FULLGCCVSX   /* not supported by older gcc (eg. 4.8) */
+         #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
+         { \
+            rXr_ = (ATL_VTYPE) vec_mergee((vector unsigned int)(rXi_), \
+                                          (vector unsigned int) (rXi_)); \
+            rXi_ = (ATL_VTYPE) vec_mergeo((vector unsigned int)(rXi_),\
+                                          (vector unsigned int)(rXi_)); \
+         }
+         #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+         {  ATL_VTYPE t1_;\
+            ATL_vmul(rR_, rR_, ATL_VONEPN); \
+            t1_ = vec_vmrglw(rR_, rI_); \
+            rR_ = vec_vmrghw(rR_, rI_); \
+            ATL_vadd(rR_, rR_, t1_); \
+            t1_ = vec_xxpermdi(rR_, rR_, 2); \
+            ATL_vadd(rR_, rR_, t1_); \
+         }
+      #else
+/*
+ *       Using these guys as constants isn't so great: gcc 4.8.2 pulls
+ *       the formation of the first iperm vector out of a loop, but then leaves
+ *       the formation of the second (in terms of the first) inside the loop.
+ *       The fix is to have this file define DECL/INIT macros, where we manually
+ *       declare the perm vector, create it, and hoist it ourselves.
+ *       We'll keep with crap way, since later gcc supports mergee/mergeo.
+ */
+         #define ATL_MERGEE (vector unsigned char) \
+            {0, 1, 2, 3, 0, 1, 2, 3, 8, 9, 10, 11, 8, 9, 10, 11}
+         #define ATL_MERGEO (vector unsigned char) \
+            {4, 5, 6, 7, 4, 5, 6, 7, 12, 13, 14, 15, 12, 13, 14, 15}
+         #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
+         { \
+            rXr_ = vec_perm(rXi_, rXi, ATL_MERGEE); \
+            rXi_ = vec_perm(rXi_, rXi, ATL_MERGEO); \
+         }
+      #endif
+   #else /* DCPLX */
+      #define ATL_vcxswapRI(d_, s_) d_ = vec_xxpermdi(s_, s_, 2)
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
+      { \
+         rXr_ = vec_xxpermdi(rXi_, rXi_, 0); \
+         rXi_ = vec_xxpermdi(rXi_, rXi_, 3); \
+      }
+      #define ATL_CXSPLDb ATL_VLENb
+      #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
+      { \
+         rXr_ = vec_splats(*(pX_)); \
+         rXi_ = vec_splats(*((pX_)+1)); \
+      }
+   #endif
+#elif defined(ATL_VECARM1) || defined(ATL_NEON)
+   #ifdef SCPLX
+      #if 0
+      #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
+      { unsigned long long *lp_=(void*)(pX_), l0_, l1_, rl0_, il0_, rl1_, il1_;\
+         l0_ = *lp_;                /* l0 = {i0, r0}   :: cycle 0 */\
+         l1_ = lp_[1];              /* l1 = {i1, r1}   :: cycle 0 */\
+         rl0_ = l0_ << 32;          /* rl0= {r0,  0}   :: cycle 1 */\
+         il0_ = l0_ >> 32;          /* il0= { 0, i0}   :: cycle 1*/\
+         rl1_ = l1_ << 32;          /* rl1= {r1,  0}   :: cycle 2*/\
+         il1_ = l1_ >> 32;          /* il1= { 0, i1}   :: cycle 2*/\
+         rl0_ |= (rl0_>> 32);       /* rl0= {r0, r0}   :: cycle 3*/\
+         il0_ |= (il0_<< 32);       /* il0= {i0, i0}   :: cycle 3*/\
+         rl1_ |= (rl1_>> 32);       /* rl1= {r1, r1}   :: cycle 4*/\
+         il1_ |= (il1_<< 32);       /* il1= {i1, i1}   :: cycle 4*/\
+         rXr_ = vcombine_f32(vreinterpret_f32_u64(rl0_), \
+                             vreinterpret_f32_u64(rl1_)); /* cycle 5 */\
+         rXi_ = vcombine_f32(vreinterpret_f32_u64(il0_), \
+                             vreinterpret_f32_u64(il1_)); /* cycle 6 */\
+      }
+      #endif
+
+      #if defined(ATL_VECARM1)
+         #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+         {  \
+            rXr_ = vtrn1q_f32(rXi_, rXi_); \
+            rXi_ = vtrn2q_f32(rXi_, rXi_); \
+         }
+      #else
+         #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+         { \
+            rXr_[0] = rXr_[1] = rXi[0]; \
+            rXr_[2] = rXr_[3] = rXi[2]; \
+            rXi_[0] = rXi_[1] = rXi[1]; \
+            rXi_[2] = rXi_[3] = rXi[3]; \
+         }
+      #endif
+      #define ATL_vcxswapRI(d_, s_) \
+         d_ = vreinterpretq_f32_s32(vrev64q_s32(vreinterpretq_s32_f32(s_)))
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      { \
+         rR_[0] += (rR_)[2] - (rR_)[1] - (rR_)[3]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1] + (rI_)[2] + (rI_)[3]; \
+      }
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         rALn_ = vreinterpretq_f32_u64(vdupq_lane_u64(\
+                    vreinterpret_u64_f32(vget_low_f32(rALn_)),0)); \
+         ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+         ATL_vcxswapRI(rALs_, rALs_); \
+      }
+   #else
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = vdupq_laneq_f64(rXi_, 0); \
+         rXi_ = vdupq_laneq_f64(rXi_, 1); \
+      }
+      #define ATL_vcxswapRI(d_, s_) \
+         d_ = vcombine_f64(vget_high_f64(s_),vget_low_f64(s_))
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      { \
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         rR_ = vpaddq_f64(rR_, rI_); \
+      }
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+         ATL_vcxswapRI(rALs_, rALs_); \
+      }
+   #endif
+#elif defined(ATL_AVXMAC) || defined(ATL_AVX)
+   #ifdef SCPLX
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm256_moveldup_ps(rXi); \
+         rXi_ = _mm256_movehdup_ps(rXi); \
+      }
+      #define ATL_vcxswapRI(d_, s_) d_ = _mm256_shuffle_ps(s_, s_, 0xB1)
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      {  __m128 t0_, t1_;\
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         rR_ = _mm256_hadd_ps(rR_, rI_); \
+         rR_ = _mm256_hadd_ps(rR_, rR_); \
+         t0_ =  _mm256_extractf128_ps(rR_, 1); \
+         t0_ = _mm_add_ps(t0_, _mm256_extractf128_ps(rR_, 0)); \
+         rR_ = _mm256_insertf128_ps(rR_, t0_, 0); \
+      }
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      {  __m128 t0_; \
+         t0_ = _mm256_extractf128_ps(rALn_,0); \
+         t0_ = _mm_movelh_ps(t0_, t0_); \
+         rALn_ = _mm256_insertf128_ps(rALn_,t0_, 0); \
+         rALn_ = _mm256_insertf128_ps(rALn_,t0_, 1); \
+         ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+         ATL_vcxswapRI(rALs_, rALs_); \
+      }
+   #else  /* DCPLX */
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm256_movedup_pd(rXi); \
+         rXi_ = _mm256_shuffle_pd(rXi, rXi, 0xF); \
+      }
+      #define ATL_vcxswapRI(d_, s_) d_ = _mm256_shuffle_pd(s_, s_, 5)
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      {  __m128d t0_;\
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         rR_ = _mm256_hadd_pd(rR_, rI_); \
+         t0_ =  _mm256_extractf128_pd(rR_, 1); \
+         t0_ =  _mm_add_pd(t0_, _mm256_extractf128_pd(rR_, 0)); \
+         rR_ = _mm256_insertf128_pd(rR_, t0_, 0); \
+      }
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         rALn_ = _mm256_insertf128_pd(rALn_,_mm256_extractf128_pd(rALn_,0),1); \
+         ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+         ATL_vcxswapRI(rALs_, rALs_); \
+      }
+   #endif
+#elif defined(ATL_SSE2) && defined(DCPLX)
+   #ifdef ATL_SSE3
+      #define ATL_CXSPLDb 8
+      #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
+      { \ 
+         rXr = _mm_loaddup_pd(pX_); \
+         rXi = _mm_loaddup_pd((pX_)+1); \
+      }
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm_movedup_pd(rXi); \
+         rXi_ = _mm_shuffle_pd(rXi, rXi, 0xF); \
+      }
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      { \
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         rR_ = _mm_hadd_pd(rR_, rI_); \
+      }
+   #else
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm_unpacklo_pd(rXi, rXi); \
+         rXi_ = _mm_unpackhi_pd(rXi, rXi); \
+      }
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      {  __m128d t1_;\
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         t1_ = _mm_unpacklo_pd(rR_, rI_); \
+         rR_ = _mm_unpackhi_pd(rR_, rI_); \
+         ATL_vadd(rR_, rR_, t1_); \
+      }
+   #endif
+   #define ATL_vcxswapRI(d_, s_) d_ = _mm_shuffle_pd(s_, s_, 5);
+#elif defined(ATL_SSE1) && defined(SCPLX)
+   #ifdef ATL_SSE3
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
+      { \
+         rXr_ = _mm_moveldup_ps(rXi); \
+         rXi_ = _mm_movehdup_ps(rXi); \
+      }
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      { \
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         rR_ = _mm_hadd_ps(rR_, rI_); \
+         rR_ = _mm_hadd_ps(rR_, rR_); \
+      }
+   #else
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm_shuffle_ps(rXi, rXi, 0xA0); \
+         rXi_ = _mm_shuffle_ps(rXi, rXi, 0xF5); \
+      }
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      {  __m128 t1_;\
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         t1_ = _mm_unpacklo_ps(rR_, rI_); \
+         rR_ = _mm_unpackhi_ps(rR_, rI_); \
+         ATL_vadd(rR_, rR_, t1_); \
+         t1_ = _mm_movehl_ps(t1_, rR_); \
+         ATL_vadd(rR_, rR_, t1_); \
+      }
+   #endif
+   #define ATL_vcxswapRI(d_, s_) d_ = _mm_shuffle_ps(s_, s_, 0xB1)
+   #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+   { \
+      rALn_ = _mm_movelh_ps(rALn_, rALn_); \
+      ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+      ATL_vcxswapRI(rALs_, rALs_); \
+   }
+#else  /* gnuvec */
+   #if ATL_VLEN == 2
+      #define ATL_VIPERMR ((ATL_VITYPE){0, 0})
+      #define ATL_VIPERMI ((ATL_VITYPE){1, 1})
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0})
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         (rR_)[0] -= (rR_)[1]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1]; \
+      }
+   #elif  ATL_VLEN == 4
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2})
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         rR_[0] += (rR_)[2] - (rR_)[1] - (rR_)[3]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1] + (rI_)[2] + (rI_)[3]; \
+      }
+      #define ATL_VIPERMR ((ATL_VITYPE){0, 0, 2, 2})
+      #define ATL_VIPERMI ((ATL_VITYPE){1, 1, 3, 3})
+   #elif  ATL_VLEN == 8
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2,5,4,7,6})
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         (rR_)[0] += (rR_)[2]+(rR_)[4]+(rR_)[6] \
+               - (rR_)[1]-(rR_)[3]-(rR_)[5]-(rR_)[7]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1] + (rI_)[2] + (rI_)[3] \
+                  + (rI_)[4] + (rI_)[5] + (rI_)[6] + (rI_)[7]; \
+      }
+      #define ATL_VIPERMR ((ATL_VITYPE){0, 0, 2, 2, 4, 4, 6, 6})
+      #define ATL_VIPERMI ((ATL_VITYPE){1, 1, 3, 3, 5, 5, 7, 7})
+   #elif  ATL_VLEN == 16
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2,5,4,7,6, \
+                                                   9,8,11,10,13,12,15,14})
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         (rR_)[0] += (rR_)[2]+(rR_)[4]+(rR_)[6]+(rR_)[8]+(rR_)[10]+(rR_)[12] \
+                   + (rR_)[14] - (rR_)[1]-(rR_)[3]-(rR_)[5]-(rR_)[7] \
+                   - (rR_)[9]-(rR_)[11]-(rR_)[13]-(rR_)[15]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1] + (rI_)[2] + (rI_)[3] \
+                  + (rI_)[4] + (rI_)[5] + (rI_)[6] + (rI_)[7]  \
+                  + (rI_)[8] + (rI_)[9] + (rI_)[10] + (rI_)[11]  \
+                  + (rI_)[12] + (rI_)[13] + (rI_)[14] + (rI_)[15]; \
+      }
+      #define ATL_VIPERMR ((ATL_VITYPE){0, 0, 2, 2, 4, 4, 6, 6, \
+                                        8, 8, 10, 10, 12, 12, 14, 14})
+      #define ATL_VIPERMI ((ATL_VITYPE){1, 1, 3, 3, 5, 5, 7, 7, \
+                                        9, 9, 11, 11, 13, 13, 15, 15})
+   #elif  ATL_VLEN == 32
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2,5,4,7,6, \
+                                                   9,8,11,10,13,12,15,14, \
+                                                   17,16,19,18,21,20,23,22, \
+                                                   25,24,27,26,29,28,31,30})
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         (rR_)[0] += (rR_)[2]+(rR_)[4]+(rR_)[6] \
+                   + (rR_)[8]+(rR_)[10]+(rR_)[12]+(rR_)[14] \
+                   + (rR_)[16]+(rR_)[18]+(rR_)[20]+(rR_)[22] \
+                   + (rR_)[24]+(rR_)[26]+(rR_)[28]+(rR_)[30] \
+                   - (rR_)[1]-(rR_)[3]-(rR_)[5]-(rR_)[7] \
+                   - (rR_)[9]-(rR_)[11]-(rR_)[13]-(rR_)[15] \
+                   - (rR_)[17]-(rR_)[19]-(rR_)[21]-(rR_)[23] \
+                   - (rR_)[25]-(rR_)[27]-(rR_)[29]-(rR_)[31]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1] + (rI_)[2] + (rI_)[3] \
+                  + (rI_)[4] + (rI_)[5] + (rI_)[6] + (rI_)[7]  \
+                  + (rI_)[8] + (rI_)[9] + (rI_)[10] + (rI_)[11]  \
+                  + (rI_)[12] + (rI_)[13] + (rI_)[14] + (rI_)[15] \
+                  + (rI_)[16] + (rI_)[17] + (rI_)[18] + (rI_)[19] \
+                  + (rI_)[20] + (rI_)[21] + (rI_)[22] + (rI_)[23] \
+                  + (rI_)[24] + (rI_)[25] + (rI_)[26] + (rI_)[27] \
+                  + (rI_)[28] + (rI_)[29] + (rI_)[30] + (rI_)[31]; \
+      }
+       #define ATL_VIPERMR ((ATL_VITYPE) \
+        { 0,  0,  2,  2,  4,  4,  6,  6,  8,  8, 10, 10, 12, 12, 14, 14, \
+          16, 16, 18, 18, 20, 20, 22, 22, 24, 24, 26, 26, 28, 28, 30, 30}) 
+       #define ATL_VIPERMI ((ATL_VITYPE) \
+        { 1,  1,  3,  3,  5,  5,  7,  7,  9,  9, 11, 11, 13, 13, 15, 15, \
+         17, 17, 19, 19, 21, 21, 23, 23, 25, 25, 27, 27, 29, 29, 31, 31}) 
+   #else
+      #error "unsupported ATL_VLEN!"
+   #endif
+   #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+   { \
+      rXr_ = __builtin_shuffle(rXi_, ATL_VIPERMR); \
+      rXi_ = __builtin_shuffle(rXi_, ATL_VIPERMI); \
+   }
+#endif
+/*
+ * brute-force alpha prep works on any gcc-compat compiler & vec ISA
+ */
+#ifndef ATL_vcxPrepAlpha
+   #if ATL_VLEN == 2  /* case that can be vec wt predef ops */
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+         ATL_vcxswapRI(rALs_, rALs_); \
+      }
+   #else
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         TYPE mr_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
+         TYPE a0_, a1_; int i_; \
+         ATL_vst(mr_, rALn_); \
+         a0_ = *(mr_); a1_ = mr_[1]; \
+         for (i_=2; i_ < ATL_VLEN; i_ += 2) \
+         { mr_[i_] = a0_; mr_[i_+1] = a1_; } \
+         ATL_vld(rALn_, mr_); \
+         a0_ = -a1_; a1_ = *(mr_); \
+         for (i_=0; i_ < ATL_VLEN; i_ += 2) \
+         { mr_[i_] = a0_; mr_[i_+1] = a1_; } \
+         ATL_vld(rALs_, mr_); \
+      }
+   #endif
+#endif
+/*
+ * brute force combine that will work on any gcc-compatible compiler/vec ISA
+ */
+#ifndef ATL_vcxdotcomb
+   #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR gets ans */ \
+   { \
+      TYPE mr_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
+      TYPE mi_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
+      int i_;  \
+      register TYPE dr_=ATL_rzero, di_=ATL_rzero; \
+      ATL_vst(mr_, rR_); \
+      ATL_vst(mi_, rI_); \
+      for (i_=0; i_ < ATL_VLEN; i_ += 2) \
+      { \
+         dr_ += mr_[i_] - mr_[i_+1]; \
+         di_ += mi_[i_] + mi_[i_+1]; \
+      } \
+      mr_[0] = dr_; \
+      mr_[1] = di_; \
+      ATL_vld(rR_, mr_); \
+   }
+#endif
+/*
+ * Default vcxsplitRIld that uses ATL_vld & ATL_vcxsplitRI
+ */
+#ifndef ATL_CXSPLDb
+   #define ATL_CXSPLDb ATL_VLENb
+#endif
+#ifndef ATL_vcxsplitRIld
+   #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
+   { \
+      ATL_vld(rXi_, pX_); \
+      ATL_vcxsplitRI(rXr_, rXi_); \
+   }
+#endif
+/*
+ * Convenience funcs for one vector iteration of DOT product, aligned &
+ * unaligned Y. rX_ comes in already preloaded so that it can be used across mul
+ * cols, as in GEMVT.  vX is natural order, vXs real/imag swapped (cxriswap).
+ */
+#define ATL_vcxdotA(dotR_, dotI_, vX_, vXs_, pY_) \
+{\
+   register ATL_VTYPE vY_; \
+   ATL_vld(vY_, pY_); \
+   ATL_vmac(dotR_, vX_, vY_); \
+   ATL_vmac(dotI_, vXs_, vY); \
+}
+
+#define ATL_vcxdotU(dotR_, dotI_, vX_, vXs_, pY_) \
+{\
+   register ATL_VTYPE vY_; \
+   ATL_vuld(vY_, pY_); \
+   ATL_vmac(dotR_, vX_, vY_); \
+   ATL_vmac(dotI_, vXs_, vY); \
+}
+/*
+ * Convenience funcs for one vector iteration of AXPLY, [Un]&Aligned pY_
+ * X comes in already split into vXr_ (real elts) and vXi_ (imag elts) so
+ * that the same X values can be used across multiple Y vecs (which are
+ * actually A columns for GER.
+ */
+#define ATL_vcxaxpyA(pY_, vXr_, vXi_, vALn_, vALs_) \
+{                                      /* ALs={ALr,-iAL}; */ \
+   register ATL_VTYPE vY_;             /* ALn={iAL,rAL} */ \
+   ATL_vld(vY_, pY_);                  /* vY = {iY,rY, ...} */ \
+   ATL_vmac(vY_, vXi_, vALs_);         /* vY += {iX*rAL, -iX*iAL} */ \
+   ATL_vmac(vY_, vXr_, vALn_);         /* vY += {rX*iAL, rX*rAL} */ \
+   ATL_vst(pY_, vY_); \
+}
+
+#define ATL_vcxaxpyU(pY_, vXr_, vXi_, vALn_, vALs_) \
+{                                      /* ALs={ALr,-iAL}; */ \
+   register ATL_VTYPE vY_, vXr_, vXi_; /* ALn={iAL,rAL} */ \
+   ATL_vuld(vY_, pY_);                 /* vY = {iY,rY, ...} */ \
+   ATL_vmac(vY_, vXi_, vALs_);         /* vY += {iX*rAL, -iX*iAL} */ \
+   ATL_vmac(vY_, vXr_, vALn_);         /* vY += {rX*iAL, rX*rAL} */ \
+   ATL_vst(pY_, vY_); \
+}
+/*
+ * Remainder load/store functions.  They take 0 < n_ < (ATL_VLEN/2), which
+ * is the number of complex elts to load/store from/to the ptr
+ */
+
+#if ATL_VLEN <= 4
+   #define ATL_vcxldR(r_, p_, n_) ATL_vcxld1(r_, p_)
+   #define ATL_vcxuldR(r_, p_, n_) ATL_vcxuld1(r_, p_)
+   #define ATL_vcxstR(p_, r_, n_) ATL_vcxst1(p_, r_)
+   #define ATL_vcxustR(p_, r_, n_) ATL_vcxust1(p_, r_)
+   #define ATL_vcxldXYR(rX_, pX_, rY_, pY_, n_) \
+   { \
+      ATL_vcxld1(rX_, pX_); \
+      ATL_vcxld1(rY_, pY_); \
+   }
+   #define ATL_vcxldXuYR(rX_, pX_, rY_, pY_, n_) \
+   { \
+      ATL_vcxld1(rX_, pX_); \
+      ATL_vcxuld1(rY_, pY_); \
+   }
+   #define ATL_vcxlduXuYR(rX_, pX_, rY_, pY_, n_) \
+   { \
+      ATL_vcxuld1(rX_, pX_); \
+      ATL_vcxuld1(rY_, pY_); \
+   }
+@BEGINPROC ldR2 nm nm1 arg1 nm2 arg2
+   #define ATL_vcx@(nm)R(@(arg1),@(arg2),n_) \
+   { \
+      switch(n_) \
+      { \
+   @iexp k 2 @(j) /
+   @iexp k @(k) -1 +
+   @iexp i 1 0 +
+   @iwhile i < @(k)
+      case @(i) : \
+         ATL_vcx@(nm1)@(i)(@(arg1)); \
+         ATL_vcx@(nm2)@(i)(@(arg2)); \
+         break; \
+      @iexp i @(i) 1 +
+   @endiwhile
+      default: \
+         ATL_vcx@(nm1)@(i)(@(arg1)); \
+         ATL_vcx@(nm2)@(i)(@(arg2)); \
+      } \
+   }
+@ENDPROC
+@BEGINPROC ldstR1 nm arg
+   #define ATL_vcx@(nm)R(@(arg),n_) \
+   { \
+      switch(n_) \
+      { \
+   @iexp k 2 @(j) /
+   @iexp k @(k) -1 +
+   @iexp i 1 0 +
+   @iwhile i < @(k)
+      case @(i) : \
+         ATL_vcx@(nm)@(i)(@(arg)); \
+         break; \
+      @iexp i @(i) 1 +
+   @endiwhile
+      default: \
+         ATL_vcx@(nm)@(i)(@(arg)); \
+      } \
+   }
+@ENDPROC
+@iexp j 4 4 +
+@iwhile j < 64
+#elif ATL_VLEN == @(j)
+   @CALLPROC ldR2 ldXY ld rX_,pX_ ld rY_,pY_
+   @CALLPROC ldR2 ldXuY ld rX_,pX_ uld rY_,pY_
+   @CALLPROC ldR2 lduXuY uld rX_,pX_ uld rY_,pY_
+   @CALLPROC ldstR1 ld r_,p_
+   @CALLPROC ldstR1 st p_,r_
+   @CALLPROC ldstR1 uld r_,p_
+   @CALLPROC ldstR1 ust p_,r_
+   @iexp j @(j) @(j) +
+@endiwhile
+#endif    /* end VLEN test for remainder definitions */
+
+#endif   /* end multiple inclusion guard */
