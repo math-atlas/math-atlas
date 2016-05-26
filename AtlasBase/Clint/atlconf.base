@@ -606,7 +606,10 @@ void GetFlags(int nargs,                /* nargs as passed into main */
          {
             if (++i >= nargs)
                PrintUsage(args[0], i, "out of arguments");
-            *gccflags = args[i];
+            if (args[i-2][1] == 'C')
+               comps[k] = args[i];
+            else
+               *gccflags = args[i];
          }
 @endifdef
          else
@@ -695,11 +698,17 @@ enum OSTYPE {OSOther=0, OSLinux, OSSunOS, OSSunOS4, OSOSF1, OSIRIX, OSAIX,
 enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, 
               AFARM, AFS390};
 
-#define NMACH 54
+/*
+ * Corei1: Nahalem / Westmere
+ * Corei2: ivy bridge, sandy bridge: AVX
+ * Corei3: haswell: AVXMAC
+ * Corei3EP: v3 Haswell, E5-26XX
+ */
+#define NMACH 59
 static char *machnam[NMACH] = 
-   {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
-    "POWER6", "POWER7", "POWERe6500", 
-    "IBMz9", "IBMz10", "IBMz196", "IBMzEC12","IBMz13",
+   {"UNKNOWN", "PPCG4", "PPCG5", "POWER3", "POWER4", "POWER5",
+    "POWER6", "POWER7", "POWER8", "POWERe6500", 
+    "IBMz9", "IBMz10", "IBMz196", "IBMzEC12", "IBMz13",
     "x86x87", "x86SSE1", "x86SSE2", "x86SSE3",
     "P5", "P5MMX", "PPRO", "PII", "PIII", "PM", "CoreSolo", 
     "CoreDuo", "Core2Solo", "Core2", "Corei1", "Corei2", "Corei3",
@@ -707,9 +716,10 @@ static char *machnam[NMACH] =
     "Efficeon", "K7", "HAMMER", "AMD64K10h", "AMDLLANO", "AMDDOZER","AMDDRIVER",
     "UNKNOWNx86", "IA64Itan", "IA64Itan2",
     "USI", "USII", "USIII", "USIV", "UST1", "UST2", "UnknownUS", 
-    "MIPSR1xK", "MIPSICE9", "ARMv7"};
-enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
-               IbmPwr6, IbmPwr7, Pwre6500,
+    "MIPSR1xK", "MIPSICE9", 
+    "ARMa7", "ARMa9", "ARMa15", "ARMa17", "ARM64xgene1"};
+enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5,
+               IbmPwr6, IbmPwr7, IbmPwr8, Pwre6500,
                IbmZ9, IbmZ10, IbmZ196, IbmZEC12, IbmZ13, /* s390(x) in Linux */ 
                x86x87, x86SSE1, x86SSE2, x86SSE3, /* generic targets */
                IntP5, IntP5MMX, IntPPRO, IntPII, IntPIII, IntPM, IntCoreS,
@@ -720,10 +730,17 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                SunUSI, SunUSII, SunUSIII, SunUSIV, SunUST1, SunUST2, SunUSX, 
                MIPSR1xK, /* includes R10K, R12K, R14K, R16K */
                MIPSICE9,  /* SiCortex ICE9 -- like MIPS5K */
-               ARMv7      /* includes Cortex A8, A9 */
+@skip               ARMv7      /* includes Cortex A8, A9 */
+               ARM7,      /* odroid-little */
+               ARM9,      /* pandaboard */
+               ARM15,     /* tegra, odroid-big */
+               ARM17,     /* lots of tablets */
+               ARM64xg,     /* includes ARMv8 */
                };
 #define MachIsX86(mach_) \
    ( (mach_) >= x86x87 && (mach_) <= x86X )
+#define MachIsPWR(mach_) \
+   ( (mach_) >= IbmPwr3 && (mach_) <= Pwre6500 )
 #define MachIsIA64(mach_) \
    ( (mach_) >= IA64Itan && (mach_) <= IA64Itan2 )
 #define MachIsUS(mach_) \
@@ -738,7 +755,9 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
 #define MachIsPPC(mach_) \
    ( (mach_) >= PPCG4 && (mach_) <= PPCG5 )
 #define MachIsARM(mach_) \
-   ( (mach_) == ARMv7 )
+   ( (mach_) >= ARM7 && (mach_) <= ARM17 )
+#define MachIsARM64(mach_) \
+   ( (mach_) == ARM64xg )
 #define MachIsS390(mach_) \
    ( (mach_) >= IbmZ9 && (mach_) <= IbmZ13 )
 
@@ -754,22 +773,24 @@ enum F2CNAME {f2c_NamErr=0, f2c_Add_, f2c_Add__, f2c_NoChange, f2c_UpCase};
 enum F2CINT {f2c_IntErr=0, FintCint, FintClong, FintClonglong, FintCshort};
 enum F2CSTRING {f2c_StrErr=0, fstrSun, fstrCray, fstrStructVal, fstrStructPtr};
 
-#define NISA 12
+#define NISA 16
 static char *ISAXNAM[NISA] = 
-   {"", "VSX", "VSXS390", "AltiVec", "AVXMAC", "AVXFMA4", "AVX", 
-    "SSE3", "SSE2", "SSE1", "3DNow", "NEON"};
+   {"", "VSX", "VSX390", "AltiVec", "AVXZ",
+    "AVXMAC", "AVXFMA4", "AVX", "SSE3", "SSE2", "SSE1", "3DNow", 
+    "FPV3D2MACNEON", "FPV3D16MACNEON", "FPV3D32MAC", "FPV3D16MAC"};
 enum ISAEXT 
-   {ISA_None=0, ISA_VSX, ISA_VSXZ, ISA_AV, ISA_AVXMAC, ISA_AVXFMA4, ISA_AVX, 
-    ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow, ISA_NEON};
+   {ISA_None=0, ISA_VSX, ISA_VSXZ, ISA_AV, ISA_AVXZ,
+    ISA_AVXMAC, ISA_AVXFMA4, ISA_AVX, ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow, 
+    ISA_NEON, ISA_NEON16, ISA_VFP3D32MAC, ISA_VFP3D16MAC};
 
 @ROUT atlconf.h asmconf.h
-#define NASMD 9
+#define NASMD 10
 enum ASMDIA 
    {ASM_None=0, gas_x86_32, gas_x86_64, gas_sparc, gas_ppc, gas_parisc, 
-    gas_mips, gas_arm, gas_s390};
+    gas_mips, gas_arm, gas_arm64, gas_s390};
 static char *ASMNAM[NASMD] =
    {"",     "GAS_x8632", "GAS_x8664", "GAS_SPARC", "GAS_PPC", "GAS_PARISC",
-    "GAS_MIPS", "GAS_ARM", "GAS_S390"};
+    "GAS_MIPS", "GAS_ARM", "GAS_ARM64", "GAS_S390"};
 @ROUT atlconf.h
 
 /*
@@ -1164,7 +1185,7 @@ void GetEnter(FILE *fpout)
 {
    char ln[128];
    fprintf(fpout, "---------- PRESS ENTER TO CONTINUE ---------- ");
-   fgets(ln, 128, stdin);
+   assert(fgets(ln, 128, stdin));
 }
 
 int DisplayFile(char *fnam, FILE *fpout, int nlines)
@@ -1285,6 +1306,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
       else if (strstr(res, "ia64")) fam = AFIA64;
       else if (strstr(res, "mips")) fam = AFMIPS;
       else if (strstr(res, "arm")) fam = AFARM;
+      else if (strstr(res, "aarch64")) fam = AFARM;
       else if (strstr(res, "s390")) fam = AFS390;
       else if ( strstr(res, "i686") || strstr(res, "i586") ||
                 strstr(res, "i486") || strstr(res, "i386") ||
@@ -1310,6 +1332,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
                    strstr(res, "x86_64") ) fam = AFX86;
          else if (strstr(res, "mips")) fam = AFMIPS;
          else if (strstr(res, "arm")) fam = AFARM;
+         else if (strstr(res, "aarch64")) fam = AFARM;
          else if (strstr(res, "s390")) fam = AFS390;
          free(res);
       }
@@ -1931,12 +1954,11 @@ int GetFirstInt(char *ln);
 int GetFirstHex(char *ln);
 long long GetFirstLong(char *ln);
 long long GetFirstLongHex(char *ln);
-long long GetLastLongWithRound(char *ln);
 double GetFirstDouble(char *ln);
 int GetLastInt(char *ln);
 int GetLastHex(char *ln);
 long long GetLastLong(char *ln);
-long long GetLastLongHex(char *ln);
+long long GetLastLongWithRound(char *ln);
 int fNumLines(char *fnam);
 char *GetPathEnvVar(void);
 @skip char *CmndResults(char *targ, char *cmnd);
@@ -2344,6 +2366,19 @@ IRun_VSXS390 :
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_vsxs390 args="$(args)" \
                 redir=config0.out
 	- cat config0.out
+@multidef pre s              s              d          d
+@multidef prb vec            vec            mac        mac
+@multidef asm FPV3D32MACNEON FPV3D16MACNEON FPV3D32MAC FPV3D16MAC
+@whiledef fpu neon           neon-fp16      vfpv3      vfpv3-d16
+IRun_@(asm) :
+	$(CC) $(CCFLAGS) -mfpu=@(fpu) -o xprobe_@low@(asm) $(SRCdir)/backend/probe_@(pre)@(prb).c $(SRCdir)/backend/probe_@(asm).S
+	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_@low@(asm) args="$(args)" \
+                redir=config0.out
+	- cat config0.out
+   @undef pre
+   @undef prb
+   @undef asm
+@endwhile
 @multidef pre s    d    s       d   s
 @whiledef asm SSE1 SSE2 AltiVec VSX 3DNow
 IRun_@(asm) :
@@ -2385,7 +2420,7 @@ IRun_@(aff) :
 	- cat config0.out
 @endwhile
 
-@whiledef asm GAS_x8632 GAS_x8664 GAS_PPC GAS_PARISC GAS_SPARC GAS_ARM GAS_S390
+@whiledef asm GAS_x8632 GAS_x8664 GAS_PPC GAS_PARISC GAS_SPARC GAS_ARM GAS_ARM64 GAS_S390
 IRun_@(asm) :
 	$(CC) $(CCFLAGS) -o xprobe_@low@(asm) $(SRCdir)/backend/probe_this_asm.c $(SRCdir)/backend/probe_@low@(asm).S
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_@low@(asm) args="$(args)" \
@@ -2739,6 +2774,21 @@ int main(int nargs, char **args)
    fprintf(stdout, "SUCCESS\n");
    return(0);
 }
+@ROUT probe_gas_arm64.S
+#include "atlas_asm.h"
+#
+# Linux ARM assembly for:
+# int asm_probe(int i)
+# RETURNS: i*3
+#
+
+.text
+.globl  ATL_asmdecor(asm_probe)
+.type   ATL_asmdecor(asm_probe), %function
+ATL_asmdecor(asm_probe):
+        add     x0, x0, x0, LSL #1
+        ret
+.size ATL_asmdecor(asm_probe),.-ATL_asmdecor(asm_probe)
 @ROUT probe_gas_arm.S
 #define ATL_GAS_ARM
 #include "atlas_asm.h"
@@ -2923,6 +2973,30 @@ int main(int nargs, char **args)
    free(vp);
    return(0);
 }
+@ROUT probe_smac
+   @define typ @float@
+@ROUT probe_dmac
+   @define typ @double@
+@ROUT probe_dmac probe_smac
+#include <stdio.h>
+#include <stdlib.h>
+int main(int nargs, char **args)
+{
+   @(typ) x=2.0, y=4.0, z=(-8.0), ans;
+   void do_fmac(@(typ)*, @(typ)*, @(typ)*);
+
+   ans = z + x*y;
+   do_fmac(&z, &x, &y);
+   if (z != ans)
+   {
+      fprintf(stderr, "wanted=%.2f, got=%.2f\n", ans, z);
+      printf("FAILURE\n");
+      exit(1);
+   }
+   printf("SUCCESS\n");
+   return(0);
+}
+   @undef typ
 @ROUT probe_dvec
 #include <stdio.h>
 #include <stdlib.h>
@@ -3181,6 +3255,77 @@ ATL_asmdecor(do_vsum):
         emms
         ret
 #endif
+@ROUT probe_fpv3D32MACNEON.S probe_fpv3D16MACNEON.S
+#include "atlas_asm.h"
+/*
+  ARM NEON assembler for:
+                     r0        r1       r2
+  void do_vsum(float* z, float* x,float* y)
+   where x, y, and z are vectors of length 4
+   RETURNS: z = x + y
+*/ 
+.code   32
+.fpu    neon
+.text
+.align 2
+.globl  ATL_asmdecor(do_vsum)
+.type   ATL_asmdecor(do_vsum), %function
+ATL_asmdecor(do_vsum):
+@ROUT probe_fpv3D16MACNEON.S
+   vldm     r1,     {d0-d1}
+   vldm     r2,     {d2-d3}
+   vadd.f32 d0,     d0,      d2
+   vadd.f32 d1,     d1,      d3
+   vstm     r0,     {d0-d1}
+@ROUT probe_fpv3D32MACNEON.S
+   vldm     r1,     {d16-d17}
+   vldm     r2,     {d18-d19}
+   vadd.f32 d16,     d16,      d18
+   vadd.f32 d17,     d17,      d19
+   vstm     r0,     {d16-d17}
+@ROUT probe_fpv3D32MACNEON.S probe_fpv3D16MACNEON.S
+.size ATL_asmdecor(do_vsum),.-ATL_asmdecor(do_vsum)
+@ROUT probe_fpv3D32MAC.S probe_fpv3D16MAC.S @\
+      probe_fpv3D32NOMAC.S probe_fpv3D16NOMAC.S
+#include "atlas_asm.h"
+/*
+  ARM vfpv3 assembler for:
+                      r0        r1       r2
+  void do_fmac(double* z, double* x,double* y)
+   RETURNS: *z += *x * *y
+*/ 
+.code   32
+.fpu    vfpv3
+.text
+.align 2
+.globl  ATL_asmdecor(do_fmac)
+.type   ATL_asmdecor(do_fmac), %function
+ATL_asmdecor(do_fmac):
+@ROUT probe_fpv3D16MAC.S probe_fpv3D16NOMAC.S
+   fldd d0, [r0]
+   fldd d1, [r1]
+   fldd d2, [r2]
+@ROUT probe_fpv3D16NOMAC.S
+   fmuld d1, d1, d2
+   faddd d0, d0, d1
+@ROUT probe_fpv3D16MAC.S
+   fmacd d0, d1, d2
+@ROUT probe_fpv3D16MAC.S probe_fpv3D16NOMAC.S
+   fstd d0, [r0]
+@ROUT probe_fpv3D32MAC.S probe_fpv3D32NOMAC.S
+   fldd d31, [r0]
+   fldd d30, [r1]
+   fldd d29, [r2]
+@ROUT probe_fpv3D32NOMAC.S
+   fmuld d30, d30, d29
+   faddd d31, d31, d30
+@ROUT probe_fpv3D32MAC.S
+   fmacd d31, d30, d29
+@ROUT probe_fpv3D32MAC.S probe_fpv3D32MAC.S
+   fstd d31, [r0]
+@ROUT probe_fpv3D32MAC.S probe_fpv3D16MAC.S
+   bx lr
+.size ATL_asmdecor(do_fmac),.-ATL_asmdecor(do_fmac)
 @ROUT probe_NEON.S
 #include "atlas_asm.h"
 #
@@ -7034,6 +7179,10 @@ MACH=POWER7 OS=ALL LVL=1010 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
    'gcc' '-O2 -mvsx -mcpu=power7 -mtune=power7 -m64 -mvrsave -funroll-all-loops'
 MACH=POWER7 OS=ALL LVL=1010 COMPS=f77
    'gfortran' '-O2 -mvsx -mcpu=power7 -mtune=power7 -m64 -mvrsave -funroll-all-loops'
+MACH=POWER8 OS=ALL LVL=1010 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
+   'gcc' '-O2 -mvsx -mcpu=power8 -mtune=power8 -m64 -mvrsave -funroll-all-loops'
+MACH=POWER8 OS=ALL LVL=1010 COMPS=f77
+   'gfortran' '-O2 -mvsx -mcpu=power8 -mtune=power8 -m64 -mvrsave -funroll-all-loops'
 MACH=POWER6 OS=ALL LVL=1010 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
    'gcc' '-mcpu=power6 -mtune=power6 -maltivec -O3 -fno-schedule-insns -fschedule-insns2 -minsert-sched-nops=2'
 MACH=POWER5 OS=ALL LVL=1010 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
@@ -7098,14 +7247,29 @@ MACH=P4,PM OS=WinNT,Win64 LVL=0 COMPS=icc,dmc,smc,dkc,skc,xcc
 #
 # ARM defaults
 #
-MACH=ARMv7 OS=ALL LVL=1000 COMPS=xcc
-   'gcc' '-mcpu=cortex-a8 -O1 -mfpu=vfpv3 -mfloat-abi=softfp '
-MACH=ARMv7 OS=ALL LVL=1000 COMPS=smc,skc,gcc,icc
-   'gcc' '-O1 -mcpu=cortex-a8 -mtune=cortex-a8 -mfpu=vfpv3 -mfloat-abi=softfp -fno-expensive-optimizations'
-MACH=ARMv7 OS=ALL LVL=1000 COMPS=dmc,dkc
-   'gcc' '-O1 -mcpu=cortex-a8 -mtune=cortex-a8 -mfpu=vfpv3 -mfloat-abi=softfp -fno-schedule-insns2'
-MACH=ARMv7 OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-mcpu=cortex-a8 -mfpu=vfpv3 -mfloat-abi=softfp -O'
+MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=xcc
+   'gcc' '-O2'
+MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=smc,skc,gcc,icc
+   'gcc' '-O2 -fselective-scheduling2'
+MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=dmc,dkc
+   'gcc' '-O2 -fno-schedule-insns -fno-schedule-insns2 -fprefetch-loop-arrays'
+MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-O2'
+#
+# ARM64 defaults
+#
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=xcc
+   'gcc' '-O2'
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=icc
+   'gcc' ' -mcpu=xgene1 -mtune=xgene1 -O2'
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=skc,gcc,dkc
+   'gcc' ' -mcpu=xgene1 -mtune=xgene1 -O3  -ftree-vect-loop-version -ftree-vectorize -fprefetch-loop-arrays'
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=smc
+   'gcc' '-O2 -mcpu=xgene1 -mtune=xgene1 -fprefetch-loop-arrays'
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=dmc
+   'gcc' '-O1 -mcpu=xgene1 -mtune=xgene1 -fexpensive-optimizations -fprefetch-loop-arrays'
+MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-O2'
 #
 # Generic defaults
 #
@@ -7947,7 +8111,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
 
    assert(!system("make xspew"));
    compsflags = Comps2Flags(comps);  /* Xlate comp/flag array to xspew flags */
-   i = strlen(frm) + 11*13 + strlen(srcdir) + strlen(bindir);
+   i = strlen(frm) + 11*14 + strlen(srcdir) + strlen(bindir);
    if (cdefs)
       i += strlen(cdefs);
    if (f2cdefs)
@@ -8773,8 +8937,10 @@ int main(int nargs, char **args)
 /*
  * Update l2size, and set f2cdefs/cdefs if they are null 
  */
-   if (!l2size) l2size = 4*1024*1024;
-   else l2size *= 1024;
+   if (!l2size) 
+      l2size = ((ptrbits == 64) ? 32 : 4) * 1024*1024;
+   else 
+      l2size *= 1024;
    if (!f2cdefs) f2cdefs = "";
 /*
  * Append any appended flags, and then we have just compilers and flags
@@ -8849,6 +9015,9 @@ int main(int nargs, char **args)
    fprintf(fpout, "#  -------------------------------------------------\n");
    fprintf(fpout, "   ARCH = %s", machnam[mach]);
    fprintf(fpout, "%d", ptrbits);
+   #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
+      fprintf(fpout, "LE");
+   #endif
    if (ISAX)
       fprintf(fpout, "%s", ISAXNAM[ISAX]);
    if (!USEIEEE)
@@ -8980,7 +9149,7 @@ int main(int nargs, char **args)
          fprintf(fpout, " %d", tids[k]);
    }
    else
-      fprintf(fpout, "TIDLIST=");
+      fprintf(fpout, "   TIDLIST=");
    fprintf(fpout, "\n\n");
 
    fprintf(fpout,

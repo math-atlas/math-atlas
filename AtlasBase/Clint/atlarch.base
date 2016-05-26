@@ -362,10 +362,12 @@ enum MACHTYPE Chip2Mach(enum CHIP chip, int model, int x8664)
       case 0x2D:
       case 0x3A:
       case 0x2A:
+      case 0x3E:
          iret = IntCorei2;
 	 break;
       case 0x45:
       case 0x3C:
+      case 0x3F:  /* really i3EP, but same for stable */
          iret = IntCorei3;
          break;
       default:
@@ -643,6 +645,8 @@ enum MACHTYPE ProbeArch()
             mach = IbmPwr5;
          else if (strstr(res, "PowerPC_POWER7"))
             mach = IbmPwr7;
+         else if (strstr(res, "PowerPC_POWER8"))
+            mach = IbmPwr8;
          else if (strstr(res, "PowerPC_POWER6"))
             mach = IbmPwr6;
          else if (strstr(res, "PowerPC_POWER4"))
@@ -794,6 +798,55 @@ enum MACHTYPE ProbeArch()
       break;
    case AFARM:
       res = atlsys_1L(NULL, "fgrep 'Processor' /proc/cpuinfo", 0, 0);
+      if (!res)
+         res = atlsys_1L(NULL, "fgrep cpu /proc/cpuinfo", 0, 0);
+      if (res)
+      {
+         if (strstr(res, "ARMv7") || strstr(res,"v7l")) 
+         {
+            free(res);
+            res = atlsys_1L(NULL, "fgrep 'CPU part' /proc/cpuinfo", 0, 0);
+            if (res)
+            {
+               char *sp;
+               sp = strstr(res, "0x");
+               if (sp)
+               {
+                  int i;
+                  if (sscanf(sp, "%x", &i) == 1)
+                  {
+                     i &= 0xFF;
+                     switch(i)
+                     {
+                     case 7: 
+                        mach = ARM7;
+                        break;
+                     case 9: 
+                        mach = ARM9;
+                        break;
+                     case 15: 
+                        mach = ARM15;
+                        break;
+                     case 17: 
+                        mach = ARM17;
+                        break;
+                     default:;
+                     }
+                  }
+               }
+            }
+         }
+         else if (strstr(res, "AArch64"))
+         {
+            free(res);
+            res = atlsys_1L(NULL, "fgrep 'Hardware' /proc/cpuinfo", 0, 0);
+            if (res && strstr(res, "X-Gene "))
+               mach = ARM64xg;
+         }
+         free(res);
+      }
+@beginskip
+      res = atlsys_1L(NULL, "fgrep 'Processor' /proc/cpuinfo", 0, 0);
       if (res)
       {
          if (strstr(res, "ARMv7") || strstr(res,"v7l")) mach = ARMv7;
@@ -804,6 +857,7 @@ enum MACHTYPE ProbeArch()
          if (strstr(res, "ARMv7") || strstr(res,"v7l")) mach = ARMv7;
          free(res);
       }
+@endskip
       break;
    case AFIA64:
       res = atlsys_1L(NULL, "fgrep 'Itanium' /proc/cpuinfo", 0, 0);
@@ -827,8 +881,7 @@ enum MACHTYPE ProbeArch()
       {
          if (res[0] != '\0')
          {
-            if (strstr(res, "Itanium 2") || strstr(res, "McKinley") ||
-                strstr(res, "IA-64")) 
+            if (strstr(res, "Itanium 2") || strstr(res, "McKinley"))
                mach = IA64Itan2;
             else if (strstr(res, "Itanium")) mach = IA64Itan;
          }
