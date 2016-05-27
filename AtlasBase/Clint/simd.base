@@ -1092,6 +1092,8 @@
  *    ATL_vcxsplitRIld,  ATL_vcxsplitRI, ATL_vcxPrepAlpha
  * Macros for dot-based computation:
  *    ATL_vcxswapRI, ATL_vcxdotcomb
+ * Macros for updating complex C in GEMM
+ *   * ATL_vunpckLO ATL_vunpckHI
  * ============================================================================
  */
 /*
@@ -1477,6 +1479,7 @@
  * Define ATL_vcxdotcomb & ATL_vcxPrepAlpha if you don't want to use 
  * system-indep (slow) versions.  ATL_vcxdotcomb has a fast sys-indep
  * version for VLEN==2.
+ * Define ATL_vunpckLO/HI if you don't want to use sys-ind vers.
  */
 #ifdef ATL_VSX
    #ifdef SCPLX
@@ -1604,6 +1607,8 @@
    #endif
 #elif defined(ATL_AVXMAC) || defined(ATL_AVX)
    #ifdef SCPLX
+      #define ATL_vunpckLO(d_, s0_, s1_) d_ = _mm256_unpacklo_ps(s0_, s1_)
+      #define ATL_vunpckHI(d_, s0_, s1_) d_ = _mm256_unpackhi_ps(s0_, s1_)
       #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
       { \
          rXr_ = _mm256_moveldup_ps(rXi); \
@@ -1629,6 +1634,8 @@
          ATL_vcxswapRI(rALs_, rALs_); \
       }
    #else  /* DCPLX */
+      #define ATL_vunpckLO(d_, s0_, s1_) d_ = _mm256_unpacklo_pd(s0_, s1_)
+      #define ATL_vunpckHI(d_, s0_, s1_) d_ = _mm256_unpackhi_pd(s0_, s1_)
       #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
       { \
          rXr_ = _mm256_movedup_pd(rXi); \
@@ -1651,6 +1658,8 @@
       }
    #endif
 #elif defined(ATL_SSE2) && defined(DCPLX)
+   #define ATL_vunpckLO(d_, s0_, s1_) d_ = _mm_unpacklo_pd(s0_, s1_)
+   #define ATL_vunpckHI(d_, s0_, s1_) d_ = _mm_unpackhi_pd(s0_, s1_)
    #ifdef ATL_SSE3
       #define ATL_CXSPLDb 8
       #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
@@ -1684,6 +1693,8 @@
    #endif
    #define ATL_vcxswapRI(d_, s_) d_ = _mm_shuffle_pd(s_, s_, 5);
 #elif defined(ATL_SSE1) && defined(SCPLX)
+   #define ATL_vunpckLO(d_, s0_, s1_) d_ = _mm_unpacklo_ps(s0_, s1_)
+   #define ATL_vunpckHI(d_, s0_, s1_) d_ = _mm_unpackhi_ps(s0_, s1_)
    #ifdef ATL_SSE3
       #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
       { \
@@ -1721,6 +1732,10 @@
    }
 #else  /* gnuvec */
    #if ATL_VLEN == 2
+      #ifndef ATL_vunpckLO
+         #define ATL_vunpckLO(d_, s0_, s1_) d_ = {(s1_)[0],(s0_)[0]}
+         #define ATL_vunpckHI(d_, s0_, s1_) d_ = {(s1_)[1],(s0_)[1]}
+      #endif
       #define ATL_VIPERMR ((ATL_VITYPE){0, 0})
       #define ATL_VIPERMI ((ATL_VITYPE){1, 1})
       #define ATL_vcxswapRI(rd_, rs_) \
@@ -1731,6 +1746,12 @@
          (rR_)[1] = (rI_)[0] + (rI_)[1]; \
       }
    #elif  ATL_VLEN == 4
+      #ifndef ATL_vunpckLO
+         #define ATL_vunpckLO(d_, s0_, s1_) d_ = \
+            {(s1_)[2],(s0_)[2],(s1_)[0],(s0_)[0]}
+         #define ATL_vunpckHI(d_, s0_, s1_) d_ = \
+            {(s1_)[3],(s0_)[3],(s1_)[1],(s0_)[1]}
+      #endif
       #define ATL_vcxswapRI(rd_, rs_) \
          rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2})
       #define ATL_vcxdotcomb(rR_, rI_) \
@@ -1741,6 +1762,14 @@
       #define ATL_VIPERMR ((ATL_VITYPE){0, 0, 2, 2})
       #define ATL_VIPERMI ((ATL_VITYPE){1, 1, 3, 3})
    #elif  ATL_VLEN == 8
+      #ifndef ATL_vunpckLO
+         #define ATL_vunpckLO(d_, s0_, s1_) d_ = \
+            {(s1_)[6],(s0_)[6],(s1_)[4],(s0_)[4], \
+             (s1_)[2],(s0_)[2],(s1_)[0],(s0_)[0]}
+         #define ATL_vunpckHI(d_, s0_, s1_) d_ = \
+            {(s1_)[7],(s0_)[7],(s1_)[5],(s0_)[5], \
+             (s1_)[3],(s0_)[3],(s1_)[1],(s0_)[1]}
+      #endif
       #define ATL_vcxswapRI(rd_, rs_) \
          rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2,5,4,7,6})
       #define ATL_vcxdotcomb(rR_, rI_) \
@@ -1753,6 +1782,18 @@
       #define ATL_VIPERMR ((ATL_VITYPE){0, 0, 2, 2, 4, 4, 6, 6})
       #define ATL_VIPERMI ((ATL_VITYPE){1, 1, 3, 3, 5, 5, 7, 7})
    #elif  ATL_VLEN == 16
+      #ifndef ATL_vunpckLO
+         #define ATL_vunpckLO(d_, s0_, s1_) d_ = \
+            {(s1_)[14],(s0_)[14],(s1_)[12],(s0_)[12], \
+             (s1_)[10],(s0_)[10],(s1_)[8],(s0_)[8], \
+             (s1_)[6],(s0_)[6],(s1_)[4],(s0_)[4], \
+             (s1_)[2],(s0_)[2],(s1_)[0],(s0_)[0]}
+         #define ATL_vunpckHI(d_, s0_, s1_) d_ = \
+            {(s1_)[15],(s0_)[15],(s1_)[13],(s0_)[13], \
+             (s1_)[11],(s0_)[11],(s1_)[9],(s0_)[9], \
+             (s1_)[7],(s0_)[7],(s1_)[5],(s0_)[5], \
+             (s1_)[3],(s0_)[3],(s1_)[1],(s0_)[1]}
+      #endif
       #define ATL_vcxswapRI(rd_, rs_) \
          rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2,5,4,7,6, \
                                                    9,8,11,10,13,12,15,14})
