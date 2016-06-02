@@ -30,6 +30,14 @@
 #include <altivec.h>
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"               /* ATL_pfl1R, ATL_pfl1W */
+/*
+ * RCW: This test works with gcc at least; need to adapt permute code to le
+ *      if we want to remove
+ */
+#if _LITTLE_ENDIAN
+   #error "This kernel works for big endian only!\n"
+#endif
+
 
 #define VEC_SIZE 2
 
