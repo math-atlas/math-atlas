@@ -4705,7 +4705,7 @@ ALIGN16
    }
 #endif
 
-#ifdef SCPLX
+#if defined (TCPLX) && ATL_VLEN == 4
    #ifdef BETA0
       #define wrtC(p_, r1_) \
       { \
@@ -4740,7 +4740,7 @@ ALIGN16
          ATL_vbeta((p_)+4, rt_); \
       }
     #endif
-#elif defined(DCPLX)
+#elif defined (TCPLX) && ATL_VLEN == 2
    #ifdef BETA0
       #define wrtC(p_, r1_) \
       { \
@@ -5282,6 +5282,13 @@ void ATL_USERMM
 
 #if ATL_VLEN == 8
    #ifdef BETA0
+      #define wrtC0(p_, r1_) \
+      { \
+         (p_)[ 0] = r1_[0]; \
+         (p_)[ 2] = r1_[1]; \
+         (p_)[ 4] = r1_[2]; \
+         (p_)[ 6] = r1_[3]; \
+      }
       #define wrtC(p_, r1_) \
       { \
          (p_)[ 0] = r1_[0]; \
@@ -5294,6 +5301,13 @@ void ATL_USERMM
          ((p_)+ldc2)[ 6] = r1_[7]; \
       }
    #elif defined(BETA1)
+      #define wrtC0(p_, r1_) \
+      { \
+         (p_)[ 0] += r1_[0]; \
+         (p_)[ 2] += r1_[1]; \
+         (p_)[ 4] += r1_[2]; \
+         (p_)[ 6] += r1_[3]; \
+      }
       #define wrtC(p_, r1_) \
       { \
          (p_)[ 0] += r1_[0]; \
@@ -5306,16 +5320,23 @@ void ATL_USERMM
          ((p_)+ldc2)[ 6] += r1_[7]; \
       }
    #else
+      #define wrtC0(p_, r1_) \
+      { \
+         (p_)[ 0] = beta*(p_)[ 0] + r1_[0]; \
+         (p_)[ 2] = beta*(p_)[ 2] + r1_[1]; \
+         (p_)[ 4] = beta*(p_)[ 4] + r1_[2]; \
+         (p_)[ 6] = beta*(p_)[ 6] + r1_[3]; \
+      }
       #define wrtC(p_, r1_) \
       { \
          (p_)[ 0] = beta*(p_)[ 0] + r1_[0]; \
          (p_)[ 2] = beta*(p_)[ 2] + r1_[1]; \
          (p_)[ 4] = beta*(p_)[ 4] + r1_[2]; \
          (p_)[ 6] = beta*(p_)[ 6] + r1_[3]; \
-         ((p_)+ldc2)[ 0] = beta*(p_)[ 0] + r1_[4]; \
-         ((p_)+ldc2)[ 2] = beta*(p_)[ 2] + r1_[5]; \
-         ((p_)+ldc2)[ 4] = beta*(p_)[ 4] + r1_[6]; \
-         ((p_)+ldc2)[ 6] = beta*(p_)[ 6] + r1_[7]; \
+         ((p_)+ldc2)[ 0] = beta*((p_)+ldc2)[ 0] + r1_[4]; \
+         ((p_)+ldc2)[ 2] = beta*((p_)+ldc2)[ 2] + r1_[5]; \
+         ((p_)+ldc2)[ 4] = beta*((p_)+ldc2)[ 4] + r1_[6]; \
+         ((p_)+ldc2)[ 6] = beta*((p_)+ldc2)[ 6] + r1_[7]; \
       }
    #endif
    @beginskip
@@ -5439,6 +5460,7 @@ void ATL_USERMM
       *pC0=C
       @iexp j 2 0 +
       @iwhile j < nu
+         @iexp k @(j) -2 +
          *pC@(j)=pC@(k)+(ldc2<<1)
          @iexp j @(j) 2 +
       @endiwhile
@@ -5451,12 +5473,14 @@ void ATL_USERMM
    #elif ATL_VLEN == 4 && defined(TCPLX) && defined(BETAX)
       const ATL_VTYPE vBE={beta, 1.0, beta, 1.0};
    #endif
+   const size_t incAm = (lda<<2), incBn = ldb*@(nu);
+@beginskip
    #if ATL_KBCONST == 0
-      const size_t incAm = (lda<<2), incBn = ldb*@(nu);
    #else
       #define incAm (ATL_MM_KB<<2)
       #define incBn (@(nu)*ATL_MM_KB)
    #endif
+@endskip
    const size_t incC=ldc2*@(nu);
    #if !defined(BETA0) && !defined(BETA1) && !defined(TCPLX)
       ATL_vbcast(vBE, &beta);
@@ -5581,7 +5605,7 @@ void ATL_USERMM
          @endiif
             @iif @iexp 2 @(j)%
                @iexp k @(j) -1 +
-            ATL_vld(rB@(j), pB@(k)+lda); pB@(k) += ATL_VLEN;
+            ATL_vld(rB@(j), pB@(k)+ldb); pB@(k) += ATL_VLEN;
             @endiif
             @iif @iexp 2 @(j) % 0 =
             ATL_vld(rB@(j), pB@(j));
@@ -5695,6 +5719,29 @@ void ATL_USERMM
       @endiwhile
             #endif
          #elif ATL_VLEN == 4
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+            ATL_vvrsum4(rC0@(j), rC1@(j), rC2@(j), rC3@(j));
+         @iexp j @(j) 1 +
+      @endiwhile
+            #ifdef TCPLX
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @callproc ptrDef C @(j)
+               wrtC(@(pt), rC0@(j));
+         @undef pt
+         @iexp j @(j) 1 +
+      @endiwhile
+            #else  /* real */
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @callproc ptrDef C @(j)
+               ATL_vbeta(@(pt), rC0@(j));
+         @undef pt
+         @iexp j @(j) 1 +
+      @endiwhile
+            #endif
+@beginskip
             #if defined(TCPLX) && !defined(BETA0) // want permuted order 
       @iexp j 0 0 +
       @iwhile j < @(lst)
@@ -5741,19 +5788,19 @@ void ATL_USERMM
          @iexp j @(j) 1 +
       @endiwhile
             #endif
+@endskip
          #elif ATL_VLEN == 8 && defined(ATL_AVX) && defined(ATL_SSE1) \
                && defined(SCPLX)
          {
+      @iexp nu2 1 1 @(nu) -1 + r l
+         @iif @(nu2) > 0
             #ifndef BETA0
                ATL_vzero(rB0);
             #endif
-      @iexp nu2 1 1 @(nu) -1 + r l
+         @endiif
       @iexp j 0
       @iwhile j < @(nu2)
          @iexp k @(j) 1 +
-         @iexp j @(j) 2 +
-      @endiwhile
-      @iif @iexp @(nu2) @(nu) - 2 =
             #ifdef BETA0
                ATL_vvrsum8(rC0@(j),rC1@(j),rC2@(j),rC3@(j), rC0@(k),rC1@(k),rC2@(k),rC3@(k));
                @callproc ptrDef C @(j)
@@ -5763,14 +5810,14 @@ void ATL_USERMM
                ATL_vvrsum8(rC0@(j),rC1@(j), rC0@(k), rC1@(k), rC2@(j),rC3@(j), rC2@(k),rC3@(k));
                                      //    7    6    5    4    3    2    1    0
                                      // {r31, r21, r30, r20, r11, r01, r10, r00}
-         @callproc ptrDef C @(k)
+               @callproc ptrDef C @(k)
                ATL_vuld(rC30, @(pt)); 
                                      // {i31, r31, i21, r21, i11, r11, i01, r01}
-         @undef pt
-         @callproc ptrDef C @(j)
+               @undef pt
+               @callproc ptrDef C @(j)
                ATL_vuld(rC20, @(pt));
                                      // {i30, r30, i20, r20, i10, r10, i00, r00}
-         @undef pt
+               @undef pt
                ATL_vunpckHI(rC10, rC0@(j), rB0);
                                      // {  0, r31,   0, r21,   0, r11,   0, r01}
                ATL_vunpckLO(rC00, rC0@(j), rB0);
@@ -5782,48 +5829,74 @@ void ATL_USERMM
                ATL_vadd(rC10, rC10, rC30);
                ATL_vadd(rC00, rC00, rC20);
                @callproc ptrDef C @(k)
-               (@(pt))[0] = rC10[0];
-               (@(pt))[2] = rC10[2];
-               (@(pt))[4] = rC10[4];
-               (@(pt))[6] = rC10[6];
+               ATL_vust(@(pt), rC10);
                @undef pt
                @callproc ptrDef C @(j)
                ATL_vust(@(pt), rC00);
                @undef pt
             #endif
+         @iexp j @(j) 2 +
+      @endiwhile
+      @iif @iexp @(nu2) @(nu) - 2 =
+         @iexp k @(j) 1 +
+            ATL_vvrsum8(rC0@(j),rC1@(j),rC2@(j),rC3@(j), rC0@(k),rC1@(k),rC2@(k),rC3@(k));
+            @callproc ptrDef C @(j)
+            wrtC(@(pt), rC0@(j));
+            @undef pt
       @endiif
       @iif @iexp @(nu2) @(nu) - 1 =
+            ATL_vvrsum4(rC0@(j),rC1@(j),rC2@(j),rC3@(j));
+            @callproc ptrDef C @(j)
+            wrtC0(@(pt), rC0@(j));
+            @undef pt
       @endiif
          }
          #elif ATL_VLEN == 8 && defined(ATL_AVX) && defined(ATL_SSE1) \
                 && defined(SREAL)
          {
-            __m128 c0, c1;
       @iexp j 0 0 +
       @iexp nu2 1 1 @(nu) r l
       @iwhile j < @(nu2)
          @iexp k @(j) 1 +
             ATL_vvrsum8(rC0@(j), rC1@(j), rC2@(j), rC3@(j), rC0@(k), rC1@(k), rC2@(k), rC3@(k));
             #ifndef BETA0
-               rC10 = _mm256_insertf128_ps(rC10, _mm_loadu_ps(pC0), 0);
-               rC10 = _mm256_insertf128_ps(rC10, _mm_loadu_ps(pC0+ldc), 1);
+               @callproc ptrDef C @(j)
+               rC10 = _mm256_insertf128_ps(rC10, _mm_loadu_ps(@(pt)), 0);
+               @undef pt
+               @callproc ptrDef C @(k)
+               rC10 = _mm256_insertf128_ps(rC10, _mm_loadu_ps(@(pt)), 1);
+               @undef pt
                #ifdef BETAX
                   ATL_vmul(rC10, rC10, vBE);
                #endif
                ATL_vadd(rC0@(j), rC0@(j), rC10);
             #endif
-         @callproc ptrDef C @(j)
+            @callproc ptrDef C @(j)
             _mm_storeu_ps(@(pt), _mm256_extractf128_ps(rC0@(j), 0));
-         @undef pt
-         @callproc ptrDef C @(k)
+            @undef pt
+            @callproc ptrDef C @(k)
             _mm_storeu_ps(@(pt), _mm256_extractf128_ps(rC0@(j), 1));
-         @undef pt
+            @undef pt
          @iexp j @(j) 2 +
       @endiwhile
       @iif nu2 ! nu
-            ATL_vvrsum4(rC0@(j), rC1@(j), rC2@(j), rC3@(j))
-            c0 = _mm256_extractf128_ps(rC0@(j), 0);
-            _mm_storeu_ps(pC0, c0);
+      @print nu=@(nu), nu2=@(nu2), j=@(j)
+            {
+               __m128 c0, c1, cBE;
+               ATL_vvrsum4(rC0@(j), rC1@(j), rC2@(j), rC3@(j))
+               c0 = _mm256_extractf128_ps(rC0@(j), 0);
+               @callproc ptrDef C @(j)
+               #ifndef BETA0
+                  c1 = _mm_loadu_ps(@(pt));
+                  #ifdef BETAX
+                     cBE =_mm256_extractf128_ps(vBE, 0);
+                     c1 = _mm_mul_ps(c1, cBE);
+                  #endif
+                  c0 = _mm_add_ps(c0, c1);
+               #endif
+               _mm_storeu_ps(@(pt), c0);
+               @undef pt
+            }
       @endiif
          }
          #else
