@@ -5913,13 +5913,13 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
        break;
    case IbmPwr8:
        *GMAJOR = 5;
-       *GPATCH = 0;
-       *GMINOR = 1;
+       *GMINOR = 3;
+       *GPATCH = 1;
        break;
    case ARM64xg:
        *GMAJOR = 5;
-       *GPATCH = 3;
-       *GMINOR = 0;
+       *GMINOR = 3;
+       *GPATCH = 0;
        break;
    case ARM7:
        *GMAJOR = 4;
@@ -7322,7 +7322,7 @@ MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=smc
 MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=dmc
    'gcc' '-O1 -mcpu=xgene1 -mtune=xgene1 -fexpensive-optimizations -fprefetch-loop-arrays'
 #
-# ARM64 cortex-a57 defaults (untested)
+# ARM64 cortex-a53 defaults (untested)
 #
 MACH=ARM64a53 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-march=native -O2'
@@ -7337,7 +7337,24 @@ MACH=ARM64a53 OS=ALL LVL=1000 COMPS=smc
 MACH=ARM64a53 OS=ALL LVL=1000 COMPS=dmc
    'gcc' '-O1 -mcpu=cortex-a57 -mtune=cortex-a57 -fexpensive-optimizations -fprefetch-loop-arrays'
 MACH=ARM64a53 OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-O2'
+   'gfortran' '-O2 -mcpu=cortex-a57'
+#
+# ARM64 cortex-a53 defaults (untested)
+#
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-march=native -O2'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=xcc
+   'gcc' '-march=native -O2'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=icc
+   'gcc' '-mcpu=cortex-a53 -mtune=cortex-a53 -O2'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=skc,gcc,dkc
+   'gcc' ' -mcpu=cortex-a53 -mtune=cortex-a53 -O3  -ftree-vect-loop-version -ftree-vectorize -fprefetch-loop-arrays'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=smc
+   'gcc' '-O2 -mcpu=cortex-a53 -mtune=cortex-a53 -fprefetch-loop-arrays'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=dmc
+   'gcc' '-O1 -mcpu=cortex-a53 -mtune=cortex-a53 -fexpensive-optimizations -fprefetch-loop-arrays'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-O2 -mcpu=cortex-a53'
 #
 # Generic defaults
 #
@@ -8408,6 +8425,8 @@ flapack=ATL_NoOverride
 flapacktar=ATL_NoOverride
 f77=1
 fulllapack=0
+usetids=0
+tidlist=
 #
 # path is configure path without trailing configure :)
 #
@@ -8552,6 +8571,8 @@ do
    flag=`echo "$arg" | sed -e "s/--force-tids=//"`
    if test "$flag" != "$arg"
    then
+      usetids=1
+      tidlist=$flag
       pass="$pass -tl $flag"
       handled=1
    fi
@@ -8699,6 +8720,20 @@ fi
 if test $libinstdir = "ATL_NoOverride"
 then
    libinstdir='$(DESTDIR)/lib'
+fi
+#
+# Copy the correct ATLrun.sh over
+#
+if test $usetids -eq 1
+then
+   echo "#!/bin/sh" > ATLrun.sh
+   echo "atldir=\$1" >> ATLrun.sh
+   echo "shift" >> ATLrun.sh
+   flag=`echo "$tidlist" | sed -e "s/[0-9]* // ; s/\([0-9]\) /\1,/g ; s/, *$//"`
+   echo "taskset -c $flag \$atldir/\$*" >> ATLrun.sh
+   chmod u+x ATLrun.sh
+else
+   cp "$path"/CONFIG/src/ATLrun.sh ATLrun.sh
 fi
 #
 # Create the Makefile and copy the compiler info file
