@@ -21305,6 +21305,9 @@ double time00(void)
 #ifdef ATL_USEPTHREADS
    #include "atlas_tlvl3.h"
 #endif
+#ifdef TRUST_REF
+    #include "atlas_reflevel3.h"
+#endif
 #if defined(ATL_RKXOVER) || defined(TEST_RANKK)
    #define TRUST_BIGNORK
    void Mjoin(PATL,bignork_mm)
@@ -21347,7 +21350,7 @@ int Mjoin(PATL,gemm_rK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #ifdef ATL_DeclareSlens
 F77_INTEGER ATL_Slen1, ATL_Slen2;
 #endif
-double time00();
+double time00(void);
 
 void printmat(char *mat, int M, int N, TYPE *A, int lda)
 {
@@ -21418,6 +21421,9 @@ void matnan(int M, int N, TYPE *C, int ldc, int seed)
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(Mjoin(cblas_,PRE),gemm) \
          (CblasColMajor, TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
+#elif defined(TRUST_REF)
+   #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
+      Mjoin(PATL,refgemm)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
 #elif defined(ATL_NOAFFINITY) || defined(ATL_AFFINITY)
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,tgemm)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
@@ -21570,15 +21576,16 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
      for (i=0; i != nL2; i++) j += L2[i];
      }*/
    
-   /* invalidate L2 cache */
-   #if !ATL_LINEFLUSH
-      l2ret = ATL_flushcache( -1 );
-   #else
-      ATL_flushCacheByAddr(ldc*N, C);
-      ATL_flushCacheByAddr(ldb*Nb, B);
-      ATL_flushCacheByAddr(lda*Na, A);
-   #endif
-
+   if (CACHESIZE)
+   {  /* invalidate L2 cache */
+      #if !ATL_LINEFLUSH
+         l2ret = ATL_flushcache( -1 );
+      #else
+         ATL_flushCacheByAddr(ldc*N, C);
+         ATL_flushCacheByAddr(ldb*Nb, B);
+         ATL_flushCacheByAddr(lda*Na, A);
+      #endif
+   }
    t0 = time00();
    trusted_gemm(TAc, TBc, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
    t1 = time00() - t0;
@@ -21602,7 +21609,8 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
       matgen(M, N, D, ldd, M*N);
    #endif
 
-   /* invalidate L2 cache */
+   if (CACHESIZE)
+   {  /* invalidate L2 cache */
    #if !ATL_LINEFLUSH
       l2ret = ATL_flushcache( -1 );
    #else
@@ -21610,6 +21618,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
       ATL_flushCacheByAddr(ldb*Nb, B);
       ATL_flushCacheByAddr(lda*Na, A);
    #endif
+   }
    t0 = time00();
    test_gemm(TAc, TBc, M, N, K, alpha, A, lda, B, ldb, beta, D, ldd);
    
