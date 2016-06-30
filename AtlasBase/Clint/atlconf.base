@@ -198,8 +198,8 @@ void GetFlags(int nargs,                /* nargs as passed into main */
               int *vec,                 /* Vector ISA extension bitfield */
 @endifdef
 @ifdef -A
-   @define iflag @A@
-   @define ivar  @mach@
+@skip   @define iflag @A@
+@skip   @define ivar  @mach@
               enum MACHTYPE *mach,     /* machine/arch to assume */
 @endifdef
 @ifdef -m
@@ -403,6 +403,21 @@ void GetFlags(int nargs,                /* nargs as passed into main */
    @endifdef
          break;
 @endifdef
+@ifdef -A
+      case 'A':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         if(args[i][0] >= '0' && args[i][0] <= '9') /* giving a # */
+            *mach = atoi(args[i]);
+         else /* giving a architecture name */
+         {
+            for (k=1; k < NMACH; k++)
+               if (!strcmp(args[i], machnam[k]))
+                  break;
+            *mach = (k == NMACH) ? 0 : k;
+         }
+         break;
+@endifdef
 @whiledef iflag
       case '@(iflag)':
          if (++i >= nargs)
@@ -466,8 +481,8 @@ void GetFlags(int nargs,                /* nargs as passed into main */
       @define else @else@
    @endifdef
    @ifdef -thrchk
-@skip         @(else) if (!strcmp(sp0, "cputhrchk"))
-@skip            *ThrChk = k;
+         @(else) if (!strcmp(sp0, "cripple-perf"))
+            *ThrChk = !k;
       @define else @else@
    @endifdef
    @ifdef -gcc3
@@ -5937,7 +5952,7 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
    case ARM9:
        *GMAJOR = 4;
        *GMINOR = 6;
-       *GPATCH = 3;
+       *GPATCH = 1;
        break;
    case IntCorei4:
    case ARM15:
@@ -8316,14 +8331,36 @@ int main(int nargs, char **args)
    }
    if (ProbeCPUThrottle(verb, targarg, OS, asmb))
    {
+      char ln[64];
       fprintf(stderr, 
          "It appears you have cpu throttling enabled, which makes timings\n");
       fprintf(stderr, 
-              "unreliable and an ATLAS install nonsensical.  Aborting.\n");
-      fprintf(stderr, 
-              "See ATLAS/INSTALL.txt for further information\n");
-      if (thrchk) exit(1);
-      else fprintf(stderr, "Ignoring CPU throttling by user override!\n\n");
+              "unreliable and an ATLAS install nonsensical.\n\n");
+
+      fprintf
+      (stderr,
+"OS-controlled CPU throttling is so course grained, that timings become\n"
+"essentially random.  What this means for an ATLAS install is that ATLAS\n"
+"cannot tell the difference between a good and bad kernel, and so the\n"
+"tuning step may result in arbitrarily bad performance.  If you don't care\n"
+"about performance, you are usually better off just using the reference BLAS.\n"
+"\nIf you fear overheating, setting clock speed to some lower, constant\n"
+"value should give you a decent install.\n\n"
+"Hardware-controlled throttling is usually much finer grained, and therefore\n"
+"may result in mediocre tuning, but this will depend quite bit on luck.\n\n"
+"If your machine has OS throttling enabled, it is critical that you disable\n"
+"it (with something like cpufreq-set).  See INSTALL.txt for details.\n\n"
+"If you you do not care at all about performance, you can rerun configure\n"
+"with --cripple-atlas-performance to proceed in the face of throttling.\n"
+"Do not do this unless you really don't care about performance.\n"
+"If you are able to turn off throttling, rerun configure as normal\n"
+"once you have done so.\n\n"
+      );
+      if (thrchk)
+      {
+         fprintf(stderr, "Aborting due to throttling\n");
+         exit(1);
+      }
    }
 /* 
  * Override 32/64 bit assembler if asked
@@ -8580,6 +8617,12 @@ do
    if test "$flag" != "$arg"
    then
       incinstdir="$flag"
+      handled=1
+   fi
+   flag=`echo "$arg" | sed -e "s/--cripple-atlas-performance//"`
+   if test "$flag" != "$arg"
+   then
+      pass="$pass -Si cripple-perf 1"
       handled=1
    fi
    flag=`echo "$arg" | sed -e "s/--force-tids=//"`
