@@ -1,4 +1,4 @@
 #ifndef ATLAS_CACHEEDGE_H
    #define ATLAS_CACHEEDGE_H
-   #define CacheEdge 2097152
+   #define CacheEdge 1310720
 #endif
