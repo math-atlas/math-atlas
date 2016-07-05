@@ -622,7 +622,7 @@ void GetFlags(int nargs,                /* nargs as passed into main */
             if (++i >= nargs)
                PrintUsage(args[0], i, "out of arguments");
             if (args[i-2][1] == 'C')
-               comps[k] = args[i];
+               comps[GCC_] = args[i];
             else
                *gccflags = args[i];
          }
@@ -1506,7 +1506,7 @@ int GccIsApple(char *gcc)
 @endskip
 void GetGccVers(char *gcc, int *comp, int *major, int *minor, int *patch)
 /*
- * comp: 0: gcc;  1: egcs;  2: pgcc, 3: apple's gcc
+ * comp: 0: gcc;  1: egcs;  2: pgcc, 3: apple's gcc, 4: clang
  */
 {
    char *cmnd, *res;
@@ -1521,7 +1521,9 @@ void GetGccVers(char *gcc, int *comp, int *major, int *minor, int *patch)
    free(cmnd);
    if (res)
    {
-      if (strstr(res, "Apple Computer") || strstr(res, "Apple Inc"))
+      if (strstr(res, "clang") || strstr(res, "LLVM"))
+         *comp = 4;
+      else if (strstr(res, "Apple Computer") || strstr(res, "Apple Inc"))
          *comp = 3;
 /*
  *    Skip compiler name, which may have digits in it
@@ -1620,6 +1622,29 @@ int CompIsGcc(char *comp)
       free(res);
    }
    return(0);
+}
+
+int CompIsClang(char *comp)
+/*
+ * Tries to detect if compiler is clang w/o scoping name of compiler
+ */
+{
+   char *cmnd, *res;
+   char *cmpname;
+   int i, iret=0;
+
+   i = strlen(comp) + 16;
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
+   sprintf(cmnd, "%s --version", comp);
+   res = atlsys_1L(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res)
+   {
+      iret = (strstr(res, "clang") || strstr(res, "LLVM"));
+      free(res);
+   }
+   return(iret);
 }
 
 int CompIsMinGW(char *comp)
@@ -5012,7 +5037,8 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb,
                else if (strstr(p->comp, "gcc"))
                   p->flags = NewAppendedString(p->flags, vp);
             #else
-               if (strstr(p->comp, "gcc") || strstr(p->comp, "gfortran"))
+               if (strstr(p->comp, "gcc") || strstr(p->comp, "gfortran") ||
+                   strstr(p->comp, "clang"))
                   p->flags = NewAppendedString(p->flags, vp);
             #endif
          }
@@ -5148,7 +5174,7 @@ char *GetPtrbitsFlag(enum OSTYPE OS, enum MACHTYPE arch, int ptrbits,
 @ROUT getptrbits
   @endextract
 @ROUT probe_comp
-char *GetStandardCompName(char *comp)
+char *GetStandardCompName(char *comp, int f77)
 {
    int i, j, k;
    char *ucomp;
@@ -5159,29 +5185,24 @@ char *GetStandardCompName(char *comp)
    {
       GetGccVers(comp, &k, &j, &k, &k);
       if (j < 4)
-      {
-         if (i == F77_)
-            ucomp = "g77";
-         else
-            ucomp = "gcc";
-      }
-      else if (i == F77_)
-         ucomp = "gfortran";
+         ucomp = (f77) ? "g77" : "gcc";
       else
-         ucomp = "gcc";
+         ucomp = (f77) ? "gfortran" : "gcc";
    }
+   else if (CompIsClang(comp))
+      ucomp = (f77) ? "gfortran" : "clang";
    else
       ucomp = NameWithoutPath(comp);
    return(ucomp);
 }
-char *GetWinComp(enum OSTYPE OS, char *comp, char *bindir)
+char *GetWinComp(enum OSTYPE OS, char *comp, char *bindir, int if77)
 {
    char *ln;
    char *ucomp;
    int i;
    if (!OSIsWin(OS))
       return(NULL);
-   ucomp = GetStandardCompName(comp);
+   ucomp = GetStandardCompName(comp, if77);
    if (!strcmp(ucomp, "icc") || !strcmp(ucomp, "icl"))
       ucomp = "ATLwin_icc";
    else if (!strcmp(ucomp, "ifort") || !strcmp(ucomp, "ivf"))
@@ -5232,7 +5253,7 @@ COMPNODE *WinnowBadComps
       flg = NewStringCopy(usrcomps[NCOMP+i]?usrcomps[NCOMP+i]:p->flags);
       if (usrcomps[NCOMP*2+i])
          flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
-      sp = GetWinComp(OS, p->comp);  /* non-MinGW Windows comp wrapper */
+      sp = GetWinComp(OS, p->comp, (i==F77_));  /* non-MinGW Windows comp wrapper */
       if (!sp) 
       {
 /*
@@ -5619,7 +5640,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             flg = NewStringCopy(usrcomps[NCOMP+i]?usrcomps[NCOMP+i]:p->flags);
             if (usrcomps[NCOMP*2+i])
                flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
-            freeme = sp = GetWinComp(OS, p->comp, bindir);
+            freeme = sp = GetWinComp(OS, p->comp, bindir, (i==F77_));
             if (!sp) 
             {
 /*
@@ -5682,6 +5703,8 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       else if (!usrcomps[NCOMP+i])
       {
          p = comps[i];
+         ucomp = GetStandardCompName(usrcomps[i], (i==F77_));
+@beginskip
          ucomp = NameWithoutPath(usrcomps[i]);
 /*
  *       Recognize gnu compiler regardless of name string (eg. ev6-gcc-3.2)
@@ -5701,6 +5724,9 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             else
                ucomp = goodgcc;
          }
+         else if (CompIsClang(usrcomps[i]))
+           ucomp = (i == F77_) ? "gfortran" : "clang";
+@endskip
          for (p=comps[i]; p; p = p->next)
          {
             dcomp = NameWithoutPath(p->comp);
@@ -5721,7 +5747,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
 /*
  *    On windows, build compiler wrapper for MSVC++ or Intel compilers
  */
-      sp = GetWinComp(OS, usrcomps[i], bindir);
+      sp = GetWinComp(OS, usrcomps[i], bindir, (i==F77_));
       if (sp)
       {
          free(usrcomps[i]);
@@ -5929,11 +5955,12 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
    {
    case IbmZ12:
    case IbmZ13:
+   case IntCorei3:
+   case IntCorei4:
       *GMAJOR = 6;
       *GMINOR = 1;
-       *GPATCH = 0;
-       *GMINOR = 1;
-       break;
+      *GPATCH = 0;
+      break;
    case IbmPwr8:
        *GMAJOR = 5;
        *GMINOR = 3;
@@ -5954,7 +5981,7 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
        *GMINOR = 6;
        *GPATCH = 1;
        break;
-   case IntCorei4:
+@skip   case IntCorei4:
    case ARM15:
        *GMAJOR = 4;
        *GMINOR = 8;
@@ -5976,7 +6003,6 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
    case IntCore2:
    case IntCorei1:
    case IntCorei2:
-   case IntCorei3:
    case Amd64K10h:
    default:
       *GMINOR = 7;
@@ -6503,6 +6529,7 @@ int main(int nargs, char **args)
    }
    else
       targarg = "";
+@beginskip
    #if defined(ATL_GCCCLANG) || defined(ATL_GCC3P)
    {
       char *topd;
@@ -6520,11 +6547,12 @@ int main(int nargs, char **args)
       free(topd);
    }
    #else
-      if (usrcomps[GCC_])
-         goodgcc = NewStringCopy(usrcomps[GCC_]);
-      else
-         goodgcc = FindGoodGcc(OS, mach,  verb, targ);
-   #endif
+@endskip
+   if (usrcomps[GCC_])
+      goodgcc = NewStringCopy(usrcomps[GCC_]);
+   else
+      goodgcc = FindGoodGcc(OS, mach,  verb, targ);
+@skip   #endif
    GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, nocygwin, vecexts, 
             goodgcc, bindir);
 /* 
@@ -7099,8 +7127,8 @@ MACH=Corei2 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc,xcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
-MACH=Corei2 OS=ALL LVL=50 COMPS=skc,dkc,icc,xcc
-    'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
+@skip MACH=Corei2 OS=ALL LVL=50 COMPS=skc,dkc,icc,xcc
+@skip     'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
 MACH=Corei1 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei1 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
@@ -7329,7 +7357,7 @@ MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=xcc
    'gcc' '-O2'
 MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=smc,skc,gcc,icc
    'gcc' '-O2 -fselective-scheduling2'
-MACH=ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=dmc,dkc
+MACH=ARMa15 OS=ALL LVL=1000 COMPS=dmc,dkc
    'gcc' '-O2 -fno-schedule-insns -fno-schedule-insns2 -fprefetch-loop-arrays'
 MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-O2'
@@ -7337,7 +7365,7 @@ MACH=ARMa7 OS=ALL LVL=1100 COMPS=dmc
    'gcc' '-O2 -mcpu=cortex-a7 -fno-schedule-insns -fselective-scheduling2'
 MACH=ARMa9 OS=ALL LVL=1100 COMPS=dmc
    'gcc' '-O3 -mcpu=cortex-a9 -fno-schedule-insns -fno-schedule-insns2'
-MACH=ARMa9 OS=ALL LVL=1100 COMPS=smc
+MACH=ARMa9 OS=ALL LVL=1100 COMPS=smc,skc,dkc
    'gcc' '-O2 -mcpu=cortex-a9 -fschedule-insns'
 #
 # ARM64 XGENE1 defaults
@@ -7387,6 +7415,8 @@ MACH=ARM64a53 OS=ALL LVL=1000 COMPS=f77
 #
 # Generic defaults
 #
+MACH=ALL OS=ALL LVL=4 COMPS=smc,dmc,skc,dkc,icc,gcc,xcc
+   'clang' '-O2'
 MACH=ALL OS=ALL LVL=5 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
    'gcc' '-O -fomit-frame-pointer'
 MACH=ALL OS=ALL LVL=5 COMPS=f77
@@ -8283,7 +8313,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
 int main(int nargs, char **args)
 {
    enum OSTYPE OS;
-   enum MACHTYPE mach;
+   enum MACHTYPE mach=MACHOther;
    int i, verb, asmb, f2cname, f2cint, f2cstr, ncpu, nof77, nocygwin;
    int thrchk, mhz, omp, AntThr, lapackref;
    int j, k, h, vecexts;
@@ -8542,6 +8572,7 @@ do
       echo "ATLAS config includes this script, and probes written in C."
       echo "Therefore, configure flags are union of script and probe flags."
       echo "This configure script accepts the following flags:"
+      echo "   --force-clang=/path/to/clang : use clang not gcc all C comps"
       echo "   --cc=<C compiler> : compiler to compile configure probes"
       echo "   --cflags='<flags>' : flags for above"
       echo "   --prefix=<dirname> : Toplevel installation directory."
@@ -8619,6 +8650,14 @@ do
       incinstdir="$flag"
       handled=1
    fi
+   flag=`echo "$arg" | sed -e "s/--force-clang=//"`
+   if test "$flag" != "$arg"
+   then
+      cc=$flag
+      pass="$pass -C ac $flag -C gc $flag"
+      handled=1
+   fi
+   flag=`echo "$arg" | sed -e "s/--force-tids=//"`
    flag=`echo "$arg" | sed -e "s/--cripple-atlas-performance//"`
    if test "$flag" != "$arg"
    then
@@ -9390,7 +9429,10 @@ int main(int nargs, char **args)
           comps[i][j-2] == 'c' && comps[i][j-1] == 'c')
          break;
    }
-   goodgcc = (i < NCOMP) ? comps[i] : "gcc";
+   if (i < NCOMP)
+      goodgcc = comps[i];
+   else
+      goodgcc = comps[GCC_] ? comps[GCC_] : "gcc";
    fprintf(fpout, "   GOODGCC = %s", goodgcc);
    if (gccflags)
       fprintf(fpout, " %s", gccflags);
@@ -9514,6 +9556,8 @@ int main(int nargs, char **args)
          }
          else sp = NewStringCopy("gcc");
       }
+      else if (CompIsClang(comps[i]))
+         sp = NewStringCopy((i==F77_) ? "gfortran" : "clang");
       else
       {
          sp = NameWithoutPath(comps[i]);
