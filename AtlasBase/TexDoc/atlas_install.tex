@@ -932,6 +932,7 @@ BEST FLAGS GIVE MFLOP=592.68 (6.25% improvement over first case):
 
 \clearpage
 \subsection{Handling hyperthreading, SMT, modules, and other horrors}
+\label{sec-tids}
 Most modern machines include multiple virtual processors on each core;
 this basic idea is called hyperthreading by Intel, SMT by IBM, and other
 names by others.  AMD took it to a new level with the dozer architecture,
@@ -992,20 +993,6 @@ again shared 8-way, leading to the need to add to configure:
 \begin{verbatim}
     --force-tids="4 0 8 16 24"
 \end{verbatim}
-
-\subsubsection{Handling big/little ARM systems}
-The stable version of ATLAS is not well-suited to use big/little systems
-efficiently.   The problem is that it can use only one block size and
-kernel, and one optimized for the little systems will not be optimized
-for the big, and vice versa.  Given 3.10's limitations, I would recommend
-tuning for the small cores.  
-
-\begin{itemize}
-\item Find small cores by examining /proc/cpuinfo
-\item Tune for small cores using --force-tids
-\item Create archdefs
-\item Now build lib using all cores, forcing small arch detection
-\end{itemize}
 
 \clearpage
 \subsection{CPU throttling}
@@ -2505,22 +2492,93 @@ does not support, and so you need the cygwin emulation layer to use
 a decade-old standard.
 }
 
-\subsection{Special instructions for ARM with HARDFP ABIs}
-ATLAS assumes that the ARM ABI used is so-called SOFTFP, where
-floating-point values are passed in the integer registers.  If you
-are using a OS that has switched to the HARDFP ABI, please scope
-the errata file for additional installation instructions.
+\subsection{Special instructions for ARM32 with SOFTFP ABIs}
+As of ATLAS 3.10.3, ATLAS assumes all ARM32 installs use the the HARDFP ABI
+(prior releases assume SOFTFP).  As far as we know, SOFTFP support is not
+needed anymore.  If you need SOFTFP support, the easiest method is probably
+to use 3.10.2.
+
+It {\em may} be possible to install 3.10.3 using SOFTFP by adding
+the flags:
+\begin{verbatim}
+   -D c -DATL_ARM_SOFTFP=1 -F al -mfloat-abi=softfp -Si archdef 0
+\end{verbatim}
+to configure, but this has not been tested (the ATLAS group no longer has
+access to any ARM system using SOFTFP).
+%ATLAS assumes that the ARM ABI used is so-called SOFTFP, where
+%floating-point values are passed in the integer registers.  If you
+%are using a OS that has switched to the HARDFP ABI, please scope
+%the errata file for additional installation instructions.
+
+\subsection{Special instructions for ARM big/little systems}
+The stable version of ATLAS is not well-suited to use big/little systems
+efficiently.   The problem is that it can use only one block size and
+kernel, and one optimized for the little systems will not be optimized
+for the big, and vice versa.  If you are only using the serial interface,
+the best idea is probably to install two versions, one optimized 
+for the big and one optimized for the little CPUs.
+
+In order to install ATLAS to run only a subsection of cores, you can use
+the {\tt --force-tids} flag (see \S\ref{sec-tids} for details).  Unless
+you use something like {\tt tasksel} to invoke {\tt configure}, configure
+may detect the big core as the architecture, when you want the little, and
+vice versa.  Therefore, the easist way to support a particular is to
+explicitly tell configure which architecture you want to support by using
+the {\tt -A} flag to configure, as described in \S\ref{sec-arch-override}.
+ATLAS 3.10.3 currently has configure support for the following {\tt -A} 
+ARM32 strings: \texttt{ARMa7}, \texttt{ARMa9}, \texttt{ARMa15},
+and the following ARM64 strings:
+\texttt{ARM64a53}, \texttt{ARM64a57}, \texttt{ARM64xgene1}.
+
+You can also use only the big or little cores for ATLAS parallel work,
+by using {\tt --force-tids} (see \S\ref{sec-tids}), and specifying which
+cores to use.  This will get a subset of cores running at the best rate
+ATLAS can manage, and leave the other subset free for unrelated work.
+
+The more common case is that you want to use all the parallel cores at once
+to do parallel BLAS calls.
+Given 3.10's limitations, I would recommend tuning for the small cores.  
+The reason is that 3.10 uses a lot of statically scheduled algorithms,
+which means the BLAS will run at the speed of the slowest processor.
+Therefore, it makes sense to get the slow cores to run at peak speed,
+while the big cores take a performance hit by using the kernel and block
+factor used by the little cores.  
+
+So, as an example, my odroid system has 4 a7 (little) cores and 4 a9
+(bit) cores.  Assuming I want to use all 8 cores, my configure line
+would be:
+\begin{verbatim}
+   ../configure -b 32 -A ARMa7
+\end{verbatim}
+
+%\begin{itemize}
+%\item Find small cores by examining /proc/cpuinfo
+%\item Tune for small cores using --force-tids
+%\item Create archdefs
+%\item Now build lib using all cores, forcing small arch detection
+%\end{itemize}
+
 
 \subsection{Special instructions for OS~X}
 Newer versions of OS~X ship broken versions of the gnu binutils.  They
-are deprecated in favor of \textbf{clang}, which presently produces
-poor performance and wrong results for ATLAS.  Therefore, you will want
-to install a modern gcc using a system like fink, macports or homebrew.
-Note that even in this case, Apple's decisition to break gnu portability
-will still limit your performance.  The crippled assembler they provide
-does not understand AVX instructions, which reduces your peak performance
-by half, and for some reason GNU gcc is pretty much impossible to configure
-to ignore the native assembler in favor of its own binutils.
+are deprecated in favor of \textbf{clang}, which as of 3.10.3 can be used
+to get a fairly performant and correct ATLAS install.  Add the flag
+``\verb+--force-clang=/path/to/clang+'' to your configure line so that 
+ATLAS knows clang is your native
+compiler.  If you have a fortran compiler using the name {\tt gfortran},
+then this is all that is necessary.   If it is installed in a different
+name (even a close one like {\tt gfortran-5}), then you should also
+add: ``\verb+-C if /path/to/f77comp+''.
+If you have no fortran compiler, see Section~\ref{sec-nof77}.
+
+%which presently produces
+%poor performance and wrong results for ATLAS.  Therefore, you will want
+%to install a modern gcc using a system like fink, macports or homebrew.
+%Note that even in this case, Apple's decisition to break gnu portability
+%will still limit your performance.  The crippled assembler they provide
+%does not understand AVX instructions, which reduces your peak performance
+%by half, and for some reason GNU gcc is pretty much impossible to configure
+%to ignore the native assembler in favor of its own binutils.
 
 Note that more recent GNU {\bf tar} releases have become incompatible with 
 OS~X's native tar.  If you have difficulty untarring the tarfiles, you
