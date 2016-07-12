@@ -21,8 +21,10 @@
 
 #if defined(ATL_OS_Win64) || defined(ATL_OS_WinNT)
    #ifdef ATL_USE64BITS
-      #define ATL_WIN64THREADS 1
-      #define ATL_WINTHREADS 1
+@skip      #ifdef __MINGW64__  /* use pthreads if using cygwin gcc */
+         #define ATL_WIN64THREADS 1
+         #define ATL_WINTHREADS 1
+@skip      #endif
    #else
       #define ATL_WIN32THREADS 1
       #define ATL_WINTHREADS 1
@@ -1035,7 +1037,16 @@ int ATL_GetAtomicCount(void *vp)
 @ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64 ATL_ResetAtomicCount_win64
 #include "atlas_asm.h"
 /*
-@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
+@ROUT ATL_ResetAtomicCount_amd64
+#ifdef ATL_GAS_WOW64
+   #define vp  %rcx
+   #define cnt %rdx
+   #define ecnt %edx
+#else
+   #define vp  %rdi
+   #define cnt %rsi
+   #define ecnt %esi
+#endif
  * rax                       rdi         rsi
 @ROUT ATL_ResetAtomicCount_win64
  * rax                       rcx         rdx
@@ -1053,8 +1064,8 @@ ATL_asmdecor(ATL_ResetAtomicCount):
    movl 4(%esp), @(mm)
    movl 8(%esp), @(ct)
 @ROUT ATL_ResetAtomicCount_amd64
-   @define mm @%rdi@
-   @define ct @%esi@
+   @define mm @vp@
+   @define ct @ecnt@
 @ROUT ATL_ResetAtomicCount_win64
    @define mm @%rcx@
    @define ct @%edx@
@@ -1068,6 +1079,16 @@ ATL_asmdecor(ATL_ResetAtomicCount):
    jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
 DONE:
    ret
+@ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_win64
+#ifdef ATL_GAS_WOW64
+   #define vp %rcx
+   #define cnt %edx
+#else
+   #define vp %rdi
+   #define cnt %ecx
+#endif
+@ROUT ATL_DecAtomicCount_ia32
+#define cnt %ecx
 @ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32 ATL_DecAtomicCount_win64
 #include "atlas_asm.h"
 /* rax                  %rdi/rcx/4  */
@@ -1079,7 +1100,7 @@ ATL_asmdecor(ATL_DecAtomicCount):
    movl 4(%esp), %edx
    @define mm @%edx@
 @ROUT ATL_DecAtomicCount_amd64 
-   @define mm @%rdi@
+   @define mm @vp@
 @ROUT ATL_DecAtomicCount_win64 
    @define mm @%rdx@
    movq %rcx, %rdx
@@ -1087,13 +1108,13 @@ ATL_asmdecor(ATL_DecAtomicCount):
    sub $-128, @(mm)            /* skip false sharing guard zone */
    ATOMIC_LOOP:
       movl (@(mm)), %eax       /* read cnt from memory */
-      movl %eax, %ecx         /* ecx = cnt */
-      subl $1, %ecx           /* ecx = cnt-1 */
-      jl ZERO_RET             /* return 0 if count already below 1 */
-      lock                    /* make cmpxchg atomic */
-      cmpxchg %ecx, (@(mm))    /* put cnt-1 in mem if mem still == cnt in eax */
-      je DONE                 /* ZF set if cmpxchg wrote to mem */
-   jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
+      movl %eax, cnt        /* cnt = count */
+      subl $1, cnt          /* cnt = count-1 */
+      jl ZERO_RET           /* return 0 if count already below 1 */
+      lock                  /* make cmpxchg atomic */
+      cmpxchg cnt, (@(mm))     /* put cnt-1 in mem if mem still == cnt in eax */
+      je DONE               /* ZF set if cmpxchg wrote to mem */
+   jmp ATOMIC_LOOP          /* ZF=0 means cmpxch failed, try again */
 
 ZERO_RET:
 @ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_win64 `   xor %rax, %rax`
@@ -1264,24 +1285,30 @@ int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
    #ifdef ATL_WIN32THREADS
       DWORD thrID;
    #else
-      unsigned thrID;
+      unsigned int thrID;
    #endif
       
    #ifdef ATL_NOAFFINITY
+      thr->thrH = CreateThread(NULL, 0, rout, arg, 0, &thrID);
+   @beginskip
       #ifdef ATL_WIN32THREADS
          thr->thrH = CreateThread(NULL, 0, rout, arg, 0, &thrID);
       #else
          thr->thrH = (HANDLE)_beginthreadex(NULL, 0, rout, arg, 0, &thrID);
       #endif
+   @endskip
       ATL_assert(thr->thrH);
    #else
       thr->rank = proc;
+      thr->thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
+   @beginskip
       #ifdef ATL_WIN32THREADS
          thr->thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
       #else
          thr->thrH = (HANDLE)_beginthreadex(NULL, 0, rout, arg, 
                                             CREATE_SUSPENDED, &thrID);
       #endif
+   @endskip
       ATL_assert(thr->thrH);
       #ifdef ATL_RANK_IS_PROCESSORID
          ATL_assert(SetThreadAffinityMask(thr->thrH, (1<<proc)));
