@@ -3706,6 +3706,83 @@ All argument lengths are rounded up to 8 bytes (i.e., a
 4-byte integer is passed in the {\tt \%edi} portion of the {\tt \%rdi}
 register, for instance), both in register passing and in stack passing.
 
+\newpage
+\subsection{Some notes on WOW64 assembler}
+This is Window's bizarre ABI for x86-64.
+
+A x86-64 assembler kernel should contain the following CPP lines at the
+beginning of the file:
+\begin{verbatim}
+#ifndef ATL_GAS_WOW64
+   #error "This kernel requires gas WOW64 assembler!"
+#endif
+\end{verbatim}
+This quick error exit keeps a non-WOW64 assembler from generating hundreds
+or thousands of spurious error messages during install.
+
+
+\subsubsection{Register usage}
+The available WOW64 registers are summarized
+in Table~\ref{tab-WOW64-regs}.
+\begin{table}[hbt]
+\begin{center}
+\begin{tabular}{||l|l|l||}\hline\hline
+         &       & CALLEE\\
+REGISTER & USAGE & SAVE\\\hline\hline
+\%rsp    & Stack pointer         & YES\\\hline
+\%rbp    & optional frame pointer& YES\\\hline
+\%rax    & integer return val & NO\\\hline
+\%rcx    & 1st int arg  & NO\\\hline
+\%rdx    & 2nd int arg  & NO\\\hline
+\%r8     & 3rd int arg  & NO\\\hline
+\%r9     & 4th int arg  & NO\\\hline
+\%r10-11 & syscall/sysret& NO\\\hline
+\%r12-15 & callee-saved regs & YES \\\hline\hline
+\%rdi,rsi,rbx& callee-saved regs & YES \\\hline
+\%xmm0   & 1st arg/fp ret        & NO \\\hline
+\%xmm1-3  & fp args & NO \\\hline
+\%xmm6-15 & pass fp args & YES \\\hline
+\%st      & returns {\tt long double} args & NO\\
+          & aliased with mmx regs          & \\\hline
+\%st1-7   & scratch regs, aliased with mmx & NO\\\hline\hline
+\end{tabular}
+\end{center}
+\caption{WOW64 register summary\label{tab-WOW64-regs}}
+\end{table}
+
+\subsubsection{The calling sequence and stack frame}
+When your function first gets control, the stack frame looks like: \\
+\begin{center}
+\begin{tabular}{l|l|}
+        & Caller's frame \\\hline
+        & last overflow arg \\\hline
+        & \vdots \\\hline
+40(\%rsp) & 1st overflow arg \\\hline
+32(\%rsp) & r9 home \\\hline
+24(\%rsp) & r8 home \\\hline
+16(\%rsp) & rdx home \\\hline
+8(\%rsp) & rcx home \\\hline
+0(\%rsp) & ret @ \\\hline
+\end{tabular}
+\end{center}
+
+WOW64 has no red zone, and the stack pointer must always be 16-byte aligned.
+It's horrific argument passing has to be at least part of the WOW in the
+name: only the first four arguments are passed
+in registers, and the rest are passed through the stack.  Therefore, if
+you make a call like:
+\verb+   bob(1, 2.0, 2, 3.0, 4);+ then
+\verb+rcx=1+, \verb+xmm1=2.0+, \verb+r8=2+, \verb+xmm3=3.0+ and 4 is the
+first overflow argument.  Yes, really.
+
+All argument lengths are rounded up to 8 bytes (i.e., a
+4-byte integer is passed in the {\tt \%edi} portion of the {\tt \%rdi}
+register, for instance), both in register passing and in stack passing.
+They are put in the overflow area in order, without regard to type.
+
+The caller does not have to save the regs to the ``home'' slots; they are
+available to the callee.
+
 \subsection{Some notes on Sparc assembler}
 A Sparc assembler kernel should contain the following CPP lines at the
 beginning of the file:
