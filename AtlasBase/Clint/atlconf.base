@@ -788,11 +788,11 @@ enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS,
  * Corei3EP: v3 Haswell, E5-26XX
  * Corei4 : skylake
  */
-#define NMACH 62
+#define NMACH 64
 static char *machnam[NMACH] = 
-   {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
+   {"UNKNOWN","PPCG4", "PPCG5", "POWER3", "POWER4", "POWER5", 
     "POWER6", "POWER7", "POWER8", "POWERe6500", 
-    "IBMz9", "IBMz10", "IBMz196", "IBMzEC12","IBMz13",
+    "IBMz9", "IBMz10", "IBMz196", "IBMz12","IBMz13",
     "x86x87", "x86SSE1", "x86SSE2", "x86SSE3",
     "P5", "P5MMX", "PPRO", "PII", "PIII", "PM", "CoreSolo", 
     "CoreDuo", "Core2Solo", "Core2", "Corei1", "Corei2", "Corei3", "Corei3EP",
@@ -800,11 +800,13 @@ static char *machnam[NMACH] =
     "Efficeon", "K7", "HAMMER", "AMD64K10h", "AMDLLANO", "AMDDOZER","AMDDRIVER",
     "UNKNOWNx86", "IA64Itan", "IA64Itan2",
     "USI", "USII", "USIII", "USIV", "UST2", "UnknownUS", 
-    "MIPSR1xK", "MIPSICE9", "ARMa7", "ARMa9", "ARMa15", "ARMa17", 
-    "ARM64xgene1", "TI_C66_BM", "XeonPHI"};
+    "MIPSR1xK", "MIPSICE9", "ARMa7", 
+    "ARMa9", "ARMa15", "ARMa17", 
+    "ARM64xgene1", "ARM64a53", "ARM64a57"
+    "TI_C66_BM", "XeonPHI"};
 enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5, 
                IbmPwr6, IbmPwr7, IbmPwr8, Pwre6500,
-               IbmZ9, IbmZ10, IbmZ196, IbmZEC12, IbmZ13, /* s390(x) in Linux */
+               IbmZ9, IbmZ10, IbmZ196, IbmZ12, IbmZ13, /* s390(x) in Linux */
                x86x87, x86SSE1, x86SSE2, x86SSE3, /* generic targets */
                IntP5, IntP5MMX, IntPPRO, IntPII, IntPIII, IntPM, IntCoreS,
                IntCoreDuo, IntCore2Solo, IntCore2, IntCorei1, IntCorei2,
@@ -819,7 +821,9 @@ enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5,
                ARM9,      /* pandaboard */
                ARM15,     /* tegra, odroid-big */
                ARM17,     /* lots of tablets */
-               ARM64xg,     /* includes ARMv8 */
+               ARM64xg,   /* includes ARMv8 */
+               ARM64a53, 
+               ARM64a57,
                TI_C66_BM, /* TI accelerator */
                IntPhi     /* build for XEON Phi */
                };
@@ -843,7 +847,7 @@ enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5,
 #define MachIsARM(mach_) \
    ( (mach_) >= ARM7 && (mach_) <= ARM17 )
 #define MachIsARM64(mach_) \
-   ( (mach_) == ARM64xg )
+   ( (mach_) >= ARM64xg && (mach_) <= ARM64a57 )
 #define MachIsS390(mach_) \
    ( (mach_) >= IbmZ9 && (mach_) <= IbmZ13 )
 
@@ -870,13 +874,13 @@ enum ISAEXT
     ISA_NEON, ISA_NEON16, ISA_VFP3D32MAC, ISA_VFP3D16MAC};
 
 @ROUT atlconf.h asmconf.h
-#define NASMD 10
+#define NASMD 11
 enum ASMDIA 
    {ASM_None=0, gas_x86_32, gas_x86_64, gas_sparc, gas_ppc, gas_parisc, 
-    gas_mips, gas_arm, gas_arm64, gas_s390};
+    gas_mips, gas_arm, gas_arm64, gas_wow64, gas_s390};
 static char *ASMNAM[NASMD] =
    {"",     "GAS_x8632", "GAS_x8664", "GAS_SPARC", "GAS_PPC", "GAS_PARISC",
-    "GAS_MIPS", "GAS_ARM", "GAS_ARM64", "GAS_S390"};
+    "GAS_MIPS", "GAS_ARM", "GAS_ARM64", "GAS_WOW64", "GAS_S390"};
 @ROUT atlconf.h
 
 /*
@@ -1575,7 +1579,7 @@ int GccIsApple(char *gcc)
 @endskip
 void GetGccVers(char *gcc, int *comp, int *major, int *minor, int *patch)
 /*
- * comp: 0: gcc;  1: egcs;  2: pgcc, 3: apple's gcc
+ * comp: 0: gcc;  1: egcs;  2: pgcc, 3: apple's gcc, 4: clang
  */
 {
    char *cmnd, *res;
@@ -1590,7 +1594,9 @@ void GetGccVers(char *gcc, int *comp, int *major, int *minor, int *patch)
    free(cmnd);
    if (res)
    {
-      if (strstr(res, "Apple Computer") || strstr(res, "Apple Inc"))
+      if (strstr(res, "clang") || strstr(res, "LLVM"))
+         *comp = 4;
+      else if (strstr(res, "Apple Computer") || strstr(res, "Apple Inc"))
          *comp = 3;
 /*
  *    Skip compiler name, which may have digits in it
@@ -1689,6 +1695,29 @@ int CompIsGcc(char *comp)
       free(res);
    }
    return(0);
+}
+
+int CompIsClang(char *comp)
+/*
+ * Tries to detect if compiler is clang w/o scoping name of compiler
+ */
+{
+   char *cmnd, *res;
+   char *cmpname;
+   int i, iret=0;
+
+   i = strlen(comp) + 16;
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
+   sprintf(cmnd, "%s --version", comp);
+   res = atlsys_1L(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res)
+   {
+      iret = (strstr(res, "clang") || strstr(res, "LLVM"));
+      free(res);
+   }
+   return(iret);
 }
 
 int CompIsMinGW(char *comp)
@@ -2039,6 +2068,8 @@ char GetChar(char def, char *spc, char *expstr);
 int FileIsThere(char *nam);
 void ATL_mprintf(int np, ...);
 int GetFirstInt(char *ln);
+int GetFirstHex(char *ln);
+long long GetFirstLongHex(char *ln);
 long long GetFirstLong(char *ln);
 double GetFirstDouble(char *ln);
 int GetLastInt(char *ln);
@@ -2187,6 +2218,17 @@ enum OSTYPE ProbeOS(int verb, char *targ)
  *       Need to confirm what is returned under cygwin for XP, etc.
  */
          else if (strstr(res, "WOW64")) OS =OSWin64;
+         else if (strstr(res, "CYGWIN"))
+         {
+            free(res);
+            sprintf(cmnd, "%s -m", unam);
+            res = atlsys_1L(targ, cmnd, verb, 0);
+            if (strstr(res, "x86_64") || strstr(res, "AMD64") || 
+                strstr(res, "Intel64"))
+               OS = OSWin64;
+            else
+               OS = OSWinNT;
+         }
          else if (strstr(res, "NT")) OS = OSWinNT;
          else ierr = 1;
       }
@@ -2444,6 +2486,13 @@ IRun_@(prb): xprobe_@(prb) force_build
 # Machine-level probes run on machine lib being compiled for
 # These probes do not call system, but actually do something
 #
+IRun_ARM_HARDFP :
+	$(CC) $(CCFLAGS) -o xprobe_hardfp \
+              $(SRCdir)/backend/probe_arm32_FPABI.c \
+              $(SRCdir)/backend/hardfptst.S
+	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_hardfp args="$(args)" \
+                redir=config0.out
+	- cat config0.out
 IRun_NEON :
 	$(CC) $(CCFLAGS) -mfpu=neon -o xprobe_neon \
               $(SRCdir)/backend/probe_svec.c $(SRCdir)/backend/probe_NEON.S
@@ -2518,6 +2567,15 @@ IRun_@(asm) :
 	- cat config0.out
 @endwhile
 
+@whiledef asm GAS_WOW64
+IRun_@(asm) :
+	$(CC) $(CCFLAGS) -DATL_USE64BITS=1 -o xprobe_@low@(asm) \
+        $(SRCdir)/backend/probe_this_asm.c $(SRCdir)/backend/probe_@low@(asm).S
+	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_@low@(asm) args="$(args)" \
+                redir=config0.out
+	- cat config0.out
+@endwhile
+
 IRunC2C :
 	- rm -f config0.out xc2c c2cslave.o
 	$(CC1) $(CC1FLAGS) -c $(SRCdir)/backend/c2cslave.c
@@ -2580,7 +2638,7 @@ xarchinfo_@(OS) : $(SRCdir)/backend/archinfo_@(OS).c atlconf_misc_BE.o
 	$(CC) $(CCFLAGS) -o xarchinfo_@(OS) $(SRCdir)/backend/archinfo_@(OS).c \
               atlconf_misc_BE.o
 @endwhile
-@whiledef file x8684 x8632 ppc sparc parisc
+@whiledef file wow64 x8664 x8632 ppc sparc parisc
 xprobe_@(file) : $(SRCdir)/backend/probe_this_asm.c $(SRCdir)/backend/probe_gas_@(file).S
 	$(CC) $(CCFLAGS) -o xprobe_@(file) $(SRCdir)/backend/probe_this_asm.c \
               $(SRCdir)/backend/probe_gas_@(file).S
@@ -2698,9 +2756,19 @@ cleanall: clean
    #define my_join(pre, nam) pre ## nam
 #endif
 
+@beginskip
 #if (defined(ATL_OS_Win64) && !defined(ATL_USE64BITS)) || \
     defined(ATL_OS_Win9x) || defined(ATL_OS_OSX) || defined(ATL_OS_WinNT)
    #define ATL_asmdecor(nam) Mjoin(_,nam)
+@endskip
+#if defined(ATL_OS_Win9x) || defined(ATL_OS_OSX)
+   #define ATL_asmdecor(nam) Mjoin(_,nam)
+#elif defined(ATL_OS_Win64) || defined(ATL_OS_WinNT)
+   #if defined(ATL_GAS_WOW64) || defined (ATL_USE64BITS)
+      #define ATL_asmdecor(nam) nam
+   #else
+      #define ATL_asmdecor(nam) Mjoin(_,nam)
+   #endif
 #elif defined(ATL_OS_AIX) && defined(ATL_GAS_PPC)
    #define ATL_asmdecor(nam) Mjoin(.,nam)
 #elif !defined(ATL_OS_OSX) && defined(ATL_GAS_PPC) && defined(ATL_USE64BITS)
@@ -2826,6 +2894,42 @@ ATL_asmdecor(asm_probe):
         add     x0, x0, x0, LSL #1
         ret
 .size ATL_asmdecor(asm_probe),.-ATL_asmdecor(asm_probe)
+@ROUT probe_arm32_FPABI
+#include <stdio.h>
+#define STOMP_FPREGS __asm__ __volatile__ ( \
+   "mov r0, #0 ; fmsr s0, r0 ; fcpys s1, s0 ; fcpys s2, s0" \
+   : /* no output */ \
+   : /* no input */ \
+   : "r0", "s0", "s1", "s2"  /* clobbered */ \
+)
+int main(int nargs, char **args)
+{
+   float hardfptst(float f0, float f1, float f2);
+   STOMP_FPREGS;
+   if (hardfptst(-2.0, 2.0, 4.0) == 6.0)
+      printf("FPABI='HARDFP'\n");
+   else
+      printf("FPABI='SOFTFP'\n");
+   return(0);
+}
+@ROUT hardfptst.S
+#define ATL_GAS_ARM
+#include "atlas_asm.h"
+.code   32
+.text
+.align  2
+.globl  ATL_asmdecor(hardfptst)
+.type   ATL_asmdecor(hardfptst), %function
+/*
+ * float hardfptst(float f0, float f1, float f2);
+ * RETURNS: f0 + f1*f2, assuming HARDFP ABI
+ */
+ATL_asmdecor(hardfptst):
+        fmuls s1, s1, s2
+        fadds s0, s0, s1
+        bx      lr
+.size ATL_asmdecor(hardfptst),.-ATL_asmdecor(hardfptst)
+
 @ROUT probe_gas_arm.S
 #define ATL_GAS_ARM
 #include "atlas_asm.h"
@@ -2843,6 +2947,18 @@ ATL_asmdecor(asm_probe):
         add     r0, r0, r0, LSL #1
         bx      lr
 .size ATL_asmdecor(asm_probe),.-ATL_asmdecor(asm_probe)
+@ROUT probe_gas_wow64.S
+#include "atlas_asm.h"
+# WOW64 assembler for:
+# int asm_probe(int i)
+# RETURNS: i*3
+#
+.text
+.global ATL_asmdecor(asm_probe)
+ATL_asmdecor(asm_probe):
+        xor     %rax, %rax
+        lea (%ecx, %ecx,2), %eax
+        ret
 @ROUT probe_gas_x8664.S
 #include "atlas_asm.h"
 # x86-64 assembler for:
@@ -3446,6 +3562,12 @@ ATL_asmdecor(do_vsum):
         addps   %xmm1, %xmm0
         movups  %xmm0, 0(%rdi)
         ret
+#elif defined(ATL_GAS_WOW64)
+        movups  0(%rdx), %xmm0
+        movups  0(%r8), %xmm1
+        addps   %xmm1, %xmm0
+        movups  %xmm0, 0(%rcx)
+        ret
 #else
         movl    12(%esp), %eax
         movups  0(%eax), %xmm0
@@ -3471,6 +3593,12 @@ ATL_asmdecor(do_vsum):
         movupd  0(%rdx), %xmm1
         addpd   %xmm1, %xmm0
         movupd  %xmm0, 0(%rdi)
+        ret
+#elif defined(ATL_GAS_WOW64)
+        movupd  0(%rdx), %xmm0
+        movupd  0(%r8), %xmm1
+        addpd   %xmm1, %xmm0
+        movupd  %xmm0, 0(%rcx)
         ret
 #else
         movl    12(%esp), %eax
@@ -3498,6 +3626,12 @@ ATL_asmdecor(do_vsum):
         haddpd  %xmm1, %xmm0
         movupd  %xmm0, 0(%rdi)
         ret
+#elif defined(ATL_GAS_WOW64)
+        movupd  0(%rdx), %xmm0
+        movupd  0(%r8), %xmm1
+        haddpd  %xmm1, %xmm0
+        movupd  %xmm0, 0(%rcx)
+        ret
 #else
         movl    12(%esp), %eax
         movupd  0(%eax), %xmm0
@@ -3524,6 +3658,12 @@ ATL_asmdecor(do_vmacc):
       vmovapd 0(%rdx), %zmm2                  /* load y */
       vfmadd231pd %zmm2, %zmm1, %zmm0         /* z += x*y */
       vmovapd %zmm0, (%rdi)                   /* store z */
+   #elif defined(ATL_GAS_WOW64)
+      vmovapd 0(%rcx), %zmm0                  /* load z */
+      vmovapd 0(%rdx), %zmm1                  /* load x */
+      vmovapd 0(%r8),  %zmm2                  /* load y */
+      vfmadd231pd %zmm2, %zmm1, %zmm0         /* z += x*y */
+      vmovapd %zmm0, (%rcx)                   /* store z */
    #else
       movl    12(%esp), %eax
       vmovapd (%eax), %zmm2                   /* load y */
@@ -3545,10 +3685,25 @@ ATL_asmdecor(do_vmacc):
 .text
 .globl ATL_asmdecor(do_vmacc)
 ATL_asmdecor(do_vmacc):
+@beginskip
 #ifdef ATL_GAS_x8664
         vmovupd 0(%rdi), %ymm0                  /* load z */
         vmovupd 0(%rsi), %ymm1                  /* load x */
         vmovupd 0(%rdx), %ymm2                  /* load y */
+@endskip
+#if defined(ATL_GAS_x8664) || defined(ATL_GAS_WOW64)
+   #ifdef ATL_GAS_x8664
+      #define Z %rdi
+      #define X %rsi
+      #define Y %rdx
+   #else
+      #define Z %rcx
+      #define X %rdx
+      #define Y %r8
+   #endif
+     vmovupd (Z), %ymm0                  /* load z */
+     vmovupd (X), %ymm1                  /* load x */
+     vmovupd (Y), %ymm2                  /* load y */
 @ROUT probe_AVX.S
         vmulpd %ymm1, %ymm2, %ymm3
         vaddpd %ymm3, %ymm0, %ymm0
@@ -3557,7 +3712,7 @@ ATL_asmdecor(do_vmacc):
 @ROUT probe_AVXFMA4.S
         vfmaddpd %ymm0, %ymm1, %ymm2, %ymm0     /* z += x*y */
 @ROUT probe_AVX.S probe_AVXMAC.S probe_AVXFMA4.S
-        vmovupd %ymm0, 0(%rdi)                  /* store z */
+        vmovupd %ymm0, (Z)                      /* store z */
         ret
 #else
         movl    12(%esp), %eax
@@ -3577,6 +3732,19 @@ ATL_asmdecor(do_vmacc):
         vmovupd %xmm0, 0(%eax)                  /* store z */
         ret
 #endif
+@ROUT probe_vxz
+#include <vecintrin.h>
+void do_vsum(double *z, double *x, double *y) // RETURNS: z = x + y
+{
+   vector double vx, vy;
+   vx[0] = x[0];
+   vx[1] = x[1];
+   vy[0] = y[0];
+   vy[1] = y[1];
+   vy += vx;
+   z[0] = vy[0];
+   z[1] = vy[1];
+}
 @ROUT probe_AltiVec.S probe_VSX.S
 #include "atlas_asm.h"
 /*
@@ -4431,7 +4599,7 @@ int ProbeOneInt(enum OSTYPE OS0, enum ASMDIA asmd0, char *targ0,
 /* 
  * If Assembler right or unspecified, try x86 probe
  */
-   if (asmd == gas_x86_32 || asmd == gas_x86_64)
+   if (asmd == gas_x86_32 || asmd == gas_x86_64 || asmd == gas_wow64)
    {
       frm = "make IRunArchInfo_x86 MYFLAGS=\"-DATL_OS_%s -DATL_%s\" args=\"%s\" %s | fgrep '%s'";
       i = strlen(frm) + strlen(osnam[OS]) + strlen(ASMNAM[asmd]) + strlen(flag)
@@ -4547,7 +4715,8 @@ int main(int nargs, char **args)
    if (flags & Parch)
    {
       arch = ProbeOneInt(OS, asmd, targ, "-a", "MACHTYPE=", &sure);
-      if (arch == MACHOther && (asmd == gas_x86_32 || asmd == gas_x86_64))
+      if (arch == MACHOther && 
+          (asmd == gas_x86_32 || asmd == gas_x86_64 || asmd == gas_wow64))
          arch = x86X;
       if (flags & Pverb)
          printf("Architecture detected as %s.\n", machnam[arch]);
@@ -4563,7 +4732,7 @@ int main(int nargs, char **args)
              ProbeOneInt(OS, asmd, targ, "-t", "CPU THROTTLE=", &sure));
    if (flags & P64)
    {
-      if (asmd == gas_x86_64)
+      if (asmd == gas_x86_64 || asmd == gas_wow64)
       {
          sure = 1;
          bits = 64;
@@ -5107,6 +5276,8 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb,
       vp = "-mavx2 -mfma";
    else if (vecexts & (1<<ISA_VSX))
       vp = "-mvsx";
+   else if (vecexts & (1<<ISA_VXZ))
+      vp = "-mvx -mzvector";
    else if (vecexts & (1<<ISA_AV))
       vp = "-maltivec";
    else if (vecexts & (1<<ISA_AVX))
@@ -5162,7 +5333,8 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb,
                else if (strstr(p->comp, "gcc"))
                   p->flags = NewAppendedString(p->flags, vp);
             #else
-               if (strstr(p->comp, "gcc") || strstr(p->comp, "gfortran"))
+               if (strstr(p->comp, "gcc") || strstr(p->comp, "gfortran") ||
+                   strstr(p->comp, "clang"))
                   p->flags = NewAppendedString(p->flags, vp);
             #endif
          }
@@ -5303,7 +5475,7 @@ char *GetPtrbitsFlag(enum OSTYPE OS, enum MACHTYPE arch, int ptrbits,
 @ROUT getptrbits
   @endextract
 @ROUT probe_comp
-char *GetStandardCompName(char *comp)
+char *GetStandardCompName(char *comp, int f77)
 {
    int i, j, k;
    char *ucomp;
@@ -5314,29 +5486,25 @@ char *GetStandardCompName(char *comp)
    {
       GetGccVers(comp, &k, &j, &k, &k);
       if (j < 4)
-      {
-         if (i == F77_)
-            ucomp = "g77";
-         else
-            ucomp = "gcc";
-      }
-      else if (i == F77_)
-         ucomp = "gfortran";
+         ucomp = (f77) ? "g77" : "gcc";
       else
-         ucomp = "gcc";
+         ucomp = (f77) ? "gfortran" : "gcc";
    }
+   else if (CompIsClang(comp))
+      ucomp = (f77) ? "gfortran" : "clang";
    else
       ucomp = NameWithoutPath(comp);
    return(ucomp);
 }
-char *GetWinComp(enum OSTYPE OS, char *comp, char *bindir)
+
+char *GetWinComp(enum OSTYPE OS, char *comp, char *bindir, int if77)
 {
    char *ln;
    char *ucomp;
    int i;
    if (!OSIsWin(OS))
       return(NULL);
-   ucomp = GetStandardCompName(comp);
+   ucomp = GetStandardCompName(comp, if77);
    if (!strcmp(ucomp, "icc") || !strcmp(ucomp, "icl"))
       ucomp = "ATLwin_icc";
    else if (!strcmp(ucomp, "ifort") || !strcmp(ucomp, "ivf"))
@@ -5387,7 +5555,7 @@ COMPNODE *WinnowBadComps
       flg = NewStringCopy(usrcomps[NCOMP+i]?usrcomps[NCOMP+i]:p->flags);
       if (usrcomps[NCOMP*2+i])
          flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
-      sp = GetWinComp(OS, p->comp);  /* non-MinGW Windows comp wrapper */
+      sp = GetWinComp(OS, p->comp, (i==F77_));  /* non-MinGW Windows comp wrapper */
       if (!sp) 
       {
 /*
@@ -5606,6 +5774,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
    char *ucomp, *dcomp, *flg, *sp, *sp2, *mgwd=NULL, *mgwc=NULL, *mgwf=NULL;
    char *cmnd, *res;
    int i, j, k, h;
+   const int WIN64_32 = (OS == OSWin64 && ptrbits == 32);
 /*
  * Look through input compilers; any of them that is simply "gcc" gets replaced
  * with goodgcc;  If user has overridden with path or specific name (gcc-4) 
@@ -5624,10 +5793,9 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
    }
 
 /* 
- * If the user requests MinGW install, or is on 64-bit platform, build
- * wrapper code
+ * If the user requests MinGW install build wrapper code
  */
-   if (nocygwin || (OS == OSWin64 && ptrbits == 64))
+   if (nocygwin)
    {
       int fndit;
       mgwd = SetupMinGW(verb, ptrbits, nof77);
@@ -5774,7 +5942,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             flg = NewStringCopy(usrcomps[NCOMP+i]?usrcomps[NCOMP+i]:p->flags);
             if (usrcomps[NCOMP*2+i])
                flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
-            freeme = sp = GetWinComp(OS, p->comp, bindir);
+            freeme = sp = GetWinComp(OS, p->comp, bindir, (i==F77_));
             if (!sp) 
             {
 /*
@@ -5796,13 +5964,10 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
                else
                   sp = p->comp;
             }
-            if (ptrbits)
+            if (ptrbits && (!WIN64_32 || i != XCC_))
             {
-               if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
-                  flg = NewAppendedString(flg, "-m32");
-               else
-                  flg = NewAppendedString(flg, 
-                           GetPtrbitsFlag(OS, arch, ptrbits, sp));
+               flg = NewAppendedString(flg, 
+                        GetPtrbitsFlag(OS, arch, ptrbits, sp));
             }
             if (sp == mgwf)
                flg = NewAppendedString(flg, "-static");
@@ -5837,6 +6002,8 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       else if (!usrcomps[NCOMP+i])
       {
          p = comps[i];
+         ucomp = GetStandardCompName(usrcomps[i], (i==F77_));
+@beginskip
          ucomp = NameWithoutPath(usrcomps[i]);
 /*
  *       Recognize gnu compiler regardless of name string (eg. ev6-gcc-3.2)
@@ -5856,6 +6023,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             else
                ucomp = goodgcc;
          }
+@endskip
          for (p=comps[i]; p; p = p->next)
          {
             dcomp = NameWithoutPath(p->comp);
@@ -5876,7 +6044,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
 /*
  *    On windows, build compiler wrapper for MSVC++ or Intel compilers
  */
-      sp = GetWinComp(OS, usrcomps[i], bindir);
+      sp = GetWinComp(OS, usrcomps[i], bindir, (i==F77_));
       if (sp)
       {
          free(usrcomps[i]);
@@ -5888,13 +6056,13 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       flg = NewStringCopy(usrcomps[NCOMP+i]?usrcomps[NCOMP+i]:p->flags);
       if (usrcomps[NCOMP*2+i])
          flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
-      if (ptrbits)
+      if (ptrbits && (!WIN64_32 || i != XCC_))
       {
-         if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
-            flg = NewAppendedString(flg, "-m32");
-         else
-            flg = NewAppendedString(flg, 
-                     GetPtrbitsFlag(OS, arch, ptrbits,usrcomps[i]));
+@skip         if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
+@skip            flg = NewAppendedString(flg, "-m32");
+@skip         else
+         flg = NewAppendedString(flg, 
+                  GetPtrbitsFlag(OS, arch, ptrbits,usrcomps[i]));
       }
       if (strstr(usrcomps[i], "mgwgfortran"))
          flg = NewAppendedString(flg, "-static");
@@ -5930,10 +6098,10 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       for (i=0; i < NCOMP; i++)
       {
          sp = GetPtrbitsFlag(OS, arch, ptrbits, usrcomps[i]);
-         if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
-            usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], "-m32");
-         else
-            usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], sp);
+@skip         if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
+@skip            usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], "-m32");
+@skip         else
+         usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], sp);
       }
    }
 /*
@@ -6016,7 +6184,8 @@ int SelectBestGcc
    char *targ,
    int GMAJOR,
    int GMINOR,
-   char **gccs   /* NULL-terminated list of possible gcc compilers */
+   char **gccs,  /* NULL-terminated list of possible gcc compilers */
+   int USEMINGW  /* 0/1: reject/accept MINGW compilers */
 )
 /*
  * RETURNS: 0 if no gcc compiler,
@@ -6032,6 +6201,8 @@ int SelectBestGcc
    for (i=0; gccs[i]; i++)
    {
       int icmp, major, minor, patch;
+      if (!USEMINGW && CompIsMinGW(gccs[i]))
+         continue;
       GetGccVers(gccs[i], &icmp, &major, &minor, &patch);
       if (verb)
          printf("   icmp=%d, maj=%d, min=%d, pat=%d: %s\n", 
@@ -6112,6 +6283,16 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
    *GMAJOR = 4;
    switch(arch)
    {
+   case IbmZ12:
+   case IbmZ13:
+   case IntCorei3:
+   case IntCorei3EP:
+   case IntCorei4:
+   case IntCorei2:
+      *GMAJOR = 6;
+      *GMINOR = 1;
+      *GPATCH = 0;
+      break;
    case PPCG4:          /* cannot install 4.7.0 */
    case PPCG5:          /* cannot install 4.7.0 */
    case SunUSII:        /* cannot install 4.7.0 */
@@ -6122,16 +6303,20 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
       *GPATCH = 2;
       break;
    case ARM64xg:
-      *GMINOR = 9;
-      *GPATCH = 1;
+      *GMAJOR = 5;
+      *GMINOR = 3;
+      *GPATCH = 0;
       break;
-   case IntCorei3EP:
    case Amd64K10h:
       *GMINOR = 9;
       *GPATCH = 2;
       break;
-   case IbmPwr7:
    case IbmPwr8:
+       *GMAJOR = 5;
+       *GMINOR = 3;
+       *GPATCH = 0;
+       break;
+   case IbmPwr7:
        *GMAJOR = 5;
        *GMINOR = 1;
        *GPATCH = 0;
@@ -6157,15 +6342,14 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
    case x86x87:
    case IntCore2:
    case IntCorei1:
-   case IntCorei2:
-   case IntCorei3:
    default:
       *GMINOR = 7;
       *GPATCH = 0;
       break;
    }
 }
-char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
+char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
+                  int USEMINGW)
 {
    char *OSpaths=NULL, *sp, **gccs=NULL;
    char *ln;
@@ -6196,7 +6380,7 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
       sprintf(ln, "find %s -maxdepth 1 -name '*gcc*' -exec ./xisgcc '{}' \\;", 
               OSpaths);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
-      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
+      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs, USEMINGW);
       if (i > 1)
       {
          free(ln);
@@ -6226,7 +6410,7 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
       if (fp)
       {
          gccs = GetLinesFromFile(fp, gccs);
-         i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
+         i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs, USEMINGW);
          if (i > 0)
          {
             free(ln);
@@ -6250,7 +6434,7 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
    if (fp)
    {
       gccs = GetLinesFromFile(fp, gccs);
-      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
+      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs, USEMINGW);
       if (i > 0)
       {
          free(ln);
@@ -6276,7 +6460,7 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
       i = sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;",  
                   stdpaths);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
-      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
+      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs, USEMINGW);
       if (i > 1)
       {
          free(ln);
@@ -6295,7 +6479,7 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
 }
 
 char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb, 
-                       char *targ, char *gcc)
+                       char *targ, char *gcc, int USEMINGW)
 {
    char *OSpaths=NULL, *sp, **gccs=NULL;
    char *ln;
@@ -6320,7 +6504,7 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
       sprintf(ln, 
          "find %s -maxdepth 1 -name '*gfortran*' -exec ./xisgcc '{}' \\;", sp);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
-      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs, USEMINGW);
       if (i > 1)
       {
          free(ln);
@@ -6353,7 +6537,7 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
          "find %s -maxdepth 1 -name '*gfortran*' -exec ./xisgcc '{}' \\;",
          OSpaths);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
-      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs, USEMINGW);
       if (i > 1)
       {
          free(ln);
@@ -6380,7 +6564,7 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
          "find %s -maxdepth 1 -name '*gfortran*' -exec ./xisgcc '{}' \\;", sp);
       free(sp);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
-      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs, USEMINGW);
       if (i > 0)
       {
          free(ln);
@@ -6403,7 +6587,7 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
    if (fp)
    {
       gccs = GetLinesFromFile(fp, gccs);
-      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs, USEMINGW);
       if (i > 0)
       {
          free(ln);
@@ -6431,7 +6615,7 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
       i = sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;", 
                    stdpaths);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
-      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs, USEMINGW);
       if (i > 1)
       {
          free(ln);
@@ -6721,7 +6905,7 @@ int main(int nargs, char **args)
    if (!nof77 && usrcomps[F77_] && !strcmp(usrcomps[F77_], "gfortran"))
    {
       free(usrcomps[F77_]);
-      usrcomps[F77_] = FindGoodGfortran(OS, mach, verb, targ, goodgcc);
+      usrcomps[F77_] = FindGoodGfortran(OS, mach, verb, targ, goodgcc,nocygwin);
       if (!usrcomps[F77_])
          usrcomps[F77_] = NewStringCopy("gfortran");
    }
@@ -7281,14 +7465,16 @@ int main(int nargs, char **args)
 # Core2/Corei1/Corei2/Corei3/Corei4
 MACH=Corei3,Corei3EP,Corei4 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc,xcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
+MACH=Corei4 OS=all LVL=1100 COMPS=dmc,smc
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fschedule-insns'
 MACH=Corei2 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=dmc
    'gcc' '-O1 -mfpmath=sse -mavx'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=smc,skc,dkc,icc,gcc,xcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
-MACH=Corei2 OS=ALL LVL=50 COMPS=skc,dkc,icc,xcc
-    'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
+@skip MACH=Corei2 OS=ALL LVL=50 COMPS=skc,dkc,icc,xcc
+@skip    'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
 MACH=Corei1 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei1 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
@@ -7487,10 +7673,16 @@ MACH=IBMz196 OS=ALL LVL=600 COMPS=smc,dmc,skc,dkc,icc,xcc,gcc
 MACH=IBMz196 OS=ALL LVL=600 COMPS=f77
    'gfortran' '-march=z9-109 -O3 -funroll-loops'
 # ALL march options failed, go back to conservative defaults
-MACH=IBMz9,IBMz10,IBMz196 OS=ALL LVL=500 COMPS=f77
+MACH=IBMz9,IBMz10,IBMz196,IBMz12 OS=ALL LVL=500 COMPS=f77
    'gfortran' '-O3 -funroll-loops'
-MACH=IBMz9,IBMz10,IBMz196 OS=ALL LVL=500 COMPS=smc,dmc,skc,dkc,icc,xcc,gcc
+MACH=IBMz9,IBMz10,IBMz196,IBMz12 OS=ALL LVL=500 COMPS=smc,dmc,skc,dkc,icc,xcc,gcc
    'gcc' '-O3 -funroll-loops'
+MACH=IBMz13 OS=ALL LVL=1000 COMPS=dmc,skc,dkc,icc,xcc,gcc
+   'gcc' '-march=native -O -mvx -mzvector'
+MACH=IBMz13 OS=ALL LVL=1000 COMPS=smc
+   'gcc' '-march=native -O -mvx -mzvector -fno-peephole -fno-peephole2'
+MACH=IBMz13 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-march=native -O -mvx -mzvector'
 #
 # Windows defaults ; need to make SSE/SSE2 arch dep.
 #
@@ -7511,12 +7703,18 @@ MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=xcc
    'gcc' '-O2'
 MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=smc,skc,gcc,icc
    'gcc' '-O2 -fselective-scheduling2'
-MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=dmc,dkc
+MACH=ARMa15 OS=ALL LVL=1000 COMPS=dmc,dkc
    'gcc' '-O2 -fno-schedule-insns -fno-schedule-insns2 -fprefetch-loop-arrays'
+MACH=ARMa7 OS=ALL LVL=1100 COMPS=dmc
+   'gcc' '-O2 -mcpu=cortex-a7 -fno-schedule-insns -fselective-scheduling2'
+MACH=ARMa9 OS=ALL LVL=1100 COMPS=dmc
+   'gcc' '-O3 -mcpu=cortex-a9 -fno-schedule-insns -fno-schedule-insns2'
+MACH=ARMa9 OS=ALL LVL=1100 COMPS=smc,skc,dkc
+   'gcc' '-O2 -mcpu=cortex-a9 -fschedule-insns'
 MACH=ARMa7,ARMa9,ARMa15 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-O2'
 #
-# ARM64 defaults
+# ARM64xgene1 defaults
 #
 MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=xcc
    'gcc' '-O2'
@@ -7531,6 +7729,38 @@ MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=dmc
 MACH=ARM64xgene1 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-O2'
 #
+# ARM64 cortex-a57 defaults (untested)
+#
+MACH=ARM64a57 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-mcpu=cortex-a57 -O2'
+MACH=ARM64a57 OS=ALL LVL=1000 COMPS=xcc
+   'gcc' '-mcpu=cortex-a57 -O2'
+MACH=ARM64a57 OS=ALL LVL=1000 COMPS=icc
+   'gcc' '-mcpu=cortex-a57 -mtune=cortex-a57 -O2'
+MACH=ARM64a57 OS=ALL LVL=1000 COMPS=skc,gcc,dkc
+   'gcc' ' -mcpu=cortex-a57 -mtune=cortex-a57 -O3'
+MACH=ARM64a57 OS=ALL LVL=1100 COMPS=dmc,smc
+   'gcc' '-O1 -mcpu=cortex-a57 -mtune=cortex-a57'
+MACH=ARM64a57 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-O2 -mcpu=cortex-a57'
+#
+# ARM64 cortex-a53 defaults (untested)
+#
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-march=native -O2'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=xcc
+   'gcc' '-march=native -O2'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=icc
+   'gcc' '-mcpu=cortex-a53 -mtune=cortex-a53 -O2'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=skc,gcc,dkc
+   'gcc' ' -mcpu=cortex-a53 -mtune=cortex-a53 -O3  -ftree-vect-loop-version -ftree-vectorize'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=smc
+   'gcc' '-O2 -mcpu=cortex-a53 -mtune=cortex-a53'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=dmc
+   'gcc' '-O1 -mcpu=cortex-a53 -mtune=cortex-a53 -fexpensive-optimizations'
+MACH=ARM64a53 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-O2 -mcpu=cortex-a53'
+#
 # Untuned flags for XeonPHI
 #
 MACH=XeonPHI OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
@@ -7542,6 +7772,8 @@ MACH=XeonPHI OS=ALL LVL=1000 COMPS=f77
 #
 # Generic defaults
 #
+MACH=ALL OS=ALL LVL=4 COMPS=smc,dmc,skc,dkc,icc,gcc,xcc
+   'clang' '-O2'
 MACH=ALL OS=ALL LVL=5 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
    'gcc' '-O -fomit-frame-pointer'
 MACH=ALL OS=ALL LVL=5 COMPS=f77
@@ -8444,7 +8676,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
 int main(int nargs, char **args)
 {
    enum OSTYPE OS;
-   enum MACHTYPE mach;
+   enum MACHTYPE mach=MACHOther;
    int i, verb, asmb, f2cname, f2cint, f2cstr, ncpu, nof77, nocygwin;
    int thrchk, mhz, omp, AntThr, nreg;
    int j, k, h, vecexts;
@@ -8473,6 +8705,20 @@ int main(int nargs, char **args)
       asmb = ProbeAsm(verb, targarg, OS);
    else if (asmb < 0)
       asmb = 0;
+   if (asmb == gas_arm)
+   {
+      char defs[32], *sp;
+      sprintf(defs, "-DATL_OS_%s", osnam[OS]);
+      sp = GetStrProbe(verb, defs, "ARM_HARDFP", "FPABI");
+      if (sp)
+      {
+         if (!strcmp(sp, "HARDFP"))
+            cdefs = NewAppendedString(cdefs, "-DATL_ARM_HARDFP=1");
+         else if (!strcmp(sp, "SOFTFP"))
+            cdefs = NewAppendedString(cdefs, "-DATL_ARM_SOFTFP=1");
+         free(sp);
+      }
+   }
    if (!vecexts)
       vecexts = ProbeVecs(verb, targarg, OS, asmb);
    else if (vecexts < 0)
@@ -8487,7 +8733,7 @@ int main(int nargs, char **args)
       pmake = ProbePmake(verb, OS, ncpu);
    if (ptrbits == 0)
    {
-      if (asmb == gas_x86_64)
+      if (asmb == gas_x86_64 || asmb == gas_wow64)
          ptrbits = 64;
       else
          ptrbits = ProbePtrbits(verb, targarg, OS, asmb);
@@ -8497,16 +8743,38 @@ int main(int nargs, char **args)
       fprintf(stderr, 
          "It appears you have cpu throttling enabled, which makes timings\n");
       fprintf(stderr, 
-              "unreliable and an ATLAS install nonsensical.  Aborting.\n");
-      fprintf(stderr, 
-              "See ATLAS/INSTALL.txt for further information\n");
-      if (thrchk) exit(1);
-      else fprintf(stderr, "Ignoring CPU throttling by user override!\n\n");
+              "unreliable and an ATLAS install nonsensical.\n\n");
+
+      fprintf
+      (stderr,
+"OS-controlled CPU throttling is so course grained, that timings become\n"
+"essentially random.  What this means for an ATLAS install is that ATLAS\n"
+"cannot tell the difference between a good and bad kernel, and so the\n"
+"tuning step may result in arbitrarily bad performance.  If you don't care\n"
+"about performance, you are usually better off just using the reference BLAS.\n"
+"\nIf you fear overheating, setting clock speed to some lower, constant\n"
+"value should give you a decent install.\n\n"
+"Hardware-controlled throttling is usually much finer grained, and therefore\n"
+"may result in mediocre tuning, but this will depend quite bit on luck.\n\n"
+"If your machine has OS throttling enabled, it is critical that you disable\n"
+"it (with something like cpufreq-set).  See INSTALL.txt for details.\n\n"
+"If you you do not care at all about performance, you can rerun configure\n"
+"with --cripple-atlas-performance to proceed in the face of throttling.\n"
+"Do not do this unless you really don't care about performance.\n"
+"If you are able to turn off throttling, rerun configure as normal\n"
+"once you have done so.\n\n"
+      );
+      if (thrchk)
+      {
+         fprintf(stderr, "Aborting due to throttling\n");
+         exit(1);
+      }
    }
 /* 
  * Override 32/64 bit assembler if asked
  */
-   if (asmb == gas_x86_64 && ptrbits == 32)
+@skip   if (asmb == gas_x86_64 && ptrbits == 32)
+   if ((asmb == gas_x86_64 || asmb == gas_wow64) && ptrbits == 32)
       asmb = gas_x86_32;
    else if (asmb == gas_x86_32 && (ptrbits == 64 || ptrbits == -32))
       asmb = gas_x86_64;
@@ -8691,6 +8959,7 @@ do
       echo "ATLAS config includes this script, and probes written in C."
       echo "Therefore, configure flags are union of script and probe flags."
       echo "This configure script accepts the following flags:"
+      echo "   --force-clang=/path/to/clang : use clang not gcc all C comps"
       echo "   --cc=<C compiler> : compiler to compile configure probes"
       echo "   --cflags='<flags>' : flags for above"
       echo "   --prefix=<dirname> : Toplevel installation directory."
@@ -8790,18 +9059,31 @@ do
       incinstdir="$flag"
       handled=1
    fi
+   flag=`echo "$arg" | sed -e "s/--force-clang=//"`
+   if test "$flag" != "$arg"
+   then
+      cc=$flag
+      pass="$pass -C ac $flag -C gc $flag"
+      handled=1
+   fi
    flag=`echo "$arg" | sed -e "s/--accel=//"`
    if test "$flag" != "$arg"
    then
       if test "$flag" -eq "1"
       then
-         pass="$pass -A 54 -D c -DATL_NOPREFETCH=1"
+         pass="$pass -A TI_C66_BM -D c -DATL_NOPREFETCH=1"
          accel=1
       elif test "$flag" -eq "2"
       then
          accel=2
-         pass="$pass -A 55"
+         pass="$pass -A XeonPHI"
       fi
+      handled=1
+   fi
+   flag=`echo "$arg" | sed -e "s/--cripple-atlas-performance//"`
+   if test "$flag" != "$arg"
+   then
+      pass="$pass -Si cripple-perf 1"
       handled=1
    fi
    flag=`echo "$arg" | sed -e "s/--force-tids=//"`
@@ -9436,7 +9718,7 @@ int main(int nargs, char **args)
    assert(fpout);
    assert(srcdir && blddir);
 /*
- * If archdef directory not given, default to srcdir/CONFIG/ARCHS
+ * If archdef directory not given, default to srcdir/CONFIG/ARCHS[/WIN64]
  */
    if (!ADd)
    {
@@ -9444,10 +9726,12 @@ int main(int nargs, char **args)
       l = strlen(srcdir);
       if (srcdir[l-1] == '/')
          l--;
-      ADd = malloc(l+16);
+      ADd = malloc(l+21);
       assert(ADd);
       strncpy(ADd, srcdir, l);
       strcpy(ADd+l, "/CONFIG/ARCHS");
+      if (OS == OSWin64 && ptrbits == 64)
+         strcat(ADd, "/WIN64");
    }
 /*
  * Update l2size, and set f2cdefs/cdefs if they are null 
@@ -9780,7 +10064,10 @@ int main(int nargs, char **args)
           comps[i][j-2] == 'c' && comps[i][j-1] == 'c')
          break;
    }
-   goodgcc = (i < NCOMP) ? comps[i] : "gcc";
+   if (i < NCOMP)
+      goodgcc = comps[i];
+   else
+      goodgcc = comps[GCC_] ? comps[GCC_] : "gcc";
    if (mach == IntPhi)
       fprintf(fpout, "   GOODGCC = icc");
    else
@@ -9882,8 +10169,10 @@ int main(int nargs, char **args)
    fprintf(fpout, "   SSLAPACKlib =  # set to serial system lapack\n");
    if (THREADS)
    {
-      if (OSIsWin(OS))
+      if (USEMINGW || (ptrbits == 32 && OSIsWin(OS))
          fprintf(fpout, "   LIBS = -lkernel32 -lm\n\n");
+      else if (OSIsWin(OS))
+         fprintf(fpout, "   LIBS = -lm\n\n");
       else
          fprintf(fpout, "   LIBS = -lpthread -lm\n\n");
    }
@@ -9919,6 +10208,8 @@ int main(int nargs, char **args)
          }
          else sp = NewStringCopy("gcc");
       }
+      else if (CompIsClang(comps[i]))
+         sp = NewStringCopy((i==F77_) ? "gfortran" : "clang");
       else
       {
          sp = NameWithoutPath(comps[i]);
