@@ -2349,6 +2349,8 @@ TYPE Mjoin(PATL,gediffnrm1)
       t0 = ATL_rzero;
       for (i=0; i != M2; i++) t0 += Mabs(A[i] - B[i]);
       if (t0 > max) max = t0;
+      if (t0 != t0)   /* if we've got a NaN */
+         return(t0);  /* report it as norm! */
       A += lda2;
       B += ldb2;
    }
@@ -2453,8 +2455,9 @@ TYPE Mjoin(PATL,hbnrm)
    } 
  
    max = work[0];
-   for( j = 1; j < N; j++ ) if( max < work[j] ) max = work[j];
- 
+   for( j = 1; j < N; j++ ) 
+      if (work[j] != work[j] || max < work[j])
+         max = work[j];
    if( work ) free( work );
  
    return( max );
@@ -2551,7 +2554,9 @@ TYPE Mjoin(PATL,hpnrm)
    }
  
    max = work[0];
-   for( j = 1; j < N; j++ ) if( max < work[j] ) max = work[j];
+   for(j = 1; j < N; j++) 
+      if (work[j] != work[j] || max < work[j]) 
+         max = work[j];
  
    if( work ) free( work );
  
@@ -2648,7 +2653,9 @@ TYPE Mjoin(PATL,henrm)
    }
 
    max = work[0];
-   for( j = 1; j < N; j++ ) if( max < work[j] ) max = work[j];
+   for(j = 1; j < N; j++) 
+      if (work[j] != work[j] || max < work[j]) 
+         max = work[j];
 
    if( work ) free( work );
 
@@ -2685,6 +2692,8 @@ TYPE Mjoin(PATL,tbnrm1)(const enum ATLAS_UPLO UPLO, const enum ATLAS_DIAG DIAG,
             t0 += Mabs( A[iaij] ) + Mabs( A[iaij+1] );
 #endif
          }
+         if (t0 != t0)
+            return(t0);
          if( DIAG == AtlasNonUnit ) t0 += ATL_rone;
 
          if (t0 > max) max = t0;
@@ -2706,6 +2715,8 @@ TYPE Mjoin(PATL,tbnrm1)(const enum ATLAS_UPLO UPLO, const enum ATLAS_DIAG DIAG,
             t0 += Mabs( A[iaij] ) + Mabs( A[iaij+1] );
 #endif
          }
+         if (t0 != t0)
+            return(t0);
          if (t0 > max) max = t0;
       }
    } 
@@ -2739,6 +2750,8 @@ TYPE Mjoin(PATL,tpnrm1)(const enum ATLAS_UPLO UPLO, const enum ATLAS_DIAG DIAG,
             t0 += Mabs( A[iaij] ) + Mabs( A[iaij+1] );
 #endif
          }
+         if (t0 != t0)
+            return(t0);
          if( DIAG == AtlasNonUnit ) t0 += ATL_rone;
          if (t0 > max) max = t0;
          iaij += (1 SHIFT);
@@ -2759,6 +2772,8 @@ TYPE Mjoin(PATL,tpnrm1)(const enum ATLAS_UPLO UPLO, const enum ATLAS_DIAG DIAG,
             t0 += Mabs( A[iaij] ) + Mabs( A[iaij+1] );
 #endif
          }
+         if (t0 != t0)
+            return(t0);
          if (t0 > max) max = t0;
 
          iaij -= ( ( N - j ) << (1 SHIFT) ) + (1 SHIFT);
@@ -2788,6 +2803,8 @@ TYPE Mjoin(PATL,trnrm1)(const enum ATLAS_UPLO Uplo, const enum ATLAS_DIAG Diag,
       for (j=0; j < N; j++)
       {
          t0 = Mjoin(PATL,asum)(j+ioff, A, 1);
+         if (t0 != t0)
+            return(t0);
          if (Diag == AtlasUnit) t0 += ATL_rone;
          if (t0 > max) max = t0;
          A += incA;
@@ -2799,6 +2816,8 @@ TYPE Mjoin(PATL,trnrm1)(const enum ATLAS_UPLO Uplo, const enum ATLAS_DIAG Diag,
       for (j=N; j; j--)
       {
          t0 = Mjoin(PATL,asum)(j+ioff-1, A, 1);
+         if (t0 != t0)
+            return(t0);
          if (Diag == AtlasUnit) t0 += ATL_rone;
          if (t0 > max) max = t0;
          A += incA;
@@ -2836,6 +2855,8 @@ const TYPE *A, const int LDA)
          t0 += Mabs( A[iaij] ) + Mabs( A[iaij+1] );
 #endif
       }
+      if (t0 != t0)
+         return(t0);
       if (t0 > max) max = t0;
    }
    return(max);
@@ -2858,6 +2879,8 @@ TYPE Mjoin(PATL,genrm1)(const int M, const int N, const TYPE *A, const int lda)
    for (j=0; j < N; j++)
    {
       t0 = Mjoin(PATL,asum)(M, A, 1);
+      if (t0 != t0)
+         return(t0);
       if (t0 > max) max = t0;
       A += lda2;
    }
@@ -2868,9 +2891,35 @@ TYPE Mjoin(PATL,genrm1)(const int M, const int N, const TYPE *A, const int lda)
 #include "atlas_misc.h"
 #include "atlas_tst.h"
 #include "atlas_level1.h"
-
 TYPE Mjoin(PATL,infnrm)(const int N, const TYPE *X, const int incX)
 {
+   register TYPE max=0.0;
+   register int i;
+   if (N > 0)
+   {
+   #ifdef TCPLX
+      const int incX2=incX+incX;
+      for (i=0; i < N; i++, X += incX2)
+      {
+         register TYPE t0;
+         t0 = Mabs(*X) + Mabs(X[1]);
+         if (t0 != t0)
+            return(t0);
+         max = (max >= t0) ? max : t0;
+      }
+   #else
+      for (i=0; i < N; i++, X += incX);
+      {
+         register TYPE t0;
+         t0 = Mabs(*X);
+         if (t0 != t0)
+            return(t0);
+         max = (max >= t0) ? max : t0;
+      }
+   #endif
+   }
+   return(max);
+@beginskip
     int i;
     i = Mjoin(Mjoin(ATL_i,PRE),amax)(N, X, incX);
 #ifdef TREAL
@@ -2879,6 +2928,7 @@ TYPE Mjoin(PATL,infnrm)(const int N, const TYPE *X, const int incX)
     i *= (incX<<1);
     return(Mabs(X[i]) + Mabs(X[i+1]));
 #endif
+@endskip
 }
 @ROUT ATL_gegen
 @extract -b @(topd)/gen.inc what=cw @(cw99)
