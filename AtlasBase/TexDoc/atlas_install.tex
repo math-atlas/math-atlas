@@ -187,6 +187,56 @@ This file contains not only all bugs found, but also all kinds
 of platform-specific installation and tuning help.
 
 \subsection{Turn off CPU throttling when installing ATLAS}
+\label{sec-throttle}
+If ATLAS's configure detects that CPU throttling is enabled, it will kill
+itself.  The reason is that ATLAS depends on timings to tune the library
+to your machine.  OS-controlled throttling is so course-grained that 
+essentially all timings become random.  What this means is that instead
+of optimizing the code, ATLAS winds up randomly transforming the code,
+sometimes resulting in better code, and just as often, making the code
+slower.
+
+If throttling is enabled, the only way to get a decent ATLAS install is
+therefore to turn it off.  Most machines can switch it off in the BIOS,
+but on machines with newer Linux kernels even this does not stop pstate
+throttling.  To tell linux not to ignore your bios settings you must
+log in as root/sudo, and issue something similar to:
+\begin{enumerate}
+\item Edit \verb+/etc/default/grub+
+\item Find line with: \verb+GRUB_CMDLINE_LINUX_DEFAULT+
+\item Append the following to args: \verb+intel_pstate=disable+
+\item Update grub: \verb+update-grub+
+\item Reboot
+\end{enumerate}
+
+For modern Linuxes, you can turn off throttling using \verb+cpufreq-set+.
+Some systems allow you to set the speed of individual cores, and others
+force groups of cores to run at same speed.  Therefore, on a 4-core
+system, your frequency settings may not take hold until you've set all
+4-cores to the desired setting.  For instance:
+\begin{verbatim}
+   /usr/bin/cpufreq-set -g performance -c 0
+   /usr/bin/cpufreq-set -g performance -c 1
+   /usr/bin/cpufreq-set -g performance -c 2
+   /usr/bin/cpufreq-set -g performance -c 3
+\end{verbatim}
+
+Under MacOS or Windows, you may be able to change this under the power settings.
+I have reports that issuing "powercfg /q" in cmd.exe under windows will tell
+you whether windows is throttling or not.
+
+Note that if you worry about the system overheating, you should be able to
+get decent (not perfect) tuning by forcing any constant clock rate (rather
+than forcing the maximum rate, as above).
+
+If you cannot turn off cpu throttling you must pray that ATLAS already
+has architectural defaults.  If so, ATLAS will likely still have poor
+performance, but at least not all code transformation decisions will be
+taken at random.  To proceed with a random ATLAS tuning in the face
+of CPU throttling, you can throw the the configure flag:
+\verb+--cripple-atlas-performance+.
+
+\Wskip{
 Most OSes and hardware now turn on CPU throttling for power management\\
 \underline{even if you are using a desktop machine}.  CPU throttling makes
 pretty much all timings completely random, and so any ATLAS install will be
@@ -219,6 +269,7 @@ you may be able to change this under the power settings.
 %\begin{verbatim}
 %   -Si cputhrchk 0
 %\end{verbatim}
+}
 
 \subsection{Basic Steps of an ATLAS install}
 An ATLAS install is performed in 5 steps, only the first two of which
@@ -994,56 +1045,6 @@ again shared 8-way, leading to the need to add to configure:
     --force-tids="4 0 8 16 24"
 \end{verbatim}
 
-\clearpage
-\subsection{CPU throttling}
-\label{sec-throttle}
-If ATLAS's configure detects that CPU throttling is enabled, it will kill
-itself.  The reason is that ATLAS depends on timings to tune the library
-to your machine.  OS-controlled throttling is so course-grained that 
-essentially all timings become random.  What this means is that instead
-of optimizing the code, ATLAS winds up randomly transforming the code,
-sometimes resulting in better code, and just as often, making the code
-slower.
-
-If throttling is enabled, the only way to get a decent ATLAS install is
-therefore to turn it off.  Most machines can switch it off in the BIOS,
-but on machines with newer Linux kernels even this does not stop pstate
-throttling.  To tell linux not to ignore your bios settings you must
-log in as root/sudo, and issue something similar to:
-\begin{enumerate}
-\item Edit \verb+/etc/default/grub+
-\item Find line with: \verb+GRUB_CMDLINE_LINUX_DEFAULT+
-\item Append the following to args: \verb+intel_pstate=disable+
-\item Update grub: \verb+update-grub+
-\item Reboot
-\end{enumerate}
-
-For modern Linuxes, you can turn off throttling using \verb+cpufreq-set+.
-Some systems allow you to set the speed of individual cores, and others
-force groups of cores to run at same speed.  Therefore, on a 4-core
-system, your frequency settings may not take hold until you've set all
-4-cores to the desired setting.  For instance:
-\begin{verbatim}
-   /usr/bin/cpufreq-set -g performance -c 0
-   /usr/bin/cpufreq-set -g performance -c 1
-   /usr/bin/cpufreq-set -g performance -c 2
-   /usr/bin/cpufreq-set -g performance -c 3
-\end{verbatim}
-
-Under MacOS or Windows, you may be able to change this under the power settings.
-I have reports that issuing "powercfg /q" in cmd.exe under windows will tell
-you whether windows is throttling or not.
-
-Note that if you worry about the system overheating, you should be able to
-get decent (not perfect) tuning by forcing any constant clock rate (rather
-than forcing the maximum rate, as above).
-
-If you cannot turn off cpu throttling you must pray that ATLAS already
-has architectural defaults.  If so, ATLAS will likely still have poor
-performance, but at least not all code transformation decisions will be
-taken at random.  To proceed with a random ATLAS tuning in the face
-of CPU throttling, you can throw the the configure flag:
-\verb+--cripple-atlas-performance+.
 \clearpage
 \subsection{Building dynamic/shared libraries}
 \label{sec-shared}
@@ -2583,6 +2584,26 @@ defaults, the configure line is simply:
 %\item Create archdefs
 %\item Now build lib using all cores, forcing small arch detection
 %\end{itemize}
+
+\subsubsection{ARM with inactive CPUs}
+Sometimes, ARM systems default to having several of the CPUs turned off to save
+power.  If this happens, you need to turn them back on before doing the ATLAS
+install, as seen here:
+\begin{verbatim}
+   http://elinux.org/Jetson/Performance
+\end{verbatim}
+In case this page goes away, for my 4-core system I had to (as root):
+\begin{verbatim}
+   echo 0 > /sys/module/cpu_tegra/parameters/auto_hotplug
+   echo 0 > /sys/devices/system/cpu/cpuquiet/tegra_cpuquiet/enable
+   echo 1 > /sys/devices/system/cpu/cpu0/online
+   echo 1 > /sys/devices/system/cpu/cpu1/online
+   echo 1 > /sys/devices/system/cpu/cpu2/online
+   echo 1 > /sys/devices/system/cpu/cpu3/online
+\end{verbatim}
+
+On another system I had, the echo would not work, but copying \texttt{cpu0}'s 
+\texttt{online} file over all others did.
 
 
 \subsection{Special instructions for OS~X}
