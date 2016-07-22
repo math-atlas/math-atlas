@@ -3641,7 +3641,9 @@ void do_vsum(double *z, double *x, double *y) // RETURNS: z = x + y
  * RETURNS: z = x + y
  *
  */
+#ifndef ATL_OS_AIX  /* pwr8/AIX doesn't know .text anymore */
 .text
+#endif
 #if defined(ATL_USE64BITS) && defined (ATL_OS_Linux) && _CALL_ELF != 2
         .align 2
         .globl  ATL_asmdecor(do_vsum)
@@ -4256,7 +4258,7 @@ int main(int nargs, char **args)
 {
    pthread_attr_t attr;
    pthread_t thr;
-@ROUT probe_aff_SETAFFNP `   cpu_set_t cpuset;`
+@ROUT probe_aff_SETAFFNP `   cpu_set_t *cpuset;`
    void *vp, *vpret;
 
    if (nargs > 1)
@@ -4271,9 +4273,18 @@ int main(int nargs, char **args)
    #endif
    pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* OK to fail */
 @ROUT probe_aff_SETAFFNP
-   CPU_ZERO(&cpuset);
-   CPU_SET(rank, &cpuset);
-   assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
+/*
+ *    On POWER8/Linux, pthread_attr_setaffinity_np sometimes reallocs() the
+ *    cpuset variable, thus it must be malloced and not taken from stack!
+ */
+      cpuset = malloc(sizeof(cpu_set_t));
+      CPU_ZERO(cpuset);
+      CPU_SET(rank, cpuset);
+      assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t),cpuset));
+      free(cpuset);
+@skip   CPU_ZERO(&cpuset);
+@skip   CPU_SET(rank, &cpuset);
+@skip   assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
 @ROUT probe_aff_SETPROCNP
    assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t)rank, 
                                         PTHREAD_BIND_FORCED_NP));
@@ -5236,6 +5247,9 @@ char *GetPtrbitsFlag(enum OSTYPE OS, enum MACHTYPE arch, int ptrbits,
       return((ptrbits == 64) ? "-mabi=64" : "-mabi=n32");
    if (MachIsS390(arch))
       return((ptrbits == 64) ? "-m64" : "-m31");
+   if (OS == OSAIX)
+      return((ptrbits == 64) ? "-maix64" : "-maix32");
+
    if (!CompIsGcc(comp))
    {
 /*
@@ -7393,13 +7407,13 @@ MACH=PPCG5 OS=ALL LVL=1000 COMPS=dmc,icc,dkc,xcc,gcc
 MACH=PPCG5 OS=ALL LVL=1000 COMPS=skc
    'gcc' '-mpowerpc64 -maltivec -mabi=altivec -mcpu=970 -mtune=970 -O2 -mvrsave'
 MACH=POWER7 OS=ALL LVL=1010 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
-   'gcc' '-O2 -mvsx -mcpu=power7 -mtune=power7 -m64 -mvrsave -funroll-all-loops'
+   'gcc' '-O2 -mvsx -mcpu=power7 -mtune=power7 -mvrsave -funroll-all-loops'
 MACH=POWER7 OS=ALL LVL=1010 COMPS=f77
-   'gfortran' '-O2 -mvsx -mcpu=power7 -mtune=power7 -m64 -mvrsave -funroll-all-loops'
+   'gfortran' '-O2 -mvsx -mcpu=power7 -mtune=power7 -mvrsave -funroll-all-loops'
 MACH=POWER8 OS=ALL LVL=1010 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
-   'gcc' '-O2 -mvsx -mcpu=power8 -mtune=power8 -m64 -mvrsave -funroll-all-loops'
+   'gcc' '-O2 -mvsx -mcpu=power8 -mtune=power8 -mvrsave -funroll-all-loops'
 MACH=POWER8 OS=ALL LVL=1010 COMPS=f77
-   'gfortran' '-O2 -mvsx -mcpu=power8 -mtune=power8 -m64 -mvrsave -funroll-all-loops'
+   'gfortran' '-O2 -mvsx -mcpu=power8 -mtune=power8 -mvrsave -funroll-all-loops'
 MACH=POWER6 OS=ALL LVL=1010 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
    'gcc' '-mcpu=power6 -mtune=power6 -maltivec -O3 -fno-schedule-insns -fschedule-insns2 -minsert-sched-nops=2'
 MACH=POWER5 OS=ALL LVL=1010 COMPS=icc,smc,dmc,skc,dkc,xcc,gcc
@@ -9513,6 +9527,10 @@ int main(int nargs, char **args)
       fprintf(fpout, " -m32");
    else if (strstr(comps[NCOMP+DKC_], " -m64"))
       fprintf(fpout, " -m64");
+   else if (strstr(comps[NCOMP+DKC_], " -maix64"))
+      fprintf(fpout, " -maix64");
+   else if (strstr(comps[NCOMP+DKC_], " -maix32"))
+      fprintf(fpout, " -maix32");
    if (cdefs) fprintf(fpout, " %s", cdefs);
    if (THREADS)
    {

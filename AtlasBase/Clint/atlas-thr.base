@@ -1341,7 +1341,9 @@ int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
 #else
    pthread_attr_t attr;
    #ifndef ATL_NOAFFINITY
-      #if defined(ATL_PAFF_SETAFFNP) || defined(ATL_PAFF_SCHED)
+      #if defined(ATL_PAFF_SETAFFNP)
+         cpu_set_t *cpuset;  /* allow IBM random-realloc() */
+      #elif defined(ATL_PAFF_SCHED)
          cpu_set_t cpuset;
       #elif defined(ATL_PAFF_PLPA)
          plpa_cpu_set_t cpuset;
@@ -1373,9 +1375,20 @@ int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
       ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
    pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
    #ifdef ATL_PAFF_SETAFFNP
+/*
+ *    On POWER8/Linux, pthread_attr_setaffinity_np sometimes reallocs() the
+ *    cpuset variable, thus it must be malloced and not taken from stack!
+ */
+      cpuset = malloc(sizeof(cpu_set_t));
+      CPU_ZERO(cpuset);
+      CPU_SET(affID, cpuset);
+      ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t),cpuset));
+      free(cpuset);
+@beginskip
       CPU_ZERO(&cpuset);
       CPU_SET(affID, &cpuset);
       ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
+@endskip
    #elif defined(ATL_PAFF_SETPROCNP)
       ATL_assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t)affID, 
                                                PTHREAD_BIND_FORCED_NP)); 
