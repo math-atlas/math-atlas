@@ -307,6 +307,7 @@ long long GetLastLongHex(char *ln)
    return(iret);
 }
 
+@beginskip
 long long GetLastLongWithRound(char *ln)
 /*
  * Gets a long from end of line, assuming the line may be in decimal
@@ -331,5 +332,41 @@ long long GetLastLongWithRound(char *ln)
       sscanf(ln+i, "%lf", &d);
       iret = (int)(d+0.5);
    }
+   return(iret);
+}
+@endskip
+long long GetLastLongWithRound(char *ln)
+/*
+ * Gets a long from end of line, assuming the line may be in decimal
+ * format.  If given 1.6 it will return 2.  However, if given 1e256,
+ * it will return 256!
+ */
+{
+   int i;
+   long iret=0;
+   double d;
+
+   for (i=0; ln[i]; i++);  /* find end of string */
+   if (!i)                 /* empty string */
+     return(0);            /* returns 0 */
+/*
+ * Now skip any non-digit info at end of string (eg., MHz)
+ */
+   for(i--; i > 0 && !isdigit(ln[i]); i--);
+   if (!i)        /* no digits in string */
+      return(0);  /* returns 0 */
+/*
+ * Go backwards until we find a non-digit to possibly end the number
+ */
+   for (i--; i > 0 && isdigit(ln[i]); i--);
+   if (i > 0)  /* may be more to this number */
+   {
+      if (ln[i] == '.')
+         for(i--; i > 0 && isdigit(ln[i]); i--);
+   }
+   else if (ln[0] != '.' && !isdigit(ln[0]))
+      i = 1;
+   sscanf(ln+i, "%lf", &d);
+   iret = (int)(d+0.5);
    return(iret);
 }
