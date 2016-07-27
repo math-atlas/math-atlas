@@ -327,9 +327,9 @@ long long GetLastLongWithRound(char *ln)
 /*
  * Now skip any non-digit info at end of string (eg., MHz)
  */
-   for(i--; !isdigit(ln[i]); i--);
-   if (!i)        /* no digits in string */
-      return(0);  /* returns 0 */
+   for(i--; i > 0 && !isdigit(ln[i]); i--);
+   if (!isdigit(ln[i])) /* no digits in string */
+      return(0);        /* returns 0 */
 /*
  * Go backwards until we find a non-digit to possibly end the number
  */
