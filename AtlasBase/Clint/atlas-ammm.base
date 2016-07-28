@@ -16092,6 +16092,10 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
           ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2)
          #define ATL_FRCGNUVEC
       #endif
+   #elif defined(ATL_VXZ)
+      #if ATL_VLEN != 2;
+         #define ATL_FRCGNUVEC
+      #endif
    #elif defined(ATL_NEON)
       #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != 4) || \
           ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 1)
@@ -16118,6 +16122,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #else
          #define ATL_VLEN 2
       #endif
+   #elif defined(ATL_VXZ)
+      #define ATL_VLEN 2
    #elif defined(ATL_NEON)
       #if defined(SREAL) || defined(SCPLX)
          #define ATL_VLEN 4
@@ -16185,7 +16191,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * Undefine all vectorization if VLEN=1 (scalar code)!
  */
 #if defined(ATL_FRCGNUVEC) || ATL_VLEN < 2
-@whiledef sv VSX AVXMAC AVX SSE3 SSE2 SSE1 VECARM1 NEON
+@whiledef sv VXZ VSX AVXMAC AVX SSE3 SSE2 SSE1 VECARM1 NEON
    #ifdef ATL_@(sv)
       #undef ATL_@(sv)
    #endif
@@ -16314,6 +16320,36 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       @iexp i @(i) 1 +
    @endiwhile
    #endif
+#elif defined(ATL_VXZ)
+   #include <vecintrin.h>
+
+   #if ATL_VLEN != 2
+      #error "VSXZ supports only VLEN = 2!"
+   #endif
+   #define ATL_VTYPE vector double
+   #if (defined(DREAL) || defined(DCPLX))
+      #define ATL_vld(v_, p_) {v_[0] = *(p_); v_[1] = (p_)[1]; }
+      #define ATL_vst(p_, v_)  {*(p_) = v_[0]; (p_)[1] = v_[1];}
+   #else
+      #define ATL_vld(v_, p_) v_ = vec_ld2f(p_);
+      #define ATL_vst(p_, v_) vec_st2f(v_, p_);
+   #endif
+   #define ATL_vzero(v_) v_ = vec_splats((TYPE)0.0)
+   #define ATL_vcopy(d_, s_) d_ = s_
+   #define ATL_vbcast(v_, p_) v_ =  vec_splats(*((TYPE*)(p_)))
+   #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
+   #define ATL_vust(p_, v_) ATL_vst(p_, v_)
+   #define ATL_vadd(d_, s1_, s2_) d_ =  s1_ + s2_
+   #define ATL_vsub(d_, s1_, s2_) d_ =  s1_ - s2_
+   #define ATL_vmul(d_, s1_, s2_) d_ =  s1_ * s2_
+   #define ATL_vmac(d_, s1_, s2_) d_ = vec_madd(s1_, s2_, d_)
+   #define ATL_vvrsum1(s0_) \
+   {  ATL_VTYPE t_;\
+      t_ = vec_splat(s0_, 1); \
+      s0 += t_; \
+   }
+   #define ATL_vsplat0(d_, s_) d_ = vec_splat(s_, 0)
+   #define ATL_vsplat1(d_, s_) d_ = vec_splat(s_, 1)
 #elif defined(ATL_NEON) && (defined(SREAL) || defined(SCPLX))
    #include "arm_neon.h"
    #define ATL_VTYPE float32x4_t
