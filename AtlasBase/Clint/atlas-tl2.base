@@ -1746,6 +1746,7 @@ int Mjoin(PATL,tgemvN)
 @ROUT ATL_tger ATL_tgemv
 #include "atlas_misc.h"
 #include "atlas_level2.h"
+#include "atlas_taffinity.h"
 #include "atlas_threads.h"
 #include "atlas_tcacheedge.h"
 /*
@@ -1879,7 +1880,7 @@ void Mjoin(PATL,tgemv)
     const SCALAR beta, TYPE *Y, ATL_CINT incY)
 {
    static size_t ALb=0, ALe=0;
-   size_t at = (size_t) A;
+   size_t at = (size_t) A, ce;
    ATL_INT n, P, ldaP;
    ATL_TGEMV_t pd;
 /*
@@ -1915,8 +1916,15 @@ void Mjoin(PATL,tgemv)
             pd.flg |= (2|4);
       }
    #endif
-   P = ATL_DivBySize(CacheEdge);
-   P = ((size_t)M*N+P-1) / P;   /* add more procs only when cache is full */
+/*
+ * self-affinity is expensive, so require a 32x bigger problem to thread!
+ */
+   #if defined(ATL_PAFF_SELF) && ATL_PAFF_SELF != 0
+      ce = ATL_DivBySize(CacheEdge)<<5;
+   #else
+      ce = ATL_DivBySize(CacheEdge);
+   #endif
+   P = ((size_t)M*N+ce-1) / ce; /* add more procs only when cache is full */
    P = (P&1 && P > 1)?P+1 : P;  /* don't use odd P; it hurts alignment */
    P = Mmin(ATL_NTHREADS, P);
 /*
@@ -2053,6 +2061,7 @@ void Mjoin(Mjoin(PATL,t),MY_GER)
    ATL_TGER_t pd;
    int P;
    static TYPE *A0=NULL, *A0e=NULL;
+   size_t ce;
 
    if (M < 1 || N < 1 || SCALAR_IS_ZERO(alpha))  /* quick return if no-op */
       return;
@@ -2062,9 +2071,15 @@ void Mjoin(Mjoin(PATL,t),MY_GER)
    pd.X = X; pd.Y = Y; pd.A = A;
    pd.flg = (A0 == A || A0e == A+(M SHIFT)) ? 1 : 2;
    A0 = A; A0e = A+(M SHIFT);
-
-   P = ATL_DivBySize(CacheEdge);
-   P = ((size_t)M*N+P-1) / P;   /* add more procs only when cache is full */
+/*
+ * self-affinity is expensive, so require a 32x bigger problem to thread!
+ */
+   #if defined(ATL_PAFF_SELF) && ATL_PAFF_SELF != 0
+      ce = ATL_DivBySize(CacheEdge)<<5;
+   #else
+      ce = ATL_DivBySize(CacheEdge);
+   #endif
+   P = ((size_t)M*N+ce-1) / ce; /* add more procs only when cache is full */
    P = (P&1 && P > 1)?P+1 : P;  /* don't use odd P, since it hurts alignment */
 //   printf("TGER, P=%d\n", P);
    P = Mmin(ATL_NTHREADS, P);
