@@ -2724,6 +2724,20 @@ static int RemoveMMRuntimeK
    *KRUN = kb;
    return(nk);
 }
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static void MMApplyMoves2Flags
+(
+   ATL_mmnode_t *mmb,  /* kernel to set MMF_MV[A,B,C] flag bits */
+   int mvBits          /* last 3 bits: MOVE_[CBA] */
+)
+{
+   const unsigned int mvMSK = ~MMF_MVSET, mvSET = (mvBits&7)<<MMF_MVA;
+   ATL_mmnode_t *mmp;
+   for (mmp=mmb; mmp; mmp = mmp->next)
+      mmp->flag = ((mmp->flag) & mvMSK) | mvSET;
+}
+
 @ROUT mvread r1read mmread
 #endif  /* end atlas_@(rt)parse.h guard */
 @ROUT atlas_mvtesttime.h
@@ -4184,6 +4198,154 @@ double TimeMMKernel
    return(*((double*)ReadResultsFile(RESACT, 0, fnam)));
    #undef RESACT
 }  /* end TimeMMKernel */
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip), times all 3 vectorization schemes */
+ATL_mmnode_t *MMTimeWithGenKB
+(
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int imf,                     /* which mflop array to write to */
+   int flag,                    
+   ATL_mmnode_t *mmp,           /* ptr to mmkern struct */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int mb, int nb, int kb,      /* dimensions to time */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >=0: size of cache flush, else ignored */
+)
+/*
+ * RETURNS: NULL if kernel cannot support this case, else newly allocated
+ *          fully-qualified mmnode describing exact case
+ */
+{
+   int kbOK;
+   char *sp;
+   ATL_mmnode_t *mp;
+   if (!mmp->ID) /* genned: kvec OK wt any mul of vlen, mvec OK wt any K */
+      kbOK = FLAG_IS_SET(mmp->flag, MMF_KVEC) ? (kb%mmp->vlen == 0):1;
+   else
+   {
+      kbOK = (mmp->kbmin) ? (nb >= mmp->kbmin) : 1;
+      if (kbOK && mmp->kbmax)
+         kbOK = nb <= mmp->kbmax;
+   }
+   kbOK = kbOK && (kb%mmp->ku == 0);
+   if (!kbOK || ((mb/mmp->mu)*mmp->mu != mb) || ((nb/mmp->nu)*mmp->nu != nb))
+      return(NULL);
+   sp = mmp->genstr;
+   mmp->genstr=NULL;
+   mp = CloneMMNode(mmp);  /* get local copy so we can change */
+   mmp->genstr = sp;
+   mmp = mp;
+   mmp->mbB = mb; mmp->nbB = nb; mmp->kbB = kb;
+/*
+ * Generated files may need to get genstr and related info corrected
+ */
+   if (mmp->ID == 0)
+   {
+      if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
+          mmp->kbmax = mmp->kbmin = mmp->ku = kb;
+      if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
+          mmp->kbB = kb;
+      mmp->genstr = MMGetGenString(pre, mmp);
+   }
+   mmp->mflop[imf] = TimeMMKernel(verb, flag, mmp, pre, mb, nb, kb, 
+                                  beta, mflop, cflush);
+   return(mmp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip), times all 3 vectorization schemes */
+void MMPruneMflopTol
+(
+   ATL_mmnode_t *mmb,           /* ptr to mmkern struct queue */
+   int imf,                     /* which mflop array to write to */
+   float tol                    /* >1 allow slow kerns, < 1 penalize later */
+)
+/*
+ * First entry always retained.  Later entries must be better than
+ * prior best when scaled by tol.  So, tol > 1 will retain slower kernels,
+ * while tol < 1 will penalize later kernels.
+ */
+{
+   ATL_mmnode_t *mp;
+   double mfB;
+
+   if (tol <= 0.0 || !mmb)
+      return;
+   mfB = mmb->mflop[imf];
+
+   mp = mmb->next;
+   while (mp)
+   {
+      ATL_mmnode_t *next = mp->next;
+      double mf = mp->mflop[imf];
+      if (mf*tol < mfB)
+      {
+         mmb = RemoveMMNodeFromQ(mmb, mp);
+         KillMMNode(mp);
+      }
+      else if (mf > mfB)
+         mfB = mf;
+      mp = next;
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip), times all 3 vectorization schemes */
+ATL_mmnode_t *MMBestWithGenKB
+(
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int imf,                     /* which mflop array to write to */
+   int flag,                    
+   ATL_mmnode_t *mmb,           /* ptr to mmkern struct queue */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int mb, int nb, int kb,      /* dimensions to time */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >=0: size of cache flush, else ignored */
+)
+/*
+ * RETURNS: cloned mmnode of best-performing kern from mmB queue, or
+ *          NULL if none works for this size
+ */
+{
+   ATL_mmnode_t *mmB=NULL, *mmp;
+/*
+ * find first kernel that works, declare it best so far
+ */
+   for (mmp=mmb; mmp && !mmB; mmp = mmp->next)
+      mmB = MMTimeWithGenKB(verb, imf, flag, mmp, pre, mb, nb, kb, beta, 
+                            mflop, cflush);
+   if (verb && mmB)
+      printf("      B=(%d,%d,%d): %d,%s, mf=%.2f\n", mb, nb, kb, mmB->ID, 
+             mmB->rout, mmB->mflop[imf]);
+   if (!mmp)        /* if no other cases to consider */
+      return(mmB);  /* return best found (may be NULL) */
+/*
+ * Now try remaining kerns, and always keep best-performing
+ */
+   for (mmp=mmp->next; mmp; mmp = mmp->next)
+   {
+      ATL_mmnode_t *mp;
+      mp = MMTimeWithGenKB(verb, imf, flag, mmp, pre, mb, nb, kb, beta, 
+                           mflop, cflush);
+      if (mp)
+      {
+         if (verb)
+            printf("      B=(%d,%d,%d): %d,%s, mf=%.2f\n", mb, nb, kb, mmB->ID, 
+                   mmB->rout, mmB->mflop[imf]);
+         if (mp->mflop[imf] > mmB->mflop[imf])
+         {
+            KillMMNode(mmB);
+            mmB = mp;
+         }
+         else
+            KillMMNode(mp);
+      }
+   }
+   return(mmB);
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip), times all 3 vectorization schemes */
