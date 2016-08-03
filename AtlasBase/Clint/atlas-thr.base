@@ -91,6 +91,8 @@ void *ATL_freeLocks(unsigned int nlocks, void *vp);
 #define ATL_SAFELS_SH 7
 #define ATL_AlignSafeLS(vp_) (void*) \
    ((((size_t)(vp_))+ATL_SAFELS-1L)&(~((size_t)ATL_SAFELS-1L)))
+#define ATL_IncBySafeLS(vp_) (void*) (((size_t)(vp_))+ATL_SAFELS)
+#define ATL_StrideBySafeLS(vp_, mul_) (void*) ((size_t)(vp_))+ATL_SAFELS*(mul_)
 /*
  * Helper function that starts P threads, waits for them to complete,
  * and returns.  Used in initial tuning before we've set up full thread
@@ -3019,6 +3021,7 @@ ATL_thread_t *ATL_launch_threads(int P, void *vp)
 @ROUT ATL_thread_start
 #define Mstr2(m) # m
 #define Mstr(m) Mstr2(m)
+void ATL_xerbla(int p, char *rout, char *form, ...);
 #define ATL_assert(n_) \
 { \
    if (!(n_)) \
@@ -19876,31 +19879,79 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
 #ifndef ATLAS_GATMCTR_H
    #define ATLAS_GATMCTR_H
 
+#include "atlas_misc.h"
 #include "atlas_threads.h"
 /*
+ * Global atomic counters return a number between [low,N], low > 0, N > low.
  * These function used to deal out unordered work dynamically with work 
- * stealing.  They are initialized with a bound N, which is then split up
- * into an initial range of numbers for each core.  
-@beginskip
- * data structure:
- *    ATL_lock_t gmut;          // mutex protecting gSml,gBig (for _mbar vs)
- *    unsigned long gSml, gBig; // range available for stealing
- *    unsigned long lSml, lBig; // private (cheap access) range
- *    local increments lSml, and we use AtomicDec on gBig.
- * local vars on different ATL_SAFELS from g vars.
- * For gDecAtmCtr (only func wt no need of mutex protection):
- * 1. A return of 0 means that the global range is exhausted.  
- * 2. The last global item returned is always 1, regardless of range splitting.
- * 3. Otherwise return value ordering is not reproducable.
- * 4. Start with gBig-gSml = 2*P rest local.
- * 5. If gBig-gSml < P, will put P range on it, reserving one for local
- * 6. If all my range empty, will attempt to steal numbers from other's range
-@endskip
+ * stealing.  Each of the P threads can have private and public work.
+ * Private work is taken only by that particular rank, and thus does
+ * not need mutex protection (and therefore overhead).  Public work can
+ * be taken by any core, and thus is expensive to access due to mutex overhead.
+ * The total range is [low,N], low >= 1, N > low, so totSpan = N-low+1.
+ * Public jobs are in range [lowPub,N] and count down (PubSpan=cntPub-lowPub+1,
+ * where lowPub initialized to N).  Private jobs are in range [low,lowPub-1] 
+ * and count up (PrvSpan=lowPub-cntPrv, where cntPrv initialized to low).
+ * This look like:
+ *     ..Private count..|..Public Count..
+ *      ---------------> <---------------
+ *     [cntPrv,LowPub-1]|[lowPub, cntPub]
+ *
+ * -> private jobs consumed by cntPrv++, public jobs by cntPub--,
+ *    with cntPrv initialized to low, and cntPub to N.
+ * -> Work is moved from private to public by subtracting from LowPub, which
+ *    increases the public span while decreasing the private span.
+ * -> If public work taken since last access (lastPubcnt != PubCnt), move 
+ *    private range to public
+ * -> Start wt P jobs in public, rest private, except for small problems.
+ * -> Once cntPub starts to change, private count will be moved to public
+ *    to keep number of public jobs constant.
+ *
+ * SMALL PROBLEMS:
+ * ===============
+ * For very small problems, dynamic scheculing has too much overhead, so we
+ * set the public count to 0 (cntPub=0).  This gives us counters that
+ * implement pure static scheduling for P threads.  If the last core wakes
+ * up terribly late, this can cause horrible delays, but this can be 
+ * ameliorated by having finished threads rejoin the work with a new virtual
+ * rank.  Thus, in the best case, small problems have no scheduling overhead,
+ * and in worst (where scheduling would die), we have only the cost of
+ * re-enrolling, so something like: (job cost) + (mutex cost).
+ *
+ * DATA STRUCTURE EXPLANATION
+ * ==========================
+ * Keeping independent items on separate cache lines prevents false sharing,
+ * which is critical for parallel performance (false sharing on locks or
+ * data can cause safe access times to increase by orders of magnitude).
+ * ATLAS therefore defines a macro ATL_SAFELS which is assumed >= actual
+ * line size.  Presently it is set at 128 bytes. The data structure is then
+ * manually laid out to minimize false sharing, where each [] is SAFELS region: 
+ *  [<P><inc><N><MOVE>] : global info describing whole problem
+ *  P*([<cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>]) : local per-core info
+ *  totSz = ATL_SAFELS + P*inc, inc=3*ATL_SAFELS+CEIL(sizeof(lock)/SAFELS)
+ *
+ * if MOVE=0: don't move work from private to public (no work stealing)
+ * else     : do move work from private to public.
  */
 #define ATL_atmctr_t unsigned long
-void *ATL_gNewAtmCtr(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t ngrab);
+void *ATL_gAllocAtmCtr(unsigned int P, ATL_atmctr_t N, unsigned int MOV);
+void ATL_gInitAtmCtrByRank(void *ac, unsigned int rank, ATL_atmctr_t lowPrv, 
+                           ATL_atmctr_t npriv, ATL_atmctr_t npub);
+void *ATL_gNewAtmCtr(unsigned int P, ATL_atmctr_t N, int MOV);
 void ATL_gFreeAtmCtr(void *ac);
+/*
+ * Can get a 0 return when there is still work to be done.  Use this version
+ * when you have another task you can meaningfully do after this task done.
+ * It typically has MOVE=0, and will set MOVE=0 on first exit.
+ */
 ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank);
+/*
+ * Nobody returns until all work dealt out.  Usually used with MOVE=1.
+ * If dnrank non-NULL, then barrier so that *dnrank can legally release
+ * or reset the ac data structure.
+ */
+ATL_atmctr_t ATL_gDecAtmCtr_poll
+   (void *ac, unsigned int rank, unsigned int *dnrank);
 @beginskip
 ATL_atmctr_t ATL_gResetAtmCtr_mbar(void *ac, ATL_atmctr_t N);
 ATL_atmctr_t ATL_gDecAtmCtr_mbar(void *ac, unsigned int rank);
@@ -19919,23 +19970,61 @@ ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank);
 #endif  /* end ifndef ATLAS_GATMCTR_H */
 @ROUT ATL_gNewAtmCtr
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2016
-#include "atlas_gatmctr.h"
-/*
- *  [<P><N><ngrab><inc>][<nwait><lock>]
- *  P*([<cntPrv><lastPubCnt><lowPrv>][<cntPub>][<lowPub>][<lock>])
- *  totSz = ATL_SAFELS + P*inc, inc=4*ATL_SAFELS+CEIL(sizeof(lock)/SAFELS)
- *
- *  For problems with very little work, set ngrab > 1, so that we don't
- *  pay mutex overhead for each job.  May have worse load balance.
- */
+#include "atlas_gatmctr.h" /* scope to understand data struct */
+void *ATL_gAllocAtmCtr(unsigned int P, ATL_atmctr_t N, unsigned int MOV)
+{
+   if (N)
+   {
+      ATL_atmctr_t inc;
+      void *vp;
+      ATL_atmctr_t *gp;
+   
+      inc = sizeof(ATL_lock_t);
+      inc = (ATL_atmctr_t) ATL_AlignSafeLS(inc);
+      inc += ATL_SAFELS<<2;
+      vp = malloc((ATL_SAFELS<<1) + inc*P);
+      ATL_assert(vp);
+      gp = ATL_AlignSafeLS(vp);
+      *gp = P;
+      gp[1] = inc;
+      gp[2] = N;
+      gp[3] = MOV;
+      return(vp);
+   }
+   return(NULL);
+}
+
+void ATL_gInitAtmCtrByRank(void *ac, unsigned int rank, ATL_atmctr_t lowPrv, 
+                           ATL_atmctr_t npriv, ATL_atmctr_t npub)
+{
+   if (ac)
+   {
+      ATL_atmctr_t *ap = ATL_AlignSafeLS(ac);
+      const ATL_atmctr_t P=ap[0], inc=ap[1];
+   
+      if (rank < P)
+      {
+         const ATL_atmctr_t lowPub = lowPrv+npriv;
+         ap = (ATL_atmctr_t*)((((char*)ap)) + ATL_SAFELS + rank*inc);
+         *ap = lowPrv;
+         ap[1] = npub;
+         ap = ATL_IncBySafeLS(ap);
+         *ap = lowPub;
+         ap = ATL_IncBySafeLS(ap);
+         *ap = (lowPub + npub) - 1;
+         ap = ATL_IncBySafeLS(ap);
+         ATL_lock_init(ap);
+      }
+   }
+}
+
 void *ATL_gNewAtmCtr
 (
    unsigned int P,    /* # of worker threads  */
    ATL_atmctr_t N,    /* Count from [N,1] (0: already done) */
-   ATL_atmctr_t ngrab /* how many public jobs to grab at once */
+   int MOV            /* Move private->public? */
 )
 {
-   size_t sz;
    void *vp;
    ATL_atmctr_t *lp;
    char *cp;
@@ -19947,55 +20036,37 @@ void *ATL_gNewAtmCtr
       return(NULL);
    if (!P)
       P = 1;
-   else if (P > N)  /* not even one job per core */
-      P = N;
-   cntPub = P;      /* assume we've got P*P jobs */
-   cntPub *= P;     /* to do via public tasks */
-   if (cntPub > (N>>1) ) /* not best case, refine cntPub */
+   else
+      P = Mmin(P, N);
+   if (N <= (P<<2))
+      cntPub = 0;
+   else
    {
-      cntPub = P+P;
-      cntPub = (N >= cntPub) ? cntPub : N;
+      cntPub = P;      /* assume we've got P*P jobs */
+      cntPub *= P;     /* to do via public tasks */
+      if (cntPub > (N>>1) ) /* not best case, refine cntPub */
+      {
+         cntPub = P+P;
+         cntPub = (N >= cntPub) ? cntPub : N;
+      }
    }
+   vp = ATL_gAllocAtmCtr(P, N, MOV);
+   lp = ATL_AlignSafeLS(vp);
+   inc = lp[1];
+
    cntPrv = N - cntPub;
    lcntPub = cntPub / P;
    remPub = cntPub - lcntPub*P;
    lcntPrv = cntPrv / P;
    remPrv = cntPrv - lcntPrv*P;
-   inc = sizeof(ATL_lock_t);
-   inc = (unsigned long)ATL_AlignSafeLS(inc);
-   inc += ATL_SAFELS<<2;
-   sz = inc;
-   sz = P*sz + ATL_SAFELS;
-   vp = malloc(sz + ATL_SAFELS);
-   ATL_assert(vp);
-   lp = ATL_AlignSafeLS(vp);
-   lp[0] = P;
-   lp[1] = N;
-   lp[2] = ngrab;
-   lp[3] = inc;
-   cp = ((char*)lp) + ATL_SAFELS;
-   *((ATL_atmctr_t*)cp) = 0;
-   cp += ATL_SAFELS;
-   ATL_lock_init((void*)cp);
-   cp += ATL_SAFELS;
-/*
- *  P*([<cntPrv><lastPubCnt><lowPrv>][<cntPub>][<lowPub>][<lock>])
- */
-   cnt = 0;
-   for (i=0; i < P; i++)
+
+   for (cnt=1,i=0; i < P; i++)
    {
       ATL_atmctr_t mypub, myprv;
-      lp = (ATL_atmctr_t*) cp;
-      lp[0] = myprv = (i < remPrv) ? lcntPrv+1 : lcntPrv;
-      lp[1] = mypub = (i < remPub) ? lcntPub+1 : lcntPub;
-      lp[2] = cnt;
-      cp += ATL_SAFELS;
-      *((ATL_atmctr_t*)cp) = cnt + myprv;
-      cp += ATL_SAFELS;
-      *((ATL_atmctr_t*)cp) = mypub;
-      cp += ATL_SAFELS;
-      ATL_lock_init((void*)cp);
-      cp += ATL_SAFELS;
+
+      myprv = (i < remPrv) ? lcntPrv+1 : lcntPrv;
+      mypub = (i < remPub) ? lcntPub+1 : lcntPub;
+      ATL_gInitAtmCtrByRank(vp, i, cnt, myprv, mypub);
       cnt += myprv + mypub;
    }
    return(vp);
@@ -20012,11 +20083,10 @@ void ATL_gFreeAtmCtr(void *ac)
    if (ac)
    {
       char *cp=ATL_AlignSafeLS(ac);
-      const ATL_atmctr_t inc = ((ATL_atmctr_t*)cp)[3];
+      const ATL_atmctr_t inc = ((ATL_atmctr_t*)cp)[1];
       const unsigned int P=*((ATL_atmctr_t*)cp);
       unsigned int i;
-      ATL_lock_destroy(cp+ATL_SAFELS+sizeof(ATL_atmctr_t));
-      cp += 5*ATL_SAFELS;
+      cp += 4*ATL_SAFELS;
       for (i=0; i < P; i++, cp += inc)
          ATL_lock_destroy(cp);
       free(ac);
@@ -20025,41 +20095,71 @@ void ATL_gFreeAtmCtr(void *ac)
 
 @ROUT ATL_gDecAtmCtr
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2016
-#include "atlas_gatmctr.h"
+#include "atlas_gatmctr.h"  /* see to understand usage & data struct */
+
+static int WorkToSteal
+   (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
 /*
- * Helper function that steals work from another thread
- * rank < P
+ * RETURNS: 0 if all global count is done, and private count has a maximum
+ *          range of 1 (no assignable work).
+ * NOTES: to minimize overhead, we read data w/o mutexes, so answer is not
+ *        always correct.  In particular, it may return true even when all
+ *        the work is done, since this cache has stale data.
  */
-static ATL_atmctr_t 
-   pollCnt(unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
 {
-   const ATL_atmctr_t P=gp[0], inc=lp[3];
+   const ATL_atmctr_t P=gp[0], inc=gp[1];
+   unsigned int i, vrk=rank;
+   volatile ATL_atmctr_t *prvP;
+   prvP = (ATL_atmctr_t*) (((char*)lp) + vrk*inc);
+   for (i=0; i < P; i++)
+   {
+      const ATL_atmctr_t lowpub = *((ATL_atmctr_t*)(((char*)prvP)+ATL_SAFELS));
+      ATL_atmctr_t rng;
+
+      rng = *((ATL_atmctr_t*)(((char*)prvP)+ATL_SAFELS+ATL_SAFELS))-lowpub+1;
+      if (rng)               /* if public count non-zero */
+         return(1);          /* can steal some work, so return 1 */
+      rng = lowpub - *prvP;  /* private count left */
+      if (rng > 1)           /* if private count is more than one */
+         return(1);          /* can steal some work, so return 1 */
+      if (++vrk < P)
+         prvP = (ATL_atmctr_t*) (((char*)prvP)+inc);
+      else
+      {
+         vrk = 0;
+         prvP = lp;
+      }
+   }
+   return(0);
+}
+/*
+ * Helper function that steals work from another thread.  rank < P.
+ */
+static ATL_atmctr_t pollCnt
+   (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp, int QUIT)
+{
+   const ATL_atmctr_t P=gp[0], inc=gp[1];
    unsigned int i;
 
-   while (*gp)
+   while(1)
    {
-      unsigned int ndone=0;
-/*
- *  P*([<cntPrv><lastPubCnt><lowPrv>][<cntPub>][<lowPub>][<lock>])
- */
+      unsigned int vrk = (rank >= P) ?  rank-P : rank;
+      volatile ATL_atmctr_t *cntPubP;
+      cntPubP = (volatile ATL_atmctr_t*)(((char*)lp)+inc*vrk) + ATL_SAFELS;
       for (i=0; i < P; i++)
       {
-         volatile ATL_atmctr_t *cntPubP;
-         unsigned int vrk = rank+i;
-         vrk = (vrk > P) ?  vrk-P : vrk;
-         cntPubP = (ATL_atmctr_t*)(((char*)lp)+inc*vrk);
-         if (*cntPubP)
+         volatile ATL_atmctr_t *lowPubP = (volatile ATL_atmctr_t*)
+            ((char*)cntPubP) + ATL_SAFELS;
+         
+         if (*cntPubP >= *lowPubP)  /* any public count left? */
          {
             char *lck=((char*)cntPubP)+ATL_SAFELS+ATL_SAFELS;
             if (ATL_trylock(lck))  /* I can lock this public ctr */
             {
-               ATL_atmctr_t lowPub = 
-                  *((ATL_atmctr_t*)(((char*)cntPubP)+ATL_SAFELS));
-               ATL_atmctr_t cnt = *cntPubP;
-               if (cnt)
+               const ATL_atmctr_t lowPub = *lowPubP, cnt = *cntPubP;
+               if (cnt >= lowPub)
                {
                   *cntPubP = cnt - 1;
-                  cnt += lowPub;
                   ATL_unlock(lck);
                   return(cnt);
                }
@@ -20067,131 +20167,145 @@ static ATL_atmctr_t
                   ATL_unlock(lck);
             }
          }
+         if (++vrk < P)
+            cntPubP = (volatile ATL_atmctr_t *)(((char*)cntPubP)+inc);
+         else
+         {
+            vrk = 0;
+            cntPubP = lp;
+         }
       }
-      if (*gp)
-         ATL_thread_yield();
+/* 
+ *    If I'm quitting set it so we stop moving data from private to public.
+ *    This avoids moving private to public when we have no workers left.
+ *    QUIT should be set when the quitters can do another task, so ending
+ *    load balance shouldn't matter much
+ */
+      if (QUIT)
+      {
+         volatile unsigned char *MOV=(char*)(gp+3);
+         *MOV = 0;
+         return(0);
+      }
+      if (!WorkToSteal(rank, gp, lp))
+         return(0);
+      ATL_thread_yield();
    }
    return(0);
 }
+
+/*
+ * Gets a single count from private range, returns 0 if none left
+ */
 static ATL_atmctr_t 
-   prvPubCnt(unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *tp)
+   prvCnt(unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *tp)
 {
-   /* [<P><N><ngrab><inc>][<nwait><lock>] */
-   const ATL_atmctr_t P=(*gp), inc=gp[3];
-   size_t myp=(size_t) tp;
-   ATL_atmctr_t *lp, *wp = (ATL_atmctr_t*)((size_t)gp)+ATL_SAFELS;
-   ATL_atmctr_t cntPrv;
+   ATL_atmctr_t *cntPrvP;
+   const ATL_atmctr_t inc=gp[1];
+   ATL_atmctr_t cnt, lowPub;
+
+   if (rank > *gp)
+      return(0);
+   cntPrvP = (ATL_atmctr_t*)(((char *)tp)+inc*rank);
+   lowPub = *((ATL_atmctr_t*)((((char*)cntPrvP)+ATL_SAFELS)));
+
+   cnt = *cntPrvP;
+   if (cnt >= lowPub)
+      return(0);
+   *cntPrvP = cnt + 1;
+   return(cnt);
+}
+
+static ATL_atmctr_t prvPubCnt
+   (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp, int QUIT)
 /*
- * Do I have private count for myself, and possibly to move to public queue?
- * P*([<cntPrv><lastPubCnt><lowPrv>][<cntPub>][<lowPub>][<lock>])
+ * Get count from either private or public count.  Always prefers private
+ * to public, and will move private work to public if the number of my
+ * public jobs has changed (indicating work stealing has begun).
+ * ASSUMES: rank < P.
  */
-   myp += inc*rank;
-   lp = (ATL_atmctr_t*)myp;
-   cntPrv = *lp;
-   myp += ATL_SAFELS;
-   if (cntPrv)  /* can get job from private */
+{
+   ATL_atmctr_t *prvP, *lowPubP;
+   const ATL_atmctr_t P=(*gp), inc=gp[1];
+   ATL_atmctr_t lowPub, npriv;
+   const unsigned char *MOV = (unsigned char*)(gp+3*ATL_SAFELS);
+
+   prvP = (ATL_atmctr_t*) (((char*)lp) + rank*inc);
+   lowPubP = (ATL_atmctr_t*)(((char*)prvP)+ATL_SAFELS);
+   lowPub = *lowPubP;
+   npriv = lowPub - *prvP;
+   if (npriv)  /* can get job from private */
    {
-      ATL_atmctr_t *cntPubP = (ATL_atmctr_t*)myp;
-      ATL_atmctr_t cntPub=*cntPubP, lastPub=lp[1];
+      ATL_atmctr_t *cntPubP = (ATL_atmctr_t*) ((char*)(lowPubP)+ATL_SAFELS);
+      const ATL_atmctr_t lastPub=prvP[1];
 /*
- *     Should we move some work from private to public queue? Must have wrk 
- *     and public either empty, or starting to empty.
+ *    Should we move some work from private to public queue? Only do so if
+ *    this ctr allows moving work, we have extra private work,, and the number
+ *    of public jobs has changes since the last time we checked (ctrs starting
+ *    with 0 public work result in static scheduling on virtual rank).
  */
-      if (cntPrv > 1 && (!cntPub || cntPub != lp[1])) 
+      if (*MOV && npriv > 1 && (*cntPubP != lastPub))
       {
-         ATL_atmctr_t *lowPubP = (ATL_atmctr_t*)(myp+ATL_SAFELS);
-         void *lck=(void*)(myp+ATL_SAFELS+ATL_SAFELS);
-         ATL_atmctr_t nmov;
+         ATL_atmctr_t nmov, cntPub;
+         void *lck = ((char*)cntPubP) + ATL_SAFELS;
 /*
  *       Lock my public ctr, and move some private jobs to it
  */
          ATL_lock(lck);
          cntPub = *cntPubP;
          nmov = cntPub - lastPub;  /* default: keep #of public jobs constant */
-         if (*wp >= nmov)
-            nmov = *wp + 1;
-         if (nmov >= cntPrv)
-            nmov = cntPrv - 1;
+         nmov = (nmov < npriv) ? nmov : npriv-1;
          *lowPubP -= nmov;
-         *cntPubP = cntPub + nmov;
          ATL_unlock(lck);
-         lp[1] = cntPub + nmov;
-         cntPrv -= nmov;
-         *lp = cntPrv-1;
-         return(++(lp[2]));
+         prvP[1] = cntPub + nmov;  /* set lastPubCnt to new value */
+         return(++(*prvP));
       }
-      else  /* Take private job, leave public alone */
-      {
-         *lp = cntPrv - 1;
-         return(++(lp[2]));
-      }
+      else
+         return(prvCnt(rank, gp, lp));
    }
-   else /* no more private work */
-   {
-      ATL_atmctr_t *cntPubP = (ATL_atmctr_t*)myp;
-      ATL_atmctr_t cntPub=*cntPubP, lastPub=lp[1];
-      if (cntPub)  /* can I take some of my own public jobs? */
-      {
-         ATL_atmctr_t *lowPubP = (ATL_atmctr_t*)(myp+ATL_SAFELS);
-         void *lck=(void*)(myp+ATL_SAFELS+ATL_SAFELS);
-         ATL_atmctr_t nmov = gp[2];
-/*
- *       Lock public counter, move some jobs to private
- */
-         ATL_lock(lck);
-         cntPub = *cntPubP;
-         if (cntPub)
-         {
-            nmov = Mmin(nmov, cntPub);
-            cntPub -= nmov;
-            *lowPubP += nmov;
-            *cntPubP = cntPub;
-            if (cntPub == nmov)
-               *lowPubP = 0;  /* signal no more jobs from here ever */
-            ATL_unlock(lck);
-            lp[0] += nmov;
-            lp[1] = cntPub;
-            return(++(lp[2]));
-         }
-         else
-         {
-            *lowPubP = 0;  /* signal no more jobs from here ever */
-            ATL_unlock(lck);
-            return(pollCnt(rank, gp, tp));
-         }
-      }
-   }
+   return(pollCnt(rank, gp, lp, QUIT));
 }
-/*
- * return a number between [N,low]
- * Each [] is 128-byte region; 
- *  use lastGcnt to see if wrk taken since last time -> if so, may put more on
- *  [<P><N><ngrab><inc>][<nwait><lock>]
- *  P*([<lowPrv><cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>])
- *  totSz = ATL_SAFELS + P*inc, inc=3*ATL_SAFELS+CEIL(sizeof(lock)/SAFELS)
- *  Public jobs [<N>,<lowPub>], count down.
- *  Private jobs are numbered between [<low>,<lowPub>-1] count up.
- *  -> Start wt P jobs in public, rest private
- *  -> Once cntPub starts to change, we try to keep P cntPub jobs available
- */
+
 ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank)
+/*
+ * This version may return 0 when public work is still available.  It will
+ * make at most one pass thru the public locks before giving up.
+ * It often is initialized with MOVE=0, and will set MOVE=0 on first exit
+ * in order to prevent private work being moved to public when there aren't
+ * any workers available anymore.  Keeping track of the number of workers
+ * available is expensive, which we can't afford in algorithms that effectively
+ * become statically scheduled, so we lose some ending load balance, which
+ * shouldn't matter when you have a task to do after this one.
+ * Use this version when you've got another task to do after this one.
+ */
 {
    if (ac)
    {
       ATL_atmctr_t *gp=ATL_AlignSafeLS(ac);
-      ATL_atmctr_t P=gp[0];
+      const ATL_atmctr_t P=gp[0];
+      if (rank > P)
+         rank = P + rank%P;
       if (P)
       {
          ATL_atmctr_t *lp=(ATL_atmctr_t*)(((char*)gp)+ATL_SAFELS);
+         lp += sizeof(ATL_atmctr_t)+sizeof(ATL_lock_t);
+         lp = ATL_AlignSafeLS(lp);
          if (rank >= P)
-         {
-            rank = rank - (rank/P)*P;
-            return(pollCnt(rank, gp, lp));
-         }
-         else
-            return(prvPubCnt(rank, gp, lp));
+            return(pollCnt(rank, gp, lp, 1));
+         return(prvPubCnt(rank, gp, lp, 1));
       }
    }
+   return(0);
+}
+
+ATL_atmctr_t ATL_gDecAtmCtr_poll
+   (void *ac, unsigned int rank, unsigned int *dnrank)
+/*
+ * Nobody returns until all work dealt out.  Usually used with MOVE=1.
+ * If dnrank non-NULL, then barrier so that *dnrank can legally release
+ * or reset the ac data structure.
+ */
+{
    return(0);
 }
 @ROUT testGAT
@@ -20213,8 +20327,15 @@ int main(int nargs, char **args)
 {
    void *ac;
    ATL_atmctr_t i;
+   int P = ATL_NTHREADS;
+   if (nargs > 1)
+   {
+      P = atoi(args[1]);
+      P = Mmin(P, ATL_NTHREADS);
+   }
+
 /*
- * First just check that we can alloc/free
+ * First just check that we can alloc/free (use valgrind to validate)
  */
    ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS*(ATL_NTHREADS+2), 1);
    ATL_gFreeAtmCtr(ac);
@@ -20222,13 +20343,24 @@ int main(int nargs, char **args)
    ATL_gFreeAtmCtr(ac);
    ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS>>1, 1);
    ATL_gFreeAtmCtr(ac);
-   GN = 8111;
-   CNT = calloc(GN, sizeof(char));
-   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS>>1, 1);
-   ATL_goParallel(ATL_NTHREADS, DoWorkAC, NULL, NULL, NULL);
+   ac = ATL_gNewAtmCtr(P, P-1, 1);
    ATL_gFreeAtmCtr(ac);
-   for (i=0; i < GN; i++)
-      ATL_assert(CNT[i] == 1);
-   free((void*)CNT);
+   ac = ATL_gNewAtmCtr(0, 0, 1);
+   ATL_gFreeAtmCtr(ac);
+/*
+ * Test basic functionality
+ */
+   if (P)
+   {
+      GN = 8111;
+      CNT = calloc(GN, sizeof(char));
+      ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS>>1, 1);
+      ATL_goParallel(ATL_NTHREADS, DoWorkAC, NULL, NULL, NULL);
+      ATL_gFreeAtmCtr(ac);
+      for (i=0; i < GN; i++)
+         ATL_assert(CNT[i] == 1);
+      free((void*)CNT);
+      ATL_gFreeAtmCtr(ac);
+   }
    return(0);
 }
