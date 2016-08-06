@@ -19886,16 +19886,19 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
 #include "atlas_type.h"
 /*
  * Define bit positions in the flag bitvec of boolean flag
+ * NOTE: POLL implies LAST1
  */
 #define ATL_GAC_MOV   0  /* set: move numbers priv->pub */
 #define ATL_GAC_NOPUB 1  /* set: make all data private (static scheduling) */
 #define ATL_GAC_NOPRV 2  /* set: make all data public */
 #define ATL_GAC_POLL  3  /* set: poll for count before 0 return */
+#define ATL_GAC_LAST1 4  /* set: last count always 1 */
 #ifndef  GAC_FLAG_SET
    #define GAC_FLAG_SET(field_, bit_) ( ((field_) & (1L<<(bit_))) != 0 )
 #endif
 #define ATL_GAC_DEF_POLL ( (1L<<ATL_GAC_MOV)|((1L<<ATL_GAC_POLL)) )
 #define ATL_GAC_DEF_NOPOLL (1L<<ATL_GAC_MOV)
+#define ATL_GAC_DEF_LAST1  ( (1L<<ATL_GAC_MOV)|((1L<<ATL_GAC_LAST1)) )
 /*
  * Define offsets for initial SAFELS of global part of data structure
  */
@@ -20027,10 +20030,12 @@ void *ATL_gAllocAtmCtr(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t flg)
       void *vp;
       ATL_atmctr_t *gp;
    
+      if (GAC_FLAG_SET(flg, ATL_GAC_POLL))
+         flg |= (1L<<ATL_GAC_LAST1);
       P = (P) ? P : 1;  /* must have at least one thread! */
       inc = sizeof(ATL_lock_t);                  /* sz of native lock struct */
       inc = (ATL_atmctr_t) ATL_AlignSafeLS(inc); /* make mul of SAFELS */
-      gsz = GAC_FLAG_SET(flg, ATL_GAC_POLL) ? inc+(ATL_SAFELS<<1):ATL_SAFELS;
+      gsz = GAC_FLAG_SET(flg, ATL_GAC_LAST1) ? inc+(ATL_SAFELS<<1):ATL_SAFELS;
       inc += ATL_SAFELS<<2;
       vp = malloc(gsz + inc*P);
       ATL_assert(vp);
@@ -20040,7 +20045,7 @@ void *ATL_gAllocAtmCtr(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t flg)
       gp[ATL_GAC_INC] = inc;
       gp[ATL_GAC_N] = N;
       gp[ATL_GAC_FLG] = flg;
-      if (GAC_FLAG_SET(flg, ATL_GAC_POLL))
+      if (GAC_FLAG_SET(flg, ATL_GAC_LAST1))
       {
          ATL_BV_t *bv=ATL_IncBySafeLS(gp);
          int i, nelt;
@@ -20098,7 +20103,7 @@ void *ATL_gNewAtmCtr
    void *vp;
    ATL_atmctr_t *lp;
    char *cp;
-   ATL_atmctr_t cntPrv, lowPub, cntPub, cnt, poll;
+   ATL_atmctr_t cntPrv, lowPub, cntPub, cnt, lst1;
    ATL_atmctr_t lcntPub, lcntPrv, remPub, remPrv;
    unsigned int i;
 
@@ -20118,7 +20123,7 @@ void *ATL_gNewAtmCtr
       cntPub = N;
    else
    {
-      cntPub = P;      /* assume we've got P*P jobs */
+      cntPub = P-1;    /* assume we've got P*(P-1) jobs */
       cntPub *= P;     /* to do via public tasks */
       if (cntPub > (N>>1) ) /* not best case, refine cntPub */
       {
@@ -20143,6 +20148,8 @@ void *ATL_gNewAtmCtr
                  !GAC_FLAG_SET(flg, ATL_GAC_NOPRV));
    if (GAC_FLAG_SET(flg, ATL_GAC_MOV)) /* if we move jobs to global */
       flg &= ~(1L<<ATL_GAC_NOPUB);    /* we must scope global queue */
+   if (GAC_FLAG_SET(flg, ATL_GAC_POLL))
+      flg |= (1L<<ATL_GAC_LAST1);
    vp = ATL_gAllocAtmCtr(P, N, flg);
    lp = ATL_AlignSafeLS(vp);
 
@@ -20151,8 +20158,8 @@ void *ATL_gNewAtmCtr
    lcntPrv = cntPrv / P;
    remPrv = cntPrv - lcntPrv*P;
 
-   poll = (flg>>ATL_GAC_POLL)&1;
-   cnt = 1+poll;
+   lst1 = (flg>>ATL_GAC_LAST1)&1;
+   cnt = 1+lst1;
    for (i=0; i < P; i++)
    {
       ATL_atmctr_t mypub, myprv;
@@ -20160,12 +20167,12 @@ void *ATL_gNewAtmCtr
       myprv = (i < remPrv) ? lcntPrv+1 : lcntPrv;
       mypub = (i < remPub) ? lcntPub+1 : lcntPub;
       if (myprv)
-         myprv -= poll;
+         myprv -= lst1;
       else
-         mypub -= poll;
+         mypub -= lst1;
       ATL_gInitAtmCtrByRank(vp, i, cnt, myprv, mypub);
       cnt += myprv + mypub;
-      poll = 0;
+      lst1 = 0;
    }
    return(vp);
 }
@@ -20180,7 +20187,7 @@ void ATL_gFreeAtmCtr(void *ac)
       const ATL_atmctr_t inc = lp[ATL_GAC_INC], gsz=lp[ATL_GAC_GSZ];
       const unsigned int P=lp[ATL_GAC_P];
       unsigned int i;
-      if (GAC_FLAG_SET(lp[ATL_GAC_FLG], ATL_GAC_POLL))
+      if (GAC_FLAG_SET(lp[ATL_GAC_FLG], ATL_GAC_LAST1))
          ATL_lock_destroy(ATL_AddBytesPtr(lp, ((ATL_SAFELS)<<1)));
       lp = ATL_AddBytesPtr(lp, gsz+(ATL_SAFELS<<1)+ATL_SAFELS);
       for (i=0; i < P; i++, lp = ATL_AddBytesPtr(lp, inc))
@@ -20199,7 +20206,7 @@ void ATL_gPrintAtmCtr(FILE *fpout, void *ac)
    ATL_atmctr_t i;
    fprintf(fpout, "gAtmCtr, P=%lu, gsz=%lu, inc=%lu N=%lu, flag=%lx", 
            P, gsz, inc, gp[ATL_GAC_N], flg);
-   if (GAC_FLAG_SET(flg, ATL_GAC_POLL))
+   if (GAC_FLAG_SET(flg, ATL_GAC_LAST1))
    {
       ATL_atmctr_t *dc=ATL_IncBySafeLS(gp);
       fprintf(fpout, ", dnBV=%lu %lx\n", *dc, dc[1]);
@@ -20272,7 +20279,7 @@ static int WorkToSteal
  * one pass through public queues in search of work, and return 0 if none
  * available at this time.
  */
-static ATL_atmctr_t tryPub
+static INLINE ATL_atmctr_t tryPub
    (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
 {
    const ATL_atmctr_t P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC];
@@ -20352,16 +20359,17 @@ static ATL_atmctr_t tryPub
 }
 
 /*
- * Poll for public work.  For ATL_GAC_POLL, all threads call this prior
+ * Poll for public work.  For ATL_GAC_LAST1, all threads call this prior
  * to exiting
  */
 static ATL_atmctr_t pollPub
    (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *tp)
 {
-   const ATL_atmctr_t P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC];
+   const ATL_atmctr_t P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC], flg=gp[ATL_GAC_FLG];
    ATL_BV_t *doneBV=ATL_IncBySafeLS(gp);
    unsigned int vrk;
-   const int PUB=!GAC_FLAG_SET(gp[ATL_GAC_FLG],ATL_GAC_NOPUB);
+   const int PUB=!GAC_FLAG_SET(flg,ATL_GAC_NOPUB), 
+             POLL=GAC_FLAG_SET(flg,ATL_GAC_POLL);
 
 /*
  * If I have my own public counter, exhaust it before polling
@@ -20405,9 +20413,9 @@ static ATL_atmctr_t pollPub
    else
       vrk = rank-P;
 /*
- * If no public data, just hold here until everyone finishes
+ * If polling wt no public data, just hold here until everyone finishes
  */
-   if (!PUB)
+   if (POLL && !PUB)
    {
       while (ATL_FindFirstUnsetBitBV(doneBV, 0) != -1)
          ATL_thread_yield();  /* delay to reduce load */
@@ -20453,7 +20461,9 @@ static ATL_atmctr_t pollPub
             cntPubP = ATL_AddBytesPtr(tp, (ATL_SAFELS<<1));
          }
       }
-      ATL_thread_yield();  /* delay to reduce contention, then try again */
+      if (!POLL)           /* if not polling, only try all P locks one time */
+         return(0);        /* so return rather than trying again */
+      ATL_thread_yield();  /* else delay to reduce contention, then try again */
    }
    while (ATL_FindFirstUnsetBitBV(doneBV, 0) != -1);
    return(0);
@@ -20462,7 +20472,7 @@ static ATL_atmctr_t pollPub
 /*
  * Gets a single count from private range, returns 0 if none left
  */
-static ATL_atmctr_t 
+static INLINE ATL_atmctr_t 
    prvCnt(unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *tp)
 {
    ATL_atmctr_t *cntPrvP, *lowPubP;
@@ -20481,7 +20491,7 @@ static ATL_atmctr_t
    return(cnt);
 }
 
-static ATL_atmctr_t prvPubCnt
+static INLINE ATL_atmctr_t prvPubCnt
    (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
 /*
  * Get count from either private or public count.  Always prefers private
@@ -20532,7 +20542,7 @@ static ATL_atmctr_t prvPubCnt
       else
          return(prvCnt(rank, gp, lp));
    }
-   if (GAC_FLAG_SET(flg, ATL_GAC_POLL))
+   if (GAC_FLAG_SET(flg, ATL_GAC_LAST1))
       return(pollPub(rank, gp, lp));
    return(tryPub(rank, gp, lp));
 }
@@ -20547,7 +20557,7 @@ ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank)
       ATL_atmctr_t *lp=ATL_AddBytesPtr(gp, gp[ATL_GAC_GSZ]);
       ATL_atmctr_t ret;
       const int USEPUB = !GAC_FLAG_SET(flg, ATL_GAC_NOPUB),
-                POLL = GAC_FLAG_SET(flg, ATL_GAC_POLL);
+                POLL = GAC_FLAG_SET(flg, ATL_GAC_LAST1);
 
 
       if (rank < P)
@@ -20581,6 +20591,8 @@ ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank)
 @ROUT testGAT
 #include "atlas_gatmctr.h"
 #include "atlas_bitvec.h"
+#define ATL_GETFLAGS 1
+#include "atlas_genparse.h"
 
 static ATL_atmctr_t GN=500, NERR=0;
 volatile static unsigned char *CNT;
@@ -20611,7 +20623,8 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags]:\n", name);
    fprintf(stderr, "   -v <verb> [1]\n");
-   fprintf(stderr, "   -f <flag> [3]\n");
+   fprintf(stderr, "   -f <flag> [NOPOLL]\n");
+   fprintf(stderr, "   -F # <flag1> ... <flagN>\n");
    fprintf(stderr, "   -p <nthreads> [ATL_NTHREAD]\n");
    fprintf(stderr, "   -P <nthr0> <nthrN> <nthrINC> [ATL_NTHREAD]\n");
    fprintf(stderr, "   -n <cnt> [8111]\n");
@@ -20620,13 +20633,13 @@ void PrintUsage(char *name, int ierr, char *flag)
 }
 
 int GetFlags(int nargs, char **args, int *N0, int *NN, int *NINC,
-             int *P0, int *PN, int *PINC, int *FLAG)
+             int *P0, int *PN, int *PINC, int **FLAGs)
 {
    int i, P, verb=1;
    
    *P0 = *PN = *PINC = ATL_NTHREADS;
    *N0 = *NN = *NINC = 8111;
-   *FLAG=ATL_GAC_DEF_NOPOLL;
+   *FLAGs=NULL;
    for (i=1; i < nargs; i++)
    {
       int WH=0;
@@ -20673,15 +20686,21 @@ int GetFlags(int nargs, char **args, int *N0, int *NN, int *NINC,
             PrintUsage(args[0], i, NULL);
          verb = atoi(args[i]);
          break;
-      case 'f':         /* -p <nthr> */
+      case 'F':
+         *FLAGs = GF_GetIntList(nargs, args, i, 1);
+         i += (*FLAGs)[0] + 1;
+         break;
+      case 'f':         /* -f <flag> */
          if (++i >= nargs)
             PrintUsage(args[0], i, NULL);
-         *FLAG = atoi(args[i]);
+         *FLAGs = GF_GetIntList1(atoi(args[i]));
          break;
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
+   if (*FLAGs == NULL)
+      *FLAGs = GF_GetIntList1(ATL_GAC_DEF_NOPOLL);
    return(verb);
 }
 
@@ -20689,63 +20708,67 @@ int main(int nargs, char **args)
 {
    void *ac;
    ATL_atmctr_t i;
-   int p, verb, N0, NN, incN, P0, PN, incP, flg;
+   int p, f, verb, N0, NN, incN, P0, PN, incP, *flgs;
    unsigned long nerr=0;
-   verb = GetFlags(nargs, args, &N0, &NN, &incN, &P0, &PN, &incP, &flg);
+   verb = GetFlags(nargs, args, &N0, &NN, &incN, &P0, &PN, &incP, &flgs);
 
 /*
  * First just check that we can alloc/free (use valgrind to validate)
  */
    if (verb)
       fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
-   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS*(ATL_NTHREADS+2), flg);
+   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS*(ATL_NTHREADS+2), flgs[1]);
    ATL_gFreeAtmCtr(ac);
    if (verb)
       fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
-   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS, flg);
+   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS, flgs[1]);
    ATL_gFreeAtmCtr(ac);
-   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS>>1, flg);
+   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS>>1, flgs[1]);
    if (verb)
       fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
    ATL_gFreeAtmCtr(ac);
    if (verb)
       fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
    i = (PN > 1) ? PN : 2;
-   ac = ATL_gNewAtmCtr(i, i-1, flg);
+   ac = ATL_gNewAtmCtr(i, i-1, flgs[1]);
    ATL_gFreeAtmCtr(ac);
    if (verb)
       fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
-   ac = ATL_gNewAtmCtr(0, 0, flg);
+   ac = ATL_gNewAtmCtr(0, 0, flgs[1]);
    ATL_gFreeAtmCtr(ac);
 /*
  * Test basic functionality
  */
-   for (p=P0; p <= PN; p += incP)
+   for (f=0; f < flgs[0]; f++)
    {
-      for (GN=N0; GN <= NN; GN += incN)
+      int flg = flgs[f+1];
+      for (p=P0; p <= PN; p += incP)
       {
-         int err=0;
-         CNT = calloc(GN, sizeof(char));
-         AC = ac = ATL_gNewAtmCtr(p, GN, flg);
-         fprintf(stderr, "\n\n");
-         ATL_gPrintAtmCtr(stderr, ac);
-         fprintf(stderr, "TESTING P=%d, N=%d:\n", p, GN);
-         ATL_goParallel(p, DoWorkAC, NULL, NULL, NULL);
-         ATL_gFreeAtmCtr(ac);
-         for (i=0; i < GN; i++)
+         for (GN=N0; GN <= NN; GN += incN)
          {
-            if (CNT[i] != 1)
+            int err=0;
+            CNT = calloc(GN, sizeof(char));
+            AC = ac = ATL_gNewAtmCtr(p, GN, flg);
+            fprintf(stderr, "\n\n");
+            ATL_gPrintAtmCtr(stderr, ac);
+            fprintf(stderr, "TESTING P=%d, N=%d:\n", p, GN);
+            ATL_goParallel(p, DoWorkAC, NULL, NULL, NULL);
+            ATL_gFreeAtmCtr(ac);
+            for (i=0; i < GN; i++)
             {
-               err++;
-               if (verb)
-                  fprintf(stderr, "   CNT[%d] = %d, expected 1\n", i, CNT[i]);
+               if (CNT[i] != 1)
+               {
+                  err++;
+                  if (verb)
+                     fprintf(stderr, "   CNT[%d] = %d, expected 1\n",i,CNT[i]);
+               }
             }
+            err += NERR;
+            NERR = 0;
+            fprintf(stderr, "DONE    P=%d, N=%d, NERR=%d\n", p, GN, err);
+            nerr += err;
+            free((void*)CNT);
          }
-         err += NERR;
-         NERR = 0;
-         fprintf(stderr, "DONE    P=%d, N=%d, NERR=%d\n", p, GN, err);
-         nerr += err;
-         free((void*)CNT);
       }
    }
    fprintf(stderr, "\nDONE ALL TESTING, NERR=%d\n", nerr);
