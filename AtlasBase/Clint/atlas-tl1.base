@@ -5961,8 +5961,25 @@ enum eblas{Bnrm2, Biamax, Basum, Bscal, Bset,               /* 1vec routs */
 char *nblas[]={"nrm2", "iamax", "asum", "scal", "set", 
                "rot", "copy", "cpsc", "swap", "axpy", "axpby", "dot", "dotc"}; 
 
+#define t_iamax(N_, al_, X_, iX_, be_, Y_, iY) \
+   Mjoin(Mjoin(ATL_i,PRE),amax)(N_, X_, iX_);
+
 #define t_pref Mjoin(PATL,f77)
-#define t_iamax(N_, X_, incX_) Mjoin(Mjoin(ATL_i,PRE),amax)(N_, X_, incX_);
+#define t_nrm2(N_, al_, X_, iX_, be_, Y_, iY) \
+   Mjoin(t_pref,nrm2)(N_, X_, iX_);
+#define t_asum(N_, al_, X_, iX_, be_, Y_, iY) \
+   Mjoin(t_pref,asum)(N_, X_, iX_);
+#ifdef TCPLX
+   #define t_scal(N_, al_, X_, iX_, be_, Y_, iY) \
+      Mjoin(t_pref,scal)(N_, al_, X_, iX_);
+   #define t_set(N_, al_, X_, iX_, be_, Y_, iY) \
+      Mjoin(t_pref,set)(N_, al_, X_, iX_);
+#else
+   #define t_scal(N_, al_, X_, iX_, be_, Y_, iY) \
+      Mjoin(t_pref,scal)(N_, *(al_), X_, iX_);
+   #define t_set(N_, al_, X_, iX_, be_, Y_, iY) \
+      Mjoin(PATL,set)(N_, *(al_), X_, iX_);
+#endif
 void PrintUsage(char *name, int ierr, char *flag);
 
 int *RoutNames2IntList(int nargs, char **args, int i)
@@ -6024,14 +6041,14 @@ void PrintUsage(char *name, int ierr, char *flag)
 }
 
 unsigned long GetFlags
-   (int nargs, char **args, int *nreps, int *MALG, int **Ns, int **XINCs, 
-    int **YINCs, int **ROUTs, double **ALPs, double **BETs)
+   (int nargs, char **args, int *nreps, int *frcMF, int *MALG, int **Ns, 
+    int **XINCs, int **YINCs, int **ROUTs, double **ALPs, double **BETs)
 {
    int i;
    unsigned long flushKB;
 
    *nreps = 1;
-   *MALG = 0;
+   *frcMF = *MALG = 0;
    *ALPs = *BETs = NULL;
    *ROUTs = *XINCs = *YINCs = *Ns = NULL;
    #ifdef L2SIZE
@@ -6049,6 +6066,11 @@ unsigned long GetFlags
          if (++i >= nargs)
             PrintUsage(args[0], i, NULL);
          *MALG = atol(args[i]);
+         break;
+      case 'F':                          /* -F <mflop> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *frcMF = atoi(args[i]);
          break;
       case 'f':                          /* -f <flushKB> */
          if (++i >= nargs)
@@ -6169,7 +6191,8 @@ double opbl1
 @skip   else if( rt == BRSCAL  ) { muls = 0.0;           adds = en;         }
    else if( rt == Baxpy   ) { muls = en;            adds = en;         }
                         /* Count copy just like adds for practicality */
-   else if( rt == Bcopy   ) { muls = 0.0;           adds = en;         }
+   else if( rt == Bcopy || rt == Bset   ) 
+   { muls = 0.0;           adds = en;         }
                         /* Count swap just like adds for practicality */
    else if( rt == Bswap   ) { muls = 0.0;           adds = 2.0 * en;   }
 #ifdef TREAL
@@ -6190,9 +6213,10 @@ double opbl1
 #endif
 }
 
-double DoTime1(int MA, size_t flsh, int rt, int N, int incX, double *alp)
+double DoTime1(int MA, int frcMF, size_t flsh, int rt, int N, int incX, 
+               double *alp)
 {
-   size_t i, sz, nsets, setsz, vecsz, vecN;
+   size_t i, sz, nsets, setsz, vecsz, vecN, reps=1;
    double t0, t1;
    void *vp;
    TYPE *X;
@@ -6216,15 +6240,48 @@ double DoTime1(int MA, size_t flsh, int rt, int N, int incX, double *alp)
       X = (void*) (((size_t)X)+MA);
    sz /= sizeof(TYPE);
    Mjoin(PATL,gegen)(sz, 1, X, 1, N*incX+2557);
-   t0 = ATL_walltime();
-   t_iamax(N, X, incX);
-   t1 = ATL_walltime() - t0;
+
+   if (frcMF)
+   {
+      double d;
+      d = opbl1(rt, N);
+      reps = ((frcMF * 1e6) / d) + 0.9;
+   }
+   switch(rt)
+   {
+   @whiledef bn nrm2 iamax asum scal set
+   case B@(bn):
+      if (reps > 1)
+      {
+         unsigned int r, s;
+         TYPE *x=X;
+         t0 = ATL_walltime();
+         for (s=r=0; r < reps; r++)
+         {
+            t_@(bn)(N, alp, x, incX, NULL, NULL, NULL);
+            if (++s != nsets)
+               x += vecN;
+            else { x = X; s=0; }
+         }
+         t1 = ATL_walltime() - t0;
+         t1 /= reps;
+      }
+      else
+      {
+         t0 = ATL_walltime();
+         t_@(bn)(N, alp, X, incX, NULL, NULL, NULL);
+         t1 = ATL_walltime() - t0;
+      }
+      break;
+   @endwhile
+   }
    free(vp);
    return(t1);
 }
+
 void TimeAllL1
-   (int nrep, int MA, size_t flshKB, int *RTs, int *Ns, int *IXs, int *IYs, 
-    double *ALPs, double *BETs)
+   (int nrep, int frcMF, int MA, size_t flshKB, int *RTs, int *Ns, int *IXs, 
+    int *IYs, double *ALPs, double *BETs)
 {
    const int nbe=BETs[0], nal=ALPs[0];
    const int nrt=RTs[0], nn=Ns[0], nix=IXs[0], niy=IYs[0];
@@ -6267,7 +6324,7 @@ void TimeAllL1
                      for (ir=0; ir < nrep; ir++)
                      {
                         double tm, mf;
-                        tm = DoTime1(MA, flshKB, rt, N, incX, alp);
+                        tm = DoTime1(MA, frcMF, flshKB, rt, N, incX, alp);
                         mf = opbl1(rt, N) / (tm*1e6);
                      #ifdef TCPLX
                         printf(
@@ -6299,12 +6356,12 @@ int main(int nargs, char **args)
 {
    int *Ns, *XINCs, *YINCs, *ROUTs;
    double *ALPs, *BETs;
-   int MA, nreps;
+   int MA, nreps, frcMF;
    size_t flushKB;
 
-   flushKB = GetFlags(nargs, args, &nreps, &MA, &Ns, &XINCs, &YINCs, &ROUTs, 
-                      &ALPs, &BETs);
-   TimeAllL1(nreps, MA, flushKB, ROUTs, Ns, XINCs, YINCs, ALPs, BETs);
+   flushKB = GetFlags(nargs, args, &nreps, &frcMF, &MA, &Ns, &XINCs, &YINCs, 
+                      &ROUTs, &ALPs, &BETs);
+   TimeAllL1(nreps, frcMF, MA, flushKB, ROUTs, Ns, XINCs, YINCs, ALPs, BETs);
    free(Ns);
    free(XINCs);
    free(YINCs);
