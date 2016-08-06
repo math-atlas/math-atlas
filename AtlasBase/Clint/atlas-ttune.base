@@ -998,7 +998,10 @@ int main(int nargs, char **args)
 @ROUT tune_count
 #include "atlas_threads.h"
 #include "atlas_misc.h"
+#include "atlas_gatmctr.h"
 void *ATL_SetAtomicCount_mut(long long);
+int   ATL_DecAtomicCount_mut(void *);
+void  ATL_FreeAtomicCount_mut(void *);
 
 static volatile int count=0;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -1097,6 +1100,18 @@ void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    timearr[iam] = t1 - t0;
 }
 
+void TuneDoWork_gac(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   double t0, t1;
+   ATL_thread_t *tp = vp;
+   ATL_CINT iam = tp->rank;
+
+   t0 = ATL_walltime();
+   while (ATL_gDecAtmCtr(acnt, iam));
+   t1 = ATL_walltime();
+   timearr[iam] = t1 - t0;
+}
+
 void TuneDoWork_gc(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    double t0, t1;
@@ -1151,9 +1166,30 @@ size_t GetFlags(int nargs, char **args, char **outfile)
    return(reps);
 }
 
+double CompTimes(int P, double *times, double *MIN, double *AVG)
+{
+   int i;
+   if (P > 0)
+   {
+      double min, max, avg;
+      avg = max = min = *times;
+      for (i=1; i < P; i++)
+      {
+         double t0=times[i];
+         avg += t0;
+         max = Mmax(max, t0);
+         min = Mmin(min, t0);
+      }
+      *MIN = min;
+      *AVG = avg / (double)P;
+      return(max);
+   }
+   return(0.0);
+}
 int main(int nargs, char **args)
 {
-   double t0, tmut_s, tdec_s, tser_s, tmut, tdec, tser, tldec;
+   double t0, tmut_s, tdec_s, tser_s, tmut, tdec, tser, tldec, tpoll, tnopoll;
+   double avg, min;
    size_t nreps, i, lcnt;
    ATL_thread_t ts;
    char *outfile;
@@ -1199,6 +1235,10 @@ int main(int nargs, char **args)
 
    printf("FINDING SPEED OF PARALLEL COUNTER CHANGING USING %ld REPS %d PROC\n",
           (long int) nreps, ATL_NTHREADS);
+   printf(
+   "            WHAT      MAX TIME      MIN TIME      AVG TIME  Par/Ser\n");
+   printf(
+   "   =============  ============  ============  ============  =======\n");
 
 @beginskip
    for (i=0; i < ATL_NTHREADS-1; i++)
@@ -1220,47 +1260,62 @@ int main(int nargs, char **args)
 
    acnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, nreps, 0);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork_gc, NULL, NULL);
-   for (tldec=0.0,i=0; i < ATL_NTHREADS; i++)
-      tldec = Mmax(tldec,timearr[i]);
+   tldec = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
    ATL_FreeGlobalAtomicCount(acnt);
-   printf("   parallel GblDec time = %e (par/ser = %.2f)\n", 
-          tldec, tldec/tdec_s);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par GlblDec", 
+          tldec, min, avg, tldec/tdec_s);
+
+   acnt = ATL_gNewAtmCtr(ATL_NTHREADS, nreps, ATL_GAC_DEF_NOPOLL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_gac, NULL, NULL);
+   tnopoll = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
+   ATL_gFreeAtmCtr(acnt);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par gDec_nopoll", 
+          tnopoll, min, avg, tnopoll/tdec_s);
+
+   acnt = ATL_gNewAtmCtr(ATL_NTHREADS, nreps, ATL_GAC_DEF_POLL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_gac, NULL, NULL);
+   tpoll = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
+   ATL_gFreeAtmCtr(acnt);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par gDec_poll", 
+          tpoll, min, avg, tpoll/tdec_s);
 
    acnt = ATL_SetAtomicCount_mut(nreps);
    acnt = ATL_SetAtomicCount(nreps);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork, NULL, NULL);
-   for (tdec=0.0,i=0; i < ATL_NTHREADS; i++)
-      tdec = Mmax(tdec,timearr[i]);
+   tdec = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
    ATL_FreeAtomicCount(acnt);
-   printf("   parallel AtoDec time = %e (par/ser = %.2f)\n", tdec, tdec/tdec_s);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par AtmDec", 
+          tdec, min, avg, tdec/tdec_s);
 
    acnt = ATL_SetAtomicCount_mut(nreps);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork_mut, NULL, NULL);
-   for (tmut=0.0,i=0; i < ATL_NTHREADS; i++)
-      tmut = Mmax(tmut,timearr[i]);
+   tmut = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
    ATL_FreeAtomicCount_mut(acnt);
-   printf("   parallel mutex  time = %e (par/ser = %.2f)\n", tmut, tmut/tmut_s);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par mutex", 
+          tmut, min, avg, tmut/tmut_s);
 
    count = nreps;
    acnt = ATL_SetAtomicCount_mut(nreps);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork_ser, NULL, NULL);
-   for (tser=0.0,i=0; i < ATL_NTHREADS; i++)
-      tser = Mmax(tser,timearr[i]);
+   tser = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
    ATL_FreeAtomicCount_mut(acnt);
-   printf("   parallel unsafe time = %e (par/ser = %.2f)\n", tser, tser/tser_s);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par unsafe", 
+          tser, min, avg, tser/tser_s);
 
    #ifdef PentiumCPS
       t0 = 1000000.0*PentiumCPS;
-      printf("   CYCLES PER CALL: SER=%.1f, DEC=%.1f, GBLDEC=%.1f, MUT=%.1f\n", 
+      printf(
+      "   CYCLES/CALL: SER=%.1f, DEC=%.1f, GBLDEC=%.1f, gDec=%.1f, MUT=%.1f\n", 
              t0*(tser/nreps), t0*(tdec/nreps), t0*(tldec/nreps), 
-             t0*(tmut/nreps));
+             t0*(tnopoll/nreps), t0*(tmut/nreps));
    #endif
    t0 = 1000000.0 / nreps;
    printf(
-   "   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, GBLDEC=%.2f, MUT=%.2f\n", 
-          tser*t0, tdec*t0, tldec*t0, tmut*t0);
-   printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tdec);
-   printf("GBLDEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tldec);
+   "   MICROSEC/CALL: SER=%.2f DEC=%.2f, GBLDEC=%.2f, gDec=%.2f, MUT=%.2f\n", 
+          tser*t0, tdec*t0, tldec*t0, tnopoll*t0, tmut*t0);
+   printf("DEC    SPEEDUP OVER MUTEX = %.2f\n", tmut / tdec);
+   printf("GBLDEC SPEEDUP OVER MUTEX = %.2f\n", tmut / tldec);
+   printf("gDec   SPEEDUP OVER MUTEX = %.2f\n", tmut / tnopoll);
 /*
  * Change nothing unless outfile is non-NULL
  */
