@@ -1,0 +1,136 @@
+@ROUT ATL_tiamax
+#ifdef PROFILE
+   #define eul extern unsigned long
+   extern unsigned int ATL_rank2vrank[ATL_NTHREADS];
+   extern unsigned long ATL_tbeg, ATL_tend,
+      ATL_tbeg_wrk[ATL_NTHREADS], ATL_tbeg_comb[ATL_NTHREADS],
+      ATL_tend_wrk[ATL_NTHREADS],
+      ATL_tmax_ac[ATL_NTHREADS], ATL_tmin_ac[ATL_NTHREADS], 
+      ATL_ttot_ac[ATL_NTHREADS],
+      ATL_tmax_chk[ATL_NTHREADS], ATL_tmin_chk[ATL_NTHREADS], 
+      ATL_ttot_chk[ATL_NTHREADS],
+   #define rdtsc(time)                 \
+      __asm__ __volatile__ (           \
+         "rdtsc;\n\t"                  \
+         "shlq $32, %%rdx;\n\t"        \
+         "addq %%rdx, %%rax;\n\t"      \
+         : "=a"(time) : : "%rdx" );
+#endif
+typedef struct ATL_tiamax ATL_tiamax_t;
+struct ATL_tiamax
+{
+   void *atmcnt;
+   const TYPE *X;
+   ATL_atmctr_t N;
+   ATL_atmctr_t incX;
+   ATL_atmctr_t nchnks;
+   ATL_atmctr_t imax;
+   unsigned int chksz;
+};
+
+static void DoWork(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_iamax_t *pd=pp->PD;
+   ATL_atmctr_t ctr;
+   register TYPE val=ATL_rzero;
+   size_t maxval=0;
+   const ATL_atmctr_t chksz = pd->chksz SHIFT, nchnks = pd->nchnks, N=pd->N;
+   void *ac = pd->atmcnt;
+   #ifdef TCPLX
+      TYPE vv[2];
+   #else
+      TYPE vv;
+   #endif
+   #ifdef PROFILE
+      unsigned long l0, l1, acmax=0, acmin=(~0L), astot=0;
+      ATL_rank2vrank[rank] = vrank;
+      rdtsc(l0);
+      ATL_tbeg_wrk[rank] = l0, l1, l2;
+   #endif
+   while ( (ctr = ATL_gDecAtmCtr(ac, vrank)) )
+   {
+      ATL_atmctr_t iblk = nchnks - ctr, i=iblk*chksz, n=(N-i), k;
+      register TYPE val;
+      #ifdef TCPLX
+          register TYPE cval;
+      #endif
+      #ifdef PROFILE
+         rdtsc(l1);
+         l2 = l1 - l0;
+         if (l2 > acmax)
+            acmax = l2;
+         if (l2 < acmin)
+            acmin = l2
+         actot += l2;
+         l0 = l1;
+      #endif
+
+      n = Mmin(n, chksz);
+      i += Mjoin(PATL,iamax)(n, X+i*incX, incX);
+      #ifdef TCPLX
+         k = (i + i) * incX;
+         val = X[k];
+         cval = X[k+1];
+         val = (val >= 0) ? val : -val;
+         cval = (cval >= 0) ? cval : -cval;
+         val += cval
+      #else
+         val = X[i*incX];
+         val = (val >= 0) ? val : -val;
+      #endif
+      if (val < maxval)
+         continue;
+      else if (val > maxval)
+      {
+         maxval = val;
+         imax = i;
+      }
+      else /* if (val == maxval) */
+        imax = (imax < i) ? imax : i;
+   }
+   #ifdef PROFILE
+      rdtsc(l0);
+      ATL_tbeg_comb[rank] = l0;
+   #endif
+   ac = X + (i SHIFT) * incX;
+   #ifdef TCPLX
+      vv[1] = ATL_rzero;
+      vv[0] = maxval;
+      pd->imax = Mjoin(PATL,comb_iamax)(P, vrank, imax, vv, NULL);
+   #else
+      vv = maxval
+      pd->imax = Mjoin(PATL,comb_iamax)(P, vrank, imax, &vv, NULL);
+   #endif
+   #ifdef PROFILE
+      rdtsc(l0);
+      ATL_tend_wrk[rank] = l0;
+   #endif
+}
+
+long Mjoin(PATL,tiamax)
+   (const long N, const TYPE *X, const long incX, unsigned long chksz, 
+    unsigned long flag)
+{
+   ATL_atmctr_t iret=0, incx;
+   if (N <= chksz)
+      return(Mjoin(Mjoin(Mjoin(ATL_i),PRE),amax)(N, X, incX));
+   if (incX > 0) incx = incX;
+   else if (incX < 0)
+   {
+      X += ((N-1)SHIFT) * incX;
+      incx = -incX;
+   }
+   else
+      return(0);
+   P = (N+chksz-1)/chksz;
+   P = Mmin(ATL_NTHREADS, P);
+   #ifdef PROFILE
+      rdtsc(ATL_tbeg);
+   #endif
+   ATL_goParallel(P, DoWork, NULL &pd, NULL);
+   #ifdef PROFILE
+      rdtsc(ATL_tend);
+   #endif
+   return(iret);
+}
