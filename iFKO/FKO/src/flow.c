@@ -1256,7 +1256,7 @@ void InvalidateLoopInfo(void)
       lp->body_label = optloop->body_label;
       lp->end_label = optloop->end_label;
       lp->maxunroll = optloop->maxunroll;
-      lp->writedd = optloop->writedd;
+      lp->itermul = optloop->itermul;
       lp->LMU_flag = optloop->LMU_flag;   /* save the flag for loop markup */
       
       lp->fa2vlen = optloop->fa2vlen;     /* fptr calculated in vect*/
@@ -2272,3 +2272,427 @@ void PrintFallThruLoopPath(LOOPQ *lp)
    KillBlockList(ftblks);
    return;
 }
+
+/*=============================================================================
+ *
+ * Loop unswitching .....
+ *
+ *============================================================================*/
+
+
+int IsAnyTail(LPLIST *l0, BBLOCK *blk)
+{
+   LPLIST *ll;
+   for (ll=l0; ll; ll=ll->next)
+   {
+      if (FindBlockInList(ll->loop->tails, blk))
+         return(1);
+   }
+   return(0); 
+}
+
+int IsVarLoopsInvariant(LPLIST *l0, short var)
+{
+   INSTQ *ip;
+   LPLIST *ll;
+   BLIST *bl;
+
+
+   for (ll=l0; ll; ll=ll->next)
+   {
+      for (bl=ll->loop->blocks; bl; bl=bl->next)
+      {
+         for (ip=bl->blk->ainst1; ip; ip=ip->next)
+         {
+            if (  (IS_STORE(ip->inst[0]) || ip->inst[0] == NEG ||
+                     ip->inst[0] == NEGS || ip->inst[0] == CVTSI)
+                  && (ip->inst[1] == SToff[var-1].sa[2]) )
+               return(0);
+         }
+      }
+   }
+   return(1);
+}
+
+int IsBlkBranchLoopInvariant(LPLIST *l0, BBLOCK *blk)
+{
+   int i;
+   short reg0, reg1;
+   short var0, var1;
+   short op;
+   INSTQ *ip, *ip0;
+   
+   ip = blk->ainstN;
+   assert(IS_COND_BRANCH(ip->inst[0]));
+   
+   reg0 = reg1 = 0;
+   var0 = var1 = 0;
+   /*if (ip->prev->inst[0] == FCMP 
+         || ip->prev->inst[0] == FCMPD 
+         || ip->prev->inst[0] == CMP)*/
+   ip=ip->prev;
+/*
+ * reg0 / var0
+ */
+   if (ip->inst[2] < 0)
+      reg0 = ip->inst[2];
+   else if (ip->inst[2])
+   {
+      if (!IS_CONST(STflag[ip->inst[2]-1]))
+         var0 = STpts2[ip->inst[2]-1];
+   }
+/*
+ * reg1 / var1
+ */
+   if (ip->inst[3] < 0)
+      reg1 = ip->inst[3];
+   else if (ip->inst[3])
+   {
+      if (!IS_CONST(STflag[ip->inst[3]-1]))
+         var1 = STpts2[ip->inst[3]-1];
+   }
+/*
+ * findout the vars
+ */
+   if (reg0)
+   {
+      if (ip->prev && IS_LOAD(ip->prev->inst[0]) && ip->prev->inst[1] == reg0)
+         var0 = STpts2[ip->prev->inst[2]-1];
+      else if (ip->prev->prev && IS_LOAD(ip->prev->prev->inst[0]) 
+            && ip->prev->prev->inst[1] == reg0)
+         var0 = STpts2[ip->prev->prev->inst[2]-1];
+      else 
+         fko_error(__LINE__, "found no var using reg0!");
+   }
+   
+   if (reg1)
+   {
+      if (ip->prev && IS_LOAD(ip->prev->inst[0]) && ip->prev->inst[1] == reg0)
+         var1 = STpts2[ip->prev->inst[2]-1];
+      else if (ip->prev->prev && IS_LOAD(ip->prev->prev->inst[0]) 
+            && ip->prev->prev->inst[1] == reg0)
+         var1 = STpts2[ip->prev->prev->inst[2]-1];
+      else 
+         fko_error(__LINE__, "found no var using reg0!");
+   }
+
+   if (var0)
+   { 
+      if (IsVarLoopsInvariant(l0, var0))
+         fprintf(stderr, "var0=%s loop invariant!!!\n", STname[var0-1]);
+      else
+         return(0);
+   }
+   
+   if (var1)
+   {
+      if (IsVarLoopsInvariant(l0, var1))
+         fprintf(stderr, "var1=%s loop invariant!!!\n", STname[var1-1]);
+      else
+         return(0);
+   }
+   return(1);
+}
+
+int IsLoopUnswitchable(LPLIST *ll)
+{
+   int suc, isopt;
+   BBLOCK *bp, *head1, *tailn;
+   BLIST *bl;
+   extern LOOPQ *optloop;
+
+#if 0
+   fprintf(stderr, "loop-nest: ");
+   for (l=ll; l; l=l->next)
+   {
+      fprintf(stderr, "%s ",STname[l->loop->body_label-1]);
+   }
+   exit(0);
+#endif
+   suc = 0;
+/*
+ * check whether if have only loop invariant conditional branches (except back 
+ * edge of the loops)
+ */
+   for (bl=ll->loop->blocks; bl; bl=bl->next)
+   {
+      if (IsAnyTail(ll, bl->blk))
+         continue; /* skip tail to skip the back edge*/
+      if (bl->blk->csucc)
+      {
+#if 0
+         PrintThisBlockInst(stderr, bl->blk);
+#endif
+         suc = 1;
+         if (!IsBlkBranchLoopInvariant(ll, bl->blk))
+            return(0);
+      }
+   }
+/*
+ * fall-thru path must contain the optloop... it will make our life easy to 
+ * implement the loop unswitching
+ */
+   isopt = 0;
+   bp = ll->loop->header;
+   while(bp)
+   {
+      if (FindBlockInList(optloop->blocks, bp))
+      {
+         isopt = 1;
+         break;
+      }
+
+      if (FindBlockInList(ll->loop->tails, bp))
+         break;
+      
+      if (!FindBlockInList(ll->loop->blocks, bp))
+            break;
+      
+      bp = bp->usucc;
+   }
+   if (!isopt)
+      suc = 0;
+
+   return(suc);
+}
+
+INSTQ *RemoveBlkCondBranch(BBLOCK *blk)
+{
+   INSTQ *ip, *ip0;
+   INSTQ *iprm;
+
+   ip = blk->ainstN;
+   assert(IS_COND_BRANCH(ip->inst[0]));
+
+   ip0 = ip->prev; //cmp, neg, negs, cvtsi 
+   iprm = NewInst(NULL, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2], 
+                   ip->inst[3]);
+   DelInst(ip);    // cond jump
+
+   ip = ip0;      
+   ip0 = ip->prev; // load..
+   iprm = NewInst(NULL, NULL, iprm, ip->inst[0], ip->inst[1], ip->inst[2], 
+                   ip->inst[3]);
+   DelInst(ip);
+   ip = ip0;
+
+   while(IS_LOAD(ip->inst[0]))
+   {
+      ip0=ip->prev;
+      iprm = NewInst(NULL, NULL, iprm, ip->inst[0], ip->inst[1], ip->inst[2], 
+                      ip->inst[3]);
+      DelInst(ip);
+      ip = ip0;
+   }
+   return(iprm);
+}
+
+void LoopUnswitch(LPLIST *ll)
+/*
+ * NOTE: to simplify the implementation, we first consider, all the branches
+ * (except back edge for loop) are loop invariant. So, we can move them all 
+ * together
+ */
+{
+   INSTQ *ip, *ip0;
+   ILIST *il, *ilb;
+   LOOPQ *lp;
+   BLIST *bl, *dupblks, *ftheads;
+   BBLOCK *bp, *bp0;
+   BBLOCK *head, *tail, *newCF;
+   INT_BVI iv, ivtails;
+   short nlab=0, labs[4];
+   short lbb, lba;
+   extern BBLOCK *bbbase;
+   extern INT_BVI FKO_BVTMP;
+
+#if 1
+   fprintf(stderr, "let's unswitch the loop\n");
+   ShowFlow("cfg.dot", bbbase);
+#endif
+/*
+ * step 0: duplicate the loopnest 
+ * FIXME: need to duplicate upto FKO_EPILOGUE
+ */
+   lp = ll->loop;
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+   SetVecBit(iv, lp->header->bnum-1, 0);
+   newCF = DupCFScope(lp->blkvec, iv, lp->header);
+   assert(newCF->ilab);
+   
+   iv = BitVecCopy(iv, lp->blkvec);
+   dupblks = CF2BlockList(NULL, iv, newCF);
+   
+   SetVecAll(iv, 0);
+   ivtails = BlockList2BitVec(lp->tails);
+   ftheads =FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
+   ftheads = ReverseBlockList(ftheads);
+
+#if 0
+   fprintf(stderr, "dupblks = ");
+   for(bl=dupblks; bl; bl=bl->next)
+      fprintf(stderr, "%d ", bl->blk->bnum);
+   fprintf(stderr, "\n");
+   
+   fprintf(stderr, "fall-thru = ");
+   for(bl=ftheads; bl; bl=bl->next)
+      fprintf(stderr, "%d ", bl->blk->bnum);
+   fprintf(stderr, "\n");
+#endif
+/*
+ * step 1: remake cfg to generate expected fall-thru, which include one path of
+ * optloop
+ * NOTE: skipped that... we assume optloop is in fall-thru path.. we tested it 
+ * in IsLoopUnswitchable() 
+ */
+/*
+ * step 2: assuming the fall-thru path is correct, explore and fixed the
+ * correct path
+ * FIXME: we assume single head and tail for outter-most loop for now. many code
+ * may have multiple tails.. need to have some common block to work with this 
+ * approach
+ */
+   
+#if 0
+   head = ll->loop->header;
+   assert(!ll->loop->tails->next);
+   tail = ll->loop->tails->blk;
+   bp = head;
+   while(bp)
+   {
+      fprintf(stderr, "%d->", bp->bnum);
+      if (bp == tail)
+         break;
+      bp = bp->usucc;
+   }
+   fprintf(stderr, "\n");
+#endif
+  
+   ilb = NULL;
+   lp = ll->loop;
+   for (bl=lp->blocks; bl; bl=bl->next)
+   {
+      if (!IsAnyTail(ll, bl->blk) && bl->blk->csucc)
+      {
+         ip = RemoveBlkCondBranch(bl->blk);
+         /*PrintThisInstQ(stderr, ip);*/
+         ilb = NewIlist(ip, ilb);
+/*
+ *       since we will keep only one path at the end and assuming we have to 
+ *       enter header of loop first, it is save to delete the label from the 
+ *       conditional successor
+ */
+         DelInst(bl->blk->csucc->ainst1);
+      }
+   }
+
+#if 0
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__,__LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   ShowFlow("cfg2.dot", bbbase);
+#endif
+/*
+ * where to place the conditions... placing at the end of prehead
+ * BUT we need single prehead.. hopefully it will be created at repeatable opt
+ */
+   lp = ll->loop;
+   bp = lp->preheader;
+   assert(bp);
+
+   lbb = STlabellookup("_FKO_LOOP_UNSWITCH_P2");
+
+   ip0 = bp->ainstN;
+   for (il=ilb; il; il=il->next)
+   {
+      for (ip=il->inst; ip; ip=ip->next)
+      {
+         if (IS_COND_BRANCH(ip->inst[0]))
+            ip->inst[3] = lbb;
+         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+      }
+   }
+
+/*
+ * adding the duplicated blocks
+ */
+   for (bp0=bbbase; bp0->down; bp0=bp0->down);
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+   bp->up = bp0;
+   bp0 = bp;
+   
+   ip = InsNewInst(bp, NULL, NULL, LABEL, lbb, 0, 0);
+   
+   for (bl=ftheads; bl; bl=bl->next)
+   {
+      for (bp=bl->blk; bp; bp=bp->down)
+      {
+         if (!BitVecCheck(lp->blkvec, bp->bnum-1))
+            break;
+         bp0->down = FindBlockInListByNumber(dupblks, bp->bnum);
+         bp0->down->up = bp0;
+         bp0 = bp0->down;
+         if (BitVecCheck(ivtails, bp->bnum-1))
+            break;
+         if (bp->usucc != bp->down && bp->csucc != bp->down)
+            break;
+
+      }
+      bp0->down = NULL;
+   }
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+#if 0
+   lba = STlabellookup("_IFKO_EPILOGUE");
+#else
+   assert(lp->posttails && !lp->posttails->next);
+   assert(lp->posttails->blk->ilab);
+   lba = lp->posttails->blk->ilab;
+#endif
+   ip = InsNewInst(bp, NULL, NULL, JMP, -PCREG, lba, 0);
+
+#if 0
+   fprintf(stdout, "inst");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif
+
+
+#if 0
+   nlab=2;
+   labs[0] = STlabellookup(rout_name);
+   labs[1] = STlabellookup("_IFKO_EPILOGUE");
+   DoUselessLabelElim(nlab, labs);
+   ShowFlow("cfg3.dot", bbbase);
+#endif
+/*
+ * to mark prehead and posttail
+ */
+   InsNewInst(lp->preheader, lp->preheader->ainstN, NULL, LABEL, 
+              STlabellookup("_FKO_UNSWITCH_PH"), 0, 0);
+   assert(lp->posttails && !lp->posttails->next);
+   InsNewInst(lp->posttails->blk, NULL, lp->posttails->blk->ainst1, LABEL, 
+              STlabellookup("_FKO_UNSWITCH_PT"), 0, 0);
+
+#if 1
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__,__LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   ShowFlow("cfg4.dot", bbbase);
+#endif
+/*
+ * del temporaries
+ */
+   KillAllIlist(ilb);
+   KillBlockList(dupblks);
+   KillBlockList(ftheads);
+
+}
+

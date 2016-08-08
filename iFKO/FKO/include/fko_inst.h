@@ -1017,6 +1017,9 @@ char *instmnem[] =
 
 /*#define IS_MOVS(i_) ( (i_) == VDMOVS || (i_) == VFMOVS )*/
 
+#define IS_PREF(i_) ( (i_) == PREFR || (i_) == PREFW )
+
+
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);
 INSTQ *InsNewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,

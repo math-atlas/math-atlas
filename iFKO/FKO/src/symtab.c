@@ -1638,4 +1638,3 @@ void CreateArrColPtrs()
 #endif
 }
 
-

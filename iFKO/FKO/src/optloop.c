@@ -994,6 +994,7 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    short r0, r1;
    INSTQ *ip;
    extern int FKO_UR;
+   extern int SKIP_CLEANUP;
 
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
@@ -1008,7 +1009,8 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  *    loop. Look into the code of GenCleanupLoop. 
  */
       /*SToff[OL_NEINC-1].i = unroll-1;*/
-      if (!(lp->LMU_flag & LMU_NO_CLEANUP) 
+      if (!(lp->LMU_flag & LMU_NO_CLEANUP)
+            && !SKIP_CLEANUP
             && FKO_UR != -1) /* no need if no cleanup */
          SToff[OL_NEINC-1].i = unroll; /* it works. */
    }
@@ -1042,6 +1044,7 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  */
    if (unroll > 1 && !IS_CONST(STflag[lp->end-1]) 
          && !(lp->LMU_flag & LMU_NO_CLEANUP) 
+         && !SKIP_CLEANUP
          && FKO_UR != -1)
    {
       ip = ip->next;
@@ -1130,6 +1133,7 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    short r0, r1;
    int I, I0, N, inc, Ioff, i;
    extern int FKO_UR;
+   extern int SKIP_CLEANUP;
 
    I  = lp->I;
    I0 = lp->beg;
@@ -1188,7 +1192,8 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  * NOTE: if NO_CLEANUP is used, we don't need the checking; but we need to init
  * the index variable
  */
-   if (unroll < 2 || (lp->LMU_flag & LMU_NO_CLEANUP) 
+   if (unroll < 2 || (lp->LMU_flag & LMU_NO_CLEANUP)
+         || SKIP_CLEANUP
          || FKO_UR == -1) /* this is for unroll all the way */
       ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
    else
@@ -1684,17 +1689,6 @@ static BLIST *FindAllFallHeads0(BLIST *ftheads, INT_BVI iscope, BBLOCK *head,
    if (head->csucc && !BitVecCheck(inblks, head->csucc->bnum-1))
       ftheads = FindAllFallHeads(ftheads, iscope, head->csucc, tails, inblks);
 #endif
-
-/*
- * If it is tail blk, we don't need to recurse; otherwise, we will fall into
- * infinit loop. 
- * FIXME: if there is a nested loop inside the scope, it will fail. 
- * Need to handle specially for nested loop and will do it later.
- */
-#if 0   
-   if (BitVecCheck(tails, head->bnum-1))
-      return(ftheads);
-#endif   
 /*
  * make this node visited 
  */
@@ -2098,7 +2092,8 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  * NOTE: We may skip cleanup if markup says so
  */
    /*UnrollCleanup(lp, unroll);*/
-   if ( !(lp->LMU_flag & LMU_NO_CLEANUP) 
+   if ( !(lp->LMU_flag & LMU_NO_CLEANUP)
+         /*&& !SKIP_CLEANUP*/
          && FKO_UR != -1) /* unroll all the way */
    {
       if (FKO_SB && (VECT_FLAG & VECT_SV) )
@@ -4642,7 +4637,7 @@ OPTLOOP=1
  *             call RcVectorization too to check error
  *             NOTE: shadow RC only works in X86_64 now, not in 32 bit
  */
-               Vrc = !(RcVectorAnalysis()); /* checking for shadow RC too */
+               Vrc = !(RcVectorAnalysis(optloop)); /* checking for shadow RC too */
                #ifdef X86_32
                   if (Vrc && (VECT_FLAG & VECT_SHADOW_VRC) )
                      Vrc = 0; /* can't vect on X86_32*/
@@ -4650,7 +4645,7 @@ OPTLOOP=1
                #else
                   if (Vrc)
                #endif
-                     Vrc = !RcVectorization();
+                     Vrc = !RcVectorization(optloop);
                iVecMethod[LOOPLVL] = Vrc;
                KillPathTable();
             }
@@ -5766,8 +5761,12 @@ void FinalizeVectorCleanup(LOOPQ *lp, int unroll)
 /*
  * Cleanup should already be generated before finalizing it
  */
+#if 0   
    assert(lp->CU_label > 0);
-
+#else
+   if (lp->CU_label == -1)
+      return;
+#endif
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
 /*
@@ -8148,6 +8147,11 @@ int IfConvWithRedundantComp()
 int Get_OL_NEINC()
 {
    return OL_NEINC;
+}
+
+void Set_OL_NEINC_One()
+{
+   OL_NEINC = STdef("OL_NEINC", CONST_BIT | T_INT, 1);
 }
 
 /* ===========================================================================

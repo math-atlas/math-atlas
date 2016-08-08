@@ -31,6 +31,7 @@
  * .... Should we have two different types like: V_SHORT, V_INT !!!!
  * NOTE: normally, we don't use V_SHORT and V_INT together. So, I decided to
  * use only one type V_INT in my implementation.
+ * NOTE: they are also used in fko_types.h... see flag for SLP_VECTOR
  */
 #define T_VINT       0x8
 /*#define T_VSHORT       0x8

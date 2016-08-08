@@ -8,6 +8,10 @@
 static LOOPPATH **PATHS = NULL;
 static int NPATH = 0, TNPATH = 0, VPATH = -1;
 
+int SKIP_PELOGUE = 0;  /* needed to skip for loop nest vec */
+int SKIP_PEELING = 0;  /* needed to skip for loop nest vec */
+int SKIP_CLEANUP = 0;  /* can safely skip the cleanup after vectorixzation*/
+
 void NewPathTable(int chunk)
 {
    int i, n;
@@ -1315,21 +1319,100 @@ short FindMostAccessedPtr(short *ptrs, BLIST *scope)
 short FindPtrToForceAlign(LOOPQ *lp)
 /*
  * return ST index of ptr to force align
+ * NOTE: 2D array ptrs are considered to find the candiadate ptr
  */
 {
-   short ptr;
+   int i, k, n;
+   short ptr, id;
+   short *s;
+   int type;
+
+   assert(lp->varrs);
 /*
  * if there exist a ptr from FORCE_ALIGN markup
+ * NOTE: We don't check alignment in force_align ptrs except the value 0 which
+ * mean not alignable!
  */
-   if (lp->faalign)  /* if exist, return the 1st one */
+   if (lp->faalign)
    {
-      lp->fa2vlen = lp->faalign[1];
-      /*return (lp->faalign[1]);*/
+      for (i=1, n=lp->faalign[0]; i <= n; i++)
+      {
+         if (lp->fbalign[i]) /* skip with alignment 0 */
+         {
+/*
+ *          if it is 2D array ptr, all column ptr must be mutually aligned!
+ */
+            id = STarrlookup(lp->faalign[i]);
+            if (!id)
+            {
+               lp->fa2vlen = lp->faalign[i];
+               break;
+            }
+            else /* 2d array pointer */
+            {               
+               if (!lp->maaligned && lp->mbalign) /*all mutually aligned */ 
+               {
+                  if (lp->mbalign[1] >= GetVecAlignByte())
+                  {
+                     lp->fa2vlen = STarr[id-1].colptrs[1];
+                     break;
+                  }
+               }
+               else if (lp->maaligned 
+                        && (k=FindInShortList(lp->maaligned[0], lp->maaligned+1, 
+                           lp->faalign[i])))
+               {
+                  if (lp->mbalign[k] >= GetVecAlignByte())
+                  {
+                     lp->fa2vlen = STarr[id-1].colptrs[1];
+                     break;
+                  }
+               }
+               else 
+               {
+                  fko_warn(__LINE__, "force align to 2d array," 
+                        " but not mutually aligned! considered 1st col ptr \n");
+                  lp->fa2vlen = STarr[id-1].colptrs[1];
+               }  
+            }
+         }
+      }
    }
+/*
+ * force any ptr, still need to check for 2D..skip them if not mutually aligned
+ */
    else if (!lp->faalign && lp->fbalign)
    {
-      lp->fa2vlen = lp->varrs[1];
-      /*return (lp->varrs[1]);*/
+      //lp->fa2vlen = lp->varrs[1];
+      for (i=1, n=lp->varrs[0]; i <= n; i++)
+      {
+         id = STarrColPtrlookup(lp->varrs[i]);
+         if (!id)
+         {
+            lp->fa2vlen = lp->varrs[i];
+            break;
+         }
+         else /* col ptr in 2D */
+         {
+            if (!lp->maaligned && lp->mbalign) /*all mutually aligned */ 
+            {
+               if (lp->mbalign[1] >= GetVecAlignByte())
+               {
+                  lp->fa2vlen = lp->varrs[i];
+                  break;
+               }
+            }
+            else if (lp->maaligned && 
+                  (k=FindInShortList(lp->maaligned[0], lp->maaligned+1, id)))
+            {
+               if (lp->mbalign[k] >= GetVecAlignByte())
+               {
+                  lp->fa2vlen = lp->varrs[i];
+                  break;
+               }
+            }
+         }
+      }
    }
 /*
  * if no ptr is specified in markup, find out best candidate
@@ -1339,16 +1422,74 @@ short FindPtrToForceAlign(LOOPQ *lp)
  */   
    else
    {
-      ptr = lp->varrs[1];
+      ptr = 0;
       if (lp->maaligned)
-         ptr = lp->maaligned[1];
-      else if (!lp->maaligned && lp->mbalign) /* all malign, select anyone */
-         ptr = lp->varrs[1];
-      else /* no falign and no malign ptr, find the most accessed one */
+      {
+/*
+ *       NOTE: consider 2D array... prioritize it, since all of the col ptrs 
+ *       would be mutually aligned
+ */
+         for (i=1, n=lp->maaligned[0]; i <= n; i++)
+         {
+            if (lp->mbalign[i] >= GetVecAlignByte())
+            {
+               id = STarrlookup(lp->maaligned[i]);
+               if (id)
+               {
+                  ptr = STarr[id-1].colptrs[1];
+                  break;
+               }
+            }
+         }
+/*
+ *       no 2D array ptr, choice first one 
+ */
+         if (!ptr)
+         {
+            for (i=1, n=lp->maaligned[0]; i <= n; i++)
+            {
+               if (lp->mbalign[i] >= GetVecAlignByte())
+               {
+                  ptr = lp->maaligned[i];
+                  break;
+               }
+            } 
+         }
+      }
+      else if (!lp->maaligned && lp->mbalign) /* all malign */
+      {
+         if (lp->mbalign[1] >= GetVecAlignByte())
+         {
+            //ptr = lp->varrs[1];
+            for (i=1, n=lp->varrs[0]; i <= n; i++)
+            {
+               id = STarrColPtrlookup(lp->varrs[i]);
+               if (id)
+               {
+                  ptr = lp->varrs[i];
+                  break;
+               }
+            }
+            if (!ptr) /* no 2D array */
+            {
+               ptr = lp->varrs[1];
+            }
+         }
+      }
+/*
+ *    still no forceable ptr! find most frequent one 
+ */ 
+      if (!ptr) /* no falign and no malign ptr, find the most accessed one */
          ptr = FindMostAccessedPtr(lp->varrs, lp->blocks);
+      
       lp->fa2vlen = ptr;
    }
-
+#if 1
+   if (lp->fa2vlen)
+   {
+      fprintf(stderr, "force align ptr = %s\n", STname[lp->fa2vlen-1]);
+   }
+#endif
    return(lp->fa2vlen);
 }
 
@@ -1430,6 +1571,7 @@ void GenForceAlignedPeeling(LOOPQ *lp)
      fptr = lp->varrs[1];     /* 1st availbale ptr */
 #else
   fptr = FindPtrToForceAlign(lp);
+  assert(fptr);
 #if 0
   fprintf(stderr, "FPTR=%s\n", STname[fptr-1]);
 #endif
@@ -2247,14 +2389,18 @@ void PrintVars(FILE *out, char* title, INT_BVI iv)
 {
    short *sp;
    int i, N;
+
+   if (!iv)
+      return;
    sp = BitVec2Array(iv, 1-TNREG);
    fprintf(out, "%s : ", title);
    for (N=sp[0], i=1; i <= N; i++)
    {
-      //if (!STname[sp[i-1]])
-      if (!STname[sp[i]-1])
+      if (sp[i] > 0)
+         fprintf(out, "%s(%d) ",STname[sp[i]-1]? STname[sp[i]-1]: "NULL",
+               sp[i]-1);
+      else
          fprintf(out,"[ST NULL:%d] ",sp[i]-1);
-      fprintf(out, "%s(%d) ",STname[sp[i]-1]? STname[sp[i]-1]: "NULL",sp[i]-1);
    }
    fprintf(out, "\n");
 }
@@ -4232,7 +4378,7 @@ int SpecVecXform(LOOPQ *lp, int unroll)
    
    return(0);
 }
-
+#if 0
 int SpeculativeVecTransform(LOOPQ *lp)
 /*
  * transform Vector in single path which is saved globaly as vect path. Must 
@@ -4804,7 +4950,7 @@ static enum inst
 #endif
    return(0);
 }
-
+#endif
 int RedundantVectorTransform(LOOPQ *lp)
 /*
  * NOTE: This is similar of normal vector transformation DoSimdLoop except max
@@ -8025,6 +8171,7 @@ int IsOnlyUseAsDTindex(short var, short flag, BLIST *scope)
 /*
  *          if the variable is used in any arithmatic operation, but not just
  *          load of any float/double, it doesn't meet the constrain
+ *          FIXME: what happens after adding PREF inst
  */
             if (!IS_STORE(ipDT->inst[0]))
                return(0);
@@ -8234,7 +8381,7 @@ int isShadowPossible(LOOPQ *lp)
 /*
  * Need to make this Vector analysis general for all VRC
  */
-int RcVectorAnalysis()
+int RcVectorAnalysis(LOOPQ *lp)
 {
    int i, j, k, n;
    int *vpindx;
@@ -8242,13 +8389,13 @@ int RcVectorAnalysis()
    char ln[512];
    short *sp;
    LOOPPATH *vpath;
-   LOOPQ *lp;
-   extern LOOPQ *optloop;
+   /*LOOPQ *lp;*/
+   /*extern LOOPQ *optloop;*/
    extern BBLOCK *bbbase;
    extern int VECT_FLAG;
 
 
-   lp = optloop;
+   /*lp = optloop;*/
    isIscal = 0; /* is there any INT scalar for vectorization */
 /*
  * redo data flow analysis
@@ -9235,9 +9382,9 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
                #else
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
                                     -r0, STiconstlookup(0x33));
-               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
                                     -r1);
-               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
                                     SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
                #endif
                }
@@ -9440,7 +9587,7 @@ int RcVecTransform(LOOPQ *lp)
  */
 
 #if 1
-   if (IsSIMDalignLoopPeelable(lp))
+   if (IsSIMDalignLoopPeelable(lp) && !SKIP_PEELING)
       GenForceAlignedPeeling(lp);
 #endif   
 
@@ -9450,9 +9597,14 @@ int RcVecTransform(LOOPQ *lp)
 #endif
 /*
  * Generate scalar cleanup loop before simdifying loop
+ * NOTE: NO_CLEANUP markup no longer used for vect
  */
-   GenCleanupLoop(lp);
-
+   
+   /*if (!lp->LMU_flag & LMU_NO_CLEANUP)*/
+   if (!SKIP_CLEANUP)
+      GenCleanupLoop(lp);
+   else
+      Set_OL_NEINC_One();
 #if 0
    fprintf(stdout, "LIL After cleanup\n");
    PrintInst(stdout, bbbase);
@@ -9479,13 +9631,13 @@ int RcVecTransform(LOOPQ *lp)
  * vectorized instructions for analysis); will put them back in loop after
  * vectorization is done.
  */
-
    pi0 = FindMovingPointers(lp->blocks);
    ippu = KillPointerUpdates(pi0, vlen);
 /*
  * Add prologue epilogue for vectorization
  */
-   AddVectorPrologueEpilogue(lp);
+   if (!SKIP_PELOGUE)
+      AddVectorPrologueEpilogue(lp);
 #if 0
    fprintf(stdout, "LIL After Prologue epilogue\n");
    PrintInst(stdout, bbbase);
@@ -10069,13 +10221,13 @@ int RcVecTransform(LOOPQ *lp)
    return(0);
 }
 
-int RcVectorization()
+int RcVectorization(LOOPQ *lp)
 {
    int fstat; 
-   LOOPQ *lp;
+   /*LOOPQ *lp;*/
    extern LOOPQ *optloop;
 
-   lp = optloop;
+   /*lp = optloop;*/
    fstat = 1;
 #if 0
    //PrintLoopInfo();
@@ -10126,7 +10278,7 @@ static void ConvertAlign2Unalign(short *aptrs, BLIST *scope)
    enum inst inst;
    const int nvalign = 6;
    int i,j,k;
-   short op;
+   short op, id;
    INSTQ *ip;
    BLIST *bl;
    LOOPQ *lp;
@@ -10144,14 +10296,41 @@ static void ConvertAlign2Unalign(short *aptrs, BLIST *scope)
             for (i=1; i<4; i++)
             {
                op = ip->inst[i];
-               if (op > 0 && IS_DEREF(STflag[op-1]))
+               if (op > 0 && NonLocalDeref(op) )
                {
                   k = STpts2[op-1];
+#if 0
                   if (!FindInShortList(aptrs[0], aptrs+1, k)
                         && FindInShortList(lp->varrs[0],lp->varrs+1, k))
                   {
                      ip->inst[0] = vualign[j];
                   }
+#else
+/*
+ *                check 2D array and skip if it is in aptrs
+ */
+                  id = STarrColPtrlookup(k);
+                  if (id && STarr[id-1].ndim >= 2) /* 2d array */
+                  {
+                     if (!FindInShortList(aptrs[0], aptrs+1, STarr[id-1].ptr))
+                     {
+                        if (!FindInShortList(aptrs[0], aptrs+1, k))
+                           ip->inst[0] = vualign[j];
+                        else /* found in aptr */
+                        {
+                           if (SToff[op-1].sa[1]) /* lda active? */
+                              ip->inst[0] = vualign[j];
+                        }
+                     }
+                  }
+                  else /* 1D */
+                  {
+                     if (!FindInShortList(aptrs[0], aptrs+1, k) 
+                           || SToff[op-1].sa[1] ) // index var?  
+                        ip->inst[0] = vualign[j];
+                  }
+
+#endif
                }
             }
          }
@@ -10164,12 +10343,13 @@ void UnalignLoopSpecialization(LOOPQ *lp)
  * to manage the alignment in case all arrays are not mutually aligned
  */
 {
-   int i,k,n;
+   int i, j, k, n, m;
    int halign;
    short reg0, reg1;
    short lsAlabel,jBlabel; 
    short faptr, ptr;
    short *aptrs;
+   short *s, id;
    short rvar;
    INSTQ *ip;
    BBLOCK *bp0, *bp, *bpN;
@@ -10181,15 +10361,13 @@ void UnalignLoopSpecialization(LOOPQ *lp)
  * in case it is not specified through markup!
  * NOTE: we updated optloop->fa2vlen in loop peeling to be that.
  */
-#if 0   
-   if (lp->faalign)
-      faptr = lp->faalign[1];
-   else
-      faptr = lp->varrs[1];
-#else
    faptr = lp->fa2vlen;
-   assert(faptr);
-#endif
+   /*assert(faptr);*/
+   if (!faptr)
+   {
+      fko_warn(__LINE__, "No ptr to force align, skip specialization!");
+      return;
+   }
 /*
  * If there are ptrs which are mutually aligned with faptr, there are also
  * aligned after aplying loop peeling. make a list of them
@@ -10200,6 +10378,14 @@ void UnalignLoopSpecialization(LOOPQ *lp)
       aptrs = lp->varrs; 
    else 
 #endif      
+/*
+ * FIXME: need to consider 2D array pointers
+ * main idea: if faptr has one of the col ptr of 2D array and they are aligned
+ * or mutually aligned with vector-length, all the col ptrs can be treated as
+ * aligned.
+ */
+#if 0 
+   i = n = 0;
    if (lp->maaligned)
    {
       for (n=lp->maaligned[0],i=1; i <= n; i++)
@@ -10215,7 +10401,97 @@ void UnalignLoopSpecialization(LOOPQ *lp)
       aptrs[0] = 1;
       aptrs[1] = faptr;
    }
+#else
+   s = malloc(sizeof(short)*(lp->varrs[0]+1)); // max moving ptr
+   assert(s);
+   aptrs = NULL;
+/*
+ * aadup faptr. faptr is col ptr incase of 2D array ptr
+ * NOTE: add original 2D array pointer if all col ptrs are aligned/mutually 
+ * aligned
+ */
+   k = 1;
+   //s[k++] = faptr;
+/*
+ * addup all aligned ptrs
+ * NOTE: all aligned case is already tested in IsAlignLoopSpecNeeded()
+ */
+   if (lp->aaligned)
+   {
+      for (i=1, n=lp->aaligned[0]; i <= n; i++)
+      {
+         if (lp->abalign[i] >= GetVecAlignByte())
+         {
+            id = STarrlookup(lp->aaligned[i]);
+            if (id && STarr[id-1].ndim >= 2)
+            {
 #if 0
+               for (j=1, m=STarr[id-1].colptrs[0]; j <= m; j++)
+               {
+                  if (FindInShortList(lp->varrs[0], lp->varrs+1, 
+                           STarr[id-1].colptrs[j]))
+                  {
+                     s[k++] = STarr[id-1].colptrs[j];
+                  }
+               }
+#else
+/*
+ *             add original 2D array... otherwise, it would be tough to manage 
+ *             in case -a applied
+ */
+               s[k++] = lp->aaligned[i]; 
+#endif
+            }
+            else
+            {
+               s[k++] = lp->aaligned[i];
+            }
+         }
+      }
+   }
+/*
+ * addup mutually aligned ptr with fptr. fptr can be a col ptr 
+ * all mutually align case has been already tested  in IsAlignLoopSpecNeeded()
+ */
+   if (lp->maaligned)
+   {
+      id = STarrColPtrlookup(faptr);
+      if (id)
+      {
+         if ( (i=FindInShortList(lp->maaligned[0], lp->maaligned+1, 
+                     STarr[id-1].ptr)) )
+         {
+            s[k++] = lp->maaligned[i]; 
+         }
+      }
+      else
+      {
+         if (FindInShortList(lp->maaligned[0], lp->maaligned+1, faptr))
+         {
+            for (i=1, n=lp->maaligned[0]; i <= n; i++)
+            {
+               s[k++] = lp->maaligned[i];
+            }
+         }
+      }
+   }
+/*
+ * if fpatr is not added, add it
+ */
+   if (!FindInShortList(k-1, s+1, faptr))
+      s[k++] = faptr;
+/*
+ * now copy it aptrs
+ */
+   aptrs = malloc(sizeof(short)*k);
+   assert(aptrs);
+   aptrs[0] = n = k-1;
+   for (i=1; i <= n; i++)
+      aptrs[i] = s[i];
+   free(s);
+#endif
+
+#if 1
    fprintf(stderr, "Aligned PTR=");
    for (n=aptrs[0], i=1; i <= n; i++)
       fprintf(stderr, "%s ", STname[aptrs[i]-1]);
@@ -10232,7 +10508,8 @@ void UnalignLoopSpecialization(LOOPQ *lp)
  * ===========================================================================
  * 1. where from: need to figure out the condition to switch to this new loop
  * NOTE: it doesn't work if we place the condition in preheader... register 
- * assignment also assumes preheader and posttail not share with loops..
+ * assignment also assumes preheader and posttail which may not match with 
+ * loop-info..
  * So, place test at the end of each predecessor of the header of loop..
  */
 #ifdef AVX
@@ -10251,8 +10528,18 @@ void UnalignLoopSpecialization(LOOPQ *lp)
    /* add extra checking for the alignment */
       for (i=1,n=lp->varrs[0]; i <= n; i++)
       {
+#if 0         
          if (FindInShortList(aptrs[0], aptrs+1, lp->varrs[i])) 
             continue;
+#else
+         if (FindInShortList(aptrs[0], aptrs+1, lp->varrs[i])) 
+            continue;
+         else if ( (id = STarrColPtrlookup(lp->varrs[i])))
+         {
+            if (FindInShortList(aptrs[0], aptrs+1, STarr[id-1].ptr))
+               continue;
+         }
+#endif
          ptr = lp->varrs[i]; 
 #if 0
          fprintf(stderr, "Check PTR=%s\n", STname[ptr-1]);
@@ -10270,8 +10557,18 @@ void UnalignLoopSpecialization(LOOPQ *lp)
       }
       for (i=i+1; i <=n; i++)
       {
+#if 0         
          if (FindInShortList(aptrs[0], aptrs+1, lp->varrs[i])) 
             continue;
+#else
+         if (FindInShortList(aptrs[0], aptrs+1, lp->varrs[i])) 
+            continue;
+         else if ( (id = STarrColPtrlookup(lp->varrs[i])))
+         {
+            if (FindInShortList(aptrs[0], aptrs+1, STarr[id-1].ptr))
+               continue;
+         }
+#endif
          ptr = lp->varrs[i]; 
 #if 0
          fprintf(stderr, "Check PTR=%s\n", STname[ptr-1]);
@@ -10653,10 +10950,14 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
    ilam = calloc(sizeof(ILIST*), m);
    assert(ilam);
 /*
- * NOTE: here, we consider only memory load, not memory store
+ * NOTE: here, we consider mem access, either load or store
  */
    for (ip=ipscope; ip; ip=ip->next)
    {
+      if (!ACTIVE_INST(ip->inst[0]) || IS_PREF(ip->inst[0])
+            || IS_BRANCH(ip->inst[0])) /* skip inactive, pref and branch inst */
+         continue;
+      
       if ( (isload && IS_LOAD(ip->inst[0]) && NonLocalDeref(ip->inst[2])) 
             || (!isload && IS_STORE(ip->inst[0]) && NonLocalDeref(ip->inst[1])))
       {
@@ -10682,6 +10983,10 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
                   /*while (il2 && offset > 
                         SToff[il2->inst->inst[2]-1].sa[3] / 
                         type2len(FLAG2TYPE(STflag[ptr-1])) ) */
+/*
+ *                NOTE: ilam[] constains inst with sorted list
+ *                FIXME: same offset is skiped, must be handled in initpack
+ */
                   while (il2 && offset > ioffset) 
                   {
                      il1 = il2;
@@ -10843,6 +11148,9 @@ ILIST **FindAdjMem(INSTQ *ipscope, int *npt)
    m = 0;
    for (ip=ipscope; ip; ip=ip->next)
    {
+      if (!ACTIVE_INST(ip->inst[0]) || IS_PREF(ip->inst[0])
+            || IS_BRANCH(ip->inst[0])) /* skip inactive, pref and branch inst */
+         continue;
       for (i=1; i < 4; i++)
       {
          k = ip->inst[i];
@@ -11038,7 +11346,7 @@ int IsSameInst(INSTQ *ip0, INSTQ *ip1)
    }
    if (i != 4)
    {
-      //fprintf(stderr, "ip0 and ip1 are NOT same\n");
+      /*fprintf(stderr, "ip0 and ip1 are NOT same\n");*/
       return(0);
    }
    else
@@ -11162,6 +11470,37 @@ INSTQ *DelMatchInstQ(INSTQ *instq, INSTQ* delq)
       fko_error(__LINE__, "Inst not found! something is wrong!!!");
    
    return(instq); 
+}
+
+void PrintPack(FILE *fp, PACK *pk)
+{
+   ILIST *il;
+   if (!pk)
+      return;
+
+   fprintf(fp, "***PACK %d: \n", pk->pnum);
+   fprintf(fp, "len=%d\n", pk->vlen);
+   il = pk->sil;
+   while (il)
+   {
+      fprintf(stderr, "print instq :\n");
+      PrintThisInstQ(stderr, il->inst);
+      il = il->next;
+   }
+#if 0   
+   if (pk->depil)
+   {
+      fprintf(stderr, "depends upon: \n");
+      fprintf(stderr, "-------------\n");
+      il = pk->depil;
+      while (il)
+      {
+         fprintf(stderr, "dep instq :\n");
+         PrintThisInst(stderr, 0, il->inst);
+         il = il->next;
+      }
+   }
+#endif
 }
 
 INSTQ *FinalizePack(PACK *pk, INSTQ *uinst, int *change)
@@ -11319,7 +11658,8 @@ INSTQ *FinalizePack(PACK *pk, INSTQ *uinst, int *change)
                   fko_error(__LINE__, "diff ptrs!!!");
                }
                if (ioffset != offset + 1)
-                  fko_error(__LINE__, "mem access not consecutive!");
+                  fko_error(__LINE__, "mem access not consecutive: %d, %d!",
+                        offset, ioffset);
                offset = ioffset;
             }
          }
@@ -11466,7 +11806,7 @@ INSTQ *InitPack(ILIST **ilam, int nptr, INSTQ *uinst, short **pts)
                                                  STpts2[dt-1]);
                }*/
                ip=ip->next;
-            } while (!IS_STORE(ipdup->inst[0])); 
+            } while (!IS_STORE(ipdup->inst[0])); /* pref not added in pack*/ 
 /*
  *          go to starting of the instq 
  */
@@ -11607,6 +11947,75 @@ INSTQ *InitPack(ILIST **ilam, int nptr, INSTQ *uinst, short **pts)
    return(uinst);
 }
 
+int CheckDupPackError(int ipack, int npack)
+/*
+ * NOTE: following useful checkings have alreadybeen done while creating the 
+ * packs, like: 
+ *    1. consecutive mem access for mem pack
+ *    2. isomorphic inst set in pack
+ *    3. data dependencies among the element of packs
+ * 
+ * Here, we only check whether two packs are duplicated. Our current version of
+ * SLP doesn't support that. It complicates the search of pack from a single 
+ * instruction of nsbp blk. one of the pack may be selected randomly but the 
+ * dependency info are different for each pack. Currently, after applying our
+ * MinPtrUpdate optmization, this restriction works for the generated AMM 
+ * kernels. We need to remove this restriction eventually.
+ *
+ */
+{
+   int i, j;
+   ILIST *ili, *ilj;
+   INSTQ *ipi, *ipj;
+   int same;
+   PACK *pki, *pkj;
+/*
+ * count the packs. if we have only one pack, there is nothing wrong with it
+ */
+   for (i=ipack, j=0; i < npack; i++)
+      if (PACKS[i])
+         j++;
+   if (j==1)
+      return(0);
+/*
+ * if we have morethan one pack, no two pack can be same
+ */
+   for (i=ipack; i < npack-1; i++)
+   {
+      pki = PACKS[i];
+      if (!pki) continue;
+      /*fprintf(stderr, "****** Checking packs %d with:\n", i);*/
+      for (j=i+1; j < npack; j++)
+      {
+         pkj = PACKS[j]; 
+         if (!pkj) continue;
+         /*fprintf(stderr, " %d ", j);*/
+         for (ili=pki->sil, ilj=pkj->sil; ili && ilj; 
+               ili=ili->next, ilj=ilj->next)
+         {
+            same = 1;
+            for (ipi=ili->inst, ipj=ilj->inst; ipi && ipj; 
+                  ipi=ipi->next, ipj=ipj->next)
+            {
+               if (!IsSameInst(ipi, ipj))
+               {
+#if 0
+                  PrintThisInst(stderr, 1, ipi);
+                  PrintThisInst(stderr, 1, ipj);
+#endif
+                  same = 0;;
+                  break;
+               }
+            }
+            if (same)
+               return(1);
+         }
+      }
+      /*fprintf(stderr, "\n");*/
+   }
+   return(0);
+}
+
 int IsIsomorphicInst(INSTQ *ip1, INSTQ *ip2)
 {
    int i;
@@ -11683,13 +12092,14 @@ INSTQ *FindFirstLILforHIL(INSTQ *ipX)
  * last inst of a block would always be the store or branch 
  * so, check for the active inst which is successor of a store/branch/LABEL/NULL
  */
-   if (IS_STORE(ipX->inst[0]))
+   if (IS_STORE(ipX->inst[0]) || IS_COND_BRANCH(ipX->inst[0]) 
+         || IS_PREF(ipX->inst[0]))
       ip = ipX->prev;
    else 
       ip = ipX;
    ip0 = ip;
    while (ip && !IS_BRANCH(ip->inst[0]) && ip->inst[0] != LABEL 
-         && !IS_STORE(ip->inst[0]))
+         && !IS_STORE(ip->inst[0]) && !IS_PREF(ip->inst[0]))
    {
       if (ACTIVE_INST(ip->inst[0]))
          ip0 = ip;
@@ -11794,7 +12204,7 @@ INSTQ *FollowUseDefs(PACK *pk, INSTQ *upackq, int *change)
                ip0->next = ipdup;
             ip0 = ipdup;
             ipu = ipu->next;
-         } while (!IS_STORE(ipdup->inst[0])); 
+         } while (!IS_STORE(ipdup->inst[0])); /* NOTE: no pref in pack */ 
          
          while(ipdup->prev) ipdup = ipdup->prev;
          iln = NewIlistAtEnd(ipdup, iln);
@@ -11832,8 +12242,8 @@ INSTQ *FollowUseDefs(PACK *pk, INSTQ *upackq, int *change)
    upackq = FinalizePack(new, upackq, change); 
 #if 0
    if (*change)
-      fprintf(stderr, "Extending pack=%d from pack=%d by use-def\n", pk->pnum, 
-         new->pnum);
+      fprintf(stderr, "Extending pack=%d from pack=%d by use-def\n", new->pnum, 
+         pk->pnum);
 #endif
    return(upackq);
 }
@@ -11897,7 +12307,7 @@ INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
                ip0->next = ipdup;
             ip0 = ipdup;
             ipu = ipu->next;
-         } while (!IS_STORE(ipdup->inst[0])); 
+         } while (!IS_STORE(ipdup->inst[0])); /* note: no pref in pack */ 
          
          while(ipdup->prev) ipdup = ipdup->prev;
          iln = NewIlistAtEnd(ipdup, iln);
@@ -11943,8 +12353,8 @@ INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
    upackq = FinalizePack(new, upackq, change); 
 #if 0
    if (*change)
-      fprintf(stderr, "Extending pack=%d from pack=%d by use-def\n", pk->pnum, 
-         new->pnum);
+      fprintf(stderr, "Extending pack=%d from pack=%d by use-def\n", new->pnum, 
+         pk->pnum);
 #endif
    return(upackq);
 }
@@ -11979,6 +12389,74 @@ int IsInitPackInUse(PACK *ipk)
    }
    return(0);
 }
+int IsPackInConflict(PACK *pk0)
+{
+   int i, N;
+   PACK *pk;
+   short *sp;
+   short ptr, lda;
+   int offset, mul;
+   ILIST *il;
+   INSTQ *ip;
+   INT_BVI iv;
+   extern INT_BVI FKO_BVTMP;
+  
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(128);
+   iv = FKO_BVTMP;
+/*
+ * can be mem load or store
+ */
+   iv = BitVecCopy(iv, pk0->defs);
+   iv = FilterOutRegs(iv);
+   sp = BitVec2Array(iv, 1-TNREG);
+   N = sp[0];
+   if (N <= 1) /* it's a mem store */
+   {
+      iv = BitVecCopy(iv, pk0->uses);
+/*
+ *    PTR and lda also are in-use here, no need to consider them since they are
+ *    not vectorized
+ */
+      for (il=pk0->sil; il; il=il->next)
+      {
+         for (ip=il->inst; ip; ip=ip->next)
+         {
+            if (IS_STORE(ip->inst[0]))
+            {
+               ptr = lda = offset = mul = 0;
+               FindPtrInfoFromDT(ip, &ptr, &lda, &offset, &mul);
+               if (ptr)
+                  SetVecBit(iv, ptr+TNREG-1, 0);
+               if (lda)
+                  SetVecBit(iv, lda+TNREG-1, 0);
+            }
+         }
+      }
+      iv = FilterOutRegs(iv);
+      /*PrintVars(stderr,"after st" ,iv);*/
+   }
+   free(sp);
+
+   for (i=0; i < NPACK; i++)
+   {
+      pk = PACKS[i];
+      if (pk) 
+      {
+         if ( BitVecCheckComb(iv, pk->uses, '&')) /* has common vars*/
+         {
+/*
+ *          If we have common variables in both packs, all of them have to be
+ *          used
+ */
+            if (BitVecCheckComb(iv, pk->uses, '-'))
+               return(1);
+         }
+      }
+   }
+   return(0);
+}
+
 
 INSTQ *ExtendPack(INSTQ *upackq, int ipk)
 /*
@@ -11992,7 +12470,7 @@ INSTQ *ExtendPack(INSTQ *upackq, int ipk)
    for (i=ipk; i < NPACK; i++)
    {
       pk = PACKS[i];
-      if (pk)
+      if (pk && !(pk->pktype & PK_MEM_BROADCAST) )
       {
 #if 0         
          if ( (pk->pktype & PK_INIT) && (pk->pktype & PK_INIT_SCATTER))
@@ -12018,7 +12496,10 @@ INSTQ *ExtendPack(INSTQ *upackq, int ipk)
  * FIXED: they can be in use in some packs... need to check that too
  * NOTE: we don't want to delete those init packs which are from vlist; only
  * consider those which are from MEM!!!
+ * FIXME: what if there exist only mem inst!!! need to fix that from scheduling
+ * case study: mvec4x4 amm kernel
  */
+#if 0   
    for (i=ipk; i < NPACK; i++)
    {
       pk = PACKS[i];
@@ -12043,6 +12524,32 @@ INSTQ *ExtendPack(INSTQ *upackq, int ipk)
 #endif
       }
    }
+#endif  
+/*
+ * Main idea: 
+ * If we have init mem pack which won't extend any pack and has inconsistancy 
+ * with other packs, we need to delete them. Only delete those which are not 
+ * consistant. Blks may have only mem access without any code; in that case,
+ * we need to keep init pack with no extended packs
+ * FIXME: May have some packs which extend other packs but have inconsistancy 
+ * (in terms of scalar uses) with other packs!!! Scheduling step should catch
+ * them.
+ */
+   for (i=ipk; i < NPACK; i++)
+   {
+      pk = PACKS[i];
+      if (pk)
+      {
+         if ( (pk->pktype & PK_INIT_MEM) && !(pk->pktype & PK_INIT_MEM_ACTIVE))
+         {
+            if (IsPackInConflict(pk))
+               KillPack(pk);
+            else
+               pk->pktype |= PK_INIT_MEM_ACTIVE;
+         }
+      }
+   }
+
 #if 0   
    fprintf(stderr, "Packq After Extending :\n");
    for (i=0; i < NPACK; i++)
@@ -12276,7 +12783,7 @@ void UpdateDep(INSTQ *bip, int ipk)
                   pk = FindPackFromInst(ip, ipk);
                   if (pk)
                   {
-                     /*fprintf(stderr, "******Found the pack = %d\n", pk->pnum);*/
+                  /*fprintf(stderr, "******Found the pack = %d\n", pk->pnum);*/
                      il = pk->depil;
                      while (il)
                      {
@@ -12308,7 +12815,9 @@ void UpdateDep(INSTQ *bip, int ipk)
          }
          if (uvar) free(uvar);
       }
-      
+/*
+ *    if var is set in this inst, update the list
+ */
       if (BitVecCheckComb(bvvars, ip->set, '&')) 
       {
          k = STpts2[ip->inst[1]-1];
@@ -12366,7 +12875,6 @@ int IsInstInQueue(INSTQ *ipq, INSTQ *inst)
    INSTQ *ip;
    for (ip=ipq; ip; ip=ip->next)
    {
-      //if (IsSameInst(ip, inst))
       if (ip == inst) /* depil keep track of biq inst */
          return(1);
    }
@@ -12515,9 +13023,9 @@ short InsertSlpVector(int stype)
    int j, k, type;
    char ln[128];
    
-   if (FLAG2TYPE(stype) == T_FLOAT)
+   if (FLAG2TYPE(stype) == T_FLOAT || FLAG2TYPE(stype) == T_VFLOAT)
       type = T_VFLOAT;
-   else if (FLAG2TYPE(stype) == T_DOUBLE)
+   else if (FLAG2TYPE(stype) == T_DOUBLE || FLAG2TYPE(stype) == T_VDOUBLE)
       type = T_VDOUBLE;
    else
       fko_error(__LINE__, "type not supported for slp vector yet!");
@@ -12531,7 +13039,7 @@ short InsertSlpVector(int stype)
 }
 
 SLP_VECTOR *CreateVector(SLP_VECTOR *vlist, int flag, int vlen, short *svars, 
-      int islivein)
+      int islivein, short vec)
 /*
  * added at the endof the list ;
  */
@@ -12561,6 +13069,7 @@ SLP_VECTOR *CreateVector(SLP_VECTOR *vlist, int flag, int vlen, short *svars,
  */
    vl->islive = 1;  /* always live at creation */
    vl->islivein = islivein; /* livein at the entry of blk */
+   vl->isused = 0; /* by default 0, updated from schedule of slp */
    vl->flag = flag;
    vl->vlen = vlen;
    vl->redvar = 0; 
@@ -12570,9 +13079,12 @@ SLP_VECTOR *CreateVector(SLP_VECTOR *vlist, int flag, int vlen, short *svars,
    for (i=0; i <= n; i++)
       vl->svars[i] = svars[i];
 /*
- * create new vector variable
+ * create new vector variable if not specified
  */
-   vl->vec = InsertSlpVector(vl->flag);
+   if (!vec)
+      vl->vec = InsertSlpVector(vl->flag);
+   else
+      vl->vec = vec;
 
    return(vlist);
 }
@@ -12608,6 +13120,7 @@ SLP_VECTOR *AddVectorInList(SLP_VECTOR *vlist, SLP_VECTOR *vec, int islivein,
    /*vl->islive = 1; */ // need to test ???  
    vl->islive = islive; // need to test ???  
    vl->islivein = islivein; /* livein at the entry of blk */
+   vl->isused = 0; /* only set from scheduling in slp  */
    
    vl->flag = vec->flag;
    vl->vlen = vec->vlen;
@@ -12621,7 +13134,6 @@ SLP_VECTOR *AddVectorInList(SLP_VECTOR *vlist, SLP_VECTOR *vec, int islivein,
 
    return(vlist);
 }
-
 
 SLP_VECTOR *FindVectorFromSingleScalar(short var, SLP_VECTOR *vlist)
 {
@@ -12710,6 +13222,60 @@ SLP_VECTOR *FindVectorFromRedvar(short rvar, SLP_VECTOR *vlist)
    return(NULL);
 }
 
+SLP_VECTOR *AppendVoVlist(SLP_VECTOR *vd, SLP_VECTOR *vs)
+/*
+ * append vlist vs to vd without copying. After appending vs may be changed, 
+ * since we may delete the duplicate blocks. So, don't use vs pointer afterward
+ * NOTE: if duplicate exists, update isused
+ */
+{
+   SLP_VECTOR *vl, *vl1, *vln, *vld; 
+
+   if (!vd)
+   {
+      vd = vs;
+      return(vd);
+   }
+/*
+ * traverse upto the last element
+ */
+   for (vl=vd; vl->next; vl=vl->next)
+      ;
+   vln = vl;
+/*
+ * append unique vs at the end of vd
+ */
+   vl = vs;
+   while (vl)
+   {
+      vl1 = FindVectorByVec(vl->vec, vd);
+      if (!vl1)
+      {
+         vln->next = vl;
+         vln = vl;
+         vl = vl->next;
+      }
+      else
+      {
+         vld = vl;
+         vl = vl->next;
+/*
+ *       set isused if is set in either list
+ */
+         if (vld->isused)
+            vl1->isused = 1;
+/*
+ *       kill duplicate vector
+ */
+         if (vld->svars)
+            free(vld->svars);
+         free(vld); 
+      }
+   }
+   vln->next = NULL;
+   return(vd);
+}
+
 void SetVectorDead(short var, SLP_VECTOR *vlist)
 {
    int i, n;
@@ -12736,6 +13302,20 @@ void SetVectorDead(short var, SLP_VECTOR *vlist)
    }
 }
 
+void PrintThisVector(FILE *fout, SLP_VECTOR *vp)
+{
+   int i, n;
+      
+   if (vp->vec)
+      fprintf(fout, "%s : ", STname[vp->vec-1]);
+   fprintf(fout, "<");
+   for (i=1, n=vp->svars[0]; i <= n; i++)
+      if(vp->svars[i]) 
+         fprintf(fout, "%s, ", STname[vp->svars[i]-1]);
+   fprintf(fout, "> ");
+   fprintf(fout, " livein = %d\n", vp->islivein);
+}
+
 void PrintVectors(FILE *fout, SLP_VECTOR *vlist)
 {
    int i, n;
@@ -12744,10 +13324,12 @@ void PrintVectors(FILE *fout, SLP_VECTOR *vlist)
    fprintf(fout, "Printing vectors : \n");
    for (vp=vlist; vp; vp=vp->next)
    {
-      fprintf(fout, "%s : ", STname[vp->vec-1]);
+      if (vp->vec)
+         fprintf(fout, "%s : ", STname[vp->vec-1]);
       fprintf(fout, "<");
       for (i=1, n=vp->svars[0]; i <= n; i++)
-         fprintf(fout, "%s, ", STname[vp->svars[i]-1]);
+         if(vp->svars[i]) 
+            fprintf(fout, "%s, ", STname[vp->svars[i]-1]);
       fprintf(fout, "> ");
       fprintf(fout, " livein = %d\n", vp->islivein);
    }
@@ -12917,7 +13499,9 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
    const int nvinst = 11;
    static enum inst
       valign[]    = { VFLD, VDLD, VFST, VDST},
-      vualign[]   = {VFLDU, VDLDU, VFSTU, VDSTU};
+      vualign[]   = { VFLDU, VDLDU, VFSTU, VDSTU},
+      vbroadcast[] = {VFLDSB, VDLDSB };
+      
    const int nmem = 4;
    enum inst *sinst, *vinst;
    enum inst inst;
@@ -13040,8 +13624,23 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
                                  if (valign[k] == inst)
                                     break;
                               }
-                              assert(k != nmem);
-                              inst = vualign[k];
+                              if (pk->pktype & PK_MEM_BROADCAST)
+                              {
+                                 #if defined(ArchHasMemBroadcast)
+                                    assert(k <= 2);
+                                    inst = vbroadcast[k];
+                                    /*fprintf(stderr, 
+                                          "****vector broadcast applied!!\n");*/
+                                 #else
+                                    fko_error(stderr, 
+                                          "Need to implemenet vbroadcast!!!");
+                                 #endif
+                              }
+                              else
+                              {
+                                 assert(k != nmem);
+                                 inst = vualign[k];
+                              }
                            #endif
                            }
 /*
@@ -13071,6 +13670,139 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
    free(vscal);
    free(scal);
    GetReg(-1);
+}
+
+int ConvertLoad2MemBroadcast(INSTQ *ip0, short var, short vec)
+{
+   int i, j, k;
+   int type, vtype;
+   short op;
+   INSTQ *ip;
+   enum inst fld, vld, fst, vst, vbld;
+   int nfr = 0;
+   short sregs[TNFR], vregs[TNFR];
+
+   type = FLAG2TYPE(STflag[var-1]);
+
+   if (type == T_FLOAT)
+   {
+      fld = FLD;
+      vld = VFLD;
+      vbld = VFLDSB;
+      fst = FST;
+      vst = VFST;
+      vtype = T_VFLOAT;
+   }
+   else if (type == T_DOUBLE)
+   {
+      fld = FLDD;
+      vld = VDLD;
+      vbld = VDLDSB;
+      fst = FSTD;
+      vst = VDST;
+      vtype = T_VDOUBLE;
+   }
+   else
+      fko_error(__LINE__, "type not supported in slp");
+/*
+ * Checking for correct format first
+ */
+   k = 0;
+   ip = ip0;
+   while (ip)
+   {
+      if (ACTIVE_INST(ip->inst[0]))
+      {
+         if (IS_LOAD(ip->inst[0]))
+         {
+            if (NonLocalDeref(ip->inst[2])) /* has mem load*/
+               k = 1; 
+         }
+         else if (IS_STORE(ip->inst[0]))
+         {
+            if (ip->inst[1] != SToff[var-1].sa[2])
+            {
+               fprintf(stderr, "diff var updated!!\n");
+               k = 0;
+            }
+            break; /* need no further checking*/
+         }
+         else
+         {
+            fprintf(stderr, 
+                  "inst other than ld/st: %s!!\n", instmnem[ip->inst[0]]);
+            k = 0;
+            break;
+         }
+      }
+      ip = ip->next;
+   }
+   if (!k) /* not in format */
+   {
+      fprintf(stderr, "failed conditions!!\n");
+      return(0);
+   }
+/*
+ * assuming ip0 is the first LIL inst of the instq which translated from mem 
+ * load of HIL     
+ */
+   for (ip=ip0; ip && IS_LOAD(ip->inst[0]); ip=ip->next )
+   {
+      if (ip->inst[0] == fld)
+      {
+         if (NonLocalDeref(ip->inst[2]))
+            ip->inst[0] = vbld;
+         else 
+            ip->inst[0] = vld;
+            
+         for (i=1; i < 4; i++)
+         {
+            op = ip->inst[i];
+            if (!op) continue;
+            else if (op < 0)
+            {
+               op = -op;
+               j = FindInShortList(nfr, sregs, op);
+               if (!j)
+               {
+                  nfr = AddToShortList(nfr, sregs, op);
+                  j = FindInShortList(nfr, sregs, op);
+                  vregs[j-1] = GetReg(vtype);
+               }
+                  ip->inst[i] = -vregs[j-1];
+            }
+            else
+            {
+               if (IS_DEREF(STflag[op-1]) && !NonLocalDeref(op))
+               {
+                  assert(op == SToff[var-1].sa[2]);
+                  ip->inst[i] = SToff[vec-1].sa[2];
+               }
+            }
+         }
+      }
+   }
+   GetReg(-1);
+
+   assert(IS_STORE(ip->inst[0]));
+   if (ip->inst[0] == fst)
+      ip->inst[0] = vst;
+   
+   for (i=1; i < 4; i++)
+   {
+      op = ip->inst[i];
+      if (!op) continue;
+      else if (op < 0)
+      {
+         op = -op;
+         j = FindInShortList(nfr, sregs, op);
+         assert(j);
+         ip->inst[i] = -vregs[j-1];
+      }
+      else if (IS_DEREF(STflag[op-1]))
+         ip->inst[i] = SToff[vec-1].sa[2];
+   }
+   return(1);
 }
 
 int MemBroadcast(BBLOCK *blk, short var, short vec)
@@ -13109,8 +13841,9 @@ int MemBroadcast(BBLOCK *blk, short var, short vec)
       fko_error(__LINE__, "type not supported in slp");
 /*
  * search from last inst to first 
- */  
+ */
    ptr = lda = offset = mul = 0;
+#if 1   
    for (ip=blk->ainstN; ip; ip=ip->prev)
    {
       if (IS_STORE(ip->inst[0]) && ip->inst[1] == SToff[var-1].sa[2])
@@ -13136,15 +13869,45 @@ int MemBroadcast(BBLOCK *blk, short var, short vec)
          break;
       }
    }
+#else
+   for (ip=blk->inst1; ip; ip=ip->next)
+   {
+      if (IS_STORE(ip->inst[0]) && ip->inst[1] == SToff[var-1].sa[2])
+      {
+         ip0 = ip->prev;
+         while (ip0 && IS_LOAD(ip0->inst[0]))
+         {
+            if (NonLocalDeref(ip0->inst[2]))
+               FindPtrInfoFromDT(ip0, &ptr, &lda, &offset, &mul);
+            else if (ip0->inst[2] == SToff[var-1].sa[2] 
+                     || (ptr && ip0->inst[2] == SToff[ptr-1].sa[2]) 
+                     || (lda && ip0->inst[2] == SToff[lda-1].sa[2]) )
+            {
+               ismemb = 1;
+            }
+            else 
+            {
+               ismemb = 0;
+               break;
+            }
+            ip0 = ip0->prev;
+         }
+         break;
+      }
+   }
+#endif
+
    if (ismemb && ptr )
    {
       if (ip0)
          ip0 = ip0->next;
       else
-         ip0 = blk->ainst1;
+         ip0 = FindFirstLILforHIL(ip);
 /*
  *    now, time to covert the mem load into vmem load
+ *    FIXME: why don't we convert all such mem load into vmem load
  */
+#if 0      
       for (ip=ip0; ip && IS_LOAD(ip->inst[0]); ip=ip->next )
       {
          if (ip->inst[0] == fld)
@@ -13185,23 +13948,39 @@ int MemBroadcast(BBLOCK *blk, short var, short vec)
          ip->inst[0] = vst;
       for (i=1; i < 4; i++)
       {
-               op = ip->inst[i];
-               if (!op) continue;
-               else if (op < 0)
-               {
-                  op = -op;
-                  j = FindInShortList(nfr, sregs, op);
-                  assert(j);
-                  ip->inst[i] = -vregs[j-1];
-               }
-               else if (IS_DEREF(STflag[op-1]))
-               {
-                  assert(op == SToff[var-1].sa[2]);
-                  ip->inst[i] = SToff[vec-1].sa[2];
-               }
+         op = ip->inst[i];
+         if (!op) continue;
+         else if (op < 0)
+         {
+            op = -op;
+            j = FindInShortList(nfr, sregs, op);
+            assert(j);
+            ip->inst[i] = -vregs[j-1];
+         }
+         else if (IS_DEREF(STflag[op-1]))
+         {
+            assert(op == SToff[var-1].sa[2]);
+            ip->inst[i] = SToff[vec-1].sa[2];
+         }
       }
+#else
+      assert(ConvertLoad2MemBroadcast(ip0, var, vec));
+#endif
       return(1);
    }
+   else
+   {
+/*
+ *    FIXME: not sure whether it's possible. return error for now!
+ */
+      fprintf(stderr, "Load inst not found for %s = %s(%d, %d)\n", 
+              STname[vec-1], 
+              STname[var-1], 
+              ptr, ismemb);
+      PrintThisInstQ(stderr, blk->inst1);
+      fko_error(__LINE__, "should have one load to broadcast!!! double check!");
+   }
+   
    return(0);
 }
 
@@ -13296,13 +14075,25 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
       }
       fprintf(stderr, "\n");
 #endif
-      vd = FindVectorFromScalars(pk->scdef, vlist);
+      if (pk->pktype & PK_MEM_BROADCAST)
+         vd = FindVectorFromSingleScalar(pk->scdef[1], vlist);
+      else
+         vd = FindVectorFromScalars(pk->scdef, vlist);
       if (!vd)
       {
-         vlist = CreateVector(vlist, pk->vflag, pk->vlen, pk->scdef, 0);
+         vlist = CreateVector(vlist, pk->vflag, pk->vlen, pk->scdef, 0, 0);
          vd = FindVectorFromScalars(pk->scdef, vlist); /*avoid extra search!*/
          assert(vd);
-      }  
+      } 
+      vd->isused = 1; /* marked as used */
+#if 0      
+      if (pk->pktype & PK_MEM_BROADCAST)
+      {
+         fprintf(stderr, "***** broadcast vector = %s (%s)\n", 
+               STname[vd->vec-1], STname[pk->scdef[1]-1]);
+         PrintVectors(stderr, vlist);
+      }
+#endif
 #if 0      
       ip = pk->sil->inst;
       for ( ; ip; ip = ip->next)
@@ -13334,13 +14125,23 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
          iv = BitVecCopy(iv, pk->uses);
          FilterOutRegs(iv);
 #if 0
-      PrintVars(stderr, "uses: ",iv);
+         PrintVars(stderr, "uses: ",iv);
 #endif
          assert(!BitVecCheckComb(iv, livein, '-'));
-         vlist = CreateVector(vlist, pk->vflag,pk->vlen, pk->scuse, 1);
+#if 0
+         n = pk->scuse[0];
+         fprintf(stderr, "++++++ Mem store(%d): ", n);
+         for (i=1; i <= n; i++)
+         {
+            fprintf(stderr, "%s, ", STname[pk->scuse[i]-1]);
+         }
+         fprintf(stderr, "\n");
+#endif
+         vlist = CreateVector(vlist, pk->vflag,pk->vlen, pk->scuse, 1, 0);
          vs1 = FindVectorFromScalars(pk->scuse, vlist);
          assert(vs1);
       } 
+      vs1->isused = 1; /* marked as used */
       pk->vsc = malloc(2*sizeof(short));
       assert(pk->vsc);
       pk->vsc[0] = 1;
@@ -13402,7 +14203,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
             FilterOutRegs(iv);
             if (BitVecCheckComb(iv, livein, '-')) /* not livein: all ? any? */
             {
-               vlist = CreateVector(vlist, pk->vflag, pk->vlen, sp, 0);
+               vlist = CreateVector(vlist, pk->vflag, pk->vlen, sp, 0, 0);
                vd = FindVectorFromScalars(sp, vlist);
                assert(vd);
                if ( NeedBroadcast(sp))
@@ -13424,13 +14225,17 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
             }
             else
             {
-               vlist = CreateVector(vlist, pk->vflag, pk->vlen, sp, 1);
+               vlist = CreateVector(vlist, pk->vflag, pk->vlen, sp, 1, 0);
                vd = FindVectorFromScalars(sp, vlist);
                assert(vd);
             }
          }
          else  /* already created, but need to see */
          {
+/*
+ *          we have already add checking in Scheduling to skip such case
+ */
+#if 0
             if (!vd->islive)
             {
                if ( NeedBroadcast(sp))
@@ -13448,7 +14253,9 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
                   fko_error(__LINE__, "not supported if can't be broadcast!");
                }
             }
+#endif            
          }
+         vd->isused = 1; /* marked as used */
          pk->vsc[i+1] = vd->vec;
       }
 
@@ -13511,18 +14318,23 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein)
  *
  * 3. unpack all the vectors whose scalars are liveout at the exit of the block
  * place it at the successor of the block.
- *          
- *
+ *    
+ * NOTE: we avoid all unpacking of vectors since upacking/repacking is costly 
+ * for current generation of hardware. It limits the successful vectorization 
+ * in our ofcourse. Blk only be vectorized when we don't have to unpack.
+ * 
  */
 
 SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein, 
                   SLP_VECTOR *vlist, int ipk, int *err)
 {
+   int i,k;
    int nosch, isstore;
-   INSTQ *ip;
+   INSTQ *ip, *ip1;
    ILIST *il;
    /*ILIST *iln;*/
    PACK *pk;
+   SLP_VECTOR *vl, *vls;
    /*SLP_VECTOR *vlist = NULL;*/
 /*
  * NOTE:
@@ -13536,7 +14348,7 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
       if (!ACTIVE_INST(ip->inst[0]))
       {
 /*
- *       FIXME: we need to add all inactive flags like CMPFLAG for later use.
+ *       FIXED: we need to add all inactive flags like CMPFLAG for later use.
  */
          InsNewInst(sbp, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
                     ip->inst[3]);
@@ -13561,16 +14373,22 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
 /*
  *    find pack from inst
  */
+#if 0
+      fprintf(stderr, "Handling inst: \n");
+      fprintf(stderr, "----------------\n");
+      PrintThisInst(stderr, 111, ip);
+      fprintf(stderr, "----------------\n");
+#endif
       pk = FindPackFromInst(ip, ipk);
       if (pk)  
       {
 #if 0
          fprintf(stderr, "Pack-%d found while scheduling\n", pk->pnum);
-         iln = pk->sil;
-         while (iln)
+         il = pk->sil;
+         while (il)
          {
-            PrintThisInstQ(stderr, iln->inst);
-            iln = iln->next;
+            PrintThisInstQ(stderr, il->inst);
+            il = il->next;
          }
 #endif
          il = pk->depil;
@@ -13591,6 +14409,7 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
                PrintThisInstQ(stderr, pk->sil->inst);
                fprintf(stderr, "printing nsbp\n");
                PrintThisInstQ(stderr, nsbp->ainst1);
+               exit(0);
 #endif
                break;
             }
@@ -13643,6 +14462,12 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
       }
       else /* not in the pack, schedule as standalone */
       {
+/*
+ *       FIXME: If we consider scatter/gather, we have to scatter the vector 
+ *       into scalar (which is used/defined in this standalone insts) and 
+ *       execute this standalone inst. Since we avoid scatter/gather all 
+ *       together, vectorization fails. Making the vector dead won't work!!!
+ */
          //ip0 = ip;
          isstore = 0;
          PrintComment(vbp, NULL, NULL, "Schedule as standalone inst");
@@ -13660,42 +14485,85 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
             }
          }
 #endif
+#if 0
+         fprintf(stderr, "*** standalone inst:\n");
+#endif
+/*
+ *       NOTE: copied the inst and then check whether it conflicts with 
+ *       existing vlist. resolved one such conflict with mem broadcast!
+ */
+         isstore = 0;
+         vls = NULL;
          while(1)
          {
+            if (!ip)
+               break;
+#if 1
+            for (i=1; i < 4; i++)
+            {
+               k = ip->inst[i];
+               if (k > 0 && !NonLocalDeref(k))
+               {
+                  k = STpts2[k-1];
+                  vl = FindVectorFromSingleScalar(k, vlist);
+                  if (vl)
+                  {
+                     /*fprintf(stderr, "scalar %s is vectorized in %s\n", 
+                           STname[k-1], STname[vl->vec-1]);*/
+                     vls = AddVectorInList(vls, vl, vl->islivein, vl->islive);
+                  }
+               }
+            }
+#endif
             if (IS_STORE(ip->inst[0]) //|| ip->inst[0] == LABEL 
-                  || IS_BRANCH(ip->inst[0]))
+                  || IS_BRANCH(ip->inst[0]) || IS_PREF(ip->inst[0]))
             {
                isstore = 1;
+            #if 0               
                if (IS_STORE(ip->inst[0]) && !NonLocalDeref(ip->inst[1]))
                {
                   SetVectorDead(STpts2[ip->inst[1]-1], vlist);
                }
+            #endif
             }
-#if 0            
-            NewInst(NULL, sbiq, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
-                    ip->inst[3]);
-            if (ip->prev)
-               ip->prev->next = ip->next;
-            if (ip->next) 
-               ip->next->prev = ip->prev;
-            if (ip == biq)
-            {
-               ip = KillThisInst(ip);
-               biq = ip;
-            }
-            else
-               ip = KillThisInst(ip);
-            assert(ip);
-#else
             InsNewInst(sbp, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
                   ip->inst[3]);
             InsNewInst(vbp, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
                   ip->inst[3]);
+            /*PrintThisInst(stderr, 1, ip);*/
             ip = DelInst(ip);
-#endif            
             if (isstore)
                break;
          }
+/*
+ *       conflict with vectors
+ *       NOTE: will replace these fko_errors with errr returns
+ */
+         if (vls)
+         {
+            if (vls->next)
+               fko_error(__LINE__, 
+                     "Conflict with more than one vec while scheduling");
+            if (NeedBroadcast(vls->svars))
+            {
+               ip1 = FindFirstLILforHIL(vbp->instN);
+               if (!ConvertLoad2MemBroadcast(ip1, vls->svars[1], vls->vec))
+               {
+                  /*fko_error(__LINE__, 
+                     "Conflict can't be resloved with mem broadcast");*/
+                  fko_warn(__LINE__, 
+               "can't use scalars which is a part of vec as standalone inst");
+                  KillVlist(vls);
+                  *err = 2;
+                  return(vlist);
+               }
+            }
+            KillVlist(vls);
+         }
+
+#if 0
+         fprintf(stderr, "************\n");
+#endif
 #if 0         
          fprintf(stderr, "sbiq: \n");
          PrintThisInstQ(stderr, sbp->ainst1);
@@ -13713,6 +14581,9 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
 
 
 void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
+/*
+ * FIXME: rewrite the function to remove the duplication
+ */
 {
    int i, n;
    short vr0, vr1, vr2;
@@ -13753,16 +14624,63 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             s1 = SToff[vl->svars[2]-1].sa[2];
             s2 = SToff[vl->svars[3]-1].sa[2];
             s3 = SToff[vl->svars[4]-1].sa[2];
+            
+            vr0 = GetReg(T_VDOUBLE);
+            vr1 = GetReg(T_VDOUBLE);
+            vr2 = GetReg(T_VDOUBLE);
 /*
  *          not handled this case: s0 = s1 = s2 = s3
  *          but can be implemented quick easily! will add that later 
  */
-            if (s0 == s1 == s2 == s3)
-               fko_error(__LINE__, "not handled the simplest case in SLP");
+            if ( (vl->svars[1] == vl->svars[2])
+               && (vl->svars[1] == vl->svars[3])
+               && (vl->svars[1] == vl->svars[4]) )
+            {
+               if (vl->flag & NSLP_ACC)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "ACC Vector init: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
+                     InsNewInst(blk, NULL, iph, VDST, vec, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+                     iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0); 
+                  }
+               }
+               else if (vl->flag & NSLP_SCAL)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "Vector init: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
+                     InsNewInst(blk, NULL, iph, VDSHUF, -vr0, -vr0, 
+                            STiconstlookup(0));
+                     InsNewInst(blk, NULL, iph, VDST, vec, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "Vector init: %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+                     iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0); 
+                  }
 
-            vr0 = GetReg(T_VDOUBLE);
-            vr1 = GetReg(T_VDOUBLE);
-            vr2 = GetReg(T_VDOUBLE);
+               }
+               else
+                  fko_error(__LINE__, "not handled the case in SLP");
+               GetReg(-1);
+               continue;
+            }
+/*
+ *          Regular SLP vector init
+ */
             if (endpos)
             {
                PrintComment(blk, NULL, iph, "Vector init: %s", 
@@ -13800,10 +14718,50 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             assert(vl->svars[0] == 2);
             s0 = SToff[vl->svars[1]-1].sa[2];
             s1 = SToff[vl->svars[2]-1].sa[2];
-            if (s0 == s1)
-               fko_error(__LINE__, "not handled the simplest case in SLP");
             vr0 = GetReg(T_VDOUBLE);
             vr1 = GetReg(T_VDOUBLE);
+/*
+ *          NSLP Vect
+ */
+            if (vl->svars[1] == vl->svars[2])
+            {
+               if (vl->flag & NSLP_ACC)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "ACC Vector init: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
+                     InsNewInst(blk, NULL, iph, VDST, vec, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+                     iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0); 
+                  }
+               }
+               else if (vl->flag & NSLP_SCAL)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "Vector init: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
+                     InsNewInst(blk, NULL, iph, VDSHUF, -vr0, -vr0, 
+                            STiconstlookup(0));
+                     InsNewInst(blk, NULL, iph, VDST, vec, -vr0, 0);
+                  }
+                  else
+                  fko_error(__LINE__, "not handled the simplest case in SLP");
+               }
+               GetReg(-1);
+               continue;
+            }
+/*
+ *          SLP vector init
+ */
             if (endpos)
             {
                PrintComment(blk, NULL, iph, "Vector init: %s", 
@@ -13839,12 +14797,55 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             s5 = SToff[vl->svars[6]-1].sa[2];
             s6 = SToff[vl->svars[7]-1].sa[2];
             s7 = SToff[vl->svars[8]-1].sa[2];
-            if (s0 == s1 == s2 == s3 == s4 == s5 == s6 == s7)
-               fko_error(__LINE__, "not handled the simplest case in SLP");
             vr0 = GetReg(T_VFLOAT);
             vr1 = GetReg(T_VFLOAT);
             vr2 = GetReg(T_VFLOAT);
-               
+            
+            if ( (vl->svars[1] == vl->svars[2]) 
+                  && (vl->svars[1] == vl->svars[3]) 
+                  && (vl->svars[1] == vl->svars[4])
+                  && (vl->svars[1] == vl->svars[5])
+                  && (vl->svars[1] == vl->svars[6])
+                  && (vl->svars[1] == vl->svars[7])
+                  && (vl->svars[1] == vl->svars[8]) )
+            {
+               if (vl->flag & NSLP_ACC)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "ACC Vector init: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
+                     InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s0, 0);
+                     iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0); 
+                  }
+               }
+               else if (vl->flag & NSLP_SCAL)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "Vector init: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
+                     InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr0, 
+                            STiconstlookup(0));
+                     InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
+                  }
+                  else
+                  fko_error(__LINE__, "not handled the simplest case in SLP");
+               }
+               GetReg(-1);
+               continue;
+            }
+/*
+ *          General SLP vector init
+ */
             if (endpos)
             {
                PrintComment(blk, NULL, iph, "Vector init: %s", 
@@ -13918,11 +14919,49 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             s1 = SToff[vl->svars[2]-1].sa[2];
             s2 = SToff[vl->svars[3]-1].sa[2];
             s3 = SToff[vl->svars[4]-1].sa[2];
-            if (s0 == s1 == s2 == s3)
-               fko_error(__LINE__, "not handled the simplest case in SLP");
             vr0 = GetReg(T_VFLOAT);
             vr1 = GetReg(T_VFLOAT);
             vr2 = GetReg(T_VFLOAT);
+            
+            if ( (vl->svars[1] == vl->svars[2])
+                  && (vl->svars[1] == vl->svars[3])
+                  && (vl->svars[1] == vl->svars[4]) )
+            {
+               //fko_error(__LINE__, "not handled the simplest case in SLP");
+               if (vl->flag & NSLP_ACC)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "ACC Vector init: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
+                     InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s0, 0);
+                     iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0); 
+                  }
+               }
+               else if (vl->flag & NSLP_SCAL)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "Vector init: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
+                     InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr0, 
+                            STiconstlookup(0));
+                     InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
+                  }
+                  else
+                  fko_error(__LINE__, "not handled the simplest case in SLP");
+               }
+               GetReg(-1);
+               continue;
+            }
             if (endpos)
             {
                PrintComment(blk, NULL, iph, "Vector init: %s", 
@@ -14006,8 +15045,40 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             s1 = SToff[vl->svars[2]-1].sa[2];
             s2 = SToff[vl->svars[3]-1].sa[2];
             s3 = SToff[vl->svars[4]-1].sa[2];
-               
             vr0 = GetReg(T_VDOUBLE);
+/*
+ *          Special case 
+ */
+            if ( (vl->svars[1] == vl->svars[2])
+                  && (vl->svars[1] == vl->svars[3])
+                  && (vl->svars[1] == vl->svars[4]))
+            {
+               //fko_error(__LINE__, "not handle in SLP epilogue!");
+               if (vl->flag & NSLP_ACC)
+               {
+                  fko_error(__LINE__, "ACC should be handled using vvrsums!");
+               }
+               else if (vl->flag & NSLP_SCAL)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "Vector reduction: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VDLD, -vr0, vec, 0);
+                     InsNewInst(blk, NULL, iph, VDSTS, s0, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, iptn, VDLD, -vr0, vec, 0);
+                     iptp = InsNewInst(blk, iptp, iptn, VDSTS, s0, -vr0, 0);
+                  }
+               }
+               GetReg(-1);
+               continue;
+            }
+
             if (endpos)
             {
                PrintComment(blk, NULL, iph, "Scatter of vector %s", 
@@ -14090,6 +15161,35 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             s0 = SToff[vl->svars[1]-1].sa[2];
             s1 = SToff[vl->svars[2]-1].sa[2];
             vr0 = GetReg(T_VDOUBLE);
+            
+            if (vl->svars[1] == vl->svars[2])
+            {
+               //fko_error(__LINE__, "not handle in SLP epilogue!");
+               if (vl->flag & NSLP_ACC)
+               {
+                  fko_error(__LINE__, "ACC should be handled using vvrsums!");
+               }
+               else if (vl->flag & NSLP_SCAL)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "Vector reduction: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VDLD, -vr0, vec, 0);
+                     InsNewInst(blk, NULL, iph, VDSTS, s0, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, iptn, VDLD, -vr0, vec, 0);
+                     iptp = InsNewInst(blk, iptp, iptn, VDSTS, s0, -vr0, 0);
+                  }
+               }
+               GetReg(-1);
+               continue;
+            }
+            
             if (endpos)
             {
                PrintComment(blk, NULL, iph, "Scatter of vector %s", 
@@ -14146,6 +15246,41 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             s6 = SToff[vl->svars[7]-1].sa[2];
             s7 = SToff[vl->svars[8]-1].sa[2];
             vr0 = GetReg(T_VFLOAT);
+
+            if ( (vl->svars[1] == vl->svars[2])
+                  && (vl->svars[1] == vl->svars[3])
+                  && (vl->svars[1] == vl->svars[4])
+                  && (vl->svars[1] == vl->svars[5])
+                  && (vl->svars[1] == vl->svars[6])
+                  && (vl->svars[1] == vl->svars[7])
+                  && (vl->svars[1] == vl->svars[8]) )
+            {
+               //fko_error(__LINE__, "not handle in SLP epilogue!");
+               if (vl->flag & NSLP_ACC)
+               {
+                  fko_error(__LINE__, "ACC should be handled using vvrsums!");
+               }
+               else if (vl->flag & NSLP_SCAL)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "Vector reduction: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VFLD, -vr0, vec, 0);
+                     InsNewInst(blk, NULL, iph, VFSTS, s0, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, iptn, VFLD, -vr0, vec, 0);
+                     iptp = InsNewInst(blk, iptp, iptn, VFSTS, s0, -vr0, 0);
+                  }
+               }
+               GetReg(-1);
+               continue;
+            }
+            
             if (endpos)
             {
                PrintComment(blk, NULL, iph, "Scatter of vector %s", 
@@ -14210,6 +15345,37 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             s2 = SToff[vl->svars[3]-1].sa[2];
             s3 = SToff[vl->svars[4]-1].sa[2];
             vr0 = GetReg(T_VFLOAT);
+
+            if ( (vl->svars[1] == vl->svars[2])
+                  && (vl->svars[1] == vl->svars[3])
+                  && (vl->svars[1] == vl->svars[4]) )
+            {
+               //fko_error(__LINE__, "not handle in SLP epilogue!");
+               if (vl->flag & NSLP_ACC)
+               {
+                  fko_error(__LINE__, "ACC should be handled using vvrsums!");
+               }
+               else if (vl->flag & NSLP_SCAL)
+               {
+                  if (endpos)
+                  {
+                     PrintComment(blk, NULL, iph, "Vector reduction: %s", 
+                            STname[vl->vec-1]);
+                     InsNewInst(blk, NULL, iph, VFLD, -vr0, vec, 0);
+                     InsNewInst(blk, NULL, iph, VFSTS, s0, -vr0, 0);
+                  }
+                  else
+                  {
+                     iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
+                                         STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, iptn, VFLD, -vr0, vec, 0);
+                     iptp = InsNewInst(blk, iptp, iptn, VFSTS, s0, -vr0, 0);
+                  }
+               }
+               GetReg(-1);
+               continue;
+            }
+            
             if (endpos)
             {
                PrintComment(blk, NULL, iph, "Scatter of vector %s", 
@@ -14436,9 +15602,73 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(128);
    iv = FKO_BVTMP;
 
+#if 1
+/*
+ * create pack using mem broadcast for the vector
+ */
+   n = vl->svars[0];
+   if (n > 1)
+   {
+      k = vl->svars[1];
+      for (i=2; i <= n; i++)
+      {
+         if (k != vl->svars[i])
+            break;
+      }
+      if (i > n)
+      {
+         SetVecAll(iv, 0); 
+         SetVecBit(iv, vl->svars[1]+TNREG-1, 1);
+         ipu = InstdefsVar(iv, upackq);     
+         if(ipu) 
+         {
+            k = 0;
+            ip = ipu; 
+            while (IS_LOAD(ip->inst[0]))
+            {
+               if (NonLocalDeref(ip->inst[2]))
+               {
+                  k = 1;
+                  break;
+               }
+               ip = ip->next;
+            }
+            if (k)
+            {
+               /*fprintf(stderr, "*** %s is a candidate of boardcast\n", 
+                     STname[vl->svars[1]-1]);*/
+               assert(IS_LOAD(ipu->inst[0]));
+               ipdup = ip0 = NULL;
+               do
+               {
+                  ipdup = NewInst(NULL, ipdup, NULL, ipu->inst[0], ipu->inst[1], 
+                                  ipu->inst[2], ipu->inst[3]);
+                  CalcThisUseSet(ipdup);
+                  if (ip0)
+                     ip0->next = ipdup;
+                  ip0 = ipdup;
+                  ipu = ipu->next;
+               } while (!IS_STORE(ipdup->inst[0])); 
+         
+               while(ipdup->prev) ipdup = ipdup->prev;
+               iln = NewIlistAtEnd(ipdup, iln); 
+               new = NewPack(iln, vl->vlen);
+               new->vflag = vl->flag; /* vl->flag == pk->vflag*/
+               new->pktype = PK_INIT_VLIST;
+               new->pktype |= PK_MEM_BROADCAST;
+               upackq = FinalizePack(new, upackq, change); 
+               return(upackq);
+            }
+         }
+
+      }
+   }
+#endif
+
+   SetVecAll(iv, 0); 
    for (i=1, n=vl->svars[0], k=0; i <= n; i++)
    {
-      SetVecAll(iv, 0); 
+      /*SetVecAll(iv, 0); */
       SetVecBit(iv, vl->svars[i]+TNREG-1, 1);
 #if 0
       ipu = InstdefsVar(iv, upackq);
@@ -14487,6 +15717,8 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
          *change = 0;
          return(upackq);
       }
+      
+      SetVecBit(iv, vl->svars[i]+TNREG-1, 0);
    }
 /*
  * finalize pack
@@ -14515,8 +15747,6 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
    fprintf(stderr, "vl->flag = %d\n", vl->flag);
 #endif
    upackq = FinalizePack(new, upackq, change); 
-
-
    return(upackq);
 }
 
@@ -14615,11 +15845,23 @@ int CountRvarVect(BBLOCK *blk, SLP_VECTOR *vlist)
    
    for (vl=vlist; vl; vl=vl->next)
    {
-      rvar = FindRedVar(blk, vl->svars);
-      if (rvar)
+/*
+ *    FIXME: can we depend on vectors islivein? or, should we match it with 
+ *    blk->ins
+ */
+      if (vl->islivein) /* vector with redvar must be livein*/
       {
-         vl->redvar = rvar;
-         nr++;
+         if (vl->redvar) /* already known the redvar, possibly by LNZV method*/
+            nr++;
+         else
+         {
+            rvar = FindRedVar(blk, vl->svars);
+            if (rvar)
+            {
+               vl->redvar = rvar;
+               nr++;
+            }
+         }
       }
    }
    return(nr); 
@@ -15874,377 +17116,6 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
    return(ip0);
 }
 
-INSTQ *InitSlpPack(INSTQ *upackq, SLP_VECTOR *vl0)
-/*
- * creates init/seed pack for SLP using following methods (priority as memtion):
- *    1. existing vector pack (may be from live-in vectors)
- *    2. Adj mem: a) adjacent load b) if no adj loads, then adj stores
- */
-{
-   int i, suc, nptr;
-   SLP_VECTOR *vl;
-   ILIST **ilam;
-   short *pta=NULL;
-/*
- * 1. From Existing vectors
- */
-   if(vl0) /* init vector is provided */
-   {
-/*
- *    assumimg only the appropriate vectors are passed through the argument
- */
-      for (vl=vl0; vl; vl=vl->next)
-      {
-         upackq = FindInitPackFromVlist(upackq, vl, &suc);
-         #if 0
-            if (suc) 
-               fprintf(stderr, "pack-%d created for %s\n", NPACK, 
-                     STname[vl->vec-1]);
-         #endif
-      }
-   }
-/*
- * 2. From Adj Mem access
- */
-   else /* no existing vector, find adj mem*/ 
-   {
-/*
- *    find adjacent memory load
- */
-      ilam = FindAdjMem(upackq, &nptr);
-      if (ilam)
-      {
-/*
- *       create initial pack with mem loads 
- *       NOTE: in ilam, mem access is sorted based on number of adj access
- */
-         upackq = InitPack(ilam, nptr, upackq, &pta);
-/*
- *       delete ilam, it's not valid since upackq is changed
- */
-         for (i=0; i < nptr; i++)
-            if (ilam[i])
-               KillAllIlist(ilam[i]);
-         free(ilam);
-#if 0
-/*    HERE HERE, following can only be used if ifko search supports that
- *    sorted init packs based on Pointer 
- *    NOTE: I hardcoded to sort pA here... will feedback ptr info later and pass
- *    flag to control this
- *    FIXME: ???  
- */
-         for (i=1; i <= pta[0]; i++)
-         {
-            if (i > 1 && !strcmp(STname[pta[i]-1], "pA") )
-            {
-               int j;
-               j = pta[1];
-               pta[1] = pta[i];
-               pta[i] = j;
-            }
-         }
-/*
- *       short pack table based on ptr preference
- */
-         SortPackBasedOnPtr(pta, inpack);
-#endif
-         if (pta) free(pta);
-      }
-   }
-/*
- * NOTE: extension of init pack may be added later, if there is no adj mem.
- * May want to add code here.
- */
-   return(upackq);
-}
-
-#if 0
-SLP_VECTOR *SingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vlist, int *err)
-/*
- * two mode:
- *    1. !vl0: represents the first SLP where we init pack based on 
- *       adj mem
- *    2. vl0 : provided the vector list created before and the live-in
- *       bvec, this func create to init pack based on those vector
- *    NOTE: in both case live-in bvec is needed
- */
-{
-   int i;
-   int inpack;
-   INT_BVI livein;
-   INSTQ *upackq;
-   PACK *seedpk=NULL, *pk;
-   BBLOCK *nsbp, *sbp, *vbp;
-   extern INT_BVI FKO_BVTMP;
-   
-   inpack = NPACK;
-/*
- * step: 0 
- * =========
- * copy active inst from block, create upackq
- */
-   upackq = DupInstQ(blk->ainst1);
-/*
- * step: 1
- * =========
- * create initialize packs:  
- */
-   upackq = InitSlpPack(upackq, vlist);
-/*
- * we need at least one init pack to begin with 
- */
-   for (i=inpack; i < NPACK; i++)
-   {
-      if (PACKS[i])
-      {
-         seedpk = PACKS[i];
-         break;
-      }
-   }
-   if (!seedpk)
-   {
-      fko_warn(__LINE__, "no effective seed/init pack found!");
-/*
- *    free all memory
- */
-      KillAllInst(upackq);
-      *err = 1;
-      return(vlist);
-   }
-/*
- * step: 2
- * ========
- * extend pack using def-use chain
- */
-   upackq = ExtendPack(upackq, inpack);
-/*
- * step: 3
- * =======
- * Calculate dependencies
- */
-   nsbp = NewBasicBlock(NULL, NULL);
-   nsbp = DupInstQInBlock(nsbp, blk->inst1);
-   UpdateDep(nsbp->inst1, 0);
-/*
- * step: 4
- * ========
- * schedule packs and emit vector inst accordingly
- */
-   livein = NewBitVec(128);
-   livein = BitVecCopy(livein, ivin);
-   FilterOutRegs(livein);
-   
-   sbp = NewBasicBlock(NULL, NULL);
-   vbp = NewBasicBlock(NULL, NULL);
-   vlist = SchVectorInst(nsbp, sbp, vbp, livein, vlist, inpack, err);
-/*
- * check whether the scheduling is successful
- */
-   if (*err)
-   {
-      fko_warn(__LINE__, 
-            "Scheduling of SLP isn't successful, error code = %d\n", *err);
-/*
- *    rollback all chnages
- */
-      KillAllInst(upackq); 
-      KillAllInst(nsbp->inst1);
-      free(nsbp);
-      KillAllInst(sbp->inst1);
-      free(sbp);
-      KillAllInst(vbp->inst1);
-      free(vbp);
-      
-      KillBitVec(livein); 
-      
-      for (i=inpack; i < NPACK; i++)
-      {
-         pk = PACKS[i];
-         if (pk)
-            KillPack(pk);
-      }
-      NPACK = inpack;
-      
-      return(vlist);
-   }
-/*
- * safe to vectorize, so do it
- */
-   FinalizeVecBlock(blk, vbp);
-
-/*
- * delete all temporaries...
- */
-   KillBitVec(livein);
-   KillAllInst(upackq); 
-   KillAllInst(sbp->inst1);
-   free(sbp);
-   KillAllInst(nsbp->inst1);
-   free(nsbp);
-   KillAllInst(vbp->inst1);
-   free(vbp);
-      
-   return(vlist);
-
-}
-
-int DoPblkSLP(BBLOCK *blk, SLP_VECTOR *vl0, INT_BVI ivin)
-{
-   int i;
-   int suc, err;
-   int inpack;
-   INT_BVI livein, iv;
-   INSTQ *upackq;
-   SLP_VECTOR *vl;
-   PACK *seedpk=NULL, *pk;
-   BBLOCK *nsbp, *sbp, *vbp;
-   SLP_VECTOR *vlist=NULL;
-   extern INT_BVI FKO_BVTMP;
-
-   inpack = NPACK;
-/*
- * step: 0
- */
-   upackq = DupInstQ(blk->ainst1);
-/*
- * step: 1
- * init packs
- */
-#if 1
-   PrintVectors(stderr, vl0);
-#endif
-   for (vl=vl0; vl; vl=vl->next)
-   {
-      upackq = FindInitPackFromVlist(upackq, vl, &suc);
-#if 0
-      if (suc)
-         fprintf(stderr, "pack-%d created for %s\n", NPACK, 
-                 STname[vl->vec-1]);
-#endif
-   }
-/*
- * we need at least one init pack to begin with 
- */
-   for (i=inpack; i < NPACK; i++)
-   {
-      if (PACKS[i])
-      {
-         seedpk = PACKS[i];
-         break;
-      }
-   }
-   if (!seedpk)
-   {
-      fko_warn(__LINE__, "no effective seed found!");
-/*
- *    free all memory
- */
-      KillAllInst(upackq);
-      return(1);
-   }
-/*
- * step: 2
- * ========
- * extend pack using def-use chain
- */
-   upackq = ExtendPack(upackq, inpack);
-/*
- * step: 3
- * =======
- * Calculate dependencies
- */
-   nsbp = NewBasicBlock(NULL, NULL);
-   nsbp = DupInstQInBlock(nsbp, blk->ainst1);
-   UpdateDep(nsbp->ainst1, 0);
-/*
- * step: 4
- * ========
- * schedule packs and emit vector inst accordingly
- */
-   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(128);
-   iv = FKO_BVTMP;
-   
-   livein = NewBitVec(128);
-   livein = BitVecCopy(livein, ivin);
-   FilterOutRegs(livein);
-   
-   if (vl0) /* not the 1st call, may have live-in */
-   {
-      for (vl=vl0; vl; vl=vl->next)
-      {
-         iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1) );
-         if (!BitVecCheckComb(iv, livein, '-'))
-            vlist = AddVectorInList(vlist, vl, 1, 1);
-         else
-            vlist = AddVectorInList(vlist, vl, 0, 1);
-      }
-   }
-
-   sbp = NewBasicBlock(NULL, NULL);
-   vbp = NewBasicBlock(NULL, NULL);
-   vlist = SchVectorInst(nsbp, sbp, vbp, livein, vlist, inpack, &err);
-/*
- * check whether the scheduling is successful
- */
-   if (err)
-   {
-      fko_warn(__LINE__, 
-            "Scheduling of SLP isn't successful, error code = %d\n", err);
-/*
- *    rollback all chnages
- */
-      KillAllInst(upackq); 
-      KillAllInst(nsbp->inst1);
-      free(nsbp);
-      KillAllInst(sbp->inst1);
-      free(sbp);
-      KillAllInst(vbp->inst1);
-      free(vbp);
-      
-      KillVlist(vlist);
-
-      KillBitVec(livein); 
-      
-      for (i=inpack; i < NPACK; i++)
-      {
-         pk = PACKS[i];
-         if (pk)
-            KillPack(pk);
-      }
-      NPACK = inpack;
-
-      return(1);
-   }
-/*
- * safe to vectorize, so do it
- */
-   FinalizeVecBlock(blk, vbp);
-
-/*
- * delete all temporaries...
- */
-   for (i=inpack; i < NPACK; i++)
-   {
-      pk = PACKS[i];
-      if (pk)
-         KillPack(pk);
-   }
-   NPACK = inpack;
-   
-   KillBitVec(livein);
-   KillAllInst(upackq); 
-   KillAllInst(sbp->inst1);
-   free(sbp);
-   KillAllInst(nsbp->inst1);
-   free(nsbp);
-   KillAllInst(vbp->inst1);
-   free(vbp);
-   KillVlist(vlist);
-      
-   return(0);
-}
-#endif
-
 INSTQ *AddInstAtEnd(INSTQ *ip0, INSTQ *ipn)
 {
    INSTQ *ip, *ip1;
@@ -16317,7 +17188,7 @@ INSTQ *InstUnordVVRSUMscatter(SLP_VECTOR *rv)
          }
       }
       rvar[0] = vlen; // i
-      vli = CreateVector(vli, vl0->flag, vlen, rvar, 0); 
+      vli = CreateVector(vli, vl0->flag, vlen, rvar, 0, 0); 
       /*ipv = InstVVRSUM(rvec, vlen, vli); */
       ip = InstVVRSUM(rvec, nvrs, vli); 
       ip = AddVectorScatterInst(ip, vli, nelem);
@@ -16335,1112 +17206,6 @@ INSTQ *InstUnordVVRSUMscatter(SLP_VECTOR *rv)
    free(rvar);
    return(ipv);
 }
-
-#if 0
-int DoSlpWithReduction(BBLOCK *blk, SLP_VECTOR *vl0)
-{
-   int i, n, inpack, nelem;
-   int err;
-   SLP_VECTOR *vl, *vl1; 
-   SLP_VECTOR *rvec=NULL, *nrvec=NULL, *vlist=NULL, *vli=NULL;
-   INT_BVI livein;
-   BBLOCK *rbp = NULL;
-   INSTQ *upackq, *ip, *ipn, *ipv=NULL, *ipvrsums=NULL;
-   int noslp = 0;
-#if 1
-   PrintVectors(stderr, vl0);
-#endif
-   rbp = NewBasicBlock(NULL, NULL);
-   rbp = DupInstQInBlock(rbp, blk->inst1);
-/*
- * check whether all vectors are reduced or not; update redvar for them
- */
-   if (!CheckRedVarforVectors(vl0, rbp))
-      fko_warn(__LINE__, "Not all vectors are reducible!!!");
-/*
- * delete reduction code from blk
- */
-   for (vl=vl0; vl; vl=vl->next)
-   {
-      if (vl->redvar)
-      {
-         rvec = AddVectorInList(rvec, vl, vl->islivein, vl->islive);
-         DelRedCodeFromRvars(rbp, vl->svars);
-      }
-      else
-         nrvec = AddVectorInList(nrvec, vl, vl->islivein, vl->islive);
-   }
-#if 0
-   fprintf(stderr, "blk without reduciton code:\n");
-   PrintThisInstQ(stderr, rbp->inst1);
-   exit(0);
-#endif
-/*
- * NOTE: add redvars along with liveins 
- */
-   livein = NewBitVec(128);
-   livein = BitVecCopy(livein, blk->ins);
-
-   for (vl=rvec; vl; vl=vl->next) 
-      SetVecBit(livein, vl->redvar+TNREG-1, 1 );
-#if 0
-      PrintVars(stderr, "redvars: ",livein);
-#endif
-   vlist = NULL;
-   vlist = SingleBlkSLP(rbp, livein, vlist, &err);
-/*
- * successfully vectorize, vlist represents all the vector list
- * cases: 
- *    1. vlist(livein) <intersection> rvec = empty
- *       -> bestcase. no need of any scatter at all
- *    2. rvec - vlist(livein) = not empty
- *       -> scatter the remaining rvec down into scalar
- *    3. vlist(livein) - rvec = not empty
- *       -> has some vector which needs gather... skip SLP for them now
- * NOTE: (latest)
- *
- * vlist = nrvec + V_red_vars + V_other_scalars + V_mixed(redvars + other scalar)
- *
- */
-   vli = NULL;
-   if (vlist && !err)
-   {
-      for (vl=vlist; vl; vl=vl->next)
-      {
-         nelem = 0;
-         if (vl->islivein) /* need to create this using vvrsums*/
-         {
-/*
- *          findout all the related rvec 
- */
-            for (i=1, n=vl->svars[0]; i <= n; i++ )
-            {
-               vl1 = FindVectorFromRedvar(vl->svars[i], rvec); 
-               if (vl1)
-               {
-                  vli = AddVectorInList(vli, vl1, vl1->islivein, vl1->islive);
-                  rvec = KillVecFromList(rvec, vl1);
-                  nelem++;
-               }
-               else
-               {
-                  fprintf(stderr, "Not found = %s\n", STname[vl->svars[i]-1]);
-               }
-            }
-/*
- *          not matched  
- */
-            if (!nelem || nelem != vl->vlen)
-            {
-               PrintVectors(stderr, vl);
-               fprintf(stderr, "mixed up=%s(%d,%d) !!", STname[vl->vec-1], 
-                       nelem, vl->vlen);
-               noslp = 1;
-/*
- *             rollback
- */
-               for (vl=vli; vl; vli=vli->next)
-                  rvec = AddVectorInList(rvec, vl, vl->islivein, vl->islive);
-               KillVlist(vli);
-               vli = NULL;
-               break; /* exit from the loop*/
-            }
-            else /* matched */
-            {
-               ipv = InstVVRSUM(vli, nelem, vl);
-               vl->islivein = 0; /* no more live in */
-               KillVlist(vli);
-               vli = NULL;
-            }
-         }
-/*
- *       copy vvrsum inst into ipvrsums
- */
-         if (!noslp)
-         {
-            assert(ipv);
-            ipvrsums = AddInstAtEnd(ipvrsums, ipv);
-            KillAllInst(ipv);
-            ipv = NULL;
-         }
-         else /* delete ipvvrsum*/
-         {
-            KillAllInst(ipvrsums);
-         }
-      }     
-   }
-   else if (err)
-      noslp = 1;
-/*
- * generated vvrsum and scatter them down if we have remaining rvec
- * NOTE: we will apply vvrsum even if we can't apply slp there
- * see previous implementation ... they should work
- */
-   //if (!noslp && rvec)
-   if (rvec)
-   {
-      ipv = InstUnordVVRSUMscatter(rvec);
-      ipvrsums = AddInstAtEnd(ipvrsums, ipv);
-      KillAllInst(ipv);
-      ipv = NULL;
-   }
-#if 0
-   PrintVectors(stderr, vlist);
-#endif
-#if 1
-      fprintf(stderr, "vvrsum inst: \n");
-      PrintThisInstQ(stderr, ipvrsums);
-      fprintf(stderr, "rvec veclist \n");
-      PrintVectors(stderr, rvec);
-#endif
-/*
- * Add ipvvrsums at the beginning of the rbp block
- */
-   assert(ipvrsums);
-   ip = ipvrsums;
-   ipn = InsNewInstAfterLabel(rbp, ip->inst[0], ip->inst[1], ip->inst[2], 
-         ip->inst[3]);
-   ip = ip->next;
-   while (ip)
-   {
-      ipn = InsNewInst(rbp, ipn, NULL, ip->inst[0], ip->inst[1], ip->inst[2], 
-            ip->inst[3]);
-      ip=ip->next;
-   }
-/*
- * update the original posttail
- */
-   FinalizeVecBlock(blk, rbp); 
-   free(rbp);
-   return(0); /* return slp not done */
-}
-
-
-int DoSlpWithReduction0(BBLOCK *blk, SLP_VECTOR *vl0)
-{
-   int i, vlen=0;
-   int nelem, nvrs;
-   SLP_VECTOR *vl, *vl2, *rvec=NULL, *vld=NULL, *vli=NULL;
-   short *rvar;
-   INSTQ *ip, *ipn, *ipvrsums=NULL, *ipv = NULL;
-   BBLOCK *rbp=NULL;
-
-   rbp = NewBasicBlock(NULL, NULL);
-   rbp = DupInstQInBlock(rbp, blk->inst1);
-/*
- * steps:
- * 1. Find out reduction variable and check validity
- * 2. Delete reduction statements and apply slp vectorization
- * 3. Formalize vector reduciton with special sequence
- */
-
-#if 1
-   PrintVectors(stderr, vl0);
-#endif
-/*
- * step 1: 
- * Findout reduction variable and check validity
- */
-   /*CheckRedVarforVectors(vl0, blk);*/
-   CheckRedVarforVectors(vl0, rbp);
-   
-/*
- * create a new vector and store the reductions of packs it in now.
- * NOTE: later we won't create any vector.. will apply SLP after deleting the 
- * scalar reduction code... SLP will create new vectors.
- */
-   vl = vl0;
-   assert(vl);
-/*
- * FIXME: we need to sort it out the order of the rcvec correctly
- * diff order of HIL code may affect the capability of SLP
- */
-   vlen = vl->vlen; 
-   while (vl)
-   {
-      rvar = malloc( sizeof(short)*(vlen+1) );
-      assert(rvar);
-      
-      vl0 = vl;
-      for (i=0; i < vlen && vl; i++)
-      {
-         rvec = AddVectorInList(rvec, vl, vl->islivein, vl->islive);
-         rvar[i+1] = vl->redvar;
-         assert(rvar[i+1]);
-         vl = vl->next;
-      }
-      nelem = i;
-#if 0
-      if ( i == vlen)
-      {
-         nelem = i;
-         rvar[0] = nelem;
-         vli = CreateVector(vli, vl0->flag, vlen, rvar, 0); 
-         ipv = InstVVRSUM(rvec, vlen, vli); 
-         vld = AddVectorInList(vld, vli, 0);
-/*
- *       delete reduction code
- */
-         for (vl2=rvec; vl2; vl2=vl2->next)
-            DelRedCodeFromRvars(rbp, vl2->svars);
-      }
-      else /* scatter code */
-      {
-         nelem = i;
-         PrintVectors(stderr, rvec);
-         ipv = AddVectorScatterInst(ipv, rvec, vlen); 
-      }
-#else
-/*
- *       apply larger vvrsum with duplicated elements..
- *       NOTE: need to optimize it by applying 1, 2, 4, 8 sequences
- *       for now, we use vlen.
- */
-      nvrs = vlen;
-      if (i != vlen)
-      {
-         nvrs = 1;
-         while (nvrs < i) 
-            nvrs <<= 1;
-         
-         for (; i < vlen; i++)
-         {
-            rvec = AddVectorInList(rvec, vl0, vl0->islive, vl0->islive); 
-            rvar[i+1] = vl0->redvar;
-            assert(rvar[i+1]);
-         }
-      }
-      rvar[0] = vlen; // i
-      vli = CreateVector(vli, vl0->flag, vlen, rvar, 0); 
-      /*ipv = InstVVRSUM(rvec, vlen, vli); */
-      ipv = InstVVRSUM(rvec, nvrs, vli); 
-/*
- *    if it doesn't have full vlen elements, scatter it down
- */
-      if (nelem == vlen)
-         vld = AddVectorInList(vld, vli, vli->islivein, vli->islive);
-      else
-         AddVectorScatterInst(ipv, vli, nelem);
-/*
- *    delete reduciton code
- */
-      for (vl2=rvec, i=0; vl2 && i < nelem; vl2=vl2->next)
-         DelRedCodeFromRvars(rbp, vl2->svars);
-#endif
-
-#if 0
-      fprintf(stderr, "Inst added for vvrsum: \n");
-      fprintf(stderr, "========================\n");
-      PrintThisInstQ(stderr, ipv);
-#endif
-/*
- *    add up vvrsum code 
- */
-      assert(ipv);
-      ip = ipv;
-      if (ipvrsums)
-      {
-         for (ipn=ipvrsums; ipn->next; ipn=ipn->next)
-            ;
-         ipn->next = NewInst(NULL, ipn, NULL, ip->inst[0], ip->inst[1], 
-                                ip->inst[2], ip->inst[3]);
-         ipn = ipn->next;
-         ip = ip->next;
-      }
-      else
-      {
-         ipn = NULL;
-         ipvrsums = ipn = NewInst(NULL, NULL, NULL, ip->inst[0], ip->inst[1], 
-                                  ip->inst[2], ip->inst[3]);
-         ip = ip->next;
-      }
-
-      for ( ; ip; ip=ip->next)
-      {
-         ipn->next = NewInst(NULL, ipn, NULL, ip->inst[0], ip->inst[1], 
-                             ip->inst[2], ip->inst[3]);
-         ipn=ipn->next;
-      }
-      
-      KillAllInst(ipv);
-      ipv = NULL;
-#if 0
-         fprintf(stderr, "Inst of vvrsum: \n");
-         fprintf(stderr, "========================\n");
-         PrintThisInstQ(stderr, ipvrsums);
-#endif
-         
-      KillVlist(vli);
-      vli = NULL;
-      KillVlist(rvec);
-      rvec = NULL;
-      free(rvar);
-#if 0
-      fprintf(stderr, "Red Vec:\n");
-      PrintVectors(stderr, vld);
-#endif
-   }
-#if 0
-/*
- * Add scatter code for test the implementaiton
- */
-   AddVectorScatterInst(ipvrsums, vld); 
-#else
-/*
- * apply SLP on the block
- */
-   if (DoPblkSLP(rbp, vld, blk->ins)) /* error in SLP */
-   {
-      AddVectorScatterInst(ipvrsums, vld, vlen); 
-   }
-#endif
-/*
- * Add ipvvrsums at the beginning of the rbp block
- */
-   assert(ipvrsums);
-   ip = ipvrsums;
-   ipn = InsNewInstAfterLabel(rbp, ip->inst[0], ip->inst[1], ip->inst[2], 
-         ip->inst[3]);
-   ip = ip->next;
-   while (ip)
-   {
-      ipn = InsNewInst(rbp, ipn, NULL, ip->inst[0], ip->inst[1], ip->inst[2], 
-            ip->inst[3]);
-      ip=ip->next;
-   }
-#if 0
-   fprintf(stdout, "blk inst:\n");
-   PrintThisInstQ(stdout, rbp->inst1);
-   fflush(stdout);
-#endif
-#if 1
-/*
- * update the original posttail
- */
-   FinalizeVecBlock(blk, rbp); 
-   free(rbp);
-   return(0); /* return slp not done */
-#else
-   KillAllInst(rbp->inst1);
-   free(rbp);
-   return(1); /* return slp not done */
-#endif
-}
-
-
-int DoLoopSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails, SLP_VECTOR *vl0, 
-      int isFirst, int isup)
-/*
- * to control the recursion: 
- *    isFirst: 1  =  first call
- *    isup:  1 = traverse preheaders, 0 = traverse posttails 
- */
-{
-   int i;
-   int inpack, nnpack, suc, err;
-   int haslivein, hasliveout;
-   BBLOCK *bp;
-   BBLOCK *prebp;
-   BLIST *postbl;
-   INT_BVI iv, livein, liveout, ivins;
-   PACK *pk;
-   SLP_VECTOR *vl, *vlist=NULL, *vlive=NULL;
-   LOOPQ *lpq;
-   extern LOOPQ *loopq;
-   extern INT_BVI FKO_BVTMP;
-
-   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(128);
-   iv = FKO_BVTMP;
-   
-   inpack = NPACK; /* starting index of pack table for this call */
-/*
- * NOTE: create separate func for blkslp and call it when needed 
- */
-   livein = NewBitVec(128);
-   livein = BitVecCopy(livein, blk->ins);
-   FilterOutRegs(livein);
-   liveout = NewBitVec(128);
-   liveout = BitVecCopy(liveout, blk->outs);
-   FilterOutRegs(liveout);
-
-   if (isFirst)  /* starting blk to start SLP with*/
-   {
-      vlist = NULL;
-      vlist = SingleBlkSLP(blk, livein, vlist, &err); /* slp failed*/
-      if (err)
-      {
-         KillBitVec(livein); 
-         if (vlist)
-            KillVlist(vlist);
-         return(1);
-      }
-   }
-   else
-   {
-/*
- *    not the first call, populate vlist based on vl0
- */
-      for (vl=vl0; vl; vl=vl->next)
-      {
-         iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1) );
-         if (!BitVecCheckComb(iv, livein, '-'))
-            vlist = AddVectorInList(vlist, vl, 1, 1);
-         else
-            vlist = AddVectorInList(vlist, vl, 0, 0);
-      }
-/*
- *    call blk slp with vl0
- */
-      vlist = SingleBlkSLP(blk, livein, vlist, &err);
-      if (err)
-      {
-         KillBitVec(livein); 
-         if (vlist) 
-            KillVlist(vlist);
-         return(1);
-      }
-   }
-   nnpack = NPACK; /* store the npack in this call */
-/*
- * resolve the up/down recursion with prehead and posttails
- */
-   ivins = NewBitVec(128);
-
-   if (isFirst || isup)
-   {
-/*
- *    call by up 
- */
-      haslivein = 0;
-      for (vl=vlist; vl; vl=vl->next)
-      {
-         if (vl->islivein)
-         {
-            haslivein = 1;
-            break;
-         }
-      }
-      suc = 0;
-      if (prehead && haslivein)
-      {
-         if (prehead->usucc == blk && !prehead->csucc)
-         {
-            bp = prehead;
-            prebp = NULL;
-            postbl = NULL;
-            for (lpq=loopq; lpq; lpq=lpq->next)
-            {
-               if (lpq->header == bp)
-               {
-                  prebp = lpq->preheader;
-                  postbl = lpq->posttails;
-                  break;
-               }
-            }
-            if (prebp)
-            {
-/*
- *             create vector with live-in vectors and recurse SLP
- */
-               for (vl=vlist; vl; vl=vl->next)
-                  if (vl->islivein)
-                     vlive = AddVectorInList(vlive, vl, 1, 1); 
-               
-               /*fprintf(stderr, "***Applying SLP upwords for prehead\n");*/
-               /*PrintVectors(stderr, vlive);*/
-/*
- *             FIXME: header will have more than one succesor. we need to make
- *             sure that the live-in follows only the header.. not the tails..
- *             need to add a special checking here
- */
-               if (!DoLoopSLP(bp, prebp, postbl, vlive, 0, 1)) 
-                  suc = 1;
-               KillVlist(vlive);
-               vlive=NULL;
-            }
-         }
-      }
-/*
- *    Add Prologue with vector gather if we don't have proper preheads and have 
- *    live-in
- */
-      if (haslivein && !suc)
-      {
-         assert(prehead);
-         ivins = BitVecCopy(ivins, livein);
-         ivins = FilterOutRegs(ivins);
-         for (i=inpack; i < nnpack; i++)
-         {
-            pk = PACKS[i];
-            if (pk)
-            {
-               iv = BitVecComb(iv, ivins, pk->uses, '&');
-               AddSlpPrologue0(prehead, pk, iv, vlist, 1);
-               ivins = BitVecComb(ivins, ivins, pk->uses, '-');
-            }
-         }
-      }
-   }
-/*
- * manage posttails
- */
-   if (isFirst || !isup) /* manage down direction for posttails*/
-   {
-      hasliveout = 0;
-/*
- *    checking for liveout vectors
- */
-      ivins = BitVecCopy(ivins, posttails->blk->ins);
-      ivins = FilterOutRegs(ivins);
-      for (vl=vlist; vl; vl=vl->next)
-      {
-         iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1) );
-/*
- *       check whether all of them are liveout
- *       NOTE: we are considering single posttails. so, we can consider only the
- *       live in at the entry of the posttails.
- *       FIXME: need to test this extensively... is there any other case!!!
- */
-         if (!BitVecCheckComb(iv, liveout, '-')) /* all live out! */
-         {
-/*
- *          also, tested whether they are live in at the entry of posttail
- */
-            if (BitVecCheckComb(iv, ivins, '&')) /* also livein at posttail*/
-            {
-               if (!FindVectorByVec(vl->vec, vlive))
-               {
-                  hasliveout = 1;
-                  vlive = AddVectorInList(vlive, vl, 0, vl->islive);
-               }
-            }
-         }
-         else /* what if some are live-out! */
-         {
-            assert(!BitVecCheckComb(iv, liveout, '&'));
-         }
-      }
-/*
- *    has live out? check for the posttail structure
- */
-      suc = 0;
-      if (posttails && hasliveout)
-      {
-         assert(posttails && !posttails->next);
-         bp = posttails->blk;
-         postbl = NULL;        
-         for (lpq=loopq; lpq; lpq=lpq->next)
-         {
-            if (lpq->tails->blk == bp)
-            {
-               postbl = lpq->posttails;
-               break;
-            }
-         }
-         if (postbl && hasliveout)
-         {
-            /*fprintf(stderr, "+++Applying SLP downword for posttail = %d\n", 
-                    bp->bnum);*/
-/*
- *          FIXME: there may be more variables which are live out but not 
- *          live in at the beginning of the posttails block!
- *          Need to opt out them here
- */
-            if (!DoLoopSLP(bp, NULL, postbl, vlive, 0, 0))
-               suc = 1;
-         }
-/*
- *       posttails not vectorizable, add gather codes here
- */
-         if (!suc && hasliveout)
-         {
-            /*fko_warn(__LINE__, "not successful on posttail = %d\n", 
-                  posttails->blk->bnum);*/
-/*
- *          let try to handle a special case: reduction of kvec kernels
- */
-            if (DoSlpWithReduction(bp, vlive)) /* not possible with err code */
-            {
-/*
- *             no other way, dump all the vector to scalar scatter code
- *             NOTE: can be improved by scheduling these before the first use of
- *             any element of each pack!
- */
-               //ivins = BitVecCopy(ivins, posttails->blk->ins);
-               //ivins = FilterOutRegs(ivins);
-               for (i=inpack; i < nnpack; i++)
-               {
-                  pk = PACKS[i];
-                  if (pk)
-                  {
-                     iv = BitVecComb(iv, ivins, pk->defs, '&');
-                     AddSlpEpilogue0(posttails->blk, pk, iv, vlist, 0);
-                     ivins = BitVecComb(ivins, ivins, pk->defs, '-');
-                  }
-               }
-            }
-         }
-      }
-      KillVlist(vlive);
-      vlive = NULL;
-   }
-/*
- * delete temporary storage
- */
-   KillBitVec(ivins);
-   KillBitVec(livein);
-   KillBitVec(liveout);
-   KillVlist(vlist);
-#if 0   
-   KillAllInst(upackq); 
-   KillAllInst(sbp->inst1);
-   free(sbp);
-   KillAllInst(nsbp->inst1);
-   free(nsbp);
-   KillAllInst(vbp->inst1);
-   free(vbp);
-#endif   
-   return(0);
-}
-#endif
-
-#if 0
-int DoLoopSLP(BBLOCK *blk, BBLOCK *prehead, BLIST *posttails, SLP_VECTOR *vl0, 
-      int isFirst, int isup)
-/*
- * to control the recursion: 
- *    isFirst: 1  =  first call
- *    isup:  1 = traverse preheaders, 0 = traverse posttails 
- */
-{
-   int i;
-   int inpack, nnpack, suc, err;
-   int haslivein, hasliveout;
-   BBLOCK *bp;
-   BBLOCK *prebp;
-   BLIST *postbl;
-   INT_BVI iv, livein, liveout, ivins;
-   PACK *pk;
-   SLP_VECTOR *vl, *vlist=NULL, *vlive=NULL;
-   LOOPQ *lpq;
-   extern LOOPQ *loopq;
-   extern INT_BVI FKO_BVTMP;
-   short *pta=NULL;
-   ILIST **ilam;
-   INSTQ *upackq;
-   int nptr;
-   BBLOCK *sbp, *nsbp, *vbp;
-   PACK *seedpk=NULL;
-
-   inpack = NPACK; /* starting index of pack table for this call */
-/*
- * step: 0 
- * =========
- * copy active inst from block, create upackq
- */
-   upackq = DupInstQ(blk->ainst1);
-   /*upackq = DupInstQ(blk->inst1);*/
-/*
- * step: 1
- * =========
- * initialize packs: a) find adjacent memory b) create init packs with mem loads  
- */
-   if (isFirst)  /* starting blk to start SLP with*/
-   {
-/*
- *    find adjacent memory load
- */
-      ilam = FindAdjMem(upackq, &nptr);
-      if (ilam)
-      {
-/*
- *       create initial pack with mem loads 
- *       NOTE: in ilam, mem access is sorted based on number of adj access
- */
-         upackq = InitPack(ilam, nptr, upackq, &pta);
-/*
- *       delete ilam, it's not valid since upackq is changed
- */
-         for (i=0; i < nptr; i++)
-            if (ilam[i])
-               KillAllIlist(ilam[i]);
-         free(ilam);
-#if 0
-/*    HERE HERE, following can only be used if ifko search supports that
- *    sorted init packs based on Pointer 
- *    NOTE: I hardcoded to sort pA here... will feedback ptr info later and pass
- *    flag to control this
- *    FIXME: ???  
- */
-         for (i=1; i <= pta[0]; i++)
-         {
-            if (i > 1 && !strcmp(STname[pta[i]-1], "pA") )
-            {
-               int j;
-               j = pta[1];
-               pta[1] = pta[i];
-               pta[i] = j;
-            }
-         }
-/*
- *       short pack table based on ptr preference
- */
-         SortPackBasedOnPtr(pta, inpack);
-#endif
-         if (pta) free(pta);
-      }
-   }
-   else /* not the first call, should have live-in to start with */
-   {
-/*
- *    need to pass only those vlist which can be used to init pack...
- *    it can be either livein or liveout
- */
-/*
- *    assumimg only the appropriate vectors are passed through the argument
- */
-      for (vl=vl0; vl; vl=vl->next)
-      {
-         upackq = FindInitPackFromVlist(upackq, vl, &suc);
-         #if 0
-            if (suc) 
-               fprintf(stderr, "pack-%d created for %s\n", NPACK, 
-                     STname[vl->vec-1]);
-         #endif
-      }
-   }
-/*
- * we need at least one init pack to begin with 
- */
-   for (i=inpack; i < NPACK; i++)
-   {
-      if (PACKS[i])
-      {
-         seedpk = PACKS[i];
-         break;
-      }
-   }
-   if (!seedpk)
-   {
-      fko_warn(__LINE__, "no effective seed found!");
-/*
- *    free all memory
- */
-      KillAllInst(upackq);
-      return(1);
-   }
-/*
- * step: 2
- * ========
- * extend pack using def-use chain
- */
-   upackq = ExtendPack(upackq, inpack);
-/*
- * step: 3
- * =======
- * Calculate dependencies
- */
-   nsbp = NewBasicBlock(NULL, NULL);
-   nsbp = DupInstQInBlock(nsbp, blk->inst1);
-   UpdateDep(nsbp->inst1, 0);
-/*
- * step: 4
- * ========
- * schedule packs and emit vector inst accordingly
- */
-   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(128);
-   iv = FKO_BVTMP;
-
-   livein = NewBitVec(128);
-   liveout = NewBitVec(128);
-   
-   livein = BitVecCopy(livein, blk->ins);
-   liveout = BitVecCopy(liveout, blk->outs);
-   FilterOutRegs(livein);
-   FilterOutRegs(liveout);
-  
-   if (vl0) /* not the 1st call, may have live-in or, live-out */
-   {
-      for (vl=vl0; vl; vl=vl->next)
-      {
-         iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1) );
-         if (!BitVecCheckComb(iv, livein, '-'))
-            vlist = AddVectorInList(vlist, vl, 1, 1);
-         else
-            vlist = AddVectorInList(vlist, vl, 0, vl->islive);
-      }
-   }
-#if 0
-   fprintf(stderr, "Initial vlist (before starting scheduling):\n");
-   PrintVectors(stderr, vlist);
-   fprintf(stderr, "packs:\n");
-   for (i=inpack; i < NPACK; i++)
-   {
-      pk = PACKS[i];
-      if (pk)
-      {
-         fprintf(stderr, "%d:\n", pk->pnum);
-         il = pk->sil;
-         while (il)
-         {
-            PrintThisInstQ(stderr, il->inst);
-            il=il->next;
-         }
-      }
-      fprintf(stderr, "\n");
-   }
-#endif
-   sbp = NewBasicBlock(NULL, NULL);
-   vbp = NewBasicBlock(NULL, NULL);
-   vlist = SchVectorInst(nsbp, sbp, vbp, livein, vlist, inpack, &err);
-/*
- * check whether the scheduling is successful
- */
-   if (err)
-   {
-      fko_warn(__LINE__, 
-            "Scheduling of SLP isn't successful, error code = %d\n", err);
-/*
- *    rollback all chnages
- */
-      KillAllInst(upackq); 
-      KillAllInst(nsbp->inst1);
-      free(nsbp);
-      KillAllInst(sbp->inst1);
-      free(sbp);
-      KillAllInst(vbp->inst1);
-      free(vbp);
-      
-      KillVlist(vlist);
-
-      KillBitVec(livein); 
-      KillBitVec(liveout); 
-      
-      for (i=inpack; i < NPACK; i++)
-      {
-         pk = PACKS[i];
-         if (pk)
-            KillPack(pk);
-      }
-      NPACK = inpack;
-
-      return(1);
-   }
-/*
- * safe to vectorize, so do it
- */
-   FinalizeVecBlock(blk, vbp);
-
-#if 0
-   fprintf(stdout,"vectorized: \n");
-   PrintThisInstQ(stdout, blk->inst1);
-   fflush(stdout);
-#endif
-
-   nnpack = NPACK; /* store the npack in this call */
-/*
- * resolve the up/down recursion with prehead and posttails
- */
-   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(128);
-   iv = FKO_BVTMP;
-   ivins = NewBitVec(128);
-
-   if (isFirst || isup)
-   {
-/*
- *    call by up 
- */
-      haslivein = 0;
-      for (vl=vlist; vl; vl=vl->next)
-      {
-         if (vl->islivein)
-         {
-            haslivein = 1;
-            break;
-         }
-      }
-      suc = 0;
-      if (prehead && haslivein)
-      {
-         if (prehead->usucc == blk && !prehead->csucc)
-         {
-            bp = prehead;
-            prebp = NULL;
-            postbl = NULL;
-            for (lpq=loopq; lpq; lpq=lpq->next)
-            {
-               if (lpq->header == bp)
-               {
-                  prebp = lpq->preheader;
-                  postbl = lpq->posttails;
-                  break;
-               }
-            }
-            if (prebp)
-            {
-/*
- *             create vector with live-in vectors and recurse SLP
- */
-               for (vl=vlist; vl; vl=vl->next)
-                  if (vl->islivein)
-                     vlive = AddVectorInList(vlive, vl, 1, 1); 
-               
-               /*fprintf(stderr, "***Applying SLP upwords for prehead\n");*/
-               fprintf(stderr, "***Applying SLP upwords for prehead\n");
-               /*PrintVectors(stderr, vlive);*/
-
-               if (!DoLoopSLP(bp, prebp, postbl, vlive, 0, 1)) 
-                  suc = 1;
-               KillVlist(vlive);
-               vlive=NULL;
-            }
-         }
-      }
-/*
- *    Add Prologue with vector gather if we don't have proper preheads and have 
- *    live-in
- */
-      if (haslivein && !suc)
-      {
-         assert(prehead);
-         ivins = BitVecCopy(ivins, livein);
-         ivins = FilterOutRegs(ivins);
-         for (i=inpack; i < nnpack; i++)
-         {
-            pk = PACKS[i];
-            if (pk)
-            {
-               iv = BitVecComb(iv, ivins, pk->uses, '&');
-               AddSlpPrologue0(prehead, pk, iv, vlist, 1);
-               ivins = BitVecComb(ivins, ivins, pk->uses, '-');
-            }
-         }
-      }
-   }
-/*
- * manage posttails
- */
-   if (isFirst || !isup) /* manage down direction for posttails*/
-   {
-      hasliveout = 0;
-/*
- *    checking for liveout vectors
- */
-      ivins = BitVecCopy(ivins, posttails->blk->ins);
-      ivins = FilterOutRegs(ivins);
-      for (vl=vlist; vl; vl=vl->next)
-      {
-         iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1) );
-/*
- *       check whether all of them are liveout
- *       NOTE: we are considering single posttails. so, we can consider only the
- *       live in at the entry of the posttails.
- *       FIXME: need to test this extensively... is there any other case!!!
- */
-         if (!BitVecCheckComb(iv, liveout, '-')) /* all live out! */
-         {
-/*
- *          also, tested whether they are live in at the entry of posttail
- */
-            if (BitVecCheckComb(iv, ivins, '&')) /* also livein at posttail*/
-            {
-               if (!FindVectorByVec(vl->vec, vlive))
-               {
-                  hasliveout = 1;
-                  vlive = AddVectorInList(vlive, vl, 0, vl->islive);
-               }
-            }
-         }
-         else /* what if some are live-out! */
-         {
-            assert(!BitVecCheckComb(iv, liveout, '&'));
-         }
-      }
-/*
- *    has live out? check for the posttail structure
- */
-      suc = 0;
-      if (posttails && hasliveout)
-      {
-         assert(posttails && !posttails->next);
-         bp = posttails->blk;
-         postbl = NULL;        
-         for (lpq=loopq; lpq; lpq=lpq->next)
-         {
-            if (lpq->tails->blk == bp)
-            {
-               postbl = lpq->posttails;
-               break;
-            }
-         }
-         if (postbl && hasliveout)
-         {
-            /*fprintf(stderr, "+++Applying SLP downword for posttail = %d\n", 
-                    bp->bnum);*/
-            fprintf(stderr, "+++Applying SLP downword for posttail = %d\n", 
-                    bp->bnum);
-/*
- *          FIXME: there may be more variables which are live out but not 
- *          live in at the beginning of the posttails block!
- *          Need to opt out them here
- */
-            if (!DoLoopSLP(bp, NULL, postbl, vlive, 0, 0))
-               suc = 1;
-         }
-/*
- *       posttails not vectorizable, add gather codes here
- */
-         if (!suc && hasliveout)
-         {
-            /*fko_warn(__LINE__, "not successful on posttail = %d\n", 
-                  posttails->blk->bnum);*/
-/*
- *          let try to handle a special case: reduction of kvec kernels
- */
-            if (DoSlpWithReduction(bp, vlive)) /* not possible with err code */
-            {
-/*
- *             no other way, dump all the vector to scalar scatter code
- *             NOTE: can be improved by scheduling these before the first use of
- *             any element of each pack!
- */
-               //ivins = BitVecCopy(ivins, posttails->blk->ins);
-               //ivins = FilterOutRegs(ivins);
-               for (i=inpack; i < nnpack; i++)
-               {
-                  pk = PACKS[i];
-                  if (pk)
-                  {
-                     iv = BitVecComb(iv, ivins, pk->defs, '&');
-                     AddSlpEpilogue0(posttails->blk, pk, iv, vlist, 0);
-                     ivins = BitVecComb(ivins, ivins, pk->defs, '-');
-                  }
-               }
-            }
-         }
-      }
-      KillVlist(vlive);
-      vlive = NULL;
-   }
-/*
- * delete temporary storage
- */
-   KillBitVec(ivins);
-   KillBitVec(livein);
-   KillBitVec(liveout);
-   KillVlist(vlist);
-#if 0   
-   KillAllInst(upackq); 
-   KillAllInst(sbp->inst1);
-   free(sbp);
-   KillAllInst(nsbp->inst1);
-   free(nsbp);
-   KillAllInst(vbp->inst1);
-   free(vbp);
-#endif   
-   return(0);
-}
-#endif
 
 int PreSLPchecking(LOOPQ *lp)
 /*
@@ -17471,7 +17236,9 @@ int PreSLPchecking(LOOPQ *lp)
       fprintf(stderr, "only one block is considered in SLP\n");
       return(1);
    }
+#if 0   
 /*
+ * NOTE: all the ptr checking is skipped to apply SLP on generated mvec codes
  * do moving pointer analysis. 
  * NOTE: It is not essential for SLP itseft, but normally, it is assumed 
  * whenever vec is applied. needed later for prefecting 
@@ -17499,7 +17266,6 @@ int PreSLPchecking(LOOPQ *lp)
          fprintf(stderr, "multiple pointer update prohibit vect!\n");
          return(1);
       }
-#if 0      
 /*
  *    check whether ptr is accessed after ptr update. we won't vectorize if 
  *    it is so.
@@ -17518,12 +17284,13 @@ int PreSLPchecking(LOOPQ *lp)
             }
          }
       }
-#endif   
    }
    optloop->varrs = s;
 
 /*
  * delete pointer updates and add at the bottom before loop control 
+ * NOTE: we can't delete ptr updates if they are being accessed after the 
+ * updates. SO, don't skip the above checking if you want to use following codes
  */
    ip0 = KillPointerUpdates(pbase, 1);
    
@@ -17544,13 +17311,15 @@ int PreSLPchecking(LOOPQ *lp)
    if (pbase) KillAllPtrinfo(pbase);
    if (ip0) KillAllInst(ip0);
    INUSETU2D = 0;
+#endif
    return(0);
 }
 
 int MemUnalign2Align(LOOPQ *lp)
 {
    int type;
-   int i, j, n;
+   int i, j, k, n, m;
+   short id, ptr, op;
    short *pts, *s;
    INSTQ *ip;
    BLIST *bl;
@@ -17584,27 +17353,66 @@ int MemUnalign2Align(LOOPQ *lp)
    for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
       if (IS_FP(STflag[pi->ptr-1]))
          s[i] = pi->ptr;
+#if 1
+   fprintf(stderr, "ptrs: \n");
+   for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
+      fprintf(stderr, "%s ", STname[s[i]-1]);
+   fprintf(stderr, "\n");
+#endif
 /*
- * NOTE: haven't considered 2D array ptr yet... need to consider them too later.
+ * NOTE: 2D array aligned means all col ptrs are aligned.
  */
    pts = malloc(sizeof(short)*(n+1));
    assert(pts);
-   
+   j = 1;
    if (lp->aaligned)
    {
-
+#if 0      
       for (i=1, j=1, n=lp->aaligned[0]; i <= n; i++)
       {
          type = FLAG2TYPE(STflag[lp->aaligned[i]-1]) == T_FLOAT? 
             T_VFLOAT : T_VDOUBLE;
-         if ( FindInShortList(s[0], s+1, lp->aaligned[i]) 
-               && lp->abalign[i] >= type2len(type)) 
-            pts[j++] = lp->aaligned[i];
+         if ( FindInShortList(s[0], s+1, lp->aaligned[i]) )
+         {
+            if (lp->abalign[i] >= type2len(type)) 
+               pts[j++] = lp->aaligned[i];
+         }
+         else if (lp->abalign[i] >= type2len(type)) 
+         {
+            id = STarrlookup(lp->aaligned[i]);
+            if (id && STarr[id-1].ndim > 1)
+            {
+               for (k=1, m=STarr[id-1].colptrs[0]; k <= m; k++)
+               {
+                  pts[j++] = STarr[id-1].colptrs[k];
+               }
+            }
+         }
       }
       pts[0] = j-1;
+#else
+      for (i=1, n=lp->aaligned[0]; i <= n; i++)
+      {
+         if (lp->abalign[i] >= GetVecAlignByte())
+         {
+            id = STarrlookup(lp->aaligned[i]);
+            if (!id)
+            {
+               if (FindInShortList(s[0], s+1, lp->aaligned[i]))
+                  pts[j++] = lp->aaligned[i];
+            }
+            else if (STarr[id-1].ndim > 1)/* multi dim array */
+            {
+               pts[j++] = lp->aaligned[i];
+            }
+         }
+      }
+
+#endif
    }
-   else if (lp->abalign && lp->abalign)
+   else if (!lp->abalign && lp->abalign)
    {
+#if 0      
       for (i=1, j=1, n=s[0]; i <=n; i++)
       {
          type = FLAG2TYPE(STflag[s[i]-1]) == T_FLOAT? 
@@ -17612,15 +17420,43 @@ int MemUnalign2Align(LOOPQ *lp)
          if (lp->abalign[1] >= type2len(type))
             pts[j++] = s[i];
       }
-      pts[0] = j-1;
+#else
+      if (lp->abalign[1] >= GetVecAlignByte())
+      {
+         for (i=1, n=s[0]; i <=n; i++)
+         {
+            id = STarrColPtrlookup(s[i]);
+            if (!id)
+            {
+               pts[j++] = s[i];
+            }
+            else if (STarr[id-1].ndim > 1)
+            {
+               if (!FindInShortList(j-1, pts+1, STarr[id-1].ptr))
+               {
+                  pts[j++] = STarr[id-1].ptr;
+               }
+            }
+         }
+      }
+#endif
    }
-   else /* doesn't meet the alignment requirement*/
+   pts[0] = j-1;
+
+   if(!pts[0])  /* doesn't meet the alignment requirement*/
    {
       free(s);
       free(pts);
       KillAllPtrinfo(pbase);
       return(1);
    }
+
+#if 0
+   fprintf(stderr, "ALIGNED ptrs: \n");
+   for (i=1, n=pts[0]; i <= n; i++)
+      fprintf(stderr, "%s ", STname[pts[i]-1]);
+   fprintf(stderr, "\n");
+#endif
    free(s); 
    KillAllPtrinfo(pbase);
 
@@ -17633,13 +17469,16 @@ int MemUnalign2Align(LOOPQ *lp)
    fprintf(stderr, "\n");
 #endif
 /*
- * convert all related mem access to aligned access
+ * convert all related mem access to aligned/unaligned access based on markup
+ * some vec method may assume aligned access all the time.. so, make it 
+ * unaligned, since we don't want to add loop peeling! 
  */
    for (bl=lp->blocks; bl; bl=bl->next)
    {
       for (ip=bl->blk->ainst1; ip; ip=ip->next)
       {
          inst = ip->inst[0];
+#if 0         
          if ( IS_UNALIGNED_VLOAD(inst))
          {
             if (FindInShortList(pts[0], pts+1, STpts2[ip->inst[2]-1]))
@@ -17662,92 +17501,71 @@ int MemUnalign2Align(LOOPQ *lp)
                ip->inst[0] = valign[j];
             }
          }
+#else
+         if (IS_VLOAD(inst) || IS_VSTORE(inst) )
+         {
+            if (IS_VLOAD(inst))
+            {
+               if (NonLocalDeref(ip->inst[2]))
+               {
+                  ptr = STpts2[ip->inst[2]-1];
+                  op = ip->inst[2];
+               }
+               else continue;
+            }
+            else
+            {
+               if (NonLocalDeref(ip->inst[1]))
+               {
+                  ptr = STpts2[ip->inst[1]-1];
+                  op = ip->inst[1];
+               }
+               else continue;
+            }
+/*
+ *          findou the index of ld/st
+ */
+            for (j=0; j < ninst; j++)
+            {
+               if ( (inst == valign[j]) || (inst == vualign[j]))
+                  break;
+            }
+            assert(j!=ninst);
+/*
+ *          handle 2d array as well
+ */
+            id = STarrColPtrlookup(ptr); 
+            if (!id)
+            {
+               if (FindInShortList(pts[0], pts+1, ptr))
+                  ip->inst[0] = valign[j];
+               else
+                  ip->inst[0] = vualign[j];
+            }
+            else
+            {
+               if (FindInShortList(pts[0], pts+1, STarr[id-1].ptr))
+               {
+                  ip->inst[0] = valign[j];
+               }
+               else if (FindInShortList(pts[0], pts+1, ptr))
+               {
+                  if (SToff[op-1].sa[1])   /* active lda? */
+                     ip->inst[0] = vualign[j];
+                  else
+                  ip->inst[0] = valign[j];
+               }
+               else
+                  ip->inst[0] = vualign[j];
+            }
+         }
+#endif
       }
    }
    free(pts);
    return(0);
 }
 
-#if 0
-int SlpVectorization()
-{
-   int err; 
-   extern LOOPQ *optloop;
-   extern LOOPQ *loopq;
-   extern BBLOCK *bbbase;
-   
-   if ( PreSLPchecking(optloop) )
-   {
-      fprintf(stderr, "Prechecking failed for SLP\n");
-      return(1); /* returns error */
-   }
-#if 0
-   InvalidateLoopInfo();
-   bbbase = NewBasicBlocks(bbbase);
-   CheckFlow(bbbase, __FILE__, __LINE__);
-   FindLoops();
-   CheckFlow(bbbase, __FILE__, __LINE__);
-#endif
-/*
- * NOTE: developing SLP in a way that we can specify preheader and postails 
- * to generate vector prologue and epilogue; otherwise prologue/eplilogue will
- * be added on same basic blk
- * HERE HERE SLP must be applied on a scalar block, not work if we have any 
- * vector code in block (including vector init).
- */
-#if 0
-   fprintf(stdout, "LIL before SLP\n");
-   PrintInst(stdout, bbbase);
-#endif
-/*
- * create a new preheader
- */ 
-   if (!CFUSETU2D)
-   {
-      CalcInsOuts(bbbase);
-      CalcAllDeadVariables();
-   }
-   /*
-   //BlkSLP(optloop->blocks->blk, optloop->preheader, optloop->posttails);
-   //BlkSLP(optloop->preheader, NULL, NULL);
-   
-   //PrintLoop(stderr, loopq);
-   //LoopBlkSLP(optloop->blocks->blk, optloop->preheader, optloop->posttails, 
-   //           NULL, 1);
-   */
-   err = DoLoopSLP(optloop->blocks->blk, optloop->preheader, optloop->posttails, 
-              NULL, 1, 0);
-#if 0
-   if (err)
-      fprintf(stderr, "SLP not successful!\n");
-#endif
-
-   KillPackTable();
-
-/*
- * if user markup says that some ptr are aligned, replace all unaligned ld/st
- * with aligned ld/st for them
- */
-
-   if (optloop->aaligned || (!optloop->aaligned && optloop->abalign) )
-         MemUnalign2Align(optloop);
-
-#if 0
-   fprintf(stdout, "LIL after SLP\n");
-   PrintInst(stdout, bbbase);
-   //PrintST(stdout);
-   //ShowFlow("cfg.dot", bbbase);
-#endif
-   
-   InvalidateLoopInfo();
-   bbbase = NewBasicBlocks(bbbase);
-   CheckFlow(bbbase, __FILE__, __LINE__);
-   FindLoops();
-   CheckFlow(bbbase, __FILE__, __LINE__);
-
-   return(err);
-}
-#endif
 /*=============================================================================
  *    Loop Nest vectorization
  *
@@ -17757,7 +17575,7 @@ int SlpVectorization()
  * to manage the loopq list, will move to misc.h later   
  * Add a loop at the beginning of the list
  */
-LPLIST *NewLPlist(LOOPQ *loop, LPLIST *next)
+LPLIST *NewLPlist(LPLIST *next, LOOPQ *loop)
 {
    LPLIST *lp;
    lp = malloc(sizeof(LPLIST));
@@ -17800,6 +17618,10 @@ INSTQ *InitPackFromAdjMem(INSTQ *upackq)
          if (ilam[i])
             KillAllIlist(ilam[i]);
       free(ilam);
+/*
+ *    NOTE: packs are sorted by ptr with large mem access while initializing..
+ *    so, we skip explicit sorting here!!!
+ */
       /*SortPackBasedOnPtr(pta, inpack);*/
       if (pta) free(pta);
    }
@@ -17825,7 +17647,67 @@ int AnyPack(int inpack, int nnpack)
    return(0);
 }
 
-SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
+int IsPreheadConsistent(BBLOCK *blk, SLP_VECTOR *vi, SLP_VECTOR *vo)
+{
+   int suc = 1;
+   SLP_VECTOR *vl, *vl1;
+   INSTQ *ip;
+   INT_BVI iv, iv1, ivset;
+   extern INT_BVI FKO_BVTMP;
+
+   ivset = NewBitVec(128);
+   for (ip=blk->inst1; ip; ip=ip->next)
+   {
+      if (ACTIVE_INST(ip->inst[0]))
+         ivset = BitVecComb(ivset, ivset, ip->set, '|');
+   }
+
+   iv = FKO_BVTMP;
+   if (!iv)
+      NewBitVec(128);
+
+   for (vl=vi; vl; vl=vl->next)
+   {
+      iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1));
+      if (!FindVectorByVec(vl->vec, vo))
+      {
+         for (vl1=vo; vl1; vl1=vl1->next)
+         {
+            if (vl1->isused)
+            {
+               iv1 = Array2BitVec(vl1->svars[0], vl1->svars+1, TNREG-1);
+               if (BitVecCheckComb(iv, iv1, '&') ) /* a common scalar */
+               {
+                  if ( BitVecCheckComb(iv, iv1, '-') 
+                           || BitVecCheckComb(iv1, iv, '-') ) /* iv != iv1*/
+                  {
+                     suc = 0;
+                     break;
+                  }
+               }
+            }
+         }
+/*
+ *       unmatched vector can't be set in blk
+ */
+         if (suc)
+         {
+            if (BitVecCheckComb(ivset, iv, '&')) 
+            {
+               suc = 0;
+               break;
+            }
+         }
+         else
+            break;
+      }
+   }
+   KillBitVec(ivset);
+   return(suc);
+}
+
+SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err, 
+      int isPosttail)
 /*
  * single block SLP with vvrsums 
  */
@@ -17836,9 +17718,9 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
    PACK *pk;
    INSTQ *upackq, *ip, *ipv, *ipn, *ipvrsums;
    BBLOCK *nsbp, *sbp, *vbp, *rbp, *bp;
-   INT_BVI livein, iv;
+   INT_BVI livein, iv, iv1;
    extern INT_BVI FKO_BVTMP;
-   
+  
    inpack = NPACK;
    bp = blk;
 /*
@@ -17858,7 +17740,7 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
 /*
  *    check for reduction code, delete it if found
  */
-      if (CountRvarVect(bp, vi))     
+      if (isPosttail && CountRvarVect(bp, vi))     
       {
          hasredcode=1;
          vr = NULL;
@@ -17873,9 +17755,14 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
             if (vl->redvar) 
             {
                vr = AddVectorInList(vr, vl, vl->islivein, vl->islive);
-               DelRedCodeFromRvars(bp, vl->svars);
+               if (!(vl->flag & NSLP_ACC))
+                  DelRedCodeFromRvars(bp, vl->svars);
             }
          }
+#if 0
+         fprintf(stderr, "postails: \n");
+         PrintThisInstQ(stderr, bp->inst1);
+#endif
       }
 /*
  *    create init pack from vector list
@@ -17883,18 +17770,45 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
       upackq = DupInstQ(bp->ainst1);
       for (vl=vi; vl; vl=vl->next)
       {
-         upackq = FindInitPackFromVlist(upackq, vl, &suc);
-         #if 0
-            if (suc) 
-               fprintf(stderr, "pack-%d created for %s\n", NPACK, 
-                     STname[vl->vec-1]);
-         #endif
+/*
+ *       HERE HERE 
+ *       NOTE: we can't extend pack from Non SLP vectors, because they are 
+ *       created by implicite vectorization 
+ */
+         if (! (vl->flag & (NSLP_ACC | NSLP_SCAL)))
+         {
+/*
+ *          FIXME: we may found multiple packs from same same vector
+ */
+            while (upackq)
+            {
+               ip = upackq;
+               upackq = FindInitPackFromVlist(upackq, vl, &suc);
+               #if 0
+                  if (suc) 
+                     fprintf(stderr, "pack-%d created for %s\n", NPACK, 
+                        STname[vl->vec-1]);
+               #endif
+               if (!suc)
+                  break;
+            }
+         }
       }
+/*
+ *    NOTE: If we don't have active reduction code (or, livein NSLP vectors), 
+ *    We need to utilize all the live in vectors to create packs.... otherwise,
+ *    slp fails and need to scatter/gather vectors!!!
+ */
       if (!AnyPack(inpack, NPACK))
       {
          KillAllInst(upackq);
          upackq = DupInstQ(bp->ainst1);
          upackq = InitPackFromAdjMem(upackq);
+#if 0
+         for (i=0; i < NPACK; i++)
+            if(PACKS[i]) 
+               PrintPack(stderr, PACKS[i]);
+#endif
       }
    }
 /*
@@ -17916,12 +17830,32 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
       *err = 1;
       return(NULL);
    }
+#if 0
+   fprintf(stderr, "*************************Before Extending: %d\n", NPACK);
+   for (i=inpack; i < NPACK; i++)
+      if(PACKS[i]) 
+         PrintPack(stderr, PACKS[i]);
+#endif
 /*
  * step: 2
  * ========
  * extend pack using def-use chain
  */
    upackq = ExtendPack(upackq, inpack);
+   if (CheckDupPackError(inpack, NPACK))
+   {
+      fko_error(__LINE__, 
+            "*******Rename scalars, duplicated packs are not supported yet");
+      if (hasredcode)
+      {
+         KillAllInst(rbp->inst1);
+         free(rbp);   
+         KillVlist(vr);
+      }
+      KillAllInst(upackq);
+      *err = 1;
+      return(NULL);
+   }
 /*
  * step: 3
  * =======
@@ -17930,6 +17864,13 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
    nsbp = NewBasicBlock(NULL, NULL);
    nsbp = DupInstQInBlock(nsbp, bp->inst1);
    UpdateDep(nsbp->inst1, inpack);
+
+#if 0
+   fprintf(stderr, "************************* After Extending: %d\n", NPACK);
+   for (i=inpack; i < NPACK; i++)
+      if(PACKS[i]) 
+         PrintPack(stderr, PACKS[i]);
+#endif
 /*
  * step: 4
  * ========
@@ -17947,7 +17888,8 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
  */
    vo = NULL;
    for (vl=vi; vl; vl=vl->next)
-      vo = AddVectorInList(vo, vl, 1, 1); // vi is livein list and they are live
+         if (! (vl->flag & (NSLP_ACC | NSLP_SCAL))) /* */
+            vo = AddVectorInList(vo, vl, 1, 1); 
 
    /* consider redvar as livein for now */
    if (hasredcode)
@@ -17997,6 +17939,36 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
       return(NULL);
    }
 /*
+ * special validity checking for preheader vectorization before updating the
+ * blk
+ */
+/*
+ * Preheader: 
+ * All vectors in vi may not be used as init vector in SLP
+ * Not apply SLP, if :
+ * 1. There is a conflict in between Vo and Vi; 
+ * 2. scalar element of Vi is set in blk, meaning the live range is changed!!
+ */
+   else if (vi && !isPosttail)
+   {
+/*
+ *    in conflict, not vectorizable
+ */
+      if (!IsPreheadConsistent(bp, vi, vo))
+      {
+         fko_warn(__LINE__, "--------------prehead fails\n");
+         *err = 1;
+         KillVlist(vo);
+         KillAllInst(vbp->inst1);
+         free(vbp);
+         return(NULL);
+      }
+      else
+      {
+         FinalizeVecBlock(bp, vbp);
+      }
+   }
+/*
  * safe to vectorize, so do it
  */
    else
@@ -18008,9 +17980,9 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
    KillAllInst(vbp->inst1);
    free(vbp);
 /*
- * has reduction code
+ * posttail and has reduction code
  */
-   if (hasredcode)
+   if(isPosttail && hasredcode)
    {
 /*
  *    vi = input livein vectors
@@ -18024,12 +17996,26 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
       for (vl=vi; vl; vl=vl->next)
          if (!FindVectorByVec(vl->vec, vr))
             visr = AddVectorInList(visr, vl, vl->islivein, vl->islive);
+/*
+ *    All reducible vr must be handled here... they must be dead inside this 
+ *    block. So, we can mark them as used vector... not true if NSLP_ACC
+ */
+      for (vl=vr; vl; vl=vl->next)
+      {
+         vl1 = FindVectorByVec(vl->vec, vo);
+         if (vl1 && !(vl1->flag & NSLP_ACC) )
+            vl1->isused = 1;
+      }
       vli = NULL;
       vs = NULL;
       ipvrsums = ipv = NULL;
+#if 0
+      fprintf(stderr, "output vectors:\n");
+      PrintVectors(stderr, vo);
+#endif
       for (vl=vo; vl; vl=vl->next)
       {
-         if (vl->islivein) //&& !FindVectorByVec(vl->vec, vi) )
+         if (vl->islivein && !(vl->flag & NSLP_ACC))
          {
             nelem = 0;
             for (i=1, n=vl->svars[0]; i <= n; i++ )
@@ -18082,6 +18068,8 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
                break; /* exit from the loop*/
             }
          }
+         else /* not a candidate for vvrsum at all*/ 
+            continue;
 /*
  *       copy vvrsum inst into ipvrsums
  */
@@ -18123,9 +18111,7 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
       for (vl=visr; vl; vl=vl->next)
       {
          if (!FindVectorFromScalars(vl->svars, vo))
-         {
             ip = AddVectorScatterInst(ip, vl, vl->vlen); 
-         }
       }
       if (ip)
       {
@@ -18161,12 +18147,166 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err)
       if (vs) KillVlist(vs);
       if (vr) KillVlist(vr);
    } // end of hasredcode if
-   
+
+#if 0 
+   fprintf(stderr, "Vectorized code for block: %d\n", blk->bnum);
+   fprintf(stderr, "***********************************\n");
+   PrintThisInstQ(stderr, blk->inst1);
+   fprintf(stderr, "***********************************\n");
+#endif
    return(vo);
 }
 
+int IsSlpFlowConsistent(BBLOCK *sbp1, BBLOCK *sbp2, SLP_VECTOR *v1, 
+      SLP_VECTOR *v2, INT_BVI ins, INT_BVI outs)
+/*
+ *    Algorithm:
+ *       At any junction of the two blocks, live-out variables as vector can't 
+ *       be used as scalar without scatter. 
+ *       Note: it can be live-in as scalar if the successor block doesn't use 
+ *       it at all. May be, it is used on any later block. we need to scatter 
+ *       it on that block
+ *          -------
+ *          |     |
+ *          |     |
+ *          -------  Live-out as vectors
+ *             |
+ *          -------  
+ *          |     |  can't be used as scalar without scatter
+ *          |     |
+ *          -------
+ *    
+ */   
+{
+   int res=1;
+   INT_BVI iv, slivein, vliveout, uses;
+   SLP_VECTOR *vl;
+  
+   vliveout = NewBitVec(128);
+   slivein = NewBitVec(128);
+   uses = NewBitVec(128);
+   
+   if (v1) /* 1st blk is vectorized */
+   {
+      for (vl=v1; vl; vl=vl->next)
+      {
+/*
+ *       FIXED: acc vector for nslp would always be dead using vvrsum or scatter
+ *       first. so, don't consider them as liveout here
+ */
+         if (vl->isused && !(vl->flag & NSLP_ACC))
+         {
+            iv = Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1);
+            vliveout = BitVecComb(vliveout, vliveout, iv, '|');
+         }
+      }
+      iv = BitVecCopy(iv, outs);
+      FilterOutRegs(iv); 
+      vliveout = BitVecComb(vliveout, vliveout, iv, '&');
+/*
+ *    NOTE: if v0 has vectors, meaning we don't used scatter/gather for used 
+ *    vectors at all.... that means they are not used as scalar!
+ *    Assumption: the scalar which is used as vector can't be used as scaler in 
+ *    same block!!!may not always be true! specially not for boardcast!
+ */
+      slivein = BitVecCopy(slivein, ins);
+      FilterOutRegs(slivein); 
+      for (vl=v2; vl; vl=vl->next)
+      {
+         if (vl->isused)
+         {
+            iv = Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1);
+            slivein = BitVecComb(slivein, slivein, iv, '-');
+         }
+      }
+/*
+ *    remove those which are not used inside successor. They are live-in for 
+ *    later use
+ */
+#if 0
+      for (ip=bp2->ainst1; ip; ip=ip->next)
+         uses = BitVecComb(uses, uses, ip->uses, '|');
+      slivein = BitVecComb(slivein, slivein, uses, '&');
+#else
+      slivein = BitVecComb(slivein, slivein, sbp2->uses, '&');
+#endif
+/*
+ *    to be consistent, slivein can't have any variable which also belongs to 
+ *    vlivein
+ */
+      if (BitVecCheckComb(slivein, vliveout, '&'))
+      {
+         res = 0;
+         PrintVars(stderr, "common var: ", BitVecComb(slivein, slivein, 
+                  vliveout, '&'));
+      }
+   }
+   KillBitVec(vliveout);
+   KillBitVec(slivein);
+   KillBitVec(uses);
+   return(res);
+}
 
 int IsSlpConsistent(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2, 
+      LOOPQ *loop, BBLOCK *vbp0, BBLOCK *vbp1, INT_BVI ins, INT_BVI outs)
+{
+   int res, safe;
+   SLP_VECTOR *vl;
+/*
+ * NOTE: in our single loop nest definition, loop only has one prehead and 
+ * one posttail. So, liveout of prehead is directly livein in at the beginning 
+ * of loop. So is the posttail! but we have two liveout path for posttail and 
+ * two livein path for prehead
+ * NOTE: we can't recompute the ins and outs of block, since we need to 
+ * recompute CFG and it will destroy the loop structure... we need to figure
+ * out live-out vectors without recomputing data-flow.
+ */
+   //fprintf(stderr, "++++++checking consistency at prehead -> loop\n");
+   res = IsSlpFlowConsistent(loop->preheader, loop->header, v1, v0, 
+            loop->header->ins, loop->preheader->outs);
+#if 0
+   fprintf(stderr, "------vector used on loop:\n");
+   for (vl=v0; vl; vl=vl->next)
+      if (vl->isused)
+         PrintThisVector(stderr,vl);
+   fprintf(stderr, "------vector used on posttail:\n");
+   for (vl=v2; vl; vl=vl->next)
+      if (vl->isused)
+         PrintThisVector(stderr,vl);
+#endif
+   //fprintf(stderr, "+++++checking consistency at loop -> posttail\n");
+   res += IsSlpFlowConsistent(loop->tails->blk, loop->posttails->blk, v0, v2, 
+            loop->posttails->blk->ins, loop->tails->blk->outs);
+   //fprintf(stderr, "+++++checking consistency at posttail -> prehead\n");
+   res += IsSlpFlowConsistent(loop->posttails->blk, loop->preheader, v2, v1, 
+            loop->preheader->ins, loop->posttails->blk->outs);
+
+   if (res < 3)
+   {
+      fprintf(stderr, "############# SLP fails !!!!\n");
+      safe = 0;
+   }
+   else
+      safe = 1;
+#if 0
+   fprintf(stderr, "------vector used on loop:\n");
+   for (vl=v0; vl; vl=vl->next)
+      if (vl->isused)
+         PrintThisVector(stderr,vl);
+   fprintf(stderr, "------vector used on prehead:\n");
+   for (vl=v1; vl; vl=vl->next)
+      if (vl->isused)
+         PrintThisVector(stderr,vl);
+   fprintf(stderr, "------vector used on posttail:\n");
+   for (vl=v2; vl; vl=vl->next)
+      if (vl->isused)
+         PrintThisVector(stderr,vl);
+   exit(0);
+#endif
+   return(safe);
+}
+
+int IsSlpConsistent0(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2, 
       LOOPQ *loop, BBLOCK *bp0, BBLOCK *bp1)
 {
    int safe;
@@ -18284,14 +18424,55 @@ int IsSlpConsistent(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2,
    return(safe);
 }
 
+SLP_VECTOR *CreateVlistFromLoop(LOOPQ *lp)
+{
+   int i, j, n, ne, type;
+   short *sp;
+   SLP_VECTOR *vl, *vlist=NULL;
+
+   for (i=1, n=lp->vscal[0]; i <= n; i++)
+   {
+      type = FLAG2TYPE(STflag[lp->vvscal[i]-1]);
+      ne = vtype2elem(type); 
+      sp = malloc((ne+1)*sizeof(short)); 
+      assert(sp);
+      sp[0] = ne;
+
+      for(j=1; j <=ne; j++)
+         sp[j] = lp->vscal[i];
+
+      if (lp->vsflag[i] & (VS_LIVEIN | VS_LIVEOUT) )
+         vlist = CreateVector(vlist, type, ne, sp, 1, lp->vvscal[i]);
+      else
+         vlist = CreateVector(vlist, type, ne, sp, 0, lp->vvscal[i]);
+/*
+ *    added the vector at the end. so, traverse the list to access it
+ */
+      for(vl=vlist; vl->next; vl=vl->next)
+         ;
+      if (lp->vsoflag[i] & VS_ACC) /* */
+      {
+         vl->redvar = lp->vscal[i];
+         vl->flag |= NSLP_ACC;
+         /*for (j=2; j <= ne; j++)
+            vl->svars[j] = 0;*/
+
+      }
+      else
+         vl->flag |= NSLP_SCAL;
+      vl->isused = 1; /* marked as used */
+   }
+   return(vlist);
+}
+
 SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
 {
-   int err0, err1;
-   BBLOCK *blk;
+   int tr, err0, err1;
    INT_BVI iv, ins, outs;
    SLP_VECTOR *vl, *vo, *v1, *v2, *vo1, *vo2;
-   BBLOCK *preblk, *postblk;
+   BBLOCK *bp, *blk, *preblk, *postblk;
    LOOPQ *lp;
+   INSTQ *ip, *ipn, *ipvrsums;
    extern LOOPQ *optloop;
    extern int VECT_FLAG;
    extern INT_BVI FKO_BVTMP;
@@ -18319,16 +18500,81 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
          vo = NULL;
 #if 0
          fprintf(stderr, "*****************Applying SLP on optloop\n");
+         fprintf(stderr, "Scalar codes:\n");
+         PrintThisInstQ(stderr, lpl->loop->blocks->blk->inst1);
+         fprintf(stderr, "==================================\n");
 #endif
-         vo = DoSingleBlkSLP(lpl->loop->blocks->blk, ins, vo, err);
+         vo = DoSingleBlkSLP(lpl->loop->blocks->blk, ins, vo, err, 0);
          KillBitVec(ins);
          if (*err)
          {
+            fprintf(stderr, "SLP fails in optloop!\n");
             KillVlist(vo);
             return NULL;
          }
+#if 0
+         {
+            //extern BBLOCK *bbbase;
+            fprintf(stderr, "vectorized loop block:\n");
+            //PrintInst(stderr, bbbase);
+            PrintThisInstQ(stderr, lpl->loop->blocks->blk->inst1); 
+            //exit(0);
+         }
+#endif
+/*
+ *       NOTE: no need, since we ensure there is no scalar and vector inst  
+ *       for a varibale at the same time
+ */
+#if 0
+         if (!IsSlpFlowConsistent(vo, vo, lpl->loop->blocks->blk->ins, 
+               lpl->loop->blocks->blk->outs))
+            fko_error(__LINE__, "SLP vec mismatch at optloop!!!");
+#endif
          return(vo);
       }
+      else if (VECT_FLAG & VECT_NCONTRL)
+      {
+         SKIP_PELOGUE = 1;
+         SKIP_PEELING = 1;
+         SKIP_CLEANUP = 1;
+         if (RcVectorAnalysis(lpl->loop))
+         {
+            *err = 1;
+            return(NULL);
+         }
+         if (RcVectorization(lpl->loop))
+         {
+            *err = 2;
+            return(NULL);
+         }
+         *err = 0;
+         /*FinalizeVectorCleanup(lpl->loop, 1);*/
+         SKIP_PELOGUE = 0;
+         /*SKIP_PEELING = 0;*/  
+#if 0
+         {
+            extern BBLOCK *bbbase;
+            fprintf(stderr, "vectorized loop block:\n");
+            PrintInst(stderr, bbbase);
+            exit(0);
+         }
+#endif
+/*
+ *       NOTE: generating these vectors from optloop won't help slp for next 
+ *       steps except the posttail's vvrsum codes. They are main controlled by
+ *       NSLP_ACC and NSLP_SCAL flag
+ */
+         vo = CreateVlistFromLoop(lpl->loop);
+#if 0
+         fprintf(stderr, "generated vectors");
+         PrintVectors(stderr, vo);
+         exit(0);
+#endif
+         return(vo);
+      }
+      else 
+         fko_error(__LINE__, "loopnest vectorization is not supported for this"
+               " vectorization technique!!!");
    }
 /*
  * recursion with one step down 
@@ -18358,46 +18604,112 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
    {
       iv = BitVecCopy(iv, Array2BitVec(vl->svars[0], vl->svars+1, TNREG-1) );
       if ( BitVecCheckComb(iv, ins, '&') )
-         v1 = AddVectorInList(v1, vl, 1, 1);
+         v1 = AddVectorInList(v1, vl, 0, 0); /* not ins for prehead */
       if ( BitVecCheckComb(iv, outs, '&') )
          v2 = AddVectorInList(v2, vl, 1, 1); 
    }
+#if 0
+   fprintf(stderr, "Livein vectors:\n");
+   PrintVectors(stderr, v1);
+   fprintf(stderr, "Liveout vectors:\n");
+   PrintVectors(stderr, v2);
+#endif
+   /*fprintf(stderr, "Applying SLP on prehead\n");
+   fprintf(stderr, "=========================\n");*/
+
+   ins = BitVecCopy(ins, lp->preheader->ins);
+   FilterOutRegs(ins);
+   vo1 = DoSingleBlkSLP(preblk, ins, v1, &err0, 0);
    
-   vo1 = DoSingleBlkSLP(preblk, ins, v1, &err0);
-   vo2 = DoSingleBlkSLP(postblk, outs, v2, &err1);
+   /*fprintf(stderr, "Applying SLP on posttail\n");
+   fprintf(stderr, "=========================\n");*/
+   ins = BitVecCopy(ins, lp->posttails->blk->ins);
+   FilterOutRegs(ins);
+   vo2 = DoSingleBlkSLP(postblk, ins, v2, &err1, 1);
+   /*vo2 = DoSingleBlkSLP(postblk, outs, v2, &err1);*/
    
-   KillBitVec(ins); 
-   KillBitVec(outs); 
 /*
  * check consistency of SLP throughout the loop, i.e., loopi-1 + prehead 
  *    + posttail 
  */
    /*fprintf(stderr, "%d %d\n", err0, err1);*/
-   if (!err0 && !err1 && IsSlpConsistent(vo, vo1, vo2, lp, preblk, postblk) )
+/*
+ * NOTE: can be vectorized even if prehead is not vectorizable!
+ * check consistency if either one can be vectorized  
+ */
+   tr = err0 + err1;
+   ins = BitVecCopy(ins, lp->preheader->ins);
+   FilterOutRegs(ins);
+   outs = BitVecCopy(outs, lp->posttails->blk->outs);
+   FilterOutRegs(outs);
+
+   if ((tr < 2) && 
+         IsSlpConsistent(vo, vo1, vo2, lp, preblk, postblk, ins, outs) )
    {
-      FinalizeVecBlock(lp->preheader, preblk); 
-      FinalizeVecBlock(lp->posttails->blk, postblk);
+/*
+ *    handle prehead
+ */
+      if(!err0) /* vec successful */
+      {
+         FinalizeVecBlock(lp->preheader, preblk); 
+         vo = AppendVoVlist(vo, vo1);
+         vo1 = NULL;
+      }
+      else
+         AddSlpPrologue(lp->preheader, v1, 1); 
+/*
+ *    handle posttail 
+ */
+      if (!err1) /* vec successful */
+      {
+         FinalizeVecBlock(lp->posttails->blk, postblk);
+         vo = AppendVoVlist(vo, vo2);
+         vo2 = NULL;
+      }
+      else
+      {
+/*
+ *       we can still apply vvrsum, if we have accumulators
+ */
+         KillVlist(vo2);
+         vo2 = NULL;
+         for (vl=v2; vl; vl=vl->next)
+            if (vl->flag & NSLP_ACC)
+               vo2 = AddVectorInList(vo2, vl, vl->islivein, vl->islive);
+         if (vo2)
+         {
+            for (vl=vo2; vl; vl=vl->next)
+               v2 = KillVecFromList(v2, vl);
+/*
+ *          add vvrsums code at the beginning
+ */
+            ipvrsums = InstUnordVVRSUMscatter(vo2);
+            assert(ipvrsums);
+            ip = ipvrsums;
+            bp = lp->posttails->blk;
+            ipn = InsNewInstAfterLabel(bp, ip->inst[0], ip->inst[1], 
+                     ip->inst[2], ip->inst[3]);
+            ip = ip->next;
+            while (ip)
+            {
+               ipn = InsNewInst(bp, ipn, NULL, ip->inst[0], ip->inst[1], 
+                        ip->inst[2], ip->inst[3]);
+               ip=ip->next;
+            }
+            KillAllInst(ipvrsums);
+         }
+         AddSlpEpilogue(lp->posttails->blk, v2, 0); 
+      }
       
       KillAllInst(preblk->inst1);
       free(preblk);
       KillAllInst(postblk->inst1);
       free(postblk);
       
-      for (vl=vo1; vl; vl=vl->next)
-      {
-         if (!FindVectorByVec(vl->vec, vo))
-            vo = AddVectorInList(vo, vl, vl->islivein, vl->islive);
-      }
-      for (vl=vo2; vl; vl=vl->next)
-      {
-         if (!FindVectorByVec(vl->vec, vo))
-            vo = AddVectorInList(vo, vl, vl->islivein, vl->islive);
-      }
-      KillVlist(vo1);
-      KillVlist(vo2);
+      if (vo2) KillVlist(vo2);
+      if (vo1) KillVlist(vo1);
       KillVlist(v1);
       KillVlist(v2);
-      return(vo);
    }
    else /* failed */
    {
@@ -18432,8 +18744,12 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
       KillVlist(v1);
       KillVlist(v2);
       KillVlist(vo);
-      return(NULL);
+      vo = NULL;
    }
+
+   KillBitVec(ins); 
+   KillBitVec(outs); 
+   return(vo);
 }
 
 int LoopNestVec()
@@ -18450,6 +18766,9 @@ int LoopNestVec()
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
+#if 0
+   PrintLoop(stderr, loopq);
+#endif
 /*
  * Find suitable loopnest for vectorization, list from upper to inner loopq
  */
@@ -18457,9 +18776,11 @@ int LoopNestVec()
    lp = optloop;
    while(lp)
    {
-      ll = NewLPlist(lp, ll);
+      ll = NewLPlist(ll, lp);
       lp0 = lp;
-      lp = lp->preheader->loop;
+      if (lp->preheader)
+         lp = lp->preheader->loop;
+      else lp = NULL;
       if (lp) // preheader is the header of upper loop
       {
          if (!lp0->posttails || lp0->posttails->next   
@@ -18477,7 +18798,9 @@ int LoopNestVec()
  */
    if (ll)
       vo = DoLoopNestVec(ll, &err);
-   
+#if 0
+   fprintf(stderr, "loop nest vect error = %d (%p)\n", err, &err);
+#endif
    if (vo) KillVlist(vo);
    KillAllLPlist(ll); 
    KillPackTable();
@@ -18495,6 +18818,10 @@ int LoopNestVec()
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
-
+#if 0
+   fprintf(stdout, "vectorized code: \n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif
    return(err);
 }
