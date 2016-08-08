@@ -2606,6 +2606,13 @@ ZERO_RET:
    xor %rax, %rax
    ret
 @ROUT ATL_FreeAtomicCount_mut
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2016
+#include "atlas_tprim.h"
+void ATL_FreeAtomicCount(void *vp)
+{
+   ATL_lock_destroy(ATL_AddBytesPtr(vp, 2*sizeof(int)+128));
+}
+@beginskip
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2015 -define cwdate 2014
 #include <stdlib.h>
 #ifdef ATL_OMP_THREADS
@@ -2625,12 +2632,10 @@ void ATL_FreeAtomicCount(void *vp)
 #endif
    free(vp);
 }
+@endskip
 @ROUT ATL_ResetAtomicCount_mut ATL_DecAtomicCount_mut
-#ifdef ATL_OMP_THREADS
-   #include <omp.h>
-#else
-   #include <pthread.h>
-#endif
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2016
+#include "atlas_tprim.h"
 @ROUT ATL_DecAtomicCount_mut
 int ATL_DecAtomicCount(void *vp)
 @ROUT ATL_ResetAtomicCount_mut
@@ -2638,30 +2643,17 @@ int ATL_ResetAtomicCount(void *vp, int cnt)
 @ROUT ATL_ResetAtomicCount_mut ATL_DecAtomicCount_mut
 {
    char *cp=vp;
-   #ifdef ATL_OMP_THREADS
-      omp_lock_t *mp;
-   #else
-      pthread_mutex_t *mp;
-   #endif
+   void *mp;
    int *cntp;
    int iret;
 
-   cntp = (int*)(cp+128);
-   #ifdef ATL_OMP_THREADS
-      mp = (omp_lock_t*)(cntp+2);
-      omp_set_lock(mp);
-   #else
-      mp = (pthread_mutex_t*)(cntp+2);
-      pthread_mutex_lock(mp);
-   #endif
+   cntp = ATL_AddBytesPtr(vp, 128);
+   mp = cntp+2;
+   ATL_assert(!ATL_lock(mp));
    iret = *cntp;
 @ROUT ATL_DecAtomicCount_mut   `   if (iret) (*cntp)--;`
 @ROUT ATL_ResetAtomicCount_mut `   *cntp = cnt;`
-   #ifdef ATL_OMP_THREADS
-      omp_unset_lock(mp);
-   #else
-      pthread_mutex_unlock(mp);
-   #endif
+   ATL_assert(!ATL_unlock(mp));
    return(iret);
 }
 @ROUT ATL_SetAtomicCount_arch

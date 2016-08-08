@@ -1004,7 +1004,7 @@ int   ATL_DecAtomicCount_mut(void *);
 void  ATL_FreeAtomicCount_mut(void *);
 
 static volatile int count=0;
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+@skip static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static void *acnt;
 static void **acnts;
 static double *timearr=NULL;
@@ -2621,4 +2621,196 @@ int main(int nargs, char **args)
    if (fpout != stderr && fpout != stdout)
       fclose(fpout);
    return(0);
+}
+@ROUT tune_cntdly
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+#include "atlas_gatmctr.h"
+#define ATL_GETFLAGS 1
+#include "atlas_genparse.h"
+void *ATL_SetAtomicCount_mut(long long);
+int   ATL_DecAtomicCount_mut(void *);
+void  ATL_FreeAtomicCount_mut(void *);
+
+static double DELAY, timearr[ATL_NTHREADS];
+static unsigned long cntPerRank[ATL_NTHREADS];
+static void *ACNT;
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n",
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -P <nthreads> (max=%d)\n", ATL_NTHREADS);
+   fprintf(stderr, 
+   "   -m <base> <multiplier> <max> (base in microsec, max in sec)\n");
+@beginskip
+   fprintf(stderr, "   -D D0 DN DINC : delay range (microseconds)\n");
+   fprintf(stderr, "   -d # D1 ... DN : delay list (microseconds)\n");
+   fprintf(stderr, "   -r d0: recursive doubling starting at d0\n");
+   fprintf(stderr, "   -v <verb> [1] do/don't print indiv reps\n");
+@endskip
+   exit (ierr ? ierr : -1);
+}
+
+FILE *GetFlags(int nargs, char **args, unsigned long *CNT, int *P, double *mula)
+{
+   unsigned long cnt=8000;
+   int p=ATL_NTHREADS, i, verb=0;
+   FILE *fpout=stdout;
+
+   mula[0] = 1e-6; mula[1] = 2.0; mula[2] = .01;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'm' : /* -m <base> <mul> <max> */
+         if (i+3 >= nargs)
+            PrintUsage(args[0], i, NULL);
+         mula[0] = atof(args[i+1]) * 1e-6;
+         mula[1] = atof(args[i+2]);
+         mula[2] = atof(args[i+3]);
+         assert(mula[0] > 0.0 && mula[2] >= mula[0] && mula[1] >= 0.0);
+         i += 3;
+         break;
+      case 'C':   /* -C <count> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         cnt = atol(args[i]);
+         break;
+   @multidef vn p
+   @whiledef fl P
+      case '@(fl)':   /* -@(fl) <@(vn)> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         @(vn) = atoi(args[i]);
+         break;
+      @undef vn
+   @endwhile
+      case 'o':  /* -o <outfile> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (!strcmp(args[i], "stdout"))
+            fpout = stdout;
+         else if (!strcmp(args[i], "stderr"))
+            fpout = stderr;
+         else
+         {
+            fpout = fopen(args[i], "w");
+            assert(fpout);
+         }
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   @whiledef vn p cnt
+   *@up@(vn) = @(vn);
+   @endwhile
+   return(fpout);
+}
+
+@define a2 @@
+@define a2 @@
+@multidef a2 ,vrank ,vrank
+@multidef rt
+   ATL_DecAtomicCount_mut ATL_DecAtomicCount ATL_gDecAtmCtr ATL_gDecAtmCtr
+@endmultidef
+@whiledef sf mut loc prv pub
+static void DoWork_@(sf)(void *vpp, int rank, int vrank)
+{
+@skip   ATL_tpool_t *pp=vpp;
+   double t0, t1, t2;
+   unsigned long cnt=0;
+/*
+ * We don't trust walltime() to have enough accuracy to time one call to
+ * DecAtom, so add all them together, and then subtract out cnt*DELAY;
+ * This isn't perfect either, but should be better wt low-res clocks
+ */
+   t0 = ATL_walltime();
+   while (@(rt)(ACNT@(a2)))
+   {
+      t1 = ATL_walltime();
+      cnt++;
+      do
+         t2 = ATL_walltime();
+      while (t2-t1 < DELAY);
+      t0 += t2-t1 - DELAY;    /* correct any extra delay */
+   }
+   t1 = ATL_walltime();
+   cntPerRank[rank] = cnt;
+   timearr[rank] = t1 - t0 - DELAY*cnt;
+}
+   @undef rt
+   @undef a2
+@endwhile
+
+double PerCallMicroSec(int P)
+{
+   double cost=0.0;
+   if (P)
+   {
+      unsigned long cnt=0;
+      int i;
+      for (i=0; i < P; i++)
+      {
+         cnt += cntPerRank[i];
+         cost += timearr[i];
+      }
+      cost /= cnt*1e-6;
+   }
+   return(cost);
+}
+
+#define PRVDEF ((1L<<ATL_GAC_NOPUB))
+#define PUBDEF  ((1L<<ATL_GAC_NOPRV))
+int main(int nargs, char **args)
+{
+   FILE *fpout;
+   int P;
+   unsigned long cnt;
+   double ma[3], del, max, mul;
+
+   fpout=GetFlags(nargs, args, &cnt, &P, ma);
+   fprintf(fpout,
+      "   DELAY    ATMCTR_mut   ATMCTR    g_PUB    g_PRV\n");
+   fprintf(fpout,
+      "========  ============  =======  =======  =======\n");
+   del = 0.0; mul = ma[1]; max = ma[2];
+   while (del <= max)
+   {
+      double tmut, tloc=0, tprv, tpub;
+
+      DELAY = del;
+
+      @whiledef rt prv pub
+      ACNT = ATL_gNewAtmCtr(P, cnt, @up@(rt)DEF);
+      ATL_goParallel(P, DoWork_@(rt), NULL, NULL, NULL);
+      ATL_gFreeAtmCtr(ACNT);
+      t@(rt) = PerCallMicroSec(P);
+
+      @endwhile
+      @define sf @@
+      @define sf @_mut@
+      @whiledef rt mut loc
+      ACNT =  ATL_SetAtomicCount@(sf)(cnt);
+      ATL_goParallel(P, DoWork_@(rt), NULL, NULL, NULL);
+      ATL_FreeAtomicCount@(sf)(ACNT);
+      t@(rt) = PerCallMicroSec(P);
+
+         @undef sf
+      @endwhile
+      fprintf(fpout, "%.2e  %e %8.2f %8.2f %8.2f\n", del, tmut, 
+              tmut/tloc, tmut/tpub, tmut/tprv);
+      if (del == 0.0)
+         del = ma[0];
+      else 
+         del *= mul;
+   }
 }
