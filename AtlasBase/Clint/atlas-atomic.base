@@ -1,0 +1,184 @@
+@ROUT atlas_atmctr.h
+#ifndef ATLAS_ATMCTR_H
+   #define ATLAS_ATMCTR_H
+   #include "atlas_tprim.h"
+/* 
+ * atmctr data structure has two variants.  The mutex version is of size
+ * 2*SAFELS + sizeof(lock).  _new returns a SAFELS-aligned address, and the
+ * data structure from this point is: [<cnt><off>][lock].
+ * 
+ * For systems where we have true atomic ctrs, the lock is ommitted, so size
+ * 2*SAFELS.
+ *
+ * If <off> is nonzero it is the bytes to add to ac to get to the 
+ * original malloc-returned ptr (used only in _free).
+ */
+   #if defined(ATL_GAS_x8632) || defined(ATL_GAS_x8664) || \
+       defined(ATL_GAS_ARM64) || defined(ATL_GAS_WOW64)
+      #define ATL_ATM_ASM 1  /* I've got assembly atomic ops */
+   #else
+      #define ATL_ATM_ASM 0  /* I do not have assembly atomic ops */
+   #endif
+
+void *ATL_atmctr_new(long cnt);
+void  ATL_atmctr_free(void *ac);
+
+/* All these functions return prior value */
+long ATL_atmctr_set(void *ac, long val);
+long ATL_atmctr_dec(void *ac);
+long ATL_atmctr_add(void *ac, unsigned long val);
+
+@skip long ATL_atmctr_get(void *ac); /* perform unsafe read */
+#define ATL_atmctr_get(ac_) (*((volatile long*)(ac_)));
+#endif
+@ROUT ATL_atmctr_new
+void *ATL_atmctr_new(long cnt)
+{
+   void *vp, *lck;
+   long *lp;
+   #if ATL_ATM_ASM
+      vp = malloc(ATL_SAFELS+ATL_SAFELS);
+   #else
+      vp = malloc(ATL_SAFELS+ATL_SAFELS+sizeof(ATL_lock_t));
+   #endif
+   ATL_assert(vp);
+   lp = ATL_AlignSafeLS(vp);
+   lp[0] = cnt;
+   lp[1] = ((size_t)vp) - ((size_t)lp); /* will be negative or 0 */
+   #if !ATL_ATM_ASM
+      lck = ATL_IncBySafeLS(lp);
+      ATL_lock_init(lck);
+   #endif
+   return(lp);
+}
+@ROUT ATL_atmctr_free
+void  ATL_atmctr_free(void *ac)
+{
+   long *lp=ac, off=lp[1];
+   #if !ATL_ATM_ASM
+      ATL_lock_destroy(ATL_IncBySafeLS(ac));
+   #endif
+   ac = ATL_AddBytesPtr(lp[1]);
+   free(ac);
+}
+@ROUT ATL_atmctr_set
+#include "atlas_atmctr.h"
+#if !ATL_ATM_ASM
+long ATL_atmctr_set(void *ac, long val)
+{  /* RETURNS: old value of count */
+   void *lck=ATL_IncBySafeLS(ac);
+   long ret, *lp=ac;
+   ATL_lock(lck);
+   ret = *lp;
+   *lp = val;
+   ATL_unlock(lck);
+   return(ret);
+}
+#endif
+@ROUT ATL_atmctr_dec
+#include "atlas_atmctr.h"
+#if !ATL_ATM_ASM
+long ATL_atmctr_dec(void *ac)
+{  /* RETURNS: old value of count */
+   void *lck=ATL_IncBySafeLS(ac);
+   long ret, *lp=ac;
+   ATL_lock(lck);
+   ret = *lp;
+   if (ret > 0)
+      *lp = ret-1;
+   ATL_unlock(lck);
+   return(ret);
+}
+#endif
+@ROUT ATL_atmctr_add
+#include "atlas_atmctr.h"
+#if !ATL_ATM_ASM
+long ATL_atmctr_add(void *ac, unsigned long val)
+{  /* RETURNS: old value of count */
+   void *lck=ATL_IncBySafeLS(ac);
+   long ret, *lp=ac;
+   ATL_lock(lck);
+   ret = *lp;
+   *lp = ret + val;
+   ATL_unlock(lck);
+   return(ret);
+}
+#endif
+@ROUT ATL_DecAtomicCount_asm.S
+#include "atlas_atmctr.h"
+#if ATL_ATM_ASM
+   #include "atlas_asm.h"
+   #define rout ATL_asmdecor(ATL_DecAtomicCount)
+   #ifdef ATL_GAS_x8664
+   /* rax                         rdi  */
+   /* int ATL_DecAtomicCount(void *vp) */
+   .text
+   ALIGN32
+   .global rout
+   rout:
+      movq (%rdi), %rax       /* read cnt from memory */
+      mov  %rax, %rcx         /* rcx = cnt */
+      sub  $1, %rcx           /* rcx = cnt-1 */
+      jl ZERO_RET             /* return 0 if count already below 1 */
+      lock                    /* make cmpxchg atomic */
+      cmpxchg %rcx, (%rdi)    /* put cnt-1 in mem if mem still == cnt in rax */
+      je DONE                 /* ZF set if cmpxchg wrote to mem */
+   jmp rout                   /* ZF=0 means cmpxch failed, try again */
+   ZERO_RET:
+      xor %rax, %rax
+   DONE:
+   ret
+   #elif defined(ATL_GAS_WOW64)
+   /* rax                         rcx  */
+   /* int ATL_DecAtomicCount(void *vp) */
+   .text
+   ALIGN32
+   .global rout
+   rout:
+      movq (%rcx), %rax       /* read cnt from memory */
+      mov  %rax, %rdx         /* rdx = cnt */
+      subl $1, %rdx           /* rdx = cnt-1 */
+      jl ZERO_RET             /* return 0 if count already below 1 */
+      lock                    /* make cmpxchg atomic */
+      cmpxchg %rdx, (%rcx)    /* put cnt-1 in mem if mem still == cnt in rax */
+      je DONE                 /* ZF set if cmpxchg wrote to mem */
+   jmp rout                   /* ZF=0 means cmpxch failed, try again */
+   ZERO_RET:
+      xor %rax, %rax
+   DONE:
+   ret
+   #elif defined(ATL_GAS_x8632)
+   /* eax                    4(%esp)  */
+   /* int ATL_DecAtomicCount(void *vp) */
+   .text
+   .global rout
+   rout:
+   movl 4(%esp), %edx
+   ATOMIC_LOOP:
+      movl (%edx), %eax       /* read cnt from memory */
+      movl %eax, %ecx         /* ecx = cnt */
+      subl $1, %ecx           /* ecx = cnt-1 */
+      jl ZERO_RET             /* return 0 if count already below 1 */
+      lock                    /* make cmpxchg atomic */
+      cmpxchg %ecx, (%edx)    /* put cnt-1 in mem if mem still == cnt in eax */
+      je DONE                 /* ZF set if cmpxchg wrote to mem */
+   jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
+
+   ZERO_RET:
+      xor %eax, %eax
+   DONE:
+   ret
+   #elif defined(ATL_GAS_ARM64)
+   .global rout
+   rout:
+      ldxr w0, [x1]      /* exclusive read of cnt into return reg (w0) */
+      subs w2, w0, 1     /* dec cnt, set cond codes */
+      b.lt   ZERO_RET    /* return 0 if count already below 1 */
+      stxr w3, w2, [x1]  /* store decremented val, w3 0 on exclusive success */
+   cbnz w3, rout         /* if (w3 != 0) try again */
+   ret
+   ZERO_RET:
+      eor w0, w0, w0
+   ret
+   #endif
+#endif
