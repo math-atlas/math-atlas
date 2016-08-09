@@ -19947,26 +19947,18 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
  * ATLAS therefore defines a macro ATL_SAFELS which is assumed >= actual
  * line size.  Presently it is set at 128 bytes. The data structure is then
  * manually laid out to minimize false sharing, where each [] is SAFELS region. 
- * The global description comes in two forms.  For the simple ctr, it is:
- *  [<P><gsz><inc><N><flag>] : global info describing whole problem
- * While for a polling counter (ATL_GAC_POLL set) it is:
- *  [<P><gsz><inc><N><flag>][doneBV][lock]
- * When a core finishes its prv&pub work, it sets its rank bit in doneBV.
- * All bits start unset, with P+1 bits.  Therefore, after setting its own
- * bit, the thread will see if the first unset bit is P, and if so, it knows
- * it was the last owner thread to finish, and so will return 1 and set the
- * P+1 bit.
- * NOTE: this code must be rewritten if we change the bitvec data structure or
- *       if the number of threads exceeds:
- *          (sizeof(SAFELS)-sizeof(long))*ATL_LSIZE
- *       At present worst case is: (128-8)*8 = 960, so P<= 959.
+ * The global description is:
+ *   [<P><gsz><inc><N><flag><done>][Last1]<dnarr>
+ * dnarr is a P-long CBC char array, starting at 0.  When a thread removes its
+ * last private count, it is set to 1.  When all entries are 1, threads know
+ * all work has been dealt out, and they can stop polling.
  *
- * The per-core information is the same for POLL/NOPOLL:
+ * The per-core information is:
  *  P*([<cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>]) : local per-core info
  *  totSz = gsz + P*inc, inc=3*ATL_SAFELS+CEIL(sizeof(lock)/SAFELS),
  *          gsz = (POLL) ? 2*SAFELS+CEIL(sizeof(lock)/SAFELS) : SAFELS
  *
- *  If ATL_GAC_POLL is set, then the last non-zero return value is always 1.
+ *  If ATL_GAC_LAST1 is set, then the last non-zero return value is always 1.
  */
 
 @skip void *ATL_gAllocAtmCtrArray(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t flg);
@@ -20423,26 +20415,27 @@ static ATL_atmctr_t pollPub
       {
          volatile ATL_atmctr_t *lowPubP;
 /*
- *       If this virtual rank's work is exhausted, go to next
+ *       If this virtual rank's has not signaled work completion, check it
  */
-         if (ATL_IsBitSetBV(doneBV, vrk)) 
-            continue;
-         lowPubP = ATL_DecBySafeLS(cntPubP);
-
-         if (*cntPubP >= *lowPubP)  /* any public count left? */
+         if (!ATL_IsBitSetBV(doneBV, vrk)) 
          {
-            char *lck=ATL_IncBySafeLS(cntPubP);
-            if (ATL_trylock(lck))  /* I can lock this public ctr */
+            lowPubP = ATL_DecBySafeLS(cntPubP);
+
+            if (*cntPubP >= *lowPubP)  /* any public count left? */
             {
-               const ATL_atmctr_t lowPub = *lowPubP, cnt = *cntPubP;
-               if (cnt >= lowPub)
+               char *lck=ATL_IncBySafeLS(cntPubP);
+               if (ATL_trylock(lck))  /* I can lock this public ctr */
                {
-                  *cntPubP = cnt - 1;
-                  ATL_unlock(lck);
-                  return(cnt);
+                  const ATL_atmctr_t lowPub = *lowPubP, cnt = *cntPubP;
+                  if (cnt >= lowPub)
+                  {
+                     *cntPubP = cnt - 1;
+                     ATL_unlock(lck);
+                     return(cnt);
+                  }
+                  else
+                     ATL_unlock(lck);
                }
-               else
-                  ATL_unlock(lck);
             }
          }
          if (++vrk < P)
