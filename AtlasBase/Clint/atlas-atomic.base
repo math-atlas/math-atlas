@@ -29,9 +29,10 @@ long ATL_atmctr_dec(void *ac);
 long ATL_atmctr_add(void *ac, unsigned long val);
 
 @skip long ATL_atmctr_get(void *ac); /* perform unsafe read */
-#define ATL_atmctr_get(ac_) (*((volatile long*)(ac_)));
+#define ATL_atmctr_get(ac_) (*((volatile long*)(ac_)))
 #endif
 @ROUT ATL_atmctr_new
+#include "atlas_atmctr.h"
 void *ATL_atmctr_new(long cnt)
 {
    void *vp, *lck;
@@ -52,16 +53,17 @@ void *ATL_atmctr_new(long cnt)
    return(lp);
 }
 @ROUT ATL_atmctr_free
+#include "atlas_atmctr.h"
 void  ATL_atmctr_free(void *ac)
 {
    long *lp=ac, off=lp[1];
    #if !ATL_ATM_ASM
       ATL_lock_destroy(ATL_IncBySafeLS(ac));
    #endif
-   ac = ATL_AddBytesPtr(lp[1]);
+   ac = ATL_AddBytesPtr(ac, lp[1]);
    free(ac);
 }
-@ROUT ATL_atmctr_set
+@ROUT ATL_atmctr_set_mut
 #include "atlas_atmctr.h"
 #if !ATL_ATM_ASM
 long ATL_atmctr_set(void *ac, long val)
@@ -75,7 +77,7 @@ long ATL_atmctr_set(void *ac, long val)
    return(ret);
 }
 #endif
-@ROUT ATL_atmctr_dec
+@ROUT ATL_atmctr_dec_mut
 #include "atlas_atmctr.h"
 #if !ATL_ATM_ASM
 long ATL_atmctr_dec(void *ac)
@@ -90,7 +92,7 @@ long ATL_atmctr_dec(void *ac)
    return(ret);
 }
 #endif
-@ROUT ATL_atmctr_add
+@ROUT ATL_atmctr_add_mut
 #include "atlas_atmctr.h"
 #if !ATL_ATM_ASM
 long ATL_atmctr_add(void *ac, unsigned long val)
@@ -104,55 +106,83 @@ long ATL_atmctr_add(void *ac, unsigned long val)
    return(ret);
 }
 #endif
-@ROUT ATL_DecAtomicCount_asm.S
-#include "atlas_atmctr.h"
-#if ATL_ATM_ASM
-   #include "atlas_asm.h"
-   #define rout ATL_asmdecor(ATL_DecAtomicCount)
-   #ifdef ATL_GAS_x8664
-   /* rax                         rdi  */
-   /* int ATL_DecAtomicCount(void *vp) */
+@ROUT ATL_atmctr_dec_asm
+   @define rt @dec@
+@ROUT ATL_atmctr_add_asm
+   @define rt @add@
+@ROUT ATL_atmctr_set_asm
+   @define rt @set@
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm ATL_atmctr_set_asm
+#include "atlas_asm.h"
+#include "atlas_asm.h"
+#define ROUT ATL_asmdecor(ATL_atmctr_@(rt))
+#ifdef ATL_GAS_x8664
+@ROUT ATL_atmctr_dec_asm
+   /* rax                     rdi  */
+   /* int ATL_atmctr_dec(void *vp) */
+@ROUT ATL_atmctr_add.S ATL_atmctr_set.S
+   /* rax                     rdi                rsi  */
+   /* int ATL_atmctr_@(rt)(void *vp, unsigned long val) */
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm ATL_atmctr_set.S
    .text
    ALIGN32
-   .global rout
-   rout:
+   .global ROUT
+   ROUT:
       movq (%rdi), %rax       /* read cnt from memory */
       mov  %rax, %rcx         /* rcx = cnt */
+@ROUT ATL_atmctr_dec_asm
       sub  $1, %rcx           /* rcx = cnt-1 */
       jl ZERO_RET             /* return 0 if count already below 1 */
+@ROUT ATL_atmctr_add_asm
+      add %rsi, %rcx          /* rcx = val+cnt */
+@ROUT ATL_atmctr_set_asm
+      mov %rsi, %rcx          /* rcx = val */
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm
       lock                    /* make cmpxchg atomic */
-      cmpxchg %rcx, (%rdi)    /* put cnt-1 in mem if mem still == cnt in rax */
+      cmpxchg %rcx, (%rdi)    /* st newcnt if mem still == oldcnt in rax */
       je DONE                 /* ZF set if cmpxchg wrote to mem */
-   jmp rout                   /* ZF=0 means cmpxch failed, try again */
+   jmp ROUT                   /* ZF=0 means cmpxch failed, try again */
    ZERO_RET:
       xor %rax, %rax
    DONE:
    ret
-   #elif defined(ATL_GAS_WOW64)
-   /* rax                         rcx  */
-   /* int ATL_DecAtomicCount(void *vp) */
+#elif defined(ATL_GAS_WOW64)
+@ROUT ATL_atmctr_dec_asm
+   /* rax                      rcx  */
+   /* int ATL_atmctr_@(rt)(void *vp) */
+@ROUT ATL_atmctr_add_asm ATL_atmctr_set_asm
+   /* rax                      rcx                rdx  */
+   /* int ATL_atmctr_@(rt)(void *vp, unsigned long val) */
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm ATL_atmctr_set_asm
    .text
    ALIGN32
-   .global rout
-   rout:
+   .global ROUT
+   ROUT:
       movq (%rcx), %rax       /* read cnt from memory */
-      mov  %rax, %rdx         /* rdx = cnt */
-      subl $1, %rdx           /* rdx = cnt-1 */
+@ROUT ATL_atmctr_dec_asm
+      mov  %rax, %r8          /* r8 = cnt */
+      subl $1, %r8            /* r8 = cnt-1 */
       jl ZERO_RET             /* return 0 if count already below 1 */
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm
+      add %rdx, %r8           /* r8 = val+cnt */
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm
       lock                    /* make cmpxchg atomic */
-      cmpxchg %rdx, (%rcx)    /* put cnt-1 in mem if mem still == cnt in rax */
+      cmpxchg %r8, (%rcx)     /* st newcnt if mem still == oldcnt in rax */
       je DONE                 /* ZF set if cmpxchg wrote to mem */
-   jmp rout                   /* ZF=0 means cmpxch failed, try again */
+   jmp ROUT                   /* ZF=0 means cmpxch failed, try again */
+@ROUT ATL_atmctr_add_asm
    ZERO_RET:
       xor %rax, %rax
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm ATL_atmctr_set_asm
    DONE:
    ret
-   #elif defined(ATL_GAS_x8632)
+#elif defined(ATL_GAS_x8632)
+@ROUT ATL_atmctr_dec_asm
    /* eax                    4(%esp)  */
    /* int ATL_DecAtomicCount(void *vp) */
    .text
-   .global rout
-   rout:
+   .global ROUT
+   ROUT:
    movl 4(%esp), %edx
    ATOMIC_LOOP:
       movl (%edx), %eax       /* read cnt from memory */
@@ -166,19 +196,55 @@ long ATL_atmctr_add(void *ac, unsigned long val)
 
    ZERO_RET:
       xor %eax, %eax
+@ROUT ATL_atmctr_add_asm ATL_atmctr_set_asm
+   /* eax                  4(%esp)  8(%esp)  */
+   /* int ATL_atmctr_@(rt)(void *vp, int val) */
+   .text
+   .global ROUT
+   ROUT:
+   push %esi
+   movl 4+4(%esp), %edx       /* edx = ac */
+   movl 4+8(%esp), %esi       /* esi = val */
+   ATOMIC_LOOP:
+      movl (%edx), %eax       /* read cnt from memory */
+      movl %eax, %ecx         /* ecx = cnt */
+@ROUT ATL_atmctr_add_asm `      add %esi, %ecx          /* ecx = cnt + val */`
+@ROUT ATL_atmctr_set_asm `      mov %esi, %ecx          /* ecx = val */`
+      lock                    /* make cmpxchg atomic */
+      cmpxchg %ecx, (%edx)    /* st newcnt if mem still == oldcnt in eax */
+      je DONE                 /* ZF set if cmpxchg wrote to mem */
+   jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
+   pop %esi
+
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm
    DONE:
    ret
-   #elif defined(ATL_GAS_ARM64)
-   .global rout
-   rout:
-      ldxr w0, [x1]      /* exclusive read of cnt into return reg (w0) */
-      subs w2, w0, 1     /* dec cnt, set cond codes */
+#elif defined(ATL_GAS_ARM64)
+@ROUT ATL_atmctr_dec_asm
+/* x0                        x0
+/* long ATL_atmctr_dec(void *ac) */
+@ROUT ATL_atmctr_add_asm ATL_atmctr_set_asm
+/* x0                         x0                 x1 */
+/* long ATL_atmctr_@(rt)(void *ac, unsigned long val) */
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm ATL_atmctr_set_asm
+   .global Mjoin(PATL,atmcnt_@(rt))
+   Mjoin(PATL,atmcnt_@(rt)):
+   mov x3, x0            /* x3 = address of ctr */
+@ROUT ATL_atmctr_set `   mov x2, x1            /* x2 = val */`
+   ATOMIC_LOOP:
+      ldxr x0, [x3]      /* exclusive read of cnt into return reg (x0) */
+@ROUT ATL_atmctr_dec_asm
+      subs x2, x0, 1     /* dec cnt, set cond codes */
       b.lt   ZERO_RET    /* return 0 if count already below 1 */
-      stxr w3, w2, [x1]  /* store decremented val, w3 0 on exclusive success */
-   cbnz w3, rout         /* if (w3 != 0) try again */
+@ROUT ATL_atmctr_add_asm
+      add x2, x0, x1     /* x2 = cnt + val */
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm ATL_atmctr_set_asm
+      stxr w4, x2, [x3]  /* excl store newval, w4 0 on exclusive success */
+   cbnz w4, ATOMIC_LOOP  /* if (w4 != 0) try again */
    ret
+@ROUT ATL_atmctr_dec_asm
    ZERO_RET:
       eor w0, w0, w0
+@ROUT ATL_atmctr_dec_asm ATL_atmctr_add_asm ATL_atmctr_set_asm
    ret
-   #endif
 #endif

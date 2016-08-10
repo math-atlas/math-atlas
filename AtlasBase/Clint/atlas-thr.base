@@ -225,6 +225,7 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
 #include "atlas_tprim.h"
 #include "atlas_ttypes.h"
 #include "atlas_bitvec.h"
+#include "atlas_atmctr.h"
 #define ATL_chkgap 128
 #define ATL_chksh  7
 /*
@@ -486,11 +487,18 @@ void *ATL_dyntlaunch(void *vp);     /* launch done as workpool */
 /*
  * Atomic count functions; may be less overhead than mutex on some systems
  */
+@beginskip
 void *ATL_SetAtomicCount(int cnt);   /* allocates acnt, sets acnt=cnt */
 int   ATL_ResetAtomicCount(void *vp, int cnt);  /* reset vp to cnt */
 int   ATL_DecAtomicCount(void *vp);  /* returns acnt-- (not --acnt!) */
 int   ATL_GetAtomicCount(void *vp);  /* returns acnt */
 void  ATL_FreeAtomicCount(void *vp); /* free acount resources */
+@endskip
+#define ATL_SetAtomicCount(cnt_) ATL_atmctr_new(cnt_)
+#define ATL_ResetAtomicCount(vp_, cnt_) ATL_atmctr_set(vp_, cnt_)
+#define ATL_DecAtomicCount(vp_) ATL_atmctr_dec(vp_)
+#define ATL_GetAtomicCount(vp_) ATL_atmctr_get(vp_)
+#define ATL_FreeAtomicCount(vp_) ATL_atmctr_free(vp_)
 /*
  * Global count functions, built out of P local counters for good scaling
  */
@@ -19883,8 +19891,6 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
 #define ATL_GAC_MOV   0  /* set: move numbers priv->pub */
 #define ATL_GAC_NOPUB 1  /* set: make all data private (static scheduling) */
 #define ATL_GAC_NOPRV 2  /* set: make all data public */
-#define ATL_GAC_POLL  3  /* set: poll for count before 0 return */
-#define ATL_GAC_LAST1 4  /* set: last count always 1 */
 #ifndef  GAC_FLAG_SET
    #define GAC_FLAG_SET(field_, bit_) ( ((field_) & (1L<<(bit_))) != 0 )
 #endif
@@ -19902,6 +19908,22 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
 
 #define ATL_atmctr_t unsigned long  /* on most systems, like size_t */
 
+/*
+ * Global atomic counters return number between [1,N], with 0 meaning no
+ * more count.  Count range is split amongst rank-linked counters, and so
+ * is affectively random.  However, NOPRV always returns 1 as last job #.
+ * (1) NOPRV: Perfect work stealing, but high overhead.  Last call returns 1.
+ *            Use for large jobs that dominate mutex cost, and perfect stealing
+ *            is very helpful.
+ * -> data: [<P><flg>][<acnt1><low1>]....[<acntP><lowP>][cnt1]
+ * (2) NOPUB: Pure static scheduling, very low overhead.  Use for very
+ *            small jobs, where dynamic scheduling is achieved by having
+ *            threads finish their portion, and re-enroll as a new rank.
+ * -> data: [<P><flg>][<cnt1><low1>]....[<cntP><lowP>]
+ * (3) else : mixed case with private and public jobs.  Low average overhead,
+ *            but some threads may return 0 before the job is finished.
+ *            Useful only when you've got another batch of jobs to do after
+ *            this one.
 /*
  * Global atomic counters return a number between [low,N], low > 0, N > low.
  * These function used to deal out unordered work dynamically with work 
