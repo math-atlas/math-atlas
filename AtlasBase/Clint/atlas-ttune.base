@@ -2625,7 +2625,8 @@ int main(int nargs, char **args)
 @ROUT tune_cntdly
 #include "atlas_threads.h"
 #include "atlas_misc.h"
-#include "atlas_gatmctr.h"
+#include "atlas_atmctr.h"
+// #include "atlas_gatmctr.h"
 #define ATL_GETFLAGS 1
 #include "atlas_genparse.h"
 void *ATL_SetAtomicCount_mut(long long);
@@ -2732,9 +2733,11 @@ FILE *GetFlags(int nargs, char **args, double *TPL, int *P, double *mula)
 @define a2 @@
 @multidef a2 ,vrank ,vrank
 @multidef rt
-   ATL_DecAtomicCount_mut ATL_DecAtomicCount ATL_gDecAtmCtr ATL_gDecAtmCtr
+   ATL_DecAtomicCount_mut ATL_atmctr_dec ATL_DecGlobalAtomicCountDown 
+   ATL_DecGlobalAtomicCount
+@skip   ATL_gDecAtmCtr
 @endmultidef
-@whiledef sf mut loc prv pub
+@whiledef sf mut loc pub prv
 static void DoWork_@(sf)(void *vpp, int rank, int vrank)
 {
 @skip   ATL_tpool_t *pp=vpp;
@@ -2763,7 +2766,7 @@ static void DoWork_@(sf)(void *vpp, int rank, int vrank)
    @undef a2
 @endwhile
 
-double PerCallMicroSec(int P)
+double PerCallSec(int P)
 {
    double cost=0.0;
    if (P)
@@ -2775,7 +2778,7 @@ double PerCallMicroSec(int P)
          cnt += cntPerRank[i];
          cost += timearr[i];
       }
-      cost /= cnt*1e-6;
+      cost /= cnt;
    }
    return(cost);
 }
@@ -2810,20 +2813,32 @@ int main(int nargs, char **args)
          cnt = Mmax(400, cnt);
       }
 
+      @BEGINSKIP
       @whiledef rt prv pub
       ACNT = ATL_gNewAtmCtr(P, cnt, @up@(rt)DEF);
       ATL_goParallel(P, DoWork_@(rt), NULL, NULL, NULL);
       ATL_gFreeAtmCtr(ACNT);
-      t@(rt) = PerCallMicroSec(P);
+      t@(rt) = PerCallSec(P);
 
       @endwhile
+      @ENDSKIP
+      ACNT = ATL_SetGlobalAtomicCountDown(P, cnt);
+      ATL_goParallel(P, DoWork_pub, NULL, NULL, NULL);
+      ATL_FreeGlobalAtomicCountDown(ACNT);
+      tpub = PerCallSec(P);
+
+      ACNT = ATL_SetGlobalAtomicCount(P, cnt, 100);
+      ATL_goParallel(P, DoWork_prv, NULL, NULL, NULL);
+      ATL_FreeGlobalAtomicCount(ACNT);
+      tprv = PerCallSec(P);
+
       @define sf @_mut@
       @define sf @@
       @whiledef rt mut loc
       ACNT =  ATL_SetAtomicCount@(sf)(cnt);
       ATL_goParallel(P, DoWork_@(rt), NULL, NULL, NULL);
       ATL_FreeAtomicCount@(sf)(ACNT);
-      t@(rt) = PerCallMicroSec(P);
+      t@(rt) = PerCallSec(P);
 
          @undef sf
       @endwhile

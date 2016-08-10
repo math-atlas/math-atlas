@@ -19894,43 +19894,39 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
 #ifndef  GAC_FLAG_SET
    #define GAC_FLAG_SET(field_, bit_) ( ((field_) & (1L<<(bit_))) != 0 )
 #endif
-#define ATL_GAC_DEF_POLL ( (1L<<ATL_GAC_MOV)|((1L<<ATL_GAC_POLL)) )
-#define ATL_GAC_DEF_NOPOLL (1L<<ATL_GAC_MOV)
-#define ATL_GAC_DEF_LAST1  ( (1L<<ATL_GAC_MOV)|((1L<<ATL_GAC_LAST1)) )
+#define ATL_GAC_PUB (1L<<ATL_GAC_NOPRV)
+#define ATL_GAC_PRV (1L<<ATL_GAC_NOPUB)
+#define ATL_GAC_MIX (1L<<ATL_GAC_MOV)
 /*
  * Define offsets for initial SAFELS of global part of data structure
  */
 #define ATL_GAC_P   0     /* these defines used to index */
-#define ATL_GAC_GSZ 1     /* the first cacheline of global */
-#define ATL_GAC_INC 2     /* data describing the AtmCtr */
-#define ATL_GAC_N   3
-#define ATL_GAC_FLG 4
-
-#define ATL_atmctr_t unsigned long  /* on most systems, like size_t */
+#define ATL_GAC_FLG 1     /* data describing the gatmctr */
+@skip #define ATL_GAC_GSZ 2     /* the first cacheline of global */
+#define ATL_GAC_INC 2     /* only used in mixed case */
+#define ATL_GAC_N   3     /* only used in mixed case */
 
 /*
  * Global atomic counters return number between [1,N], with 0 meaning no
  * more count.  Count range is split amongst rank-linked counters, and so
  * is affectively random.  However, NOPRV always returns 1 as last job #.
+ * Below, off is offset (negative) to get to the unaligned ptr to free.
  * (1) NOPRV: Perfect work stealing, but high overhead.  Last call returns 1.
  *            Use for large jobs that dominate mutex cost, and perfect stealing
  *            is very helpful.
- * -> data: [<P><flg>][<acnt1><low1>]....[<acntP><lowP>][cnt1]
+ * -> [<P><flg><incLow><incCnt><off>][<low1>...<lowP>][<act1>]...[<actP>][actL]
  * (2) NOPUB: Pure static scheduling, very low overhead.  Use for very
- *            small jobs, where dynamic scheduling is achieved by having
+ *            small jobs, where limited dynamic recovery enabled by having
  *            threads finish their portion, and re-enroll as a new rank.
- * -> data: [<P><flg>][<cnt1><low1>]....[<cntP><lowP>]
+ * -> data: [<P><flg><off>][<cnt1><low1>]....[<cntP><lowP>]
  * (3) else : mixed case with private and public jobs.  Low average overhead,
  *            but some threads may return 0 before the job is finished.
  *            Useful only when you've got another batch of jobs to do after
- *            this one.
-/*
- * Global atomic counters return a number between [low,N], low > 0, N > low.
- * These function used to deal out unordered work dynamically with work 
- * stealing.  Each of the P threads can have private and public work.
- * Private work is taken only by that particular rank, and thus does
- * not need mutex protection (and therefore overhead).  Public work can
- * be taken by any core, and thus is expensive to access due to mutex overhead.
+ *            this one.  See below for how work stealing works, and struct.
+ * NOTE: only (1) above guarantees that the last non-zero return is 1.  
+ *       (2) & (3) must assume random count return.
+ *
+ * MIXED PUBLIC AND PRIVATE COUNTERS:
  * The total range is [low,N], low >= 1, N > low, so totSpan = N-low+1.
  * Public jobs are in range [lowPub,N] and count down (PubSpan=cntPub-lowPub+1,
  * where lowPub initialized to N).  Private jobs are in range [low,lowPub-1] 
@@ -19970,147 +19966,146 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
  * line size.  Presently it is set at 128 bytes. The data structure is then
  * manually laid out to minimize false sharing, where each [] is SAFELS region. 
  * The global description is:
- *   [<P><gsz><inc><N><flag><done>][Last1]<dnarr>
- * dnarr is a P-long CBC char array, starting at 0.  When a thread removes its
- * last private count, it is set to 1.  When all entries are 1, threads know
- * all work has been dealt out, and they can stop polling.
- *
+ *   [<P><flag><inc><N><off>]
  * The per-core information is:
- *  P*([<cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>]) : local per-core info
- *  totSz = gsz + P*inc, inc=3*ATL_SAFELS+CEIL(sizeof(lock)/SAFELS),
- *          gsz = (POLL) ? 2*SAFELS+CEIL(sizeof(lock)/SAFELS) : SAFELS
- *
- *  If ATL_GAC_LAST1 is set, then the last non-zero return value is always 1.
+ *    P*([<cntPrv><lastPubCnt>][lowPub][<cntPub>][<lock>]) :
+ *  totSz = SAFELS + P*inc, inc=3*SAFELS+CEIL(sizeof(lock)/SAFELS),
  */
 
-@skip void *ATL_gAllocAtmCtrArray(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t flg);
-void *ATL_gAllocAtmCtr(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t flg);
-void ATL_gInitAtmCtrByRank(void *ac, unsigned int rank, ATL_atmctr_t lowPrv, 
-                           ATL_atmctr_t npriv, ATL_atmctr_t npub);
-void *ATL_gNewAtmCtr(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t flg);
-void ATL_gFreeAtmCtr(void *ac);
-void ATL_gPrintAtmCtr(FILE *fpout, void *ac);
-/*
- * Two main styles of operation, set via flag during initialization:
- * 1. If ATL_GAC_POLL set, then no thread gets a return value of 0 until all
- *    count is exhausted, and the thread that gets the last non-zero return
- *    guaranteed to get 1.  Unless NOPRV is set, this means that all cores
- *    must call the routine before anybody can return 0 (i.e., once private
- *    work exhausted, it will poll).
- *    Use this version when there are no tasks to do once this count is
- *    completed, and if there is private data, you will use set ATL_GAC_MOV.
- * 2. If ATL_GAC_POLL unset, then threads will return 0 anytime after they
- *    have exhausted the work they own.  They may do some work owned by other
- *    threads, but will not poll for it to be moved from private to public.
- *    Use this quick-return version when there are other tasks for threads
- *    to do.  Set ATL_GAC_NOPUB with this version to get static scheduling,
- *    with worst-case dynamic recover by the thread re-enrolling with a new
- *    virtual rank (important for small problems where mutex lock overhead
- *    is unsustainable).
- */
-ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank);
-@beginskip
-ATL_atmctr_t ATL_gResetAtmCtr_mbar(void *ac, ATL_atmctr_t N);
-ATL_atmctr_t ATL_gDecAtmCtr_mbar(void *ac, unsigned int rank);
-#if ATL_GotAtomic
-ATL_atmctr_t ATL_gResetAtmCtr(void *ac, ATL_atmctr_t N);
-void *ATL_gNewAtmCtr(ATL_atmctr_t N, unsigned int P);
-void ATL_gFreeAtmCtr(void *ac);
-ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank);
-#else
-   @whiledef rt Reset New Free Dec
-      #define ATL_g@(rt)AtmCtr  ATL_g@(rt)AtmCtr_mbar
-   @endwhile
-#endif
-@endskip
+@skip void *ATL_gatmctr_allocArray(unsigned int P, long N, long flg);
+void *ATL_gatmctr_alloc(unsigned int P, long N, long flg);
+void ATL_gatmctr_initByRank(void *ac, unsigned int rank, long lowPrv, 
+                            long npriv, long npub);
+void *ATL_gatmctr_new(unsigned int P, long N, long flg);
+void ATL_gatmctr_free(void *ac);
+void ATL_gatmctr_print(FILE *fpout, void *ac);
+long ATL_gatmctr_dec(void *ac, unsigned int rank);
 
 #endif  /* end ifndef ATLAS_GATMCTR_H */
-@ROUT ATL_gNewAtmCtr
+@ROUT ATL_gatmctr_new
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2016
 #include "atlas_gatmctr.h" /* scope to understand data struct */
-void *ATL_gAllocAtmCtr(unsigned int P, ATL_atmctr_t N, ATL_atmctr_t flg)
+void *ATL_gatmctr_alloc(unsigned int P, long N, long flg)
 {
    if (N)
    {
-      ATL_atmctr_t inc, gsz;
+      long inc;
       void *vp;
-      ATL_atmctr_t *gp;
+      long *gp;
    
-      if (GAC_FLAG_SET(flg, ATL_GAC_POLL))
-         flg |= (1L<<ATL_GAC_LAST1);
-      P = (P) ? P : 1;  /* must have at least one thread! */
+      P = (P) ? P : 1;                        /* must have one thread! */
+      if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))   /* all-public */
+      {
+         long incLow;
+         #if ATL_ATM_ASM
+            inc = ATL_SAFELS;
+         #else
+            inc = (long) ATL_AlignSafeLS(sizeof(ATL_lock_t));
+         #endif
+         incLow = sizeof(long)*P;
+         incLow = (long) ATL_AlignSafeLS(incLow);
+         vp = malloc((ATL_SAFELS<<1)+incLow+inc*(P+1));
+         ATL_assert(vp);
+         gp = ATL_AlignSafeLS(vp);
+         gp[ATL_GAC_P] = P;
+         gp[ATL_GAC_FLG] = flg;
+         gp[2] = incLow;   /* inc to skip over low array to atmctrs */
+         gp[3] = inc;      /* inc between atmctrs */
+         gp[4] = ((size_t)vp) - ((size_t)gp);
+         return(gp);
+      }
+      else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))  /* all private */
+      {
+         vp = malloc((P+2)*ATL_SAFELS);
+         ATL_assert(vp);
+         gp = ATL_AlignSafeLS(vp);
+         gp[0] = P;
+         gp[1] = flg;
+         return(gp);
+      }
       inc = sizeof(ATL_lock_t);                  /* sz of native lock struct */
-      inc = (ATL_atmctr_t) ATL_AlignSafeLS(inc); /* make mul of SAFELS */
-      gsz = GAC_FLAG_SET(flg, ATL_GAC_LAST1) ? inc+(ATL_SAFELS<<1):ATL_SAFELS;
+      inc = (long) ATL_AlignSafeLS(inc); /* make mul of SAFELS */
       inc += ATL_SAFELS<<2;
-      vp = malloc(gsz + inc*P);
+      vp = malloc(ATL_SAFELS + inc*P);
       ATL_assert(vp);
       gp = ATL_AlignSafeLS(vp);
       gp[ATL_GAC_P] = P;
-      gp[ATL_GAC_GSZ] = gsz;
       gp[ATL_GAC_INC] = inc;
       gp[ATL_GAC_N] = N;
       gp[ATL_GAC_FLG] = flg;
-      if (GAC_FLAG_SET(flg, ATL_GAC_LAST1))
-      {
-         ATL_BV_t *bv=ATL_IncBySafeLS(gp);
-         int i, nelt;
-/*
- *       Make sure doneBV fits in one SAFELS; horrific expression should be
- *       replaced by cpp with a constant.
- */
-         ATL_assert(P+1 <= 
-(ATL_lMulBySize(ATL_lMulBySize(ATL_lDivBySize((ATL_SAFELS-ATL_LSIZE))))<<3));
-            
-         bv[0] = P+1;
-         nelt = (P+bpiBV)>>shBV;
-         for (i=1; i <= nelt; i++)
-            bv[i] = 0;
-@skip         ATL_UnsetAllBitsBV(bv);
-         ATL_lock_init(ATL_IncBySafeLS(bv));
-      }
       return(vp);
    }
    return(NULL);
 }
 
-void ATL_gInitAtmCtrByRank(void *ac, unsigned int rank, ATL_atmctr_t lowPrv, 
-                           ATL_atmctr_t npriv, ATL_atmctr_t npub)
+void ATL_gatmctr_initByRank(void *ac, unsigned int rank, long lowPrv, 
+                            long npriv, long npub)
 {
    if (ac)
    {
-      ATL_atmctr_t *ap = ATL_AlignSafeLS(ac);
-      const ATL_atmctr_t P=ap[ATL_GAC_P]; 
-   
+      long *ap = ac;
+      const long P=ap[ATL_GAC_P];
+
       if (rank < P)
       {
-         const ATL_atmctr_t gsz=ap[ATL_GAC_GSZ], inc=ap[ATL_GAC_INC];
-         const ATL_atmctr_t lowPub = lowPrv+npriv;
-         ap = ATL_AddBytesPtr(ap, gsz+rank*inc);
-         *ap = lowPrv;
-         ap[1] = (lowPub + npub) - 1;
-         ap = ATL_IncBySafeLS(ap);
-         *ap = lowPub;
-         ap = ATL_IncBySafeLS(ap);
-         *ap = (lowPub + npub) - 1;
-         ap = ATL_IncBySafeLS(ap);
-         ATL_lock_init(ap);
+         const long flg=ap[ATL_GAC_FLG];
+
+         if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))
+         {
+            const long incLow=ap[2], incCnt=ap[3];
+            long *lp=ATL_IncBySafeLS(ac), *atc;
+            atc = ATL_AddBytesPtr(lp, incLow+incCnt*rank);
+            npub += npriv;
+            if (rank)
+            {
+               lp[rank] = lowPrv-1;
+               ATL_atmctr_init(atc, npub);
+            }
+            else /* rank == 0, reserve one count for last */
+            {
+               ATL_assert(npub && lowPrv == 1);
+               ATL_atmctr_init(atc, --npub);
+               *lp = 1;
+               atc += P*incCnt;
+               ATL_atmctr_init(atc, 1);
+            }
+         }
+         else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
+         {
+            long *lp = ATL_AddBytesPtr(ac, (rank+1)*ATL_SAFELS);
+            npriv += npub;
+            *lp   = npriv;
+            lp[1] = lowPrv-1;
+         }
+         else
+         {
+            const long inc=ap[ATL_GAC_INC];
+            const long lowPub = lowPrv+npriv;
+            ap = ATL_AddBytesPtr(ap, ATL_SAFELS+rank*inc);
+            *ap = lowPrv;
+            ap[1] = (lowPub + npub) - 1;
+            ap = ATL_IncBySafeLS(ap);
+            *ap = lowPub;
+            ap = ATL_IncBySafeLS(ap);
+            *ap = (lowPub + npub) - 1;
+            ap = ATL_IncBySafeLS(ap);
+            ATL_lock_init(ap);
+         }
       }
    }
 }
 
-void *ATL_gNewAtmCtr
+void *ATL_gatmctr_new
 (
    unsigned int P,    /* # of worker threads  */
-   ATL_atmctr_t N,    /* Count from [N,1] (0: already done) */
-   ATL_atmctr_t flg
+   long N,    /* Count from [N,1] (0: already done) */
+   long flg
 )
 {
-   void *vp;
-   ATL_atmctr_t *lp;
+   long *lp;
    char *cp;
-   ATL_atmctr_t cntPrv, lowPub, cntPub, cnt, lst1;
-   ATL_atmctr_t lcntPub, lcntPrv, remPub, remPrv;
+   long cntPrv, lowPub, cntPub, cnt, lst1;
+   long lcntPub, lcntPrv, remPub, remPrv;
    unsigned int i;
 
    if (!N)
@@ -20154,153 +20149,201 @@ void *ATL_gNewAtmCtr
                  !GAC_FLAG_SET(flg, ATL_GAC_NOPRV));
    if (GAC_FLAG_SET(flg, ATL_GAC_MOV)) /* if we move jobs to global */
       flg &= ~(1L<<ATL_GAC_NOPUB);    /* we must scope global queue */
-   if (GAC_FLAG_SET(flg, ATL_GAC_POLL))
-      flg |= (1L<<ATL_GAC_LAST1);
-   vp = ATL_gAllocAtmCtr(P, N, flg);
-   lp = ATL_AlignSafeLS(vp);
+   lp = ATL_gatmctr_alloc(P, N, flg);
 
    lcntPub = cntPub / P;
    remPub = cntPub - lcntPub*P;
    lcntPrv = cntPrv / P;
    remPrv = cntPrv - lcntPrv*P;
 
-   lst1 = (flg>>ATL_GAC_LAST1)&1;
-   cnt = 1+lst1;
+   cnt=1;
    for (i=0; i < P; i++)
    {
-      ATL_atmctr_t mypub, myprv;
+      long mypub, myprv;
 
       myprv = (i < remPrv) ? lcntPrv+1 : lcntPrv;
       mypub = (i < remPub) ? lcntPub+1 : lcntPub;
-      if (myprv)
-         myprv -= lst1;
-      else
-         mypub -= lst1;
-      ATL_gInitAtmCtrByRank(vp, i, cnt, myprv, mypub);
+      ATL_gatmctr_initByRank(lp, i, cnt, myprv, mypub);
       cnt += myprv + mypub;
-      lst1 = 0;
    }
-   return(vp);
+   return(lp);
 }
-@ROUT ATL_gFreeAtmCtr
+@ROUT ATL_gatmctr_free
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2016
 #include "atlas_gatmctr.h"
-void ATL_gFreeAtmCtr(void *ac)
+void ATL_gatmctr_free(void *ac)
 {
    if (ac)
    {
-      ATL_atmctr_t *lp = ATL_AlignSafeLS(ac);
-      const ATL_atmctr_t inc = lp[ATL_GAC_INC], gsz=lp[ATL_GAC_GSZ];
-      const unsigned int P=lp[ATL_GAC_P];
-      unsigned int i;
-      if (GAC_FLAG_SET(lp[ATL_GAC_FLG], ATL_GAC_LAST1))
-         ATL_lock_destroy(ATL_AddBytesPtr(lp, ((ATL_SAFELS)<<1)));
-      lp = ATL_AddBytesPtr(lp, gsz+(ATL_SAFELS<<1)+ATL_SAFELS);
-      for (i=0; i < P; i++, lp = ATL_AddBytesPtr(lp, inc))
-         ATL_lock_destroy(lp);
+      long *lp = ac;
+      const long flg = lp[ATL_GAC_FLG];
+
+      if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))
+      {
+         const long inc=lp[3];
+         const unsigned int P=lp[ATL_GAC_P];
+         unsigned int i;
+         ac = ATL_AddBytesPtr(ac, ATL_SAFELS+lp[2]);
+         for (i=0; i < P+1; i++, ac = ATL_AddBytesPtr(ac, inc))
+            ATL_atmctr_destroy(ac);
+         ac = ATL_AddBytesPtr(ac, lp[4]);
+      }
+      else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
+         ac = ATL_AddBytesPtr(ac, lp[2]);
+      else
+      {
+         const unsigned int P=lp[ATL_GAC_P];
+         unsigned int i;
+         const long inc = lp[ATL_GAC_INC];
+         void *lck;
+
+         lck = ATL_AddBytesPtr(lp, (ATL_SAFELS<<2));
+         for (i=0; i < P; i++, lck = ATL_AddBytesPtr(lck, inc))
+            ATL_lock_destroy(lck);
+         ac = ATL_AddBytesPtr(ac, lp[5]);
+      }
       free(ac);
    }
 }
 
-@ROUT ATL_gPrintAtmCtr
+@ROUT ATL_gatmctr_print
 #include "atlas_gatmctr.h"  /* see to understand usage & data struct */
-void ATL_gPrintAtmCtr(FILE *fpout, void *ac)
+void ATL_gatmctr_print(FILE *fpout, void *ac)
 {
-   ATL_atmctr_t *gp=ATL_AlignSafeLS(ac), *tp;
-   const ATL_atmctr_t inc=gp[ATL_GAC_INC], P=gp[ATL_GAC_P], gsz=gp[ATL_GAC_GSZ],
-         flg=gp[ATL_GAC_FLG];
-   ATL_atmctr_t i;
-   fprintf(fpout, "gAtmCtr, P=%lu, gsz=%lu, inc=%lu N=%lu, flag=%lx", 
-           P, gsz, inc, gp[ATL_GAC_N], flg);
-   if (GAC_FLAG_SET(flg, ATL_GAC_LAST1))
+   long *gp=ac, *tp;
+   const long P=gp[ATL_GAC_P], flg=gp[ATL_GAC_FLG];
+   long i;
+
+   if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))
    {
-      ATL_atmctr_t *dc=ATL_IncBySafeLS(gp);
-      fprintf(fpout, ", dnBV=%lu %lx\n", *dc, dc[1]);
+      long *lp = ATL_IncBySafeLS(gp), *lac;
+      const long incLow = lp[2], incCnt=lp[3];
+      fprintf(fpout, "gatmctr-PUB, P=%l, iLow=%l, iCnt=%l, off=%l, flg=%lx\n",
+              P, incLow, incCnt, lp[4], flg);
+      lac = ATL_AddBytesPtr(lp, ATL_SAFELS+incLow);
+      for (i=0; i < P; i++, lac=ATL_AddBytesPtr(lac, incCnt))
+         fprintf(fpout, "   %l: low=%l, cnt=%l\n", i, lp[i], *lac);
+   }
+   else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
+   {
+      long *lp = ATL_IncBySafeLS(gp);
+      fprintf(fpout, "gatmctr-PRV, P=%l, off=%l, flg=%lx\n", P, lp[2], flg);
+      for (i=0; i < P; i++, lp=ATL_IncBySafeLS(lp))
+         fprintf(fpout, "   %l: low=%l, cnt=%l\n", i, lp[1], *lp);
    }
    else
-      fprintf(fpout, ":\n");
-   tp = ATL_AddBytesPtr(gp, gsz);
-   for (i=0; i < P; i++)
    {
-      ATL_atmctr_t *prv=tp, *lowPubP=ATL_IncBySafeLS(tp), 
-                   *cntPubP=ATL_IncBySafeLS(lowPubP);
-      fprintf(fpout, 
-         "   %lu: prv=[%lu, %lu], pub=[%lu, %lu], lastPubCnt=%lu, lck=%p\n",
-              i, *prv, *lowPubP-1, *lowPubP, *cntPubP, prv[1], 
-              ATL_IncBySafeLS(cntPubP));
-      tp = (ATL_atmctr_t*)(((char*)tp) + inc);
+      const long inc=gp[ATL_GAC_INC];
+      fprintf(fpout, "gAtmCtr, P=%l, inc=%l, N=%l, flg=%lx:\n", 
+              P, inc, gp[ATL_GAC_N], flg);
+      tp = ATL_AddBytesPtr(gp, ATL_SAFELS);
+      for (i=0; i < P; i++)
+      {
+         long *prv=tp, *lowPubP=ATL_IncBySafeLS(tp), 
+                      *cntPubP=ATL_IncBySafeLS(lowPubP);
+         fprintf(fpout, 
+            "   %l: prv=[%l, %l], pub=[%l, %l], lastPubCnt=%l, lck=%p\n",
+                 i, *prv, *lowPubP-1, *lowPubP, *cntPubP, prv[1], 
+                 ATL_IncBySafeLS(cntPubP));
+         tp = ATL_AddBytesPtr(tp, inc);
+      }
    }         
 }
-@ROUT ATL_gDecAtmCtr
+@ROUT ATL_gatmctr_dec
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2016
 #include "atlas_gatmctr.h"  /* see to understand usage & data struct */
 @skip #define DEBUG 1
 
-@beginskip
-static int WorkToSteal
-   (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
-/*
- * RETURNS: 0 if all global count is done, and private count has a maximum
- *          range of 1 (no assignable work).
- * NOTES: to minimize overhead, we read data w/o mutexes, so answer is not
- *        always correct.  In particular, it may return true even when all
- *        the work is done, since this cache has stale data.
- */
+static INLINE long allPub(unsigned int rank, long *lp)
 {
-   const ATL_atmctr_t P=gp[0], inc=gp[1], flag=gp[3];
-   unsigned int i, vrk=rank;
-   volatile ATL_atmctr_t *prvP = (ATL_atmctr_t*) (((char*)lp) + vrk*inc);
+   const unsigned long P=lp[ATL_GAC_P];
+   unsigned long i;
+   const long incCnt = lp[3];
+   long *lowp = ATL_IncBySafeLS(lp), *acp = ATL_AddBytesPtr(lowp, lp[2]), *ac;
+   unsigned long vrk;
 /*
- * If we aren't allowd to move work (static scheduling) or there is no
- * global work, then return 0
+ * Use owned counter until exhausted
  */
-   if (GAC_FLAG_SET(flag, ATL_GAC_NOPUB))
-      return(0);                       
+   if (rank < P)
+   {
+      ac = ATL_AddBytesPtr(acp, incCnt*rank);
+      if (*ac)
+      {
+         long lret;
+         lret = ATL_atmctr_dec(ac);
+         if (lret)
+            return(lret+lowp[rank]);
+      }
+      vrk = (rank == P-1) ? 0 : rank+1;
+   }
+   else
+      vrk = rank - (rank/P)*P;
 /*
- * Check if individual threads still have stealable work
+ * See if anybody else has count I can steal
  */
+   ac = ATL_AddBytesPtr(acp, incCnt*vrk);
    for (i=0; i < P; i++)
    {
-      const ATL_atmctr_t lowpub = *((ATL_atmctr_t*)(((char*)prvP)+ATL_SAFELS)),
-            pubCnt = *((ATL_atmctr_t*)(((char*)prvP)+(ATL_SAFELS<<1)));
-
-      if (lowpub >= pubCnt)  /* if public count non-zero */
-         return(1);          /* can steal some work, so return 1 */
-      if (GAC_FLAG_SET(flag, ATL_GAC_MOV) && *prvP < lowpub)
-         return(1);  /* stealable private work, return 1 */
-      if (++vrk < P)
-         prvP = (ATL_atmctr_t*) (((char*)prvP)+inc);
-      else
+      if (*ac)
       {
-         vrk = 0;
-         prvP = lp;
+         long lret;
+         lret = ATL_atmctr_dec(ac);
+         if (lret)
+            return(lret+lowp[vrk]);
+      }
+      ac = (++vrk != P) ? ATL_AddBytesPtr(ac, incCnt) : acp;
+   }
+/*
+ * Finally, check 1/0 counter
+ */
+   ac = ATL_AddBytesPtr(acp, incCnt*P);
+   if (*ac)
+      return(ATL_atmctr_dec(ac));
+}
+static INLINE long allPrv(unsigned int rank, long *lp)
+{
+   const unsigned long P=lp[ATL_GAC_P];
+/*
+ * Private counters are all that are available
+ */
+   if (rank < P)  /* so only P owners can hope for jobs */
+   {
+      lp = ATL_AddBytesPtr(lp, (rank+1)*ATL_SAFELS);
+      if (*lp)
+      {
+         long lret;
+         lret = *lp;
+         if (lret)
+         {
+            *lp = lret - 1;
+            return(lret + lp[1]);
+         }
       }
    }
-@skip   gp[3] &= ~(1L<<ATL_GAC_NOPUB); /* future search cheap, answer no */
    return(0);
 }
-@endskip
+
 /*
  * Helper function that steals work from another thread.  Will make only 
  * one pass through public queues in search of work, and return 0 if none
  * available at this time.
  */
-static INLINE ATL_atmctr_t tryPub
-   (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
+static INLINE long tryPub
+   (unsigned int rank, volatile long *gp, long *lp)
 {
-   const ATL_atmctr_t P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC];
+   const long P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC];
    unsigned int i;
 /*
  * If I have my own public counter, prefentially use that up first
  */
    if (rank < P)
    {              
-      volatile ATL_atmctr_t *lowPubP=ATL_AddBytesPtr(lp, inc*rank+ATL_SAFELS),
+      volatile long *lowPubP=ATL_AddBytesPtr(lp, inc*rank+ATL_SAFELS),
                             *cntPubP= ATL_IncBySafeLS(lowPubP);
       if (*cntPubP >= *lowPubP)  /* any public count left? */
       {
          void *lck = ATL_IncBySafeLS(cntPubP);
-         ATL_atmctr_t cnt;
+         long cnt;
 
          ATL_lock(lck);
          cnt = *cntPubP;
@@ -20319,18 +20362,18 @@ static INLINE ATL_atmctr_t tryPub
  */
    {
       unsigned int vrk = (rank >= P) ?  rank-P : rank;
-      volatile ATL_atmctr_t *cntPubP;
+      volatile long *cntPubP;
       cntPubP = ATL_AddBytesPtr(lp, (ATL_SAFELS<<1)+inc*vrk);
       for (i=0; i < P; i++)
       {
-         volatile ATL_atmctr_t *lowPubP = ATL_DecBySafeLS(cntPubP);
+         volatile long *lowPubP = ATL_DecBySafeLS(cntPubP);
          
          if (rank >= P || i != rank)
          {
             if (*cntPubP >= *lowPubP)  /* any public count left? */
             {
                char *lck=ATL_IncBySafeLS(cntPubP);
-               ATL_atmctr_t lowPub, cnt;
+               long lowPub, cnt;
 
                ATL_lock(lck);
                lowPub = *lowPubP;
@@ -20364,14 +20407,15 @@ static INLINE ATL_atmctr_t tryPub
    return(0);
 }
 
+@beginskip
 /*
  * Poll for public work.  For ATL_GAC_LAST1, all threads call this prior
  * to exiting
  */
-static ATL_atmctr_t pollPub
-   (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *tp)
+static long pollPub
+   (unsigned int rank, volatile long *gp, long *tp)
 {
-   const ATL_atmctr_t P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC], flg=gp[ATL_GAC_FLG];
+   const long P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC], flg=gp[ATL_GAC_FLG];
    ATL_BV_t *doneBV=ATL_IncBySafeLS(gp);
    unsigned int vrk;
    const int PUB=!GAC_FLAG_SET(flg,ATL_GAC_NOPUB), 
@@ -20382,13 +20426,13 @@ static ATL_atmctr_t pollPub
  */
    if (rank < P)
    {
-      volatile ATL_atmctr_t *lowPubP=ATL_AddBytesPtr(tp, inc*rank+ATL_SAFELS),
+      volatile long *lowPubP=ATL_AddBytesPtr(tp, inc*rank+ATL_SAFELS),
                             *cntPubP= ATL_IncBySafeLS(lowPubP);
       void *lck;
 
       if (PUB && *cntPubP >= *lowPubP)
       {  /* any owned public count left? */
-         ATL_atmctr_t cnt;
+         long cnt;
 
          lck = ATL_IncBySafeLS(cntPubP);
          ATL_lock(lck);
@@ -20429,13 +20473,13 @@ static ATL_atmctr_t pollPub
    }
    do
    {
-      volatile ATL_atmctr_t *cntPubP;
+      volatile long *cntPubP;
       unsigned int i;
 
       cntPubP = ATL_AddBytesPtr(tp, (ATL_SAFELS<<1)+inc*vrk);
       for (i=0; i < P; i++)
       {
-         volatile ATL_atmctr_t *lowPubP;
+         volatile long *lowPubP;
 /*
  *       If this virtual rank's has not signaled work completion, check it
  */
@@ -20448,7 +20492,7 @@ static ATL_atmctr_t pollPub
                char *lck=ATL_IncBySafeLS(cntPubP);
                if (ATL_trylock(lck))  /* I can lock this public ctr */
                {
-                  const ATL_atmctr_t lowPub = *lowPubP, cnt = *cntPubP;
+                  const long lowPub = *lowPubP, cnt = *cntPubP;
                   if (cnt >= lowPub)
                   {
                      *cntPubP = cnt - 1;
@@ -20475,16 +20519,17 @@ static ATL_atmctr_t pollPub
    while (ATL_FindFirstUnsetBitBV(doneBV, 0) != -1);
    return(0);
 }
+@endskip
 
 /*
  * Gets a single count from private range, returns 0 if none left
  */
-static INLINE ATL_atmctr_t 
-   prvCnt(unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *tp)
+static INLINE long 
+   prvCnt(unsigned int rank, volatile long *gp, long *tp)
 {
-   ATL_atmctr_t *cntPrvP, *lowPubP;
-   const ATL_atmctr_t inc=gp[ATL_GAC_INC];
-   ATL_atmctr_t cnt, lowPub;
+   long *cntPrvP, *lowPubP;
+   const long inc=gp[ATL_GAC_INC];
+   long cnt, lowPub;
 
    if (rank > *gp)
       return(0);
@@ -20498,8 +20543,8 @@ static INLINE ATL_atmctr_t
    return(cnt);
 }
 
-static INLINE ATL_atmctr_t prvPubCnt
-   (unsigned int rank, volatile ATL_atmctr_t *gp, ATL_atmctr_t *lp)
+static INLINE long prvPubCnt
+   (unsigned int rank, volatile long *gp, long *lp)
 /*
  * Get count from either private or public count.  Always prefers private
  * to public, and will move private work to public if the number of my
@@ -20507,9 +20552,9 @@ static INLINE ATL_atmctr_t prvPubCnt
  * ASSUMES: rank < P.
  */
 {
-   ATL_atmctr_t *prvP, *lowPubP;
-   const ATL_atmctr_t P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC], flg=gp[ATL_GAC_FLG];
-   ATL_atmctr_t lowPub, npriv;
+   long *prvP, *lowPubP;
+   const long P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC], flg=gp[ATL_GAC_FLG];
+   long lowPub, npriv;
 
    prvP = ATL_AddBytesPtr(lp, rank*inc);
    lowPubP = ATL_IncBySafeLS(prvP);
@@ -20518,8 +20563,8 @@ static INLINE ATL_atmctr_t prvPubCnt
    npriv = (npriv < lowPub) ? lowPub-npriv : 0;
    if (npriv)  /* can get job from private */
    {
-      ATL_atmctr_t *cntPubP = ATL_IncBySafeLS(lowPubP);
-      const ATL_atmctr_t lastPub=prvP[1];
+      long *cntPubP = ATL_IncBySafeLS(lowPubP);
+      const long lastPub=prvP[1];
 /*
  *    Should we move some work from private to public queue? Only do so if
  *    this ctr allows moving work, we have extra private work,, and the number
@@ -20528,7 +20573,7 @@ static INLINE ATL_atmctr_t prvPubCnt
  */
       if (GAC_FLAG_SET(flg, ATL_GAC_MOV) && npriv > 1 && (*cntPubP != lastPub))
       {
-         ATL_atmctr_t nmov, cntPub;
+         long nmov, cntPub;
          void *lck = ATL_IncBySafeLS(cntPubP);
 /*
  *       Lock my public ctr, and move some private jobs to it
@@ -20549,44 +20594,33 @@ static INLINE ATL_atmctr_t prvPubCnt
       else
          return(prvCnt(rank, gp, lp));
    }
-   if (GAC_FLAG_SET(flg, ATL_GAC_LAST1))
-      return(pollPub(rank, gp, lp));
    return(tryPub(rank, gp, lp));
 }
 
-ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank)
+long ATL_gatmctr_dec(void *ac, unsigned int rank)
 {
    if (ac)
    {
-      ATL_atmctr_t *gp=ATL_AlignSafeLS(ac);
-      const ATL_atmctr_t P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC], 
-            flg=gp[ATL_GAC_FLG];
-      ATL_atmctr_t *lp=ATL_AddBytesPtr(gp, gp[ATL_GAC_GSZ]);
-      ATL_atmctr_t ret;
-      const int USEPUB = !GAC_FLAG_SET(flg, ATL_GAC_NOPUB),
-                POLL = GAC_FLAG_SET(flg, ATL_GAC_LAST1);
+      long *gp=ATL_AlignSafeLS(ac);
+      const long P=gp[ATL_GAC_P], flg=gp[ATL_GAC_FLG];
+      long ret;
 
-
-      if (rank < P)
+      if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))
+         ret = allPub(rank, ac);
+      else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
+         ret = allPrv(rank, ac);
+      else
       {
-         if (USEPUB)
+         const long inc=gp[ATL_GAC_INC];
+         long *lp=ATL_IncBySafeLS(gp);
+
+         if (rank < P)
             ret = prvPubCnt(rank, gp, lp);
          else
          {
-            ret = prvCnt(rank, gp, lp);
-            if (!ret && POLL)
-               ret = pollPub(rank, gp, lp);
-         }
-      }
-      else
-      {
-         rank = P + rank%P;
-         if (POLL)
-            ret = pollPub(rank, gp, lp);
-         else if (USEPUB)
+            rank = P + rank%P;
             ret = tryPub(rank, gp, lp);
-         else
-            ret = 0;
+         }
       }
       #ifdef DEBUG
          fprintf(stderr, "gDec=%lu\n", ret);
@@ -20594,190 +20628,4 @@ ATL_atmctr_t ATL_gDecAtmCtr(void *ac, unsigned int rank)
       return(ret);
    }
    return(0);
-}
-@ROUT testGAT
-#include "atlas_gatmctr.h"
-#include "atlas_bitvec.h"
-#define ATL_GETFLAGS 1
-#include "atlas_genparse.h"
-
-static ATL_atmctr_t GN=500, NERR=0;
-volatile static unsigned char *CNT;
-static void *AC;
-void DoWorkAC(void *vpp, int rank, int vrank)
-{
-   ATL_tpool_t *pp=vpp;
-   const ATL_atmctr_t N=GN;
-   ATL_atmctr_t cnt;
-   while ((cnt = ATL_gDecAtmCtr(AC, vrank)))
-   {
-      if (cnt < 1 || cnt > N)
-      {
-         fprintf(stderr, "   AtmCtr out of range: %lu\n", cnt);
-         NERR++;
-      }
-      else
-         CNT[N-cnt]++;
-   }
-}
-
-void PrintUsage(char *name, int ierr, char *flag)
-{
-   if (ierr > 0)
-      fprintf(stderr, "Bad argument #%d: '%s'\n",
-              ierr, flag ? flag : "Not enough arguments");
-   else if (ierr < 0)
-      fprintf(stderr, "ERROR: %s\n", flag);
-   fprintf(stderr, "USAGE: %s [flags]:\n", name);
-   fprintf(stderr, "   -v <verb> [1]\n");
-   fprintf(stderr, "   -f <flag> [NOPOLL]\n");
-   fprintf(stderr, "   -F # <flag1> ... <flagN>\n");
-   fprintf(stderr, "   -p <nthreads> [ATL_NTHREAD]\n");
-   fprintf(stderr, "   -P <nthr0> <nthrN> <nthrINC> [ATL_NTHREAD]\n");
-   fprintf(stderr, "   -n <cnt> [8111]\n");
-   fprintf(stderr, "   -N <cnt0> <cntN> <cntINC> [8111]\n");
-   exit(ierr ? ierr : -1);
-}
-
-int GetFlags(int nargs, char **args, int *N0, int *NN, int *NINC,
-             int *P0, int *PN, int *PINC, int **FLAGs)
-{
-   int i, P, verb=1;
-   
-   *P0 = *PN = *PINC = ATL_NTHREADS;
-   *N0 = *NN = *NINC = 8111;
-   *FLAGs=NULL;
-   for (i=1; i < nargs; i++)
-   {
-      int WH=0;
-      if (args[i][0] != '-')
-         PrintUsage(args[0], i, args[i]);
-      switch(args[i][1])
-      {
-      case 'p':
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *P0 = *PN = *PINC = atoi(args[i]);
-         if (*P0 == 0)
-            *PN = -1;
-         break;
-      case 'n':
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *N0 = *NN = *NINC = atoi(args[i]);
-         break;
-      case 'N':
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *N0 = atoi(args[i]);
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *NN = atoi(args[i]);
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *NINC = atoi(args[i]);
-         break;
-      case 'P':
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *P0 = atoi(args[i]);
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *PN = atoi(args[i]);
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *PINC = atoi(args[i]);
-         break;
-      case 'v':         /* -p <nthr> */
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         verb = atoi(args[i]);
-         break;
-      case 'F':
-         *FLAGs = GF_GetIntList(nargs, args, i, 1);
-         i += (*FLAGs)[0] + 1;
-         break;
-      case 'f':         /* -f <flag> */
-         if (++i >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *FLAGs = GF_GetIntList1(atoi(args[i]));
-         break;
-      default:
-         PrintUsage(args[0], i, args[i]);
-      }
-   }
-   if (*FLAGs == NULL)
-      *FLAGs = GF_GetIntList1(ATL_GAC_DEF_NOPOLL);
-   return(verb);
-}
-
-int main(int nargs, char **args)
-{
-   void *ac;
-   ATL_atmctr_t i;
-   int p, f, verb, N0, NN, incN, P0, PN, incP, *flgs;
-   unsigned long nerr=0;
-   verb = GetFlags(nargs, args, &N0, &NN, &incN, &P0, &PN, &incP, &flgs);
-
-/*
- * First just check that we can alloc/free (use valgrind to validate)
- */
-   if (verb)
-      fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
-   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS*(ATL_NTHREADS+2), flgs[1]);
-   ATL_gFreeAtmCtr(ac);
-   if (verb)
-      fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
-   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS, flgs[1]);
-   ATL_gFreeAtmCtr(ac);
-   ac = ATL_gNewAtmCtr(ATL_NTHREADS, ATL_NTHREADS>>1, flgs[1]);
-   if (verb)
-      fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
-   ATL_gFreeAtmCtr(ac);
-   if (verb)
-      fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
-   i = (PN > 1) ? PN : 2;
-   ac = ATL_gNewAtmCtr(i, i-1, flgs[1]);
-   ATL_gFreeAtmCtr(ac);
-   if (verb)
-      fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
-   ac = ATL_gNewAtmCtr(0, 0, flgs[1]);
-   ATL_gFreeAtmCtr(ac);
-/*
- * Test basic functionality
- */
-   for (f=0; f < flgs[0]; f++)
-   {
-      int flg = flgs[f+1];
-      for (p=P0; p <= PN; p += incP)
-      {
-         for (GN=N0; GN <= NN; GN += incN)
-         {
-            int err=0;
-            CNT = calloc(GN, sizeof(char));
-            AC = ac = ATL_gNewAtmCtr(p, GN, flg);
-            fprintf(stderr, "\n\n");
-            ATL_gPrintAtmCtr(stderr, ac);
-            fprintf(stderr, "TESTING P=%d, N=%d:\n", p, GN);
-            ATL_goParallel(p, DoWorkAC, NULL, NULL, NULL);
-            ATL_gFreeAtmCtr(ac);
-            for (i=0; i < GN; i++)
-            {
-               if (CNT[i] != 1)
-               {
-                  err++;
-                  if (verb)
-                     fprintf(stderr, "   CNT[%d] = %d, expected 1\n",i,CNT[i]);
-               }
-            }
-            err += NERR;
-            NERR = 0;
-            fprintf(stderr, "DONE    P=%d, N=%d, NERR=%d\n", p, GN, err);
-            nerr += err;
-            free((void*)CNT);
-         }
-      }
-   }
-   fprintf(stderr, "\nDONE ALL TESTING, NERR=%d\n", nerr);
-   return(nerr);
 }
