@@ -91,6 +91,7 @@ void *ATL_freeLocks(unsigned int nlocks, void *vp);
 #define ATL_SAFELS 128L
 #define ATL_SAFELS_SH 7
 #define ATL_AddBytesPtr(vp_, by_) (void*) ((size_t)(vp_) + (size_t)by_)
+#define ATL_SubBytesPtr(vp_, by_) (void*) ((size_t)(vp_) - (size_t)by_)
 #define ATL_AlignSafeLS(vp_) (void*) \
    ((((size_t)(vp_))+ATL_SAFELS-1L)&(~((size_t)ATL_SAFELS-1L)))
 #define ATL_IncBySafeLS(vp_) ATL_AddBytesPtr(vp_, ATL_SAFELS)
@@ -20011,7 +20012,7 @@ void *ATL_gatmctr_alloc(unsigned int P, long N, long flg)
          gp[ATL_GAC_FLG] = flg;
          gp[2] = incLow;   /* inc to skip over low array to atmctrs */
          gp[3] = inc;      /* inc between atmctrs */
-         gp[4] = ((size_t)vp) - ((size_t)gp);
+         gp[4] = ((size_t)gp) - ((size_t)vp);
          return(gp);
       }
       else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))  /* all private */
@@ -20019,8 +20020,9 @@ void *ATL_gatmctr_alloc(unsigned int P, long N, long flg)
          vp = malloc((P+2)*ATL_SAFELS);
          ATL_assert(vp);
          gp = ATL_AlignSafeLS(vp);
-         gp[0] = P;
-         gp[1] = flg;
+         gp[ATL_GAC_P] = P;
+         gp[ATL_GAC_FLG] = flg;
+         gp[2] = ((size_t)gp) - ((size_t)vp);
          return(gp);
       }
       inc = sizeof(ATL_lock_t);                  /* sz of native lock struct */
@@ -20033,7 +20035,8 @@ void *ATL_gatmctr_alloc(unsigned int P, long N, long flg)
       gp[ATL_GAC_INC] = inc;
       gp[ATL_GAC_N] = N;
       gp[ATL_GAC_FLG] = flg;
-      return(vp);
+      gp[4] = ((size_t)gp) - ((size_t)vp);
+      return(gp);
    }
    return(NULL);
 }
@@ -20063,10 +20066,10 @@ void ATL_gatmctr_initByRank(void *ac, unsigned int rank, long lowPrv,
             }
             else /* rank == 0, reserve one count for last */
             {
+               *lp = lowPrv;
                ATL_assert(npub && lowPrv == 1);
                ATL_atmctr_init(atc, --npub);
-               *lp = 1;
-               atc += P*incCnt;
+               atc = ATL_AddBytesPtr(lp, incLow+incCnt*P);
                ATL_atmctr_init(atc, 1);
             }
          }
@@ -20186,10 +20189,10 @@ void ATL_gatmctr_free(void *ac)
          ac = ATL_AddBytesPtr(ac, ATL_SAFELS+lp[2]);
          for (i=0; i < P+1; i++, ac = ATL_AddBytesPtr(ac, inc))
             ATL_atmctr_destroy(ac);
-         ac = ATL_AddBytesPtr(ac, lp[4]);
+         ac = ATL_SubBytesPtr(lp, lp[4]);
       }
       else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
-         ac = ATL_AddBytesPtr(ac, lp[2]);
+         ac = ATL_SubBytesPtr(ac, lp[2]);
       else
       {
          const unsigned int P=lp[ATL_GAC_P];
@@ -20200,7 +20203,7 @@ void ATL_gatmctr_free(void *ac)
          lck = ATL_AddBytesPtr(lp, (ATL_SAFELS<<2));
          for (i=0; i < P; i++, lck = ATL_AddBytesPtr(lck, inc))
             ATL_lock_destroy(lck);
-         ac = ATL_AddBytesPtr(ac, lp[5]);
+         ac = ATL_SubBytesPtr(ac, lp[4]);
       }
       free(ac);
    }
@@ -20217,24 +20220,25 @@ void ATL_gatmctr_print(FILE *fpout, void *ac)
    if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))
    {
       long *lp = ATL_IncBySafeLS(gp), *lac;
-      const long incLow = lp[2], incCnt=lp[3];
-      fprintf(fpout, "gatmctr-PUB, P=%l, iLow=%l, iCnt=%l, off=%l, flg=%lx\n",
-              P, incLow, incCnt, lp[4], flg);
-      lac = ATL_AddBytesPtr(lp, ATL_SAFELS+incLow);
+      const long incLow = gp[2], incCnt=gp[3];
+      fprintf(fpout, 
+              "gatmctr-PUB, P=%ld, iLow=%ld, iCnt=%ld, off=%ld, flg=%lx\n",
+              P, incLow, incCnt, gp[4], flg);
+      lac = ATL_AddBytesPtr(lp, incLow);
       for (i=0; i < P; i++, lac=ATL_AddBytesPtr(lac, incCnt))
-         fprintf(fpout, "   %l: low=%l, cnt=%l\n", i, lp[i], *lac);
+         fprintf(fpout, "   %ld: low=%ld, cnt=%ld\n", i, lp[i], *lac);
    }
    else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
    {
       long *lp = ATL_IncBySafeLS(gp);
-      fprintf(fpout, "gatmctr-PRV, P=%l, off=%l, flg=%lx\n", P, lp[2], flg);
+      fprintf(fpout, "gatmctr-PRV, P=%ld, off=%ld, flg=%lx\n", P, gp[2], flg);
       for (i=0; i < P; i++, lp=ATL_IncBySafeLS(lp))
-         fprintf(fpout, "   %l: low=%l, cnt=%l\n", i, lp[1], *lp);
+         fprintf(fpout, "   %ld: low=%ld, cnt=%ld\n", i, lp[1], *lp);
    }
    else
    {
       const long inc=gp[ATL_GAC_INC];
-      fprintf(fpout, "gAtmCtr, P=%l, inc=%l, N=%l, flg=%lx:\n", 
+      fprintf(fpout, "gAtmCtr, P=%ld, inc=%ld, N=%ld, flg=%lx:\n", 
               P, inc, gp[ATL_GAC_N], flg);
       tp = ATL_AddBytesPtr(gp, ATL_SAFELS);
       for (i=0; i < P; i++)
@@ -20242,7 +20246,7 @@ void ATL_gatmctr_print(FILE *fpout, void *ac)
          long *prv=tp, *lowPubP=ATL_IncBySafeLS(tp), 
                       *cntPubP=ATL_IncBySafeLS(lowPubP);
          fprintf(fpout, 
-            "   %l: prv=[%l, %l], pub=[%l, %l], lastPubCnt=%l, lck=%p\n",
+            "   %ld: prv=[%ld, %ld], pub=[%ld, %ld], lastPubCnt=%ld, lck=%p\n",
                  i, *prv, *lowPubP-1, *lowPubP, *cntPubP, prv[1], 
                  ATL_IncBySafeLS(cntPubP));
          tp = ATL_AddBytesPtr(tp, inc);
@@ -20623,7 +20627,7 @@ long ATL_gatmctr_dec(void *ac, unsigned int rank)
          }
       }
       #ifdef DEBUG
-         fprintf(stderr, "gDec=%lu\n", ret);
+         fprintf(stderr, "gDec=%ld\n", ret);
       #endif
       return(ret);
    }
