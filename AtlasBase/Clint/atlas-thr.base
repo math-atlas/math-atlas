@@ -19889,15 +19889,15 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
  * Define bit positions in the flag bitvec of boolean flag
  * NOTE: POLL implies LAST1
  */
-#define ATL_GAC_MOV   0  /* set: move numbers priv->pub */
-#define ATL_GAC_NOPUB 1  /* set: make all data private (static scheduling) */
-#define ATL_GAC_NOPRV 2  /* set: make all data public */
+#define ATL_GAC_MOV   1  /* set: move numbers priv->pub */
+#define ATL_GAC_NOPUB 2  /* set: make all data private (static scheduling) */
+#define ATL_GAC_NOPRV 4  /* set: make all data public */
 #ifndef  GAC_FLAG_SET
-   #define GAC_FLAG_SET(field_, bit_) ( ((field_) & (1L<<(bit_))) != 0 )
+   #define GAC_FLAG_SET(field_, bit_) ( ((field_) & (bit_)) != 0 )
 #endif
-#define ATL_GAC_PUB (1L<<ATL_GAC_NOPRV)
-#define ATL_GAC_PRV (1L<<ATL_GAC_NOPUB)
-#define ATL_GAC_MIX (1L<<ATL_GAC_MOV)
+#define ATL_GAC_PUB ATL_GAC_NOPRV
+#define ATL_GAC_PRV ATL_GAC_NOPUB
+#define ATL_GAC_MIX ATL_GAC_MOV
 /*
  * Define offsets for initial SAFELS of global part of data structure
  */
@@ -19974,7 +19974,8 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
  */
 
 @skip void *ATL_gatmctr_allocArray(unsigned int P, long N, long flg);
-void *ATL_gatmctr_alloc(unsigned int P, long N, long flg);
+void *ATL_gatmctr_alloc(unsigned int nctr, unsigned int P, long cnt, long flg,
+                        long *inc);
 void ATL_gatmctr_initByRank(void *ac, unsigned int rank, long lowPrv, 
                             long npriv, long npub);
 void *ATL_gatmctr_new(unsigned int P, long N, long flg);
@@ -19986,58 +19987,136 @@ long ATL_gatmctr_dec(void *ac, unsigned int rank);
 @ROUT ATL_gatmctr_new
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2016
 #include "atlas_gatmctr.h" /* scope to understand data struct */
-void *ATL_gatmctr_alloc(unsigned int P, long N, long flg)
+static INLINE 
+   void *ATL_gatmctr_set(void *ac, unsigned int P, long cnt, long flg)
 {
-   if (N)
+   long *gp = ATL_AlignSafeLS(ac);
+   long cntPrv, lowPub, cntPub;
+   long lcntPub, lcntPrv, remPub, remPrv;
+   unsigned int i;
+
+   ATL_assert(cnt > 0);
+   P = Mmax(P,1);
+   P = Mmin(P,cnt);
+
+   gp[ATL_GAC_P] = P;
+   gp[ATL_GAC_FLG] = flg;
+
+   if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))   /* private count only */
+   {
+      cntPub = 0;
+      cntPrv = cnt;
+      ATL_assert(!(flg&ATL_GAC_NOPRV));
+      gp[2] = ((size_t)gp) - ((size_t)ac);
+   }
+   else if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))  /* public count only */
+   {
+      long inc, incLow;
+
+      cntPrv = 0;
+      cntPub = cnt;
+      ATL_assert(!(flg&ATL_GAC_NOPUB));
+
+      #if ATL_ATM_ASM
+         inc = ATL_SAFELS;
+      #else
+         inc = ATL_SAFELS + (long) ATL_AlignSafeLS(sizeof(ATL_lock_t));
+      #endif
+      incLow = sizeof(long)*P;
+      incLow = (long) ATL_AlignSafeLS(incLow);
+      gp[2] = incLow;   /* inc to skip over low array to atmctrs */
+      gp[3] = inc;      /* inc between atmctrs */
+      gp[4] = ((size_t)gp) - ((size_t)ac);
+   }
+   else /* work stealing divides count between private/public */
    {
       long inc;
-      void *vp;
-      long *gp;
-   
-      P = (P) ? P : 1;                        /* must have one thread! */
-      if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))   /* all-public */
+      if (cnt < (P<<2))         /* if we can't have both pub & prv */
+         cntPub = cnt;         /* just make all jobs public */
+      else
       {
-         long incLow;
-         #if ATL_ATM_ASM
-            inc = ATL_SAFELS;
-         #else
-            inc = (long) ATL_AlignSafeLS(sizeof(ATL_lock_t));
-         #endif
-         incLow = sizeof(long)*P;
-         incLow = (long) ATL_AlignSafeLS(incLow);
-         vp = malloc((ATL_SAFELS<<1)+incLow+inc*(P+1));
-         ATL_assert(vp);
-         gp = ATL_AlignSafeLS(vp);
-         gp[ATL_GAC_P] = P;
-         gp[ATL_GAC_FLG] = flg;
-         gp[2] = incLow;   /* inc to skip over low array to atmctrs */
-         gp[3] = inc;      /* inc between atmctrs */
-         gp[4] = ((size_t)gp) - ((size_t)vp);
-         return(gp);
+         cntPub = P*(P-1);       /* ideal scheduling case */
+         cntPrv = cnt>>1;
+         cntPub = Mmin(cntPrv, cntPub);
       }
-      else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))  /* all private */
-      {
-         vp = malloc((P+2)*ATL_SAFELS);
-         ATL_assert(vp);
-         gp = ATL_AlignSafeLS(vp);
-         gp[ATL_GAC_P] = P;
-         gp[ATL_GAC_FLG] = flg;
-         gp[2] = ((size_t)gp) - ((size_t)vp);
-         return(gp);
-      }
-      inc = sizeof(ATL_lock_t);                  /* sz of native lock struct */
-      inc = (long) ATL_AlignSafeLS(inc); /* make mul of SAFELS */
-      inc += ATL_SAFELS<<2;
-      vp = malloc(ATL_SAFELS + inc*P);
-      ATL_assert(vp);
-      gp = ATL_AlignSafeLS(vp);
+      cntPrv = cnt - cntPub;
+
+      inc = sizeof(ATL_lock_t);           /* sz of native lock struct */
+      inc = (long) ATL_AlignSafeLS(inc);  /* make mul of SAFELS */
+      inc += ATL_SAFELS + (ATL_SAFELS<<1);
       gp[ATL_GAC_P] = P;
       gp[ATL_GAC_INC] = inc;
-      gp[ATL_GAC_N] = N;
+      gp[ATL_GAC_N] = cnt;
       gp[ATL_GAC_FLG] = flg;
-      gp[4] = ((size_t)gp) - ((size_t)vp);
-      return(gp);
+      gp[4] = ((size_t)gp) - ((size_t)ac);
    }
+
+   lcntPub = cntPub / P;
+   remPub = cntPub - lcntPub*P;
+   lcntPrv = cntPrv / P;
+   remPrv = cntPrv - lcntPrv*P;
+
+   cnt=1;
+   for (i=0; i < P; i++)
+   {
+      long mypub, myprv;
+
+      myprv = (i < remPrv) ? lcntPrv+1 : lcntPrv;
+      mypub = (i < remPub) ? lcntPub+1 : lcntPub;
+      ATL_gatmctr_initByRank(gp, i, cnt, myprv, mypub);
+      cnt += myprv + mypub;
+   }
+   return(gp);
+}
+
+static INLINE size_t ATL_gatmctr_sz(unsigned int P, long flg)
+/*
+ * RETURNS: size of specified global atomic counter, not including any
+ *          alignment guard.
+ */
+{
+   size_t sz;
+   if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))   /* all-public */
+   {
+      long incCnt=ATL_SAFELS, incLow;
+      #if !ATL_ATM_ASM
+         inc += (long) ATL_AlignSafeLS(sizeof(ATL_lock_t));
+      #endif
+      incLow = sizeof(long)*P;
+      incLow = (long) ATL_AlignSafeLS(incLow);
+      sz = ATL_SAFELS + incLow + (P+1)*incCnt;
+   }
+   else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))  /* all private */
+      sz = (P+1)*ATL_SAFELS;
+   else
+   {
+      sz = sizeof(ATL_lock_t);             /* sz of native lock struct */
+      sz = (size_t) ATL_AlignSafeLS(sz);   /* make mul of SAFELS */
+      sz += (ATL_SAFELS<<1)+ATL_SAFELS;
+      sz = sz*P + ATL_SAFELS;
+   }
+   return(sz);
+}
+
+void *ATL_gatmctr_alloc(unsigned int nctr, unsigned int P, long cnt, long flg,
+                        long *inc)
+{
+   if (cnt && nctr)
+   {
+      size_t sz;
+      void *vp;
+      void *gp;
+      unsigned int i;
+
+      sz = ATL_gatmctr_sz(P, flg);
+      if (inc)
+         *inc = sz;
+      vp = malloc(ATL_SAFELS+nctr*sz);
+      ATL_assert(vp);
+      return(vp);
+   }
+   else
+      *inc = 0;
    return(NULL);
 }
 
@@ -20105,23 +20184,26 @@ void *ATL_gatmctr_new
    long flg
 )
 {
-   long *lp;
-   char *cp;
-   long cntPrv, lowPub, cntPub, cnt, lst1;
-   long lcntPub, lcntPrv, remPub, remPrv;
-   unsigned int i;
+   long *lp=NULL;
+@skip   long cntPrv, lowPub, cntPub, cnt;
+@skip   long lcntPub, lcntPrv, remPub, remPrv;
+@skip   unsigned int i;
 
    if (!N)
       return(NULL);
-   if (!P)
-      P = 1;
-   else
-      P = Mmin(P, N);
+   P = Mmax(P,1);
+   P = Mmin(P,N);
+   if (N)
+   {
+      lp = ATL_gatmctr_alloc(1, P, N, flg, NULL);
+      lp = ATL_gatmctr_set(lp, P, N, flg);
+   }
+@beginskip
    if (N <= (P<<2) || GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
    {
       cntPub = 0;
-      flg |= 1<<ATL_GAC_NOPUB;
-      flg &= ~(1L<<ATL_GAC_MOV);
+      flg |= ATL_GAC_NOPUB;
+      flg &= ~ATL_GAC_MOV;
    }
    else if (GAC_FLAG_SET(flg, ATL_GAC_NOPRV))
       cntPub = N;
@@ -20139,20 +20221,19 @@ void *ATL_gatmctr_new
    if (!cntPrv)
    {
       ATL_assert(cntPub);
-      flg |= (1L<<ATL_GAC_NOPRV);
-      flg &= ~((1L<<ATL_GAC_NOPUB) | (1L<<ATL_GAC_MOV));
+      flg |= ATL_GAC_NOPRV;
+      flg &= ~(ATL_GAC_NOPUB | ATL_GAC_MOV);
    }
    else if (!cntPub)
    {
-      flg |= (1L<<ATL_GAC_NOPUB);
-      flg &= ~((1L<<ATL_GAC_NOPRV) | (1L<<ATL_GAC_MOV));
+      flg |= ATL_GAC_NOPUB;
+      flg &= ~(ATL_GAC_NOPRV | ATL_GAC_MOV);
    }
    else
       ATL_assert(!GAC_FLAG_SET(flg, ATL_GAC_NOPUB) &&
                  !GAC_FLAG_SET(flg, ATL_GAC_NOPRV));
    if (GAC_FLAG_SET(flg, ATL_GAC_MOV)) /* if we move jobs to global */
-      flg &= ~(1L<<ATL_GAC_NOPUB);    /* we must scope global queue */
-   lp = ATL_gatmctr_alloc(P, N, flg);
+      flg &= ~ATL_GAC_NOPUB;           /* we must scope global queue */
 
    lcntPub = cntPub / P;
    remPub = cntPub - lcntPub*P;
@@ -20169,6 +20250,7 @@ void *ATL_gatmctr_new
       ATL_gatmctr_initByRank(lp, i, cnt, myprv, mypub);
       cnt += myprv + mypub;
    }
+@endskip
    return(lp);
 }
 @ROUT ATL_gatmctr_free
@@ -20265,6 +20347,10 @@ static INLINE long allPub(unsigned int rank, long *lp)
    const long incCnt = lp[3];
    long *lowp = ATL_IncBySafeLS(lp), *acp = ATL_AddBytesPtr(lowp, lp[2]), *ac;
    unsigned long vrk;
+
+   ac = ATL_AddBytesPtr(acp, incCnt*P);
+   if (!(*ac))
+      return(0);
 /*
  * Use owned counter until exhausted
  */
@@ -20303,6 +20389,7 @@ static INLINE long allPub(unsigned int rank, long *lp)
    ac = ATL_AddBytesPtr(acp, incCnt*P);
    if (*ac)
       return(ATL_atmctr_dec(ac));
+   return(0);
 }
 static INLINE long allPrv(unsigned int rank, long *lp)
 {
@@ -20406,124 +20493,10 @@ static INLINE long tryPub
  *    QUIT should be set when the quitters can do another task, so ending
  *    load balance shouldn't matter much
  */
-      gp[ATL_GAC_FLG] &= ~(1L<<ATL_GAC_MOV);
+      gp[ATL_GAC_FLG] &= ~ATL_GAC_MOV;
    }
    return(0);
 }
-
-@beginskip
-/*
- * Poll for public work.  For ATL_GAC_LAST1, all threads call this prior
- * to exiting
- */
-static long pollPub
-   (unsigned int rank, volatile long *gp, long *tp)
-{
-   const long P=gp[ATL_GAC_P], inc=gp[ATL_GAC_INC], flg=gp[ATL_GAC_FLG];
-   ATL_BV_t *doneBV=ATL_IncBySafeLS(gp);
-   unsigned int vrk;
-   const int PUB=!GAC_FLAG_SET(flg,ATL_GAC_NOPUB), 
-             POLL=GAC_FLAG_SET(flg,ATL_GAC_POLL);
-
-/*
- * If I have my own public counter, exhaust it before polling
- */
-   if (rank < P)
-   {
-      volatile long *lowPubP=ATL_AddBytesPtr(tp, inc*rank+ATL_SAFELS),
-                            *cntPubP= ATL_IncBySafeLS(lowPubP);
-      void *lck;
-
-      if (PUB && *cntPubP >= *lowPubP)
-      {  /* any owned public count left? */
-         long cnt;
-
-         lck = ATL_IncBySafeLS(cntPubP);
-         ATL_lock(lck);
-         cnt = *cntPubP;
-         if (cnt >= *lowPubP)
-         {
-            *cntPubP = cnt - 1;
-            ATL_unlock(lck);
-            return(cnt);
-         }
-         ATL_unlock(lck);
-      }
-/*
- *    If I reach here, I've exhausted all owned count, must set rank bit
- */
-      lck=ATL_IncBySafeLS(doneBV);
-      ATL_lock(lck);
-      ATL_SetBitBV(doneBV, rank);
-      if (ATL_FindFirstUnsetBitBV(doneBV, 0) == P)  /* I'm last guy to finish */
-      {
-         ATL_SetBitBV(doneBV, P);
-         ATL_unlock(lck);
-         return(1);
-      }
-      ATL_unlock(lck);
-      vrk = (rank == P-1) ? 0 : rank+1;
-   }
-   else
-      vrk = rank-P;
-/*
- * If polling wt no public data, just hold here until everyone finishes
- */
-   if (POLL && !PUB)
-   {
-      while (ATL_FindFirstUnsetBitBV(doneBV, 0) != -1)
-         ATL_thread_yield();  /* delay to reduce load */
-      return(0);
-   }
-   do
-   {
-      volatile long *cntPubP;
-      unsigned int i;
-
-      cntPubP = ATL_AddBytesPtr(tp, (ATL_SAFELS<<1)+inc*vrk);
-      for (i=0; i < P; i++)
-      {
-         volatile long *lowPubP;
-/*
- *       If this virtual rank's has not signaled work completion, check it
- */
-         if (!ATL_IsBitSetBV(doneBV, vrk)) 
-         {
-            lowPubP = ATL_DecBySafeLS(cntPubP);
-
-            if (*cntPubP >= *lowPubP)  /* any public count left? */
-            {
-               char *lck=ATL_IncBySafeLS(cntPubP);
-               if (ATL_trylock(lck))  /* I can lock this public ctr */
-               {
-                  const long lowPub = *lowPubP, cnt = *cntPubP;
-                  if (cnt >= lowPub)
-                  {
-                     *cntPubP = cnt - 1;
-                     ATL_unlock(lck);
-                     return(cnt);
-                  }
-                  else
-                     ATL_unlock(lck);
-               }
-            }
-         }
-         if (++vrk < P)
-            cntPubP = ATL_AddBytesPtr(cntPubP, inc);
-         else
-         {
-            vrk = 0;
-            cntPubP = ATL_AddBytesPtr(tp, (ATL_SAFELS<<1));
-         }
-      }
-      if (!POLL)           /* if not polling, only try all P locks one time */
-         return(0);        /* so return rather than trying again */
-      ATL_thread_yield();  /* else delay to reduce contention, then try again */
-   }
-   while (ATL_FindFirstUnsetBitBV(doneBV, 0) != -1);
-   return(0);
-}
-@endskip
 
 /*
  * Gets a single count from private range, returns 0 if none left
@@ -20605,7 +20578,7 @@ long ATL_gatmctr_dec(void *ac, unsigned int rank)
 {
    if (ac)
    {
-      long *gp=ATL_AlignSafeLS(ac);
+      long *gp=ac;
       const long P=gp[ATL_GAC_P], flg=gp[ATL_GAC_FLG];
       long ret;
 
