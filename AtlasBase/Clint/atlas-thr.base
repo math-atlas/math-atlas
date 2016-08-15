@@ -770,6 +770,7 @@ struct ATL_SyrkK
    enum ATLAS_TRANS Trans, TB;
 };
 #ifdef TYPE
+   #define ulong unsigned long
    #define VINT volatile int
    #define VSHORT volatile short
    #define ushort unsigned short
@@ -1185,9 +1186,9 @@ struct ATL_tsyrk_ammN
       const TYPE *beta;
    #endif
    TYPE *wA, *wAt;     /* workspaces for storing A & A' */
-   void *cpydonBV;     /* nnblks tBV set means A & A' copy is done */ 
+   void *cpydonBV;     /* ndiag tBV set means A & A' copy is done */ 
    void *cblkBV;       /* arr of tBVs for dealing out work on col 0<=j<nnblks */
-   void *dbetaBV;      /* nnblks tBV: unset means beta not yet applied */
+   void *dbetaBV;      /* ndiag tBV: unset means beta not yet applied */
    void *dCtr;         /* atmctr for dealing out diagonal blocks */
    void *KbegCtr;      /* K-counters for dealing out diagonal blocks */
    void *KdonCtr;      /* K-counters for completed diagonal blocks */
@@ -1196,20 +1197,20 @@ struct ATL_tsyrk_ammN
    size_t Cstr;        /* gap (in bytes) between cblk BVs */
    size_t dCstr;       /* gap (in bytes) between dCtr BVs */
    size_t KBCstr;      /* gap (in bytes) between KbegCtrs */
-   size_t KECstr;      /* gap (in bytes) between KendCtrs */
+   size_t KDCstr;      /* gap (in bytes) between KdonCtrs */
    size_t dCinc;       /* gap (in bytes) between Cdmuts */
    size_t lda, ldc;    /* gap between columns (stride within rows) */
    size_t pansz0;      /* size of missing A/At panel */
    #ifndef TCPLX
       TYPE beta;
    #endif
+   ulong ndiag;   /* # of diagonal blocks */
+   ulong ncblks;  /* # of non-diagonal blocks left to be assigned */
+   ulong nkblks;  /* # of k blocks, including any partial block */
    VINT cpydone;  /* set when all A/A' copying complete */
    uint szCs;     /* size of SYRK's C */
    uint szS;      /* size of SYRK A blk */
    uint flg;      /* bitvec:0: set means C is upper, 1: set TA==AtlasNoTrans */
-   int ndiag;     /* # of diagonal blocks */
-   int ncblks;    /* # of non-diagonal blocks left to be assigned */
-   int nkblks;    /* # of k blocks, including any partial block */
    int NODWORK;   /* set to 1 by first thread to find all work started */
 };
 @beginskip
@@ -1384,6 +1385,7 @@ struct ATL_tgemm_ammG
    #undef uint
    #undef ushort
    #undef VINT
+   #undef ulong
 #endif
 /*
  * This data structure used when we divide N only, and NTHREAD is a power of 2
@@ -15316,13 +15318,16 @@ int Mjoin(PATL,tammm)
 #define ATL_ESTNCTR 1
 #include "atlas_tlvl3.h"
 #include "atlas_tbitvec.h"
+#include "atlas_gatmctr.h"
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #ifdef Conj_
    #define syrkBlk Mjoin(PATL,herkBlk)
 #else
    #define syrkBlk Mjoin(PATL,syrkBlk)
 #endif
-
+void syrkBlk(ipinfo_t*,int,size_t,size_t,const TYPE *,cm2am_t,ablk2cmat_t,
+             const SCALAR,TYPE*,TYPE*,TYPE*,TYPE*,TYPE*,TYPE*,TYPE*,TYPE*,
+             TYPE*,TYPE*);
 /* 
  * Translates C coordinate in lower triangular matrix to Cblk #.
  * nm is the number of Mblocks, 
@@ -15465,6 +15470,7 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
    }
 }
 
+#endif
 static INLINE void GetWrkAB
    (ipinfo_t *ip, unsigned int flg, size_t pan0, size_t ndiag, size_t dblk, 
     size_t kblk, TYPE **wA, TYPE **wB)
@@ -15498,8 +15504,8 @@ static void DoBlksWtCpy
 (
    unsigned const int rank,   /* my thread rank */
    ATL_tsyrk_ammN_t *pd,      /* problem def structure */
-   unsigned const int dblk,   /* diagonal block of C to compute */
-   unsigned int kctr,         /* non-zero Kbeg ctr */
+   unsigned const long dblk,  /* diagonal block of C to compute */
+   unsigned long kctr,        /* non-zero Kbeg ctr */
    TYPE *rS,                  /* real wrk for SYRK's A (unused for real) */
    TYPE *iS,                  /* imag wrk for SYRK's A (real for real */
    TYPE *rC,                  /* real wrk for C (unused for real) */
@@ -15523,20 +15529,18 @@ static void DoBlksWtCpy
    ATL_UINT szC=ip->szC;
    const unsigned int flg = pd->flg;
    const size_t pansz0=pd->pansz0, nkblks=pd->nkblks, ndiag=pd->ndiag;
-   int kblk = pd->nkblks - kctr;
-   int b;
+   long kblk = pd->nkblks - kctr, b;
+   void *KbegCtr = ATL_AddBytesPtr(pd->KbegCtr, dblk*pd->KBCstr);
    TYPE *wA=pd->wA, *wB=pd->wAt;
    const TYPE *A = pd->A;
-
-@skip   DoBlkWtCpy(rank, pd, dblk, kblk, 0, wC);
+   void *Cdmut;
 
    GetWrkAB(ip, flg, pansz0, ndiag, dblk, kblk, &wA, &wB);
-   syrkBlk(ip, flg, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
+   syrkBlk(ip, flg|4, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
            rS, iS, wA, wA, wB, wB, rC, iC, U);
-   while (kctr = ATL_DecGlobalAtomicCount((pd->KbegCtr)[dblk], rank))
+   while ((kctr = ATL_gatmctr_dec(KbegCtr, rank)))
    {
       kblk = nkblks - kctr;
-@skip      DoBlkWtCpy(rank, pd, dblk, kblk, 1, wC);
       GetWrkAB(ip, flg, pansz0, ndiag, dblk, kblk, &wA, &wB);
       syrkBlk(ip, flg, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
               rS, iS, wA, wA, wB, wB, rC, iC, U);
@@ -15553,13 +15557,16 @@ static void DoBlksWtCpy
 /*
  * Now, seize mutex for diagonal block of original C, and copy back out
  * only above/below diagonal
+ * NOTE: because I'm using bitvecs, have to use tSetBitBV, which contains
+ *       another mutex lock.  If I kept betaBV in a char array instead,
+ *       could reduce to only needing Cdmut here.
  */
 @skip   c = IdxC_ip(ip, pd->C, dblk, dblk);
-   ATL_mutex_lock(pd->Cdmuts[dblk]);
-   if (!ATL_IsBitSetBV(pd->dbetaBV, dblk)) /* if I apply beta */
-   {
-      ATL_SetBitBV(pd->dbetaBV, dblk); /* tell rest of thrs don't apply beta */
-      beta = pd->beta;                 /* because I'm going to do it */
+   Cdmut = ATL_AddBytesPtr(pd->Cdmuts, dblk*pd->dCinc);
+   ATL_lock(Cdmut);
+   if (!ATL_tSetBitBV(pd->dbetaBV, dblk))  /* I'm first, so tell rest of  */
+   {                                       /* thrs don't apply beta */
+      beta = pd->beta;                     /* because I'm going to do it */
       syblk2c = pd->syblk2c;
    }
    if (flg&1)  /* upper just needs to reflect from U to C */
@@ -15568,7 +15575,7 @@ static void DoBlksWtCpy
    else /* Lower writes directly to C from rC,iC */
       syrkBlk(ip, flg, dblk, 0, NULL, NULL, syblk2c, beta, pd->C,
               NULL, NULL, NULL, NULL, NULL, NULL, rC, iC, NULL);
-   ATL_mutex_unlock(pd->Cdmuts[dblk]);
+   ATL_unlock(Cdmut);
 }
 #undef ONE
 
@@ -15583,10 +15590,10 @@ static void DoBlksWtCpy
  * both KbegCtr & KdonCtr are nnblk-len arrays of atomic counters.  Each
  * counter starts at nkblks.  Once the block pointed to by KbegCtr is
  * completely copied, the copying array increments the KdonCtr.  Only one
- * core per diag will get KdonCtr == 0 after doing his copy, and this
- * core will seize cdmut mutex in order to set the appropriate bit in
- * cpydonBV, which is a nnblks-length bit vector.  If the kth bit is set,
- * that means the ith row of A & jth col of A' has been copied.
+ * core per diag will get KdonCtr == 1 after doing his copy, and this
+ * core will to set the appropriate bit in cpydonBV, which is a nnblks-length 
+ * global threaded bit vector.  If the kth bit is set, that means the 
+ * kth row of A & kth col of A' has been copied.
  * Once a thread gets KbegCtr for a particular diag of 0, it means there's
  * no more work for this block of C, and so it will seize the appropriate
  * Cdmuts mutex which protects each diagonal block of C, and write its
@@ -15598,10 +15605,14 @@ static void DoBlksWtCpy
  * threads don't have to query all the counters to know they should proceed
  * to non-diagonal work.
  */
-static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
+static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd, unsigned long diP)
 {
-   int DIAG=1, k;
+   const size_t KBinc = pd->KBCstr;
+   void *KbegCtr;
+   unsigned long k;
    TYPE *iS = pd->wC + rank*pd->wrksz, *rS, *rC, *iC, *U;
+   int DIAG=1;
+
    #ifdef TCPLX
       rS = iS + pd->szS;
       iC = rS + pd->szS;
@@ -15615,17 +15626,18 @@ static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
    U = (pd->flg & 1) ? U : NULL;
    while (!(pd->NODWORK))
    {
-       int d=0;
-       
+       long d=0;
 /*
  *     Find which diagonal block to work on, and then which k blk to use
  */
        if (DIAG)
        {
-          d = ATL_DecGlobalAtomicCount(pd->dCtr, rank);
+          d = ATL_gatmctr_dec(pd->dCtr, rank);
           if (d)
           {
-             k = ATL_DecGlobalAtomicCount((pd->KbegCtr)[pd->ndiag - d], rank);
+             k = pd->ndiag - d;
+             KbegCtr = ATL_AddBytesPtr(pd->KbegCtr, k*KBinc);
+             k = ATL_gatmctr_dec(KbegCtr, rank);
              if (!k)     /* if no more K work to do */
                 d = 0;   /* can't work on this diag after all */
           }
@@ -15636,12 +15648,14 @@ static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
  */
        if (!d)
        {
-          unsigned int i, n=pd->ndiag;
+          unsigned long i, n=pd->ndiag;
           DIAG = 0;
           for (i=0; i < n; i++)
           {
-             unsigned int j = (i+rank)%n;
-             k = ATL_DecGlobalAtomicCount((pd->KbegCtr)[j], rank);
+             unsigned long j = i+rank*diP;
+             j = (j < n) ? j : j-n;
+             KbegCtr = ATL_AddBytesPtr(pd->KbegCtr, j*KBinc);
+             k = ATL_gatmctr_dec(KbegCtr, rank);
              d = n-j;
              if (k)
                 goto FOUNDDK;
@@ -15664,23 +15678,18 @@ static void DoWorkN(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp=vpp;
    ATL_tsyrk_ammN_t *pd = pp->PD;
+   const unsigned long diP = pd->ndiag / pp->nworkers;
 
    if (!(pd->NODWORK))
-      DoDiag(vrank, pd);
+      DoDiag(vrank, pd, diP);
+   #if 0
    if (pd->ncblks)
    {
-@beginskip
-      #ifdef ATL_PHI_SORTED
-         if (pd->ncntxts > 1)
-            DoNonDiagChunk(vrank, pd);
-         else
-      #endif
-@endskip
       if (ATL_FindFirstUnsetBitBV(pd->cblkBV, 0) != -1)
          DoNonDiag(vrank, pd);
    }
+   #endif
 }
-#endif
 /*
  * SYRK where all parallelism comes from blocks of N, built atop amm directly
  *    if (TA == AtlasNoTrans) 
@@ -15776,15 +15785,15 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    szThr = ATL_DivBySize(szThr);
    pd.dCstr = pd.Cstr = ATL_tSizeofBV(ndiag, P);
    pd.KBCstr = ATL_gatmctr_sizeof(P, ATL_GAC_PUB);
-   pd.KECstr = pd.KBCstr; /* ATL_gatmctr_sizeof(P, ATL_GAC_PUB); */
+   pd.KDCstr = pd.KBCstr; /* ATL_gatmctr_sizeof(P, ATL_GAC_PUB); */
    pd.dCinc = sizeof(ATL_lock_t);
    pd.dCinc = (size_t) ATL_AlignSafeLS(pd.dCinc);
    pd.nkblks = ip.nfkblks + 1;
-   szPO = ndiag*(pd.KBCstr+pd.KECstr);     /* sz of K[beg,end]Ctrs */
+   szPO = ndiag*(pd.KBCstr+pd.KDCstr);     /* sz of K[beg,end]Ctrs */
    szPO += ndiag*(pd.dCinc+pd.Cstr);       /* Cdmuts,cblkBV */
    szPO += pd.KBCstr;                      /* dCtr */
    szPO += pd.dCstr<<1;                    /* cpydoneBV,dbetaBV */
-   sz += ATL_MulBySize(szAll + P*szThr) + szPO + ATL_SAFELS;
+   sz = ATL_MulBySize(szAll + P*szThr) + szPO + ATL_SAFELS;
 
    if (sz <= ATL_PTMAXMALLOC)
       vp = malloc(sz);
@@ -15793,9 +15802,9 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
 
    pd.wrksz = szThr;
    pd.KbegCtr = ATL_AlignSafeLS(vp);
-   pd.KendCtr = ATL_AddBytesPtr(pd.KbegCtr, pd.KBCstr*ndiag);
-   pd.cpydoneBV = ATL_AddBytesPtr(pd.KendCtr, pd.KBEstr*ndiag);
-   pd.cblkBV = ATL_AddBytesPtr(pd.cpydoneBV, pd.dCstr);
+   pd.KdonCtr = ATL_AddBytesPtr(pd.KbegCtr, pd.KBCstr*ndiag);
+   pd.cpydonBV = ATL_AddBytesPtr(pd.KdonCtr, pd.KDCstr*ndiag);
+   pd.cblkBV = ATL_AddBytesPtr(pd.cpydonBV, pd.dCstr);
    pd.Cdmuts = ATL_AddBytesPtr(pd.cblkBV, pd.dCstr*ndiag);
    pd.dbetaBV = ATL_AddBytesPtr(pd.Cdmuts, pd.dCinc*ndiag);
    pd.dCtr = ATL_AddBytesPtr(pd.dbetaBV, pd.dCstr);
@@ -15803,13 +15812,13 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    pd.ndiag = ndiag;
    pd.ncblks = ncblks;
    pd.beta = beta;
-   pd.pansz0 = (size_t)IdxAw_ip(&ip, NULL, 1, 0);
    pd.szCs = szC;
    pd.szS = szS;
       
    pd.sya2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT):Mjoin(PATL,a2blk_syrkN);
    if (Uplo == AtlasLower)
    {
+      pd.pansz0 = (size_t)IdxAw_ip(&ip, NULL, 1, 0);
       if (SCALAR_IS_NONE(alpha))
       {
          pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
@@ -15846,6 +15855,7 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    }
    else
    {
+      pd.pansz0 = (size_t)IdxBw_ip(&ip, NULL, 0, 1);
       if (SCALAR_IS_NONE(alpha))
       {
          pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b0);
@@ -15862,8 +15872,10 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
          pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
       }
    }
+   pd.pansz0 /= sizeof(TYPE);
    pd.cpydone = pd.NODWORK = 0;
    pd.wA = ATL_AddBytesPtr(pd.dCtr, pd.KBCstr);
+   pd.wA = ATL_AlignPtr(pd.wA);
    pd.wAt = pd.wA + (szA SHIFT);
    pd.wAt = ATL_AlignPtr(pd.wAt);
 
@@ -15879,31 +15891,31 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    {
       void *vp1;
 
-      for (vp0=pd.Cdmuts,i=0; i < ndiag; i++,vp0=ATL_AddBytesPtr(vp0,pd.dCinc);)
+      for (vp0=pd.Cdmuts,i=0; i < ndiag; i++,vp0=ATL_AddBytesPtr(vp0,pd.dCinc))
          ATL_lock_init(vp0);
 
       vp0 = pd.KbegCtr;
       vp1 = pd.KdonCtr;
       for (i=0; i < ndiag; i++)
       {
-         ATL_gatmctr_set(vp0, P, pd.nkblks, ATL_GAC_PUB);
-         ATL_gatmctr_set(vp1, P, pd.nkblks, ATL_GAC_PUB);
+         ATL_gatmctr_init(vp0, P, pd.nkblks, ATL_GAC_PUB);
+         ATL_gatmctr_init(vp1, P, pd.nkblks, ATL_GAC_PUB);
          vp0 = ATL_AddBytesPtr(vp0, pd.KBCstr);
-         vp1 = ATL_AddBytesPtr(vp1, pd.KECstr);
+         vp1 = ATL_AddBytesPtr(vp1, pd.KDCstr);
       }
-      ATL_gatmctr_set(pd.dCtr, P, ndiag, ATL_GAC_PUB);
+      ATL_gatmctr_init(pd.dCtr, P, ndiag, ATL_GAC_PUB);
 
-      vp0 = pd.cblksBV;
+      vp0 = pd.cblkBV;
       for (i=0; i < ndiag-1; i++)
       {
          ATL_tInitBV(vp0, ndiag-i-1, P);
-         vp0 = ATL_AddBytesPtr(vp3, pd.Cstr);
+         vp0 = ATL_AddBytesPtr(vp0, pd.Cstr);
       }
-      ATL_tInitBV(pd.cpydoneBV, ndiag, P);
+      ATL_tInitBV(pd.cpydonBV, ndiag, P);
       ATL_tInitBV(pd.dbetaBV, ndiag, P);
    }
 
-//   ATL_goParallel(P, DoWorkN, NULL, &pd, NULL);
+   ATL_goParallel(P, DoWorkN, NULL, &pd, NULL);
    #ifdef DEBUG2
       ATL_assert(ATL_FindFirstUnsetBitBV(pd.cblkBV, 0) == -1);
    #endif
@@ -15911,7 +15923,7 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
 /*
  * Free allocated structures and return; 
  */
-   for (vp0=pd.Cdmuts,i=0; i < ndiag; i++,vp0=ATL_AddBytesPtr(vp0,pd.dCinc);)
+   for (vp0=pd.Cdmuts,i=0; i < ndiag; i++,vp0=ATL_AddBytesPtr(vp0,pd.dCinc))
       ATL_lock_destroy(vp0);
    free(vp);
    return(0);
@@ -19344,6 +19356,7 @@ void *ATL_newTasklist(unsigned long ntasks, unsigned int P)
 
 @skip void *ATL_gatmctr_allocArray(unsigned int P, long N, long flg);
 size_t ATL_gatmctr_sizeof(unsigned int P, long flg);
+void *ATL_gatmctr_init(void *ac, unsigned int P, long cnt, long flg);
 void *ATL_gatmctr_alloc(unsigned int nctr, unsigned int P, long cnt, long flg,
                         long *inc);
 void ATL_gatmctr_initByRank(void *ac, unsigned int rank, long lowPrv, 
@@ -19357,8 +19370,7 @@ long ATL_gatmctr_dec(void *ac, unsigned int rank);
 @ROUT ATL_gatmctr_new
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2016
 #include "atlas_gatmctr.h" /* scope to understand data struct */
-static INLINE 
-   void *ATL_gatmctr_set(void *ac, unsigned int P, long cnt, long flg)
+void *ATL_gatmctr_init(void *ac, unsigned int P, long cnt, long flg)
 {
    long *gp = ATL_AlignSafeLS(ac);
    long cntPrv, lowPub, cntPub;
@@ -19450,7 +19462,7 @@ size_t ATL_gatmctr_sizeof(unsigned int P, long flg)
    {
       long incCnt=ATL_SAFELS, incLow;
       #if !ATL_ATM_ASM
-         inc += (long) ATL_AlignSafeLS(sizeof(ATL_lock_t));
+         incCnt += (long) ATL_AlignSafeLS(sizeof(ATL_lock_t));
       #endif
       incLow = sizeof(long)*P;
       incLow = (long) ATL_AlignSafeLS(incLow);
@@ -19478,7 +19490,7 @@ void *ATL_gatmctr_alloc(unsigned int nctr, unsigned int P, long cnt, long flg,
       void *gp;
       unsigned int i;
 
-      sz = ATL_gatmctr_sz(P, flg);
+      sz = ATL_gatmctr_sizeof(P, flg);
       if (inc)
          *inc = sz;
       vp = malloc(ATL_SAFELS+nctr*sz);
@@ -19566,7 +19578,7 @@ void *ATL_gatmctr_new
    if (N)
    {
       lp = ATL_gatmctr_alloc(1, P, N, flg, NULL);
-      lp = ATL_gatmctr_set(lp, P, N, flg);
+      lp = ATL_gatmctr_init(lp, P, N, flg);
    }
 @beginskip
    if (N <= (P<<2) || GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
@@ -19679,6 +19691,7 @@ void ATL_gatmctr_print(FILE *fpout, void *ac)
       lac = ATL_AddBytesPtr(lp, incLow);
       for (i=0; i < P; i++, lac=ATL_AddBytesPtr(lac, incCnt))
          fprintf(fpout, "   %ld: low=%ld, cnt=%ld\n", i, lp[i], *lac);
+      fprintf(fpout, "   L1: low=0, cnt=%ld\n", *lac);
    }
    else if (GAC_FLAG_SET(flg, ATL_GAC_NOPUB))
    {

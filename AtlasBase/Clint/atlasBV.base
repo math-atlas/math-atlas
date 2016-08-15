@@ -42,6 +42,7 @@ void ATL_ReverseAllBitsBV(ATL_BV_t *bv);
 void ATL_SetAllBitsBV(ATL_BV_t *bv);
 void ATL_UnsetAllBitsBV(ATL_BV_t *bv);
 int ATL_IsBitRangeSetBV(ATL_BV_t *bv, unsigned long b0, unsigned long bN);
+void ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos);
 
 #endif
 @ROUT testBV
@@ -444,6 +445,81 @@ int TestAllPos  // returns # of errors found
       printf("FindFirst%sBit: ALL CASES PASSED\n", set ? "Set":"Unset");
    return(nerr);
 }
+
+int testIncorp(long seed)
+{
+   int sl;
+   int nerr=0;
+   ATL_BV_t *src, *dst;
+/*
+ * Sanity test with 0 bounds (1 bounds tested in main loop)
+ */
+   srand48(seed);
+   src = ATL_NewBV(3);
+   dst = ATL_NewBV(5);         //  00000 (right least sig)
+   ATL_ReverseAllBitsBV(src);  //    111
+   ATL_IncorpBV(dst, src, 1);  // 001110
+   nerr = (ATL_IsBitSetBV(dst, 0) != 0);
+   nerr |= (ATL_IsBitSetBV(dst, 1) != 1);
+   nerr |= (ATL_IsBitSetBV(dst, 2) != 1);
+   nerr |= (ATL_IsBitSetBV(dst, 3) != 1);
+   nerr |= (ATL_IsBitSetBV(dst, 4) != 0);
+   nerr |= (ATL_IsBitSetBV(dst, 5) != 0);
+   if (nerr)
+      fprintf(stderr, "INCORP MISMATCH: exp=%x, got=%x\n", 0xE, dst[1]);
+   assert(!nerr);
+   ATL_FreeBV(src);
+   ATL_FreeBV(dst);
+   for (sl=0; sl < 4*bpiBV; sl++)  // source length
+   {
+      const int nselt=(sl+bpiBV-1)>>shBV;
+      ATL_BV_t pos;
+      src = ATL_NewBV(sl);
+      for (pos=0; pos < nselt; pos++)   
+         ATL_SetEltBV(src, pos, lrand48()); // set source to random bit pattern
+      for (pos=0; pos <= 2*bpiBV; pos++)
+      {
+         ATL_BV_t i;
+         const int dl = sl+pos+7;
+         dst = ATL_NewBV(dl);         // all 0s
+         ATL_ReverseAllBitsBV(dst);  // all 1s
+         ATL_IncorpBV(dst, src, pos);
+         for (i=0; i < sl; i++)
+         {
+            if (ATL_IsBitSetBV(src, i) != ATL_IsBitSetBV(dst, i+pos))
+            {
+               fprintf(stderr, "INCORP MISMATCH SLEN=%ld, POS=%ld: bit=%ld\n", 
+                       sl, pos, i);
+               nerr++;
+               ATL_assert(!nerr);
+            }
+         }
+         for (i=0; i < pos; i++)
+         {
+            if (!ATL_IsBitSetBV(dst, i))
+            {
+               fprintf(stderr, "POS=%ld, SLEN=%ld: LOWER BOUND %ld ZEROED!\n", 
+                       pos, sl, i);
+               nerr++;
+               ATL_assert(!nerr);
+            }
+         }
+         for (i=pos+sl; i < dl; i++)
+         {
+            if (!ATL_IsBitSetBV(dst, i))
+            {
+               fprintf(stderr, "POS=%ld, SLEN=%ld: UPPER BOUND %ld ZEROED!\n", 
+                       pos, sl, i);
+               nerr++;
+               ATL_assert(!nerr);
+            }
+         }
+         ATL_FreeBV(dst);
+      }
+      ATL_FreeBV(src);
+   }
+   return(nerr);
+}
 int main(int nargs, char **args)
 {
    ATL_BV_t *bv, *bv0, vv;
@@ -614,6 +690,7 @@ int main(int nargs, char **args)
    assert(ATL_@(rt)BV(bv, 65) == 0);
    @endwhile
    ATL_FreeBV(bv);
+   testIncorp(0xfc135);
    assert(TestAllPos(6,  5, 1) == 0);
    assert(TestAllPos(6,  3, 1) == 0);
    assert(TestAllPos(6,  0, 1) == 0);
@@ -631,6 +708,69 @@ int main(int nargs, char **args)
  */
    printf("\nSUCCESS!\n\n");
    return(0);
+}
+@ROUT ATL_IncorpBV
+#include "atlas_bitvec.h"
+void ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos)
+/*
+ * Copy entire contents of src into dst, starting at position pos
+ */
+{
+   if (src)
+   {
+      ATL_BV_t ncpy=(*src), i; 
+      const ATL_BV_t nr=ncpy&modmskBV, pr=pos&modmskBV;
+      ATL_assert(dst);
+      ATL_assert(pos+ncpy < *dst);
+      ncpy >>= shBV;             /* # of full array entries to copy */
+      src++;                     /* first src entry to copy */
+      dst += 1 + (pos >> shBV);  /* first affected dest entry */
+      if (pr)     /* usual case wt pos bits from old, to cancatonate */
+      {           /* with 32-pos bits from src */
+         unsigned char nnew = bpiBV - pr;
+         const ATL_BV_t oldmsk = (1L<<pr)-1;
+         ATL_BV_t last = *dst & oldmsk;
+         for (i=0; i < ncpy; i++)
+         {
+            ATL_BV_t s = src[i];
+            dst[i] = (s<<pr) | last;
+            last = s >> nnew;
+         }
+         if (nr)  /* partial last block */
+         {
+            ATL_BV_t d = dst[ncpy], s=src[ncpy], msk=(1L<<nr)-1;
+            int nextra = pr+nr - bpiBV;
+            d = (d&(~oldmsk))|last;  /* new bits below pr, orig above */
+            s = s & msk;             /* kill high bits not copied */
+            msk = ~(msk<<pr);        /* nr 0s starting at pr */
+            d = d & msk;             /* kill middle bits coming from s */
+            d |= s << pr;
+            dst[ncpy] = d;
+            if (nextra > 0) /* nextra bits spill to next dest entry! */
+            {
+               int nhandled = nr-nextra;
+               s >>= nr-nextra;
+               msk = ~((1L<<nextra)-1);
+               d = dst[ncpy+1];
+               dst[ncpy+1] = (d&msk) | s;
+            }
+         }
+         else /* write pr remaining bits to last dst */
+            dst[ncpy] = (dst[ncpy]&(~oldmsk))|last;
+      }
+      else        /* best case, start on bpiBV boundary */
+      {
+         for (i=0; i < ncpy; i++)
+            dst[i] = src[i];
+         if (nr)  /* partial last block */
+         {
+            ATL_BV_t d = dst[ncpy], s=src[ncpy], msk=allsetBV<<nr;
+            d = d & msk;     /* kill low bits overwritten by src */
+            s = s & (~msk);  /* kill high bits not copied */
+            dst[i] = d | s;
+         }
+      }
+   }
 }
 @ROUT ATL_NewBV
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
@@ -1313,29 +1453,43 @@ unsigned long ATL_tGetTotBitsBV(void *bv)
 @ROUT ATL_tNewBV
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_tbitvec.h"
-#define DoSizeComp \
-{ \
-   bvSz = nbits >> 2; \
-   P = Mmin(P,bvSz);   /* want at least 4 bits per locBV! */ \
-   lnbits = nbits / P; \
-   nlrg = nbits - lnbits * P; \
-   nsml = P - nlrg; \
-   sumSz = 8*sizeof(long) ; \
-   sumSz = (unsigned long) ATL_AlignSafeLS(sumSz); \
-   bvElts = (nlrg) ? lnbits+1 : lnbits; \
-   bvElts = (bvElts+bpiBV-1)>>shBV; \
-   bvSz = (bvElts + 2) * sizeof(long); \
-   bvSz = (unsigned long) ATL_AlignSafeLS(bvSz); \
-   lckSz = sizeof(ATL_lock_t); \
-   lckSz = (unsigned long) ATL_AlignSafeLS(lckSz); \
+#define UL unsigned long
+static UL compSz(UL nbits, unsigned int *P, UL *SUMSZ, UL *LCKSZ, UL *BVSZ, 
+                 UL *LNBITS, UL *NLRG, UL *NSML)
+#undef UL
+{
+   unsigned long sumSz, lckSz, bvSz, bvElts, lnbits, nlrg, nsml;
+   unsigned int p=*P;
+   bvSz = nbits >> 2; 
+   p = *P;
+   p = Mmin(p,bvSz);   /* want at least 4 bits per locBV! */
+   p = Mmax(p,1);
+   lnbits = nbits / p; 
+   nlrg = nbits - lnbits * p; 
+   nsml = p - nlrg; 
+   sumSz = 8*sizeof(long) ; 
+   sumSz = (unsigned long) ATL_AlignSafeLS(sumSz); 
+   bvElts = (nlrg) ? lnbits+1 : lnbits; 
+   bvElts = (bvElts+bpiBV-1)>>shBV; 
+   bvSz = (bvElts + 2) * sizeof(long); 
+   bvSz = (unsigned long) ATL_AlignSafeLS(bvSz); 
+   lckSz = sizeof(ATL_lock_t); 
+   lckSz = (unsigned long) ATL_AlignSafeLS(lckSz);
+   *P = p;
+   *SUMSZ = sumSz;
+   *LCKSZ = lckSz;
+   *BVSZ  = bvSz;
+   *LNBITS = lnbits;
+   *NLRG = nlrg;
+   *NSML = nsml;
+   return(bvElts);
 }
+
 size_t ATL_tSizeofBV(unsigned long nbits, unsigned int P)
 {
-   unsigned long sumSz, lckSz, bvSz, bvElts, lnbits, nlrg, nsml, i;
-/*
- * Allocate memory, and fill in summary area 
- */
-   DoSizeComp;
+   unsigned long sumSz, lckSz, bvSz, lnbits, nlrg, nsml;
+
+   compSz(nbits, &P, &sumSz, &lckSz, &bvSz, &lnbits, &nlrg, &nsml);
    return(sumSz + P*(lckSz + bvSz) + ATL_SAFELS); 
 }
 
@@ -1345,8 +1499,8 @@ void ATL_tInitBV(void *vp, unsigned long nbits, unsigned int P)
    {
       unsigned long sumSz, lckSz, bvSz, bvElts, lnbits, nlrg, nsml, i;
       long *lp=ATL_AlignSafeLS(vp);
-      DoSizeComp;
 
+      bvElts = compSz(nbits, &P, &sumSz, &lckSz, &bvSz, &lnbits, &nlrg, &nsml);
       lp = ATL_AlignSafeLS(vp);
       sumSz = ATL_lDivBySize(sumSz);
       lckSz = ATL_lDivBySize(lckSz);
@@ -1387,11 +1541,11 @@ void ATL_tInitBV(void *vp, unsigned long nbits, unsigned int P)
  */
 void *ATL_tNewBV(unsigned long nbits, unsigned int P)
 {
-   unsigned long sumSz, lckSz, bvSz, bvElts, lnbits, nlrg, nsml, i;
+   unsigned long sumSz, lckSz, bvSz, lnbits, nlrg, nsml;
    void *vp;
    long *lp;
 
-   DoSizeComp;
+   compSz(nbits, &P, &sumSz, &lckSz, &bvSz, &lnbits, &nlrg, &nsml);
 /*
  * Allocate memory, and fill in summary area 
  */
