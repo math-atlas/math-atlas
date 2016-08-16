@@ -42,7 +42,7 @@ void ATL_ReverseAllBitsBV(ATL_BV_t *bv);
 void ATL_SetAllBitsBV(ATL_BV_t *bv);
 void ATL_UnsetAllBitsBV(ATL_BV_t *bv);
 int ATL_IsBitRangeSetBV(ATL_BV_t *bv, unsigned long b0, unsigned long bN);
-void ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos);
+int ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos);
 
 #endif
 @ROUT testBV
@@ -711,17 +711,20 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_IncorpBV
 #include "atlas_bitvec.h"
-void ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos)
+int ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos)
 /*
  * Copy entire contents of src into dst, starting at position pos
+ * RETURNS: number of bits copied.
  */
 {
+   int iret=0;
    if (src)
    {
       ATL_BV_t ncpy=(*src), i; 
       const ATL_BV_t nr=ncpy&modmskBV, pr=pos&modmskBV;
       ATL_assert(dst);
       ATL_assert(pos+ncpy < *dst);
+      iret = ncpy;
       ncpy >>= shBV;             /* # of full array entries to copy */
       src++;                     /* first src entry to copy */
       dst += 1 + (pos >> shBV);  /* first affected dest entry */
@@ -771,6 +774,7 @@ void ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos)
          }
       }
    }
+   return(iret);
 }
 @ROUT ATL_NewBV
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
@@ -1585,6 +1589,35 @@ void *ATL_tNewBV(unsigned long nbits, unsigned int P)
 @endskip
    return(vp);
 }
+@ROUT ATL_tGlb2locBV
+#include "atlas_tbitvec.h"
+long ATL_tGlb2locBV(ATL_BV_t *lbv, void *gbv, unsigned long pos)
+/*
+ * Combines all P individual global bitvecs into one local bitvec.
+ * Mutexes are not locked, so info may be wrong.
+ * RETURNS: number of unset bits in new local bitvec
+ */
+{
+   long nunset = 0;
+   if (gbv)
+   {
+      long *gp=ATL_AlignSafeLS(gbv), *tp;
+      const long P=gp[0], nbits=gp[1], inc=gp[4];
+      long i, nb;
+
+      ATL_assert(lbv);
+      ATL_assert(lbv[0] >= nbits+pos);
+      nb = pos;
+      tp = gp + gp[2] + P*gp[3];
+      for (i=0; i < P; i++)
+      {
+         nunset += tp[0];
+         nb += ATL_IncorpBV(lbv, tp+1, nb);
+         tp += inc;
+      }
+   }
+   return(nunset);
+}
 @ROUT atlas_tbitvec.h
 #ifndef ATLAS_TBITVEC_H
    #define ATLAS_TBITVEC_H
@@ -1647,6 +1680,12 @@ long ATL_tScopeBitBV(void *vp, unsigned long bit, unsigned int flg);
 #define ATL_tIsBitSetBV(bv_, p_) ATL_tScopeBitBV(bv_, p_, 1)
 #define ATL_tSetBitBV(bv_, p_) ATL_tScopeBitBV(bv_, p_, 2)
 #define ATL_tUnsetBitBV(bv_, p_) ATL_tScopeBitBV(bv_, p_, 4)
+/*
+ * Combines all P individual global bitvecs into one local bitvec.
+ * Mutexes are not locked, so info may be wrong.
+ * RETURNS: number of unset bits in new local bitvec
+ */
+long ATL_tGlb2locBV(ATL_BV_t *lbv, void *gbv, unsigned long pos);
 
 /*
  * These functions find a [set,unset] bit, and complement it.
@@ -1765,6 +1804,45 @@ void testSetUnset(ulong len, unsigned int P)
    ATL_tFreeBV(bv);
 }
 
+void testGlb2loc(ulong nbits, unsigned int P)
+{
+   void *gbv;
+   ATL_BV_t *lbv;
+   long i, pos;
+
+   gbv = ATL_tNewBV(nbits, P);
+   lbv = ATL_NewBV(nbits+bpiBV);
+   srand48(nbits+(P<<3)+77);
+   for (i=0; i < nbits; i += bpiBV)
+      setRange(gbv, i, lrand48());
+
+   for (pos=0; pos < bpiBV; pos++)
+   {
+      long nunset, un=0;
+      nunset = ATL_tGlb2locBV(lbv, gbv, pos);
+      for (i=0; i < nbits; i++)
+      {
+         int SET;
+         SET = ATL_IsBitSetBV(lbv, pos+i);
+         if (!SET)
+            un++;
+         if (SET != ATL_tIsBitSetBV(gbv, i))
+         {
+            fprintf(stderr, "Gbl2loc MISMATCH: nbits=%ld, pos=%ld, idx=%ld\n",
+                    nbits, pos, i);
+            ATL_assert(0);
+         }
+      }
+      if (nunset != un)
+         fprintf(stderr, "Gbl2loc NUNSET WRONG: exp=%ld, got=%ld\n",
+                 un, nunset);
+
+      ATL_assert(nunset == un);
+   }
+   ATL_tFreeBV(gbv);
+   ATL_FreeBV(lbv);
+}
+
 int main(int nargs, char **args)
 {
    ATL_BV_t *bv, *bv0, vv;
@@ -1876,6 +1954,7 @@ int main(int nargs, char **args)
    testSetUnset(P*7+1,  P);
    if (P > 1)
       testSetUnset(P*7+1,  (P>>1));
+   testGlb2loc(777, P);
 /*
  * If no assertion failed, print success and return 0 for no error!
  */
