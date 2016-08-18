@@ -1215,6 +1215,7 @@ struct ATL_tsyrk_ammN
    uint szS;      /* size of SYRK A blk */
    uint flg;      /* bitvec:0: set means C is upper, 1: set TA==AtlasNoTrans */
    VCHAR NODWORK; /* set to 1 by first thread to find all work started */
+   VCHAR DONE;    /* set to 1 by first thread to find all work complete */
    VCHAR ngrab;   /* # of off-diag C blks to take at once */
 };
 @beginskip
@@ -15535,6 +15536,8 @@ static void DoBlksWtCpy
    const size_t pansz0=pd->pansz0, nkblks=pd->nkblks, ndiag=pd->ndiag;
    long kblk = pd->nkblks - kctr, b;
    void *KbegCtr = ATL_AddBytesPtr(pd->KbegCtr, dblk*pd->KBCstr);
+   void *KdonCtr = ATL_AddBytesPtr(pd->KdonCtr, dblk*pd->KDCstr);
+   void *cpydonBV = pd->cpydonBV;
    TYPE *wA=pd->wA, *wB=pd->wAt;
    const TYPE *A = pd->A;
    void *Cdmut;
@@ -15542,12 +15545,16 @@ static void DoBlksWtCpy
    GetWrkAB(ip, flg, pansz0, ndiag, dblk, kblk, &wA, &wB);
    syrkBlk(ip, flg|4, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
            rS, iS, wA, wA, wB, wB, rC, iC, U);
+   if (ATL_gatmctr_dec(KdonCtr, rank) == 1)
+      ATL_tSetBitBV(cpydonBV, dblk);
    while ((kctr = ATL_gatmctr_dec(KbegCtr, rank)))
    {
       kblk = nkblks - kctr;
       GetWrkAB(ip, flg, pansz0, ndiag, dblk, kblk, &wA, &wB);
       syrkBlk(ip, flg, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
               rS, iS, wA, wA, wB, wB, rC, iC, U);
+      if (ATL_gatmctr_dec(KdonCtr, rank) == 1)
+         ATL_tSetBitBV(cpydonBV, dblk);
    }
 /*
  * For upper, write to U ptr before seizing mutex.  After getting mutex,
@@ -15687,7 +15694,14 @@ static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd, unsigned long diP)
  */
 static void DoNonDiag_dep(const int rank, ATL_tsyrk_ammN_t *pd)
 {
+   const long ndiag = pd->ndiag;
    void *locBV = ATL_AddBytesPtr(pd->locBVs,rank*pd->LOCstr);
+   {
+      long *lp=locBV;
+      const long N=(ndiag+bpiBV-1)>>shBV;
+      *lp = ndiag;
+      lp[1] = lp[N] = 0;  /* all but 1st & last entries filled in from glob */
+   }
    while (!pd->cpydone)
    {
       long nunset;
@@ -15700,32 +15714,106 @@ static void DoNonDiag_dep(const int rank, ATL_tsyrk_ammN_t *pd)
    }
 }
 
+
 static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd,const unsigned int P)
 {
+   ipinfo_t *ip=pd->ip;
    const unsigned long ndiag=pd->ndiag;
+   const int UPPER = (pd->flg & 1);
+   TYPE *wC = pd->wC + rank*pd->wrksz, *wA = pd->wA, *wB = pd->wAt;
+   TYPE *C = pd->C;
+   #ifdef TCPLX
+      const TYPE *beta=pd->beta;
+      TYPE *rC = wC + ip->szC;
+   #else
+      const TYPE beta=pd->beta;
+      #define rC wC
+   #endif
+   const ablk2cmat_t blk2c=ip->blk2c;
+#if 0   /* ignore this until the high-overhead cleanup debugged */
 /*
  * First make one pass through cols, using only multiples of my rank
  */
    if (ndiag >= P)
    {
-      unsigned int ngrab=1;
-      unsigned long msk=1, i;
-      for (i=0; i < ndiag; i += P)
+      unsigned int ngrab=1, ngot;
+      unsigned long msk=1, old, i;
+      for (j=0; j < ndiag; j += P)
       {
-         const long col=i+rank;
+         const long c=j+rank;
+         long r;
          void *cblkBV;
-         if (col >= ndiag)
+         if (c >= ndiag)
             break;
-         cblkBV = ATL_AddBytesPtr(pd->cblkBV, pd->Cstr*col);
+         cblkBV = ATL_AddBytesPtr(pd->cblkBV, pd->Cstr*c);
          
          if (ngrab != pd->ngrab)
          {
             ngrab = pd->ngrab;
             msk = (ngrab < bpiBV) ? ((1L<<ngrab)-1):allsetBV;
          }
+/*
+ *       Attempt to get ngrab rowblks of C from this c's cblkBV starting @ r
+ */
+         r = ATL_tFindUnsetBitBV(cblkBV, rank);
+         if (r < 0)
+            continue;
+         ngot = ngrab;
+         old = ATL_tSetRangeBV(cblkBV, &ngot, r, msk);
+         if (ngot)
+         {
+            unsigned int k;
+            r = (UPPER) ? r : (1+c+r);
+            for (k=0; k < ngot; k++)
+            {
+               if ((msk>>k)&(1L))
+               {
+                  Mjoin(PATL,iploopsK)(ip, k+r, c, NULL, NULL, 
+                     IdxC_ip(ip, C, r+k, c), 3, IdxAw_ip(ip, wA, r+k, 0), 
+                     IdxBw_ip(ip, wB, 0, c), rC, wC, beta, blk2c);
+               }
+            }
+         }
       }
    }
+#endif
+/*
+ * Now, all cores to into mode where they steal work from each other,
+ * taking only 1 Cblk at a time.  Threads start with differing cblkBV regions 
+ * to minimize contention.
+ */
    pd->ngrab = 1;  /* tell other cores to stop bogarting the Cblks */
+   if (!pd->DONE)
+   {
+      void *cblkBV;
+      const long b = ndiag / P, bs=b*rank;
+      long j;
+
+      for (j=0; j < ndiag; j++)
+      {
+         long r, c;
+         if (UPPER)
+         {
+            if (!j)
+               continue;
+         }
+         else if (j == ndiag-1)
+            break;
+         c = bs + j;
+         c = (c < ndiag) ? c : ndiag - c;
+         cblkBV = ATL_AddBytesPtr(pd->cblkBV, pd->Cstr*c);
+         DOROWS:
+            r = ATL_tSetUnsetBitBV(cblkBV, rank);
+            if (r < 0)
+               goto DONE_ROWS;
+            r = (UPPER) ? r : (1+c+r);
+            Mjoin(PATL,iploopsK)(ip, r, c, NULL, NULL, IdxC_ip(ip, C, r, c), 
+                                 3, IdxAw_ip(ip, wA, r, 0), 
+                                 IdxBw_ip(ip, wB, 0, c), rC, wC, beta, blk2c);
+         DONE_ROWS:;
+      }
+   }
+   
 }
 
 static void DoWorkN(void *vpp, int rank, int vrank)
@@ -15739,7 +15827,8 @@ static void DoWorkN(void *vpp, int rank, int vrank)
       DoDiag(vrank, pd, diP);
    if (!pd->cpydone)
       DoNonDiag_dep(vrank, pd);
-   DoNonDiag(vrank, pd, P);
+   if (!pd->DONE)
+      DoNonDiag(vrank, pd, P);
 }
 /*
  * SYRK where all parallelism comes from blocks of N, built atop amm directly
@@ -15870,6 +15959,8 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    pd.beta = beta;
    pd.szCs = szC;
    pd.szS = szS;
+   pd.DONE = pd.NODWORK = 0;
+   pd.ngrab = 4;  /* adjust this later */
       
    pd.sya2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT):Mjoin(PATL,a2blk_syrkN);
    if (Uplo == AtlasLower)
