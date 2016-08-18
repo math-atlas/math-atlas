@@ -3996,6 +3996,234 @@ void MMFixGenK(char pre, ATL_mmnode_t *mb, int K)
 }
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+double TimeMMKernel3F
+(
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int flag,                   /* 1: ignore any prior output file */
+   ATL_mmnode_t *mmp,           /* ptr to mmkern struct */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int mb, int nb, int kb,      /* dimensions to time */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush,                  /* >=0: size of cache flush, else ignored */
+   int aFL,                     /* >=0: size of cache flush, else ignored */
+   int bFL,                     /* >=0: size of cache flush, else ignored */
+   int cFL                      /* >=0: size of cache flush, else ignored */
+)
+/*
+ * flag - take actions the following actions if bit location is set:
+ *    0 : ignore any prior output file on output
+ *    1 : time in serial rather than parallel
+ */
+{
+   char fnam[128], ln[4096];  /* security from 1991 */
+   const char *LO = FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "IJK": "JIK";
+   const int vl=mmp->vlen;
+   const int ku=mmp->ku;
+   const int KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+vl-1)/vl)*vl;
+   const int FORCETIME = flag&1, SERIAL=flag&2;
+   int KU=mmp->ku;
+   int DOTIME=1;
+   int MV=3;  /* bit pattern on move CBA (C=4, B=2, A=1) */
+   char *be, *gs0=mmp->genstr;
+   int i, j;
+   char ch;
+   double *dp;
+   MV = ((mmp->flag) >> MMF_MVA)&7;
+/*
+ * If it's a emit_mm generated file with a missing or bad genstring, make it
+ */
+
+   if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
+      KU = KB;
+   else if (ku > KB)
+      KU = KB;
+   if (mmp->ID == 0 && (KB != mmp->kbB || KU != mmp->ku || !mmp->genstr))
+   {
+      int kb0=mmp->kbB, ku0=mmp->ku;
+      mmp->kbB = KB;
+      mmp->ku = KU;
+      mmp->genstr = MMGetGenString(pre, mmp);
+      mmp->kbB = kb0;
+      mmp->ku = ku0;
+   }
+/*
+ * If the file is generated, call generator to create it
+ */
+   if (mmp->genstr)
+      assert(!MMDoGenString(verb, mmp->genstr));
+   else if (verb > 2)
+      printf("NO genstr\n");
+/*
+ * Figure out the name of the output file
+ */
+   if (FORCETIME)
+      strcpy(fnam, "res/tmpout.ktim");
+/*
+ * PREammID_MBxNBxKB_MUxNUxKU_FLAG_v[M,K]VLENbBETA_CFLUSH
+ */
+   else
+   {
+      if (mmp->vlen < 2)
+         ch = 'S';
+      else
+         ch = (FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? 'K' : 'M';
+
+      sprintf(fnam,
+      "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
+              pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, KU,
+              mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
+      if (mmp->blask == 1)
+      {
+         fnam[5] = 's';
+         fnam[6] = 'y';
+         fnam[7] = 'r';
+         fnam[8] = 'k';
+      }
+      else if (mmp->blask == 2)
+      {
+         fnam[5] = 's';
+         fnam[6] = 'y';
+         fnam[7] = 'm';
+         fnam[8] = 'm';
+      }
+      else if (mmp->blask == 3)
+      {
+         fnam[5] = 't';
+         fnam[6] = 'r';
+         fnam[7] = 'm';
+         fnam[8] = 'm';
+      }
+   }
+/*
+ * If we actually need to do timing, must also construct timer call
+ */
+   if (!FORCETIME)
+      DOTIME = !FileExists(fnam);
+   #define RESACT 2   /* want average frm ReadResultsFile for parallel */
+   if (DOTIME)
+   {
+      char *nm="amm";
+      if (mmp->blask == 1)
+         nm = "syk";
+      else if (mmp->blask == 2)
+         nm = "sym";
+      else if (mmp->blask == 3)
+         nm = "trm";
+      i = sprintf(ln, "make x%c%stime_pt3f mb=%d nb=%d kb=%d",
+                  pre, nm, mb, nb, KB);
+      if (mflop)
+         i += sprintf(ln+i, " FMFS=\"-Rf %d\"", mflop);
+      if (SERIAL)
+         i += sprintf(ln+i, " NPROC=1");
+      if (mmp->genstr)
+         i += sprintf(ln+i, " mmrout=%s", mmp->rout);
+      else
+         i += sprintf(ln+i, " mmrout=AMMCASES/%s", mmp->rout);
+      i += sprintf(ln+i, " mu=%d nu=%d ku=%d", mmp->mu, mmp->nu, KU);
+    if (mmp->vlen)
+       i += sprintf(ln+i, " vlen=%d", mmp->vlen);
+    if (mmp->szExtra)
+       i += sprintf(ln+i, " szExtra=%d", mmp->szExtra);
+    if (mmp->szC)
+       i += sprintf(ln+i, " szC=%d", mmp->szC);
+    if (mmp->szB)
+       i += sprintf(ln+i, " szB=%d", mmp->szB);
+    if (mmp->szA)
+       i += sprintf(ln+i, " szA=%d", mmp->szA);
+      i += sprintf(ln+i, " mvA=%d mvB=%d mvC=%d", ((mmp->flag >> MMF_MVA)&1),
+                   ((mmp->flag >> MMF_MVB)&1), ((mmp->flag >> MMF_MVC)&1));
+      i += sprintf(ln+i, " kmoves=\"");
+      if (FLAG_IS_SET(mmp->flag, MMF_MVA))
+         i += sprintf(ln+i, " -DATL_MOVEA");
+      if (FLAG_IS_SET(mmp->flag, MMF_MVB))
+         i += sprintf(ln+i, " -DATL_MOVEB");
+      if (FLAG_IS_SET(mmp->flag, MMF_MVC))
+      i += sprintf(ln+i, " -DATL_MOVEC");
+      i += sprintf(ln+i, "\"");
+      //if (cflush > 0 || aFL > 0 || bFL > 0 || cFL > 0)
+      {
+         if (cflush > 0)
+               i+= sprintf(ln+i, " CFLUSH=\"%d ", cflush);
+            else
+               i+= sprintf(ln+i, " CFLUSH=\"%d", -1);
+            if (aFL > 0)
+               i+= sprintf(ln+i, " -Fa %d ", aFL);
+            if (bFL > 0)
+               i+= sprintf(ln+i, " -Fb %d ", bFL);
+            if (cFL > 0)
+               i+= sprintf(ln+i, " -Fc %d ", cFL);
+            i+= sprintf(ln+i, " \"");
+      }
+      if (mmp->pref)
+      {
+         if (mmp->pfLS)
+            i += sprintf(ln+i, " pf=%d pfLS=%d", mmp->pref, mmp->pfLS);
+         else
+            i += sprintf(ln+i, " pf=%d", mmp->pref);
+      }
+      if (beta == 1 || beta == 0)
+         i += sprintf(ln+i, " beta=%d", beta);
+      else
+         i += sprintf(ln+i, " beta=-1 betan=\"N1\"");
+      ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+      if (mmp->comp)
+         i += sprintf(ln+i, " %cMC=\"%s\"", ch, mmp->comp);
+      if (mmp->cflags)
+         i += sprintf(ln+i, " %cMCFLAGS=\"%s\"", ch, mmp->cflags);
+      i += sprintf(ln+i, " outF=\"-f %s\"", fnam);
+   }
+   if (FORCETIME || !FileExists(fnam))
+   {
+      if (verb < 3)
+         i += sprintf(ln+i, " > /dev/null 2>&1\n");
+      else
+         i += sprintf(ln+i, "\n");
+      if (verb > 1)
+         fprintf(stdout, "SYSTEM: %s", ln);
+      if (i=system(ln))
+      {
+         fprintf(stderr, "ERROR %d IN COMMAND: %s", i, ln);
+         fprintf(stderr, "   PROPOSED FILENAME: %s\n", fnam);
+         if (mmp->genstr)
+            fprintf(stderr, "   GENSTR='%s'\n", mmp->genstr);
+         sprintf(ln, "rm -f %s\n", fnam);
+         assert(!system(ln));
+         exit(-1);
+      }
+   }
+   if (mmp->genstr != gs0)  /* put genstr back to original value */
+   {
+      free(mmp->genstr);
+      mmp->genstr = gs0;
+   }
+   dp = ReadResultsFile(RESACT, 0, fnam);
+   if (!dp)
+   {
+      fprintf(stderr, "\nEmpty file '%s'!\n", fnam);
+      fprintf(stderr, "From command: '%s'\n", ln);
+      fprintf(stderr, "DOTIME=%d, genstr='%s'\n", DOTIME,
+              (mmp->genstr) ? mmp->genstr : "");
+      exit(-1);
+   }
+   if (mmp->genstr && DOTIME)
+   {
+      sprintf(ln, "rm %s\n", mmp->rout);
+      i = system(ln);  /* return value unused, just to shut gcc up */
+   }
+   if (kb != KB)
+   {
+      double mf;
+      mf = *((double*)ReadResultsFile(RESACT, 0, fnam));
+      mf = (mf / KB)*kb;
+      return(mf);
+   }
+   return(*((double*)ReadResultsFile(RESACT, 0, fnam)));
+   #undef RESACT
+}  /* end TimeMMKernel3F */
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 double TimeMMKernel
 (
    int verb,                    /* 0: no output, 1 min output, 2: full output */

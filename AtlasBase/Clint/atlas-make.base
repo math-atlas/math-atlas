@@ -2331,6 +2331,7 @@ kmaj=0
 mvA=1
 mvB=1
 mvC=0
+CFLUSH="-1"
 outF=
 bcast=1
 vlen=1
@@ -2507,6 +2508,8 @@ xprefparse : $(mySRCdir)/prefparse.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/prefparse.c
 xammgen :  $(mySRCdir)/ammgen.c $(parsedeps) $(INCSdir)/atlas_mmgen.h
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/ammgen.c -lm
+xuammgen :  $(mySRCdir)/uammgen.c $(parsedeps) $(INCSdir)/atlas_mmgen.h
+	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/uammgen.c -lm
 xemit_amm : $(mySRCdir)/emit_amm.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/emit_amm.c -lm
 xemit_uamm : $(mySRCdir)/emit_uamm.c $(parsedeps)
@@ -2697,6 +2700,7 @@ res/@(pre)@(rt) : xgmmsearch
 	make @(pre)install_uamm_noclean ID=0
 	cp res/@(pre)uAMMFRC.sum $(BLDdir)/src/threads/lapack/amm/sumd/.
 
+@beginskip
 @(pre)install_uamm: res/@(pre)uAMMFRC.sum res/@(pre)UMMKCLEAN.sum \
               res/@(pre)UMMKCLEANBYNB.sum xemit_uamm
 @skip	- cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
@@ -2710,6 +2714,45 @@ res/@(pre)@(rt) : xgmmsearch
             -i res/@(pre)uAMMFRC.sum 
 	mv $(AMMdir)/UKERNEL/*.h $(INCAdir)/.
 	cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm
+@endskip
+@multidef pt c r
+   @ptyp s
+      @multidef pp c s
+   @ptyp d
+      @multidef pp z d
+   @ptyp s d
+@declare "@(pre)install_uamm_noclean: " y n 
+   xuammgen
+   @whiledef pp
+         res/@(pp)uAMMRES.sum
+   @endwhile
+@enddeclare
+	- cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
+	./xuammgen -p @(pre) -d $(AMMdir)/UKERNEL -I $(ID)
+	mv $(AMMdir)/UKERNEL/*.h $(INCAdir)/.
+	cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm
+   @ptyp s
+      @multidef pp c s
+   @ptyp d
+      @multidef pp z d
+@declare "@(pre)install_uamm: " y n 
+   xuammgen
+   @whiledef pp
+      @whiledef rt uAMMRES uAMMKCLEAN
+         res/@(pp)@(rt).sum
+      @endwhile
+   @endwhile
+@enddeclare
+	- cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
+	./xuammgen -p @(pre) -d $(AMMdir)/UKERNEL -I $(ID)
+	mv $(AMMdir)/UKERNEL/*.h $(INCAdir)/.
+	cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm
+   @ptyp z c
+@(pre)install_uamm_noclean: 
+	$(MAKE) @(upr)install_uamm_noclean
+@(pre)install_uamm: 
+	$(MAKE) @(upr)install_uamm
+   @ptyp !
 @(pre)install_ammm: @(pre)install_amm
    @ptyp s
       @multidef pp c s
@@ -2881,6 +2924,9 @@ x@(pre)nbtune : @(pre)nbtune.o @(pre)ammlib
 @(pre)trstime_pt.o : $(mySRCdir)/mmtime_pt.c
 	$(KC) $(KCFLAGS) -c -DTIME_TRMVK=1 -D@(typ)=1 \
               -o @(pre)trstime_pt.o $(mySRCdir)/mmtime_pt.c
+@(pre)trstime_pt3f.o : $(mySRCdir)/mmtime_pt3f.c
+	$(KC) $(KCFLAGS) -c -DTIME_TRMVK=1 -D@(typ)=1 $(TDEFS) \
+              -o @(pre)trstime_pt3f.o $(mySRCdir)/mmtime_pt3f.c
 @ptyp z c
    @define trsm @ATL_@(pre)ctrsmKL_rk2.o@
 @ptyp d s
@@ -2896,6 +2942,26 @@ x@(pre)trstime_pt : @(pre)trstime_pt.o $(L3Bdir)/kernel/@(trsm)
 	$(ATLRUN) $(MMTdir) x@(pre)trstime_pt -p $(NPROC) $(TIDLIST) \
            -m $(mb) -n $(nb) -k $(mb) -um 1 -un 1 -uk 1 $(FMFS) \
            -Ma 0 -Mb 0 -Mc 1 $(outF)
+x@(pre)trstime_pt3f : @(pre)trstime_pt3f.o $(L3Bdir)/kernel/@(trsm)
+	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)trstime_pt3f.o \
+         $(SYSdir)/time.o $(L3Bdir)/kernel/@(trsm) $(ATLASlib) $(LIBS)
+
+@ptyp d s
+bn = _b${betan}
+@(pre)ammtime_pt3f${bn}.o : $(mySRCdir)/mmtime_pt3f.c
+	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_GEMMK=1 \
+              -o @(pre)ammtime_pt3f${bn}.o $(mySRCdir)/mmtime_pt3f.c
+x@(pre)ammtime_pt3f : $(SYSdir)/time.o force_build
+	rm -f @(pre)mm.c
+	$(MAKE) @(pre)ammtime_pt3f${bn}.o
+	@(MCC) @(MMFLAGS) -DBETA$(betan)=1 -DMB=$(mb) -DNB=$(nb) \
+	    -DKB=$(kb) -D@(typ)=1 $(kmoves) -o @(pre)ammmKT.o -c $(mmrout)
+	$(CLINKER) $(CLINKFLAGS) -o x@(pre)ammtime_pt3f \
+	    @(pre)ammtime_pt3f${bn}.o @(pre)ammmKT.o $(SYSdir)/time.o $(LIBS)
+	$(ATLRUN) $(MMTdir) x@(pre)ammtime_pt3f -p $(NPROC) $(TIDLIST) \
+           -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) $(FMFS) \
+           -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) -F $(CFLUSH) $(outF)
+@ptyp !
 
 @skip @(pre)txover.o : $(mySRCdir)/txover.c
 @skip 	$(KC) $(KCFLAGS) -c -D@(typ) -o @(pre)txover.o $(mySRCdir)/txover.c
@@ -6047,7 +6113,7 @@ mySRCdir = $(SRCdir)/src/blas/level3/kernel
       @PTYP D S
 @skip         ATL_@(pre)trsmK_LLNU_a1.o
          ATL_@(pre)trsmKL_rk4.o ATL_@(pre)trsmKR_rk4.o ATL_@(pre)trsmKL_amm.o
-         ATL_@(pre)trsmK_L2blk.o
+         ATL_@(pre)trsmK_L2blk.o ATL_@(pre)trsmKLU_rk4.o
          @whiledef a X 1
             ATL_@(pre)sycopyU_a@(a).o ATL_@(pre)sycopyL_a@(a).o
             ATL_@(pre)trcopyL2U_N_a@(a).o ATL_@(pre)trcopyL2L_N_a@(a).o
@@ -6206,6 +6272,8 @@ ATL_@(pre)trsmKL_amm.o : $(mySRCdir)/ATL_trsmKL_amm.c
 	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -D@(typ) -DLeft_ $(mySRCdir)/ATL_trsmKL_amm.c
 ATL_@(pre)trsmKL_rk4.o : $(mySRCdir)/ATL_trsmKL_rk4.c
 	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -D@(typ) -DLeft_ $(mySRCdir)/ATL_trsmKL_rk4.c
+ATL_@(pre)trsmKLU_rk4.o : $(mySRCdir)/ATL_trsmKL_rk4.c
+	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -D@(typ) -DLeft_ -DATL_KERN_L4U $(mySRCdir)/ATL_trsmKL_rk4.c
       @whiledef al 1 X
          @whiledef rout sycopyL sycopyU
 ATL_@(pre)@(rout)_a@(al).o : $(mySRCdir)/ATL_@(rout).c $(dep)

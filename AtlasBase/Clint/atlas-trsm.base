@@ -2686,6 +2686,38 @@ ATL_SINLINE void ATL_rk4(ATL_CINT M, const TYPE *A, ATL_CINT lda,
 
 #if NRHS == 3
 /*
+ * Solve 4x4 L with 3 RHS symbolically for unit diagonal
+ * Answer is output into rBxx regs, which are live on input and output
+ */
+#define  ATL_trsmL4U(L_, ldl_, r_, ldr_) \
+{ \
+   const RTYPE L10=L_[1], L20=L_[2], L30=L_[3]; \
+   const RTYPE L21=L_[ldl_+2], L31=a[ldl_+3]; \
+   const RTYPE L32=L_[2*(ldl_)+3]; \
+/* \
+ * x1 = (b1 - L10 * x0) \
+ */ \
+   rB10 = (rB10 - L10*rB00);  \
+   rB11 = (rB11 - L10*rB01); \
+   rB12 = (rB12 - L10*rB02); \
+   ATL_pfl1W(r_ + ((ldr_)<<2)); \
+/* \
+ * x2 = (b2 - L20*x0 - L21*x1) \
+ */ \
+   rB20 = (rB20 - L20*rB00 - L21*rB10); \
+   rB21 = (rB21 - L20*rB01 - L21*rB11); \
+   rB22 = (rB22 - L20*rB02 - L21*rB12); \
+   ATL_pfl1W(r_ + ldr_+((ldr_)<<2)); \
+/* \
+ * x3 = (b3 - L30*x0 - L31*x1 - L32*x2) \
+ */ \
+   rB30 = (rB30 - L30*rB00 - L31*rB10 - L32*rB20); \
+   rB31 = (rB31 - L30*rB01 - L31*rB11 - L32*rB21); \
+   rB32 = (rB32 - L30*rB02 - L31*rB12 - L32*rB22); \
+   ATL_pfl1W(r_ + ((ldr_)<<1)+((ldr_)<<2)); \
+}  /* complete 4x4 NRHS=3 solve block */
+
+/*
  * Solve 4x4 L with 3 RHS symbolically
  * Answer is output into rBxx regs, which are live on input and output
  */
@@ -2763,6 +2795,42 @@ ATL_SINLINE void ATL_rk4(ATL_CINT M, const TYPE *A, ATL_CINT lda,
    rB02 = (rB02 - U01*rB12 - U02*rB22 - U03*rB32) * U00; \
 }  /* complete M=4, N=3 solve block */
 #elif NRHS == 4
+/*
+ * Solve 4x4 L with 4 RHS symbolically for unit diagonal
+ * Answer is output into rBxx regs, which are live on input and output
+ */
+#define  ATL_trsmL4U(L_, ldl_, r_, ldr_) \
+{ \
+   const RTYPE L10=L_[1], L20=L_[2], L30=L_[3]; \
+   const RTYPE L21=L_[ldl_+2], L31=a[ldl_+3]; \
+   const RTYPE L32=L_[2*(ldl_)+3]; \
+   ATL_pfl1W(r_ + ((ldr_)<<2)); \
+/* \
+ * x1 = (b1 - L10 * x0) \
+ */ \
+   rB10 = (rB10 - L10*rB00);  \
+   rB11 = (rB11 - L10*rB01); \
+   rB12 = (rB12 - L10*rB02); \
+   rB13 = (rB13 - L10*rB03); \
+   ATL_pfl1W(r_ + ldr_ +((ldr_)<<2)); \
+/* \
+ * x2 = (b2 - L20*x0 - L21*x1) \
+ */ \
+   rB20 = (rB20 - L20*rB00 - L21*rB10); \
+   rB21 = (rB21 - L20*rB01 - L21*rB11); \
+   rB22 = (rB22 - L20*rB02 - L21*rB12); \
+   rB23 = (rB23 - L20*rB03 - L21*rB13); \
+   ATL_pfl1W(r_ + ((ldr_)<<1)+((ldr_)<<2)); \
+/* \
+ * x3 = (b3 - L30*x0 - L31*x1 - L32*x2) \
+ */ \
+   rB30 = (rB30 - L30*rB00 - L31*rB10 - L32*rB20); \
+   rB31 = (rB31 - L30*rB01 - L31*rB11 - L32*rB21); \
+   ATL_pfl1W(r_ + ldr_+((ldr_)<<1)+((ldr_)<<2)); \
+   rB32 = (rB32 - L30*rB02 - L31*rB12 - L32*rB22); \
+   rB33 = (rB33 - L30*rB03 - L31*rB13 - L32*rB23); \
+}  /* complete 4x4 solve block */
+
 /*
  * Solve 4x4 L with 4 RHS symbolically
  * Answer is output into rBxx regs, which are live on input and output
@@ -3059,8 +3127,15 @@ static void ATL_trsmLLN
    }            /* end loop over RHS */
 }  /* end of static func ATL_trsmLLN */
 @ROUT ATL_trsmKL_rk4
-#define ATL_trsmLLN Mjoin(PATL,ktrsmLLN_rk4)
+#ifdef ATL_KERN_L4U
+   #define ATL_trsmLLNU Mjoin(PATL,ktrsmLLNU_rk4)
+   #define trsmL4 ATL_trsmL4U  /* use unit-diag kernel */
+void ATL_trsmLLNU
+#else
+   #define ATL_trsmLLN Mjoin(PATL,ktrsmLLN_rk4)
+   #define trsmL4 ATL_trsmL4  /* use non-unit-diag kernel */
 void ATL_trsmLLN
+#endif
 (
    ATL_CINT  M,   /* size of orig triangular matrix A */
    ATL_CINT  N,   /* number of RHS in B */
@@ -3126,7 +3201,7 @@ void ATL_trsmLLN
 /*
  *       Solve M=4 NRHS=4 TRSM symbolically
  */
-         ATL_trsmL4(a, lda, b, ldb);
+         trsmL4(a, lda, b, ldb);
 /*
  *       Write solved 4x4 block out to original workspace (final answer)
  *       Handle most common case with only one if
@@ -4317,7 +4392,11 @@ int Mjoin(PATL,trsmKL_rk2)   /* returns 0 on success */
    return(0);
 }
 @ROUT ATL_trsmKL_rk4
+#ifdef ATL_KERN_L4U
+int Mjoin(PATL,trsmKLU_rk4)   /* returns 0 on success */
+#else
 int Mjoin(PATL,trsmKL_rk4)   /* returns 0 on success */
+#endif
 (
    enum ATLAS_SIDE Side,
    enum ATLAS_UPLO Uplo,
@@ -4365,7 +4444,11 @@ int Mjoin(PATL,trsmKL_rk4)   /* returns 0 on success */
       cpypadL(Diag, M, A, lda, a, M4);
       if (t)
          free(t);
-      ATL_trsmLLN(M, N, alpha, a, B, ldb, w);
+      #ifdef ATL_KERN_L4U
+         ATL_trsmLLNU(M, N, alpha, a, B, ldb, w);
+      #else
+         ATL_trsmLLN(M, N, alpha, a, B, ldb, w);
+      #endif
    }
    else  /* Uplo == AtlasUpper */
    {
