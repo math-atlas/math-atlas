@@ -57,28 +57,42 @@ short type2shift(int type)
       #endif
    return(len);
 }
+
+#ifdef X86
 short vtype2elem(int type)
 /*
  * returns element count in vector depending on the vector type
  */
 {
    short nelem;
-#if defined(AVX)
-   if (type == T_VDOUBLE)
-      nelem = 4;
-   else if (type == T_VFLOAT) 
-      nelem = 8;
-#else
-   if (type == T_VDOUBLE)
-      nelem = 2;
-   else if (type == T_VFLOAT) 
-      nelem = 4;
-#endif
+   #if defined(AVX)
+      if (type == T_VDOUBLE)
+         nelem = 4;
+      else if (type == T_VFLOAT) 
+         nelem = 8;
+   #else
+      if (type == T_VDOUBLE)
+         nelem = 2;
+      else if (type == T_VFLOAT) 
+         nelem = 4;
+   #endif
    else
       fko_error(__LINE__, "Must be a vector type!");
    return nelem;
 }
-#ifdef X86
+
+short GetVecAlignByte()
+/*
+ * alignment needed in bytes for vector unit
+ */
+{
+   #if defined(AVX)
+      return(32);
+   #else
+      return(16);
+   #endif
+}
+
 int RevealArchMemUses(void)
 /*
  * reveals all the mem uses for DTabs/DTnzero, 
@@ -93,7 +107,7 @@ int RevealArchMemUses(void)
    enum inst inst;
    /*short op, ir;*/
    short op3, vr, ir;
-   int nchanges, arinst;
+   int nchanges;
    extern int DTabs, DTabsd, DTnzero, DTnzerod;
    /*extern int DTabss, DTabsds, DTnzeros, DTnzerods;*/
    extern BBLOCK *bbbase;
@@ -204,7 +218,9 @@ int RevealArchMemUses(void)
                CalcThisUseSet(ipN);
                CalcThisUseSet(ip);
                nchanges++;
-               break;   
+               break;  
+            default:
+               break;
          }
       }
    }
@@ -939,8 +955,8 @@ void Extern2Local(INSTQ *next, int rsav)
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs; 
    /*extern int        DTnzerods, DTnzeros, DTabsds, DTabss;*/
-   extern int FKO_FLAG;
-   short i, j=0, flag, ir, k, kk, reg1=0, freg, dreg, vfreg, vdreg;
+   /*extern int FKO_FLAG;*/
+   short i, j=0, flag, ir, k, reg1=0, freg, dreg, vfreg, vdreg;
    int USED;
    #ifdef X86_64
       int nof, ni, nd, dr;

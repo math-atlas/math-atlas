@@ -198,6 +198,7 @@ enum inst
    VDNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
    VDMAX,                      /* vr0 = max(vr1,vr2) */
    VDMIN,                      /* vr0 = min(vr1,vr2) */
+   VDHADD,                     /* vr0 = HADD(vr1), HADD(vr2)*/
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  * NOTE: it will only be used to load data. repeatble optimizations skip it
@@ -215,6 +216,8 @@ enum inst
           /* [int32] is split into 8 4 bit words; 1st word indicates which */
           /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
           /* starting in vr0[0], and ending in vr1[N], N=veclen-1 */
+   VDHIHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[1], vr0[1] = vr2[1] */
+   VDLOHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[0], vr0[1] = vr2[0] */
 /*
  * Single precision vector instructions
  * [memA] is a vector-aligned mem @ [mem] is any alignment
@@ -245,6 +248,7 @@ enum inst
    VFNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
    VFMAX,                      /* vr0 = max(vr1,vr2) */
    VFMIN,                      /* vr0 = min(vr1,vr2) */
+   VFHADD,                     /* vr0 = HADD(vr1), HADD(vr2)*/
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  * NOTE: it will only be used to load data. repeatble optimizations skip it
@@ -262,6 +266,8 @@ enum inst
           /* [int32] is split into 8 4 bit words; 1st word indicates which */
           /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
           /* starting in vr0[0], and ending in vr1[N], N=veclen-1 */
+   VFHIHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[1], vr0[1] = vr2[1] */
+   VFLOHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[0], vr0[1] = vr2[0] */
 /*
  * x86-only instructions
  */
@@ -605,6 +611,7 @@ char *instmnem[] =
    "VDNEG",
    "VDMAX",
    "VDMIN",
+   "VDHADD",
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  */
@@ -615,6 +622,8 @@ char *instmnem[] =
    "VDCMOV1",
    "VDCMOV2",
    "VDSHUF",
+   "VDHIHALF",
+   "VDLOHALF",
 /*
  * Single precision vector inst
  */
@@ -639,6 +648,7 @@ char *instmnem[] =
    "VFNEG",
    "VFMAX",
    "VFMIN",
+   "VFHADD",
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  */
@@ -649,6 +659,8 @@ char *instmnem[] =
    "VFCMOV1",
    "VFCMOV2",
    "VFSHUF",
+   "VFHIHALF",
+   "VFLOHALF",
 /*
  * x86-only instructions
  */
@@ -1004,6 +1016,9 @@ char *instmnem[] =
                               (i_) == VGR2VR64 )
 
 /*#define IS_MOVS(i_) ( (i_) == VDMOVS || (i_) == VFMOVS )*/
+
+#define IS_PREF(i_) ( (i_) == PREFR || (i_) == PREFW )
+
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);

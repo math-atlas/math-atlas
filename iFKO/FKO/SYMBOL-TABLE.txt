@@ -1,0 +1,158 @@
+*******************************************************************************
+*                       Updated By Majedul:
+*                    Details of Symbol Table in FKO 
+*******************************************************************************
+
+In latest FKO, symbol table consists of five different data structure; each data
+structure keeps certain type of information about an entity (an entity can be 
+a symbol or derefernce entry; where symbol represents variable, const, etc.). 
+Declaration of all them can be found in fko_types.h header file. 
+
+1. STname:
+-----------
+
+char **STname; 
+
+It stores name of variables, routine, labels, comments, etc. It can have some 
+special string for some entry, like: 
+"_NONLOCDEREF" -> There is one entry reserved in Symbol table for all non-local
+   memory access. Global variable 'STderef' stores the index of this entry. 
+"DT" -> indicates a Dereferce entry
+"_FPFC_0" -> indicates a entry for floating point constant
+
+2. STflag:
+-----------
+
+int *STflag;
+
+It stores the flags for various types, defined in fko_symtab.h, associated with
+the symbol table entry. 
+
+3. SToff: 
+----------
+
+union valoff
+{
+   int i;
+   short sa[4];
+   float f;
+   double d;
+   long l;
+}
+
+union valoff *SToff
+
+It is the most complex table which contains different information for different
+type of entities and the information is changed in different program state 
+overtime. Here I've summarized the usage for different types of entity: 
+
+a) For parameter: 
+parameters are numbered during declaration and this number is stored
+in SToff[].i at first. DT entry is created for each variable at certain point 
+and SToff[].sa[4] is updated. All variables are marked by types while creating
+prologue of the funtion. 
+
+   sa[0] = store the parameter# from SToff[].i [CreateLocalDerefs()]
+   sa[1] = stores the variable# by types  [NumberLocalsByType()]
+   sa[2] = index of DT entry for this varibale (DT entry uses the same table).
+   sa[3] = index of STarr array table for 2D pointer [CreateArrColPtrs()] 
+         = 0 otherwise [CreateLocalDerefs()].
+
+b) For Variable:
+   sa[0] = not defined
+   sa[1] = stores the variable# by types  [NumberLocalsByType()]
+   sa[2] = index of DT entry for this varibale (DT entry uses the same table).
+   sa[3] = not defined
+
+c) For Constant:
+   SToff[].i = saves value of int const
+   SToff[].l = saves value of long int const
+   SToff[].f = saves value of single precision float
+   SToff[].d = saves value of double precision float 
+
+d) For Local DT: (DT for variable)
+   
+   At the creation of such DT entry :
+   sa[0] = -REG_SP
+   sa[1] = ST index of the variable
+   sa[2] = -ST index of the variable
+   sa[3] = 0
+
+   At the creation of Prologue,
+   sa[0] = -REG_SP , when used in code
+            0 for unused variable/parameter [MarkUnusedLocals()].
+   sa[1] = ST index of DT enrty
+   sa[2] = -ST index of DT entry
+   sa[3] = estimated local frame offset
+
+   After repeatable optimizations and While finalizing the Prologue/Epilogue
+   sa[0] = -Reg_SP, when a live range of var is spilled 
+         = 0 when no live range of the var is spilled [MarkFinalUnusedLocals()]
+   sa[1] = ST index of the variable
+   sa[2] = 1
+   sa[3] = final local frame offset [CorrectLocalOffsets()]
+   
+e) For Non Local DT: (DT for memory access)
+   Typically, it represents <base> <add> <mul> <offset>, here add is the index 
+   ptr
+
+   1D Array:
+   ---------
+   First created while parsing the memory access (production of ptrderef )
+   sa[0] = ST index of base ptr
+   sa[1] = ST of index var
+         = 0 if no index var
+   sa[2] = size of data type  (1, 4, 8)
+   sa[3] = 0, if we have index var
+         = const index of array, if no index var
+
+   Very shortly this DT is updated again (value depends on architecture)
+   
+   sa[0] = -base_reg, register which is used to load base ptr
+   sa[1] = -index_reg, register which is used to load lda variable
+         = 0 if no index var
+   sa[2] =  size of data type  (1, 4, 8)
+   sa[3] =  0, if we have index var
+         = datasize*const_index, if no index ptr (sa[2]*sa[3])
+   
+   2D Array:
+   --------
+   At the creation
+   sa[0] = ST index of ptr
+   sa[1] = ST index of index var (ldas)
+   sa[2] = mul factor (1, 2, 3, 4)
+   sa[3] = offset (lower const index * datasize)
+
+4. STpts2 :
+-----------
+
+short *STpts2;
+
+For Local DT enrty: saves the ST index of the variable
+For Non Local DT entry: ST index of base ptr
+all other case: 0
+This table is specially useful when we need to find out base pointer from 
+nonlocal DT entry. It is also used to find the variable from local DT thoughout
+the code. 
+
+5. STarr:
+---------
+
+struct arrayinfo
+{
+   short ptr;     /* ST index of base array ptr */
+   short ndim;    /* dimension */
+   short *ldas;   /* list of ST index of ldas */
+   short *urlist; /* unroll factor for array (higher to lower dim) */
+   short *colptrs;/* list of ST index of column ptrs */
+   short *cldas;  /* custom ldas for lda, -lda, 3*lda, etc to optimize */
+};
+
+struct arrayinfo *STarr;
+
+STarr saves information for multi-dimension arrays. 
+
+
+
+
+

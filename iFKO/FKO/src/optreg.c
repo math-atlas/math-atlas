@@ -655,12 +655,15 @@ void CalcBlockIG(BBLOCK *bp)
             for (j=nn-1; j >= 0; j--)
                if (myIG[j] && myIG[j]->var == k) break;
             assert(j >= 0);
+#if 0
+            fprintf(stderr, "******dead var = %s ignode=%d\n", STname[k-1], j);
+#endif
 /*
  *          If dying range ends with a write, indicate it
  */
             if (BitVecCheck(ip->set, k+TNREG-1))
             {
-               fprintf(stderr,
+              fprintf(stderr,
                        "Inst dead on write, block=%d, inst='%s %s %s %s'!\n",
                        bp->bnum, instmnem[ip->inst[0]], op2str(ip->inst[1]),
                        op2str(ip->inst[2]), op2str(ip->inst[3]));
@@ -744,9 +747,10 @@ void CalcBlockIG(BBLOCK *bp)
                   fprintf(stderr, "%s(%d) set already exists, ignode = %d\n",
                           STname[myIG[j]->var-1], myIG[j]->var, j);
 #endif
-                  fko_error(__LINE__, "Live range of %s is set again without "
+                  fko_error(__LINE__, "Live range of %s(%d) is set again without "
                            "being used! Need to apply useless expression "
-                           "elimination first!", STname[myIG[j]->var-1]);
+                           "elimination first!", STname[myIG[j]->var-1], 
+                           myIG[j]->var);
                }
             }
          }
@@ -1101,7 +1105,7 @@ int CalcScopeIG(BLIST *scope)
  *       Majedul: 
  *       NOTE: we should not assume any order of execution!!! 
  *       stpush depends on the nwrite... which may not be seen in a 
- *       specific order!!! 
+ *       specific order!!! FIXED.
  */
          if (bl->blk->csucc)
             CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
@@ -2609,17 +2613,19 @@ int CopyPropTrans0(int SRCLIVE, BLIST *scope, INT_BVI scopeblks, BBLOCK *blk,
    INT_BVI ivsrc, ivdst;
    extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
+   /*int flag = 0;*/
 
    bl = FindInList(scope, blk);
    if (bl->ptr)
       change = 1;
 #if 0
-fprintf(stderr, "blk=%d, SRCLIVE=%d, dest=%s", blk->bnum, SRCLIVE, Int2Reg(-dest));
-fprintf(stderr, ", src=%s\n", Int2Reg(-src));
+fprintf(stderr, "blk=%d, SRCLIVE=%d, dest(%d)=%s", blk->bnum, SRCLIVE, 
+        dest, Int2Reg(-dest));
+fprintf(stderr, ", src(%d)=%s\n", src, Int2Reg(-src));
 #endif
-   ivdst = Reg2Regstate(src);
    ivdst = FKO_BVTMP = BitVecCopy(FKO_BVTMP, Reg2Regstate(dest));
    ivsrc = Reg2Regstate(src);
+
    for (ip=ipstart?ipstart->next:blk->ainst1; ip; ip = ip->next)
    {
       j = GET_INST(ip->inst[0]);
@@ -2899,6 +2905,7 @@ int DoCopyProp(BLIST *scope)
    INT_BVI scopeblks;
    INSTQ *ip=NULL, *next, *ipnext;
    BLIST *bl, *epil=NULL, *lp;
+   extern BBLOCK *bbbase;
 
    scopeblks = Scope2BV(scope);
    for (bl=scope; bl; bl = bl->next)

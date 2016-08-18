@@ -993,6 +993,8 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
 {
    short r0, r1;
    INSTQ *ip;
+   extern int FKO_UR;
+   extern int SKIP_CLEANUP;
 
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
@@ -1007,7 +1009,9 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  *    loop. Look into the code of GenCleanupLoop. 
  */
       /*SToff[OL_NEINC-1].i = unroll-1;*/
-      if (!(lp->LMU_flag & LMU_NO_CLEANUP) ) /* no need if no cleanup */
+      if (!(lp->LMU_flag & LMU_NO_CLEANUP)
+            && !SKIP_CLEANUP
+            && FKO_UR != -1) /* no need if no cleanup */
          SToff[OL_NEINC-1].i = unroll; /* it works. */
    }
    if (IS_CONST(STflag[lp->beg-1]))
@@ -1039,7 +1043,9 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  * FIXME: consider MAIN LOOP with vector/unroll and NINC format...
  */
    if (unroll > 1 && !IS_CONST(STflag[lp->end-1]) 
-         && !(lp->LMU_flag & LMU_NO_CLEANUP) )
+         && !(lp->LMU_flag & LMU_NO_CLEANUP) 
+         && !SKIP_CLEANUP
+         && FKO_UR != -1)
    {
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->end-1].sa[2], 0);
@@ -1126,6 +1132,8 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    INSTQ *ip;
    short r0, r1;
    int I, I0, N, inc, Ioff, i;
+   extern int FKO_UR;
+   extern int SKIP_CLEANUP;
 
    I  = lp->I;
    I0 = lp->beg;
@@ -1184,7 +1192,9 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  * NOTE: if NO_CLEANUP is used, we don't need the checking; but we need to init
  * the index variable
  */
-   if (unroll < 2 || (lp->LMU_flag & LMU_NO_CLEANUP) )
+   if (unroll < 2 || (lp->LMU_flag & LMU_NO_CLEANUP)
+         || SKIP_CLEANUP
+         || FKO_UR == -1) /* this is for unroll all the way */
       ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
    else
    {
@@ -1356,7 +1366,7 @@ void SetLoopControlFlag(LOOPQ *lp, int NeedKilling)
 /*
  *    We have already check the NSIMPLELC, if it is true, we will not enter 
  *    into this condition.
- */
+ */      
       /*if (!AlreadySimpleLC(lp) && !isLcOpt)*/
       if (!isLcOpt)
         lp->flag |= L_FORWARDLC_BIT;
@@ -1407,8 +1417,7 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
  *    optimized where as the clean up doesn't follow it. 
  */
       il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
-      //if (!AlreadySimpleLC(lp) && il)
-      if (!AlreadySimpleLC(lp) )
+      if (!AlreadySimpleLC(lp) && il)
         lp->flag |= L_FORWARDLC_BIT;
       else lp->flag |= L_SIMPLELC_BIT;
       if (il)
@@ -1437,17 +1446,11 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
       fprintf(stderr, "NO Loop test!!!\n");
 #endif
 /*
- * NOTE: this function is used both for main loop and cleanup loop. 
- * So far, cleanup loop doesn't have preheader yet and that's the way to
- * skip the ipinit
- * FIXME: if user throughs NO_CLEANUP markup, we need to skip the cleanup 
- * test too. but need initialization of index variable. 
- * need to formalize the whole process!!!
+ * FIXED: if user throughs NO_CLEANUP markup, we need to skip the cleanup 
+ * test too. but need initialization of index variable. did it SimpleLC
+ * and ForwardLoop function. same as unroll all the way
  */
-   /*if (lp->LMU_flag & LMU_NO_CLEANUP)
-      AddLoopControl(lp, NULL, ipupdate, ippost, iptest);
-   else*/
-      AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, ippost, iptest);
+   AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, ippost, iptest);
    KillAllInst(ipinit);
    KillAllInst(ipupdate);
    KillAllInst(iptest);
@@ -1686,17 +1689,6 @@ static BLIST *FindAllFallHeads0(BLIST *ftheads, INT_BVI iscope, BBLOCK *head,
    if (head->csucc && !BitVecCheck(inblks, head->csucc->bnum-1))
       ftheads = FindAllFallHeads(ftheads, iscope, head->csucc, tails, inblks);
 #endif
-
-/*
- * If it is tail blk, we don't need to recurse; otherwise, we will fall into
- * infinit loop. 
- * FIXME: if there is a nested loop inside the scope, it will fail. 
- * Need to handle specially for nested loop and will do it later.
- */
-#if 0   
-   if (BitVecCheck(tails, head->bnum-1))
-      return(ftheads);
-#endif   
 /*
  * make this node visited 
  */
@@ -1990,7 +1982,8 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
          InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
       }
 /*
- *    FIXME: 
+ *    FIXME: if beg and end are both const, it goes to SimpleLC... we don't
+ *    consider them here. need to extend incase they appear here.
  */
       else assert(0); /* not considering const !!!!*/
       InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
@@ -2037,6 +2030,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
    extern int VECT_FLAG;
+   extern int FKO_UR;
 /*
  * Kill previous loop control to simplify the analysis for unroll
  * NOTE: If vectorization is applied before, killing loop control may not 
@@ -2098,7 +2092,9 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  * NOTE: We may skip cleanup if markup says so
  */
    /*UnrollCleanup(lp, unroll);*/
-   if ( !(lp->LMU_flag & LMU_NO_CLEANUP) )
+   if ( !(lp->LMU_flag & LMU_NO_CLEANUP)
+         /*&& !SKIP_CLEANUP*/
+         && FKO_UR != -1) /* unroll all the way */
    {
       if (FKO_SB && (VECT_FLAG & VECT_SV) )
          UnrollCleanup2(lp, unroll*FKO_SB);
@@ -2515,6 +2511,7 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
    /*int ncptr, STc;*/
    int flag;
    enum inst inst;
+   struct ptrinfo *pbase, *pb; 
 
    bp = lp->header;
    assert(bp->ilab == lp->body_label);
@@ -2557,6 +2554,13 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
    ils = calloc(sizeof(ILIST*), n);
 #endif
    assert(ils);
+/*
+ * get ptr info from loop 
+ */
+   pbase = FindMovingPointers(lp->blocks); 
+/*
+ * generate prefetch insts 
+ */
    for (i=1, p=1; i <= n; i++)
    {
       ptr = lp->pfarrs[i];
@@ -2566,12 +2570,32 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
       lvl = lp->pfflag[i] & 0x7;
 /*
  *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
+ *    FIXME: incase of implicit unrolling, we can consider the const which is 
+ *    used to update the pointer! if we consider that.. we need not 
+ *    consider the unroll and vectorization... do we?????
  */
+#if 0      
       npf = unroll > 1 ? unroll : 1;
       npf *= type2len(FLAG2TYPE(flag));
       if (!IS_VEC(flag) && IS_VEC(lp->vflag))
          npf *= Type2Vlen(lp->vflag);
+#else
+/*
+ *    using pointer update....
+ *    pointer updates should reflect both the unrolling and vectorization
+ */
+      pb = FindPtrinfo(pbase, ptr);
+      assert(pb);
+      npf = SToff[pb->upst-1].i; 
+      npf *= type2len(FLAG2TYPE(flag));
+#endif
+#if 0
+      fprintf(stderr, "npf = %d\n", npf);
+#endif
       npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
+#if 0
+      fprintf(stderr, "final npf = %d\n", npf);
+#endif
       sta = STarrlookup(ptr);   
 /*
  *    for opt 2D array, we don't have pointers for all columns but we want to
@@ -2711,6 +2735,7 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
    }
    free(ils);
 #endif   
+   if (pbase) KillAllPtrinfo(pbase);
    return(ilbase);
 }
 
@@ -2755,7 +2780,7 @@ BLIST *FindAlwaysTakenBlocks(LOOPQ *lp)
 /*
  *          Majedul: HERE HERE: 
  *          tail is added two times as tail is part of loop block in this case
- *          which incrases the instruction count resulting the error in skip. 
+ *          which increases the instruction count resulting the error in skip. 
  *          Another point: how to skip the actual tail part from the active 
  *          instruction count??? Is it needed at all?
  */
@@ -3034,9 +3059,6 @@ void SchedPrefInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
    extern INT_BVI FKO_BVTMP;
 
    atake = GetSchedInfo(lp, ilbase, -1, &npf, &N);
-#if 0
-   fprintf(stderr, "\nnpf=%d, N=%d\n", npf, N);
-#endif
 
    N -= dist;
    assert(N > 0);
@@ -3419,7 +3441,6 @@ int VarIsAccumulator(BLIST *scope, int var)
       add = ADD;
       mac = UNIMP; /* INT MAC is not implemented yet */
       break;
-   default:
 #if 0      
    case T_VFLOAT:
    case T_VDOUBLE:
@@ -3438,6 +3459,8 @@ int VarIsAccumulator(BLIST *scope, int var)
       mac = VDMAC;
       break;
 #endif
+   default:
+      fko_error(__LINE__, "Unknown type=%d, file=%s", i, __FILE__);
    }
    for (bl=scope; bl; bl = bl->next)
    {
@@ -3567,8 +3590,8 @@ int VarIsMaxOrMin(BLIST *scope, short var, int maxcheck, int mincheck)
       cmp = CMP;
       break;
    default:
-   case T_VFLOAT:
-   case T_VDOUBLE:
+   /*case T_VFLOAT:
+   case T_VDOUBLE:*/
 /*
  *    not applicable for vector intrinsic code
  */
@@ -4320,8 +4343,14 @@ void PrintMovingPtrAnalysis(FILE *fpout)
 /*
  *          NOTE: prefetch not applicable for outer loop unrolled kernel by this 
  *          condition
+ *          FIXED: we don't need contiguous ptr inc; const ptr movement is 
+ *          enough for our cases. 
+ *          NOTE: what if there are const strided? it doesn't hurt since 
+ *          prefetch doesn't cause problem for correctness.. we will tune 
+ *          prefetch distance anyway.
  */
-            j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
+            /*j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);*/
+            j = ((pi->flag | PTRF_CONSTINC | PTRF_INC) == pi->flag);
             if (lp->nopf)
                if (FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
                   j = 0;
@@ -4461,19 +4490,18 @@ OPTLOOP=1
  *============================================================================*/
 {
    int i, npaths, nifs;
-   LOOPQ *lp;
    FILE *fpout=stdout;
    int MaxR, MinR, RC;
-   int VmaxminR, Vrc, Vspec, Vn;
    int *pvec;
    const int nelimbr = 3;
    char *cElimBr[] = {"NO", "MaxMin", "RedComp"};
    int iElimBr[] = {0, 0, 0};
    enum eElimBr {NO, MAXMIN, REDCOMP};
-   const int nvec = 3;
-   char *cVecMethod[] = {"NONE", "LoopLvl", "SpecVec"};
-   enum eVecMethod {NONE, LOOPLVL, SPECVEC};
-   int iVecMethod[] = {0, 0, 0};
+   int VmaxminR, Vrc, Vspec, Vn, Vslp;
+   const int nvec = 4;
+   char *cVecMethod[] = {"NONE", "LoopLvl", "SpecVec", "SLP"};
+   enum eVecMethod {NONE, LOOPLVL, SPECVEC, SLP};
+   int iVecMethod[] = {0, 0, 0, 0};
    extern FILE *fpLOOPINFO;
    extern short STderef;
    extern BBLOCK *bbbase;
@@ -4609,7 +4637,7 @@ OPTLOOP=1
  *             call RcVectorization too to check error
  *             NOTE: shadow RC only works in X86_64 now, not in 32 bit
  */
-               Vrc = !(RcVectorAnalysis()); /* checking for shadow RC too */
+               Vrc = !(RcVectorAnalysis(optloop)); /* checking for shadow RC too */
                #ifdef X86_32
                   if (Vrc && (VECT_FLAG & VECT_SHADOW_VRC) )
                      Vrc = 0; /* can't vect on X86_32*/
@@ -4617,7 +4645,7 @@ OPTLOOP=1
                #else
                   if (Vrc)
                #endif
-                     Vrc = !RcVectorization();
+                     Vrc = !RcVectorization(optloop);
                iVecMethod[LOOPLVL] = Vrc;
                KillPathTable();
             }
@@ -4667,10 +4695,24 @@ OPTLOOP=1
             /*Vn = !(RcVectorAnalysis());*/ /* checking for shadow RC too */
                Vn = !(SpeculativeVectorAnalysis()); /*more restrictive tesdt */
                iVecMethod[LOOPLVL] = Vn;
+/*
+ *             check for slp vectorization
+ *             Restore state0 first
+ */
+               RestoreFKOState0();
+               GenPrologueEpilogueStubs(bbbase,0);
+               NewBasicBlocks(bbbase);
+               FindLoops(); 
+               CheckFlow(bbbase, __FILE__, __LINE__);
+
+               /*Vslp = !SlpVectorization();*/
+               Vslp = !LoopNestVec();
+               iVecMethod[SLP] = Vslp;
+
             }
          }
       
-         if (Vn || Vrc || VmaxminR )
+         if (Vn || Vrc || VmaxminR || Vslp)
          {
             if (!Vspec)
                pvec[0] = 1; /* vectorizable, so default 1 for first path */
@@ -5719,8 +5761,12 @@ void FinalizeVectorCleanup(LOOPQ *lp, int unroll)
 /*
  * Cleanup should already be generated before finalizing it
  */
+#if 0   
    assert(lp->CU_label > 0);
-
+#else
+   if (lp->CU_label == -1)
+      return;
+#endif
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
 /*
@@ -5930,7 +5976,10 @@ void PrintLoop(FILE *fpout, LOOPQ *lp)
             STname[lpq->body_label-1]?  STname[lpq->body_label-1]: "NULL");
       fprintf(fpout, "\tHead: %d\n", lpq->header->bnum);
       fprintf(fpout, "\tTails: %s\n", PrintBlockList(lpq->tails));
-      fprintf(fpout, "\tPreHeader: %d\n", lpq->preheader->bnum);
+      if(lpq->preheader)  
+         fprintf(fpout, "\tPreHeader: %d\n", lpq->preheader->bnum);
+      else
+         fprintf(fpout, "\tPreHeader: NULL\n");
       fprintf(fpout, "\tPostTails: %s\n", PrintBlockList(lpq->posttails));
       fprintf(fpout, "\tBLOCKS[%d]: %s\n",ListElemCount(lpq->blocks), 
            PrintBlockList(lpq->blocks));
@@ -8099,3 +8148,310 @@ int Get_OL_NEINC()
 {
    return OL_NEINC;
 }
+
+void Set_OL_NEINC_One()
+{
+   OL_NEINC = STdef("OL_NEINC", CONST_BIT | T_INT, 1);
+}
+
+/* ===========================================================================
+ *       Unroll All the way
+ *
+ *============================================================================*/
+
+int CountUnrollFactor(LOOPQ *lp)
+{
+   int i;
+   int ur=0;
+   int beg, end, inc;
+/*
+ * loop index must be const to make the loop iter countable
+ */
+   if (!IS_CONST(STflag[lp->beg-1]) || !IS_CONST(STflag[lp->end-1]) 
+         || !IS_CONST(STflag[lp->inc-1])) 
+      return(0);
+/*
+ * return the iteration count
+ */
+   inc = SToff[lp->inc-1].i;
+   beg = SToff[lp->beg-1].i;
+   end = SToff[lp->end-1].i;
+   assert(inc);
+#if 0   
+   if (inc > 0)
+      ur = (end - beg + inc - 1 ) / inc;
+   else
+      ur = (beg - end + inc - 1) / (-inc);
+#else
+/*
+ * to aviod off-by-one error, i do run it here!
+ */
+   if (inc > 0)
+      for (i=beg; i < end; i += inc)
+         ur++;
+   else
+      for (i=beg; i > end; i += inc)
+         ur++;
+#endif
+
+#if 1
+   fprintf(stderr, "unroll = %d\n", ur);
+#endif
+   return(ur);
+}
+#if 0
+int UnrollAll(LOOPQ *lp, int unroll)
+{
+   int i;
+   INT_BVI iv;
+   BBLOCK *newCF;
+   ILIST *il;
+   INSTQ *ip, *ipn, *ippost;
+   struct ptrinfo *pi, *pi0;
+   int UsesPtrs=1;
+   BLIST **dupblks, *bl, *ntails=NULL;
+   enum comp_flag kbeg, kend;
+   extern INT_BVI FKO_BVTMP;
+   extern BBLOCK *bbbase;
+/*
+ * kill all loop control, won't need them later
+ */
+   KillLoopControl(lp);
+/*
+ * We don't allow use of index right now
+ */
+   il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+   if (il) 
+   {
+      KillIlist(il);
+      return(0);
+   }
+/*
+ * analyze moving ptrs
+ */
+   pi0 = FindMovingPointers(lp->blocks);
+   if (!pi0)
+      UsesPtrs = 0;
+
+   dupblks = malloc(sizeof(BLIST*)*unroll);
+   assert(dupblks);   
+/*
+ * Duplicate all of loop's CF
+ */
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
+   kbeg = CF_LOOP_INIT;
+   for (i=1; i < unroll; i++)
+   {
+/*
+ *    Duplicate original loop body for unroll i
+ */
+      FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+      
+      newCF = DupCFScope(lp->blkvec, iv, lp->header);
+      iv = BitVecCopy(iv, lp->blkvec);
+/*
+ *    Use CF to produce a block list of duped blocks
+ */
+      SetVecBit(iv, lp->header->bnum-1, 1);
+      dupblks[i-1] = CF2BlockList(NULL, iv, newCF);
+/*
+ *    Kill the appropriate loop markup in the blocks (so we don't increment
+ *    i multiple times, test it multiple times, etc)
+ */
+      kend = (i != unroll-1) ? CF_LOOP_END : CF_LOOP_BODY;
+      KillCompflagInRange(dupblks[i-1], kbeg, kend);
+      if (UsesPtrs)
+      {
+/*
+ *       Find the moving pointers used in unrolled loop
+ */
+         pi = FindMovingPointers(dupblks[i-1]);
+         assert(pi);
+/*
+ *       Kill pointer updates in loop, and get ptr inc code to add to EOL
+ */
+         ip = KillPointerUpdates(pi, i);
+         assert(ip);
+         for (; ip; ip = ipn)
+         {
+            ipn = ip->next;
+            free(ip);
+         }
+/*
+ *       Find all lds of moving ptrs, and add unrolling factor to them
+ */
+         UpdatePointerLoads(dupblks[i-1], pi, i);
+         KillAllPtrinfo(pi);
+      }
+   }
+   
+   if (pi0)
+   {
+      /*ippost = KillPointerUpdates(pi0, UR);*/
+      ippost = KillPointerUpdates(pi0, unroll);
+      KillAllPtrinfo(pi0);
+      assert(ippost);
+   }
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
+   KillCompflagInRange(lp->blocks, CF_LOOP_UPDATE, CF_LOOP_END);
+/*
+ * Put duplicated blocks into program at correct location; this means that
+ * the blocks [up,down] links are correct, but CF is messed up
+ */
+   InsertUnrolledCode(lp, unroll, dupblks);
+/*
+ * Fix the tails info for OptimizeLoopControl
+ */
+   iv = BlockList2BitVec(lp->tails);
+   for (bl=dupblks[unroll-2]; bl; bl = bl->next)
+   {
+/*
+ *    If last unrolling blk is a former tail, add it to new tails
+ */
+      if (BitVecCheck(iv, bl->blk->bnum-1))
+         ntails = AddBlockToList(ntails, bl->blk);
+   }
+   KillBlockList(lp->tails);
+   lp->tails = ntails;
+
+   for (bl=lp->tails; bl; bl=bl->next)
+   {
+      ipn = bl->blk->instN;
+      for (ip = ippost; ip; ip=ip->next)
+      {
+         ipn = InsNewInst(bl->blk, ipn, NULL, ip->inst[0], ip->inst[1], 
+               ip->inst[2], ip->inst[3]);
+      }
+   }
+
+   //InvalidateLoopInfo();
+   NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   //FindLoops();  /* need to setup optloop for this */
+   CheckFlow(bbbase, __FILE__, __LINE__);
+
+#if 0
+   fprintf(stdout, "unrolled loop: \n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif
+   
+   return(1);
+}
+
+int UnrollAllTheWay()
+{
+   int ur;
+   extern LOOPQ *optloop;
+
+   ur = CountUnrollFactor(optloop);
+#if 1
+   fprintf(stderr, "all the way unroll factor = %d\n", ur);
+   //exit(0);
+#endif
+   if (!ur) 
+      return(0);
+   
+   UnrollAll(optloop, ur);
+
+}
+#endif
+
+int IsIndexRefInBody(LOOPQ *lp)
+{
+   BBLOCK *bp;
+   BLIST *bl;
+   INSTQ *ip;
+
+   for (bl=lp->blocks; bl; bl=bl->next)
+   {
+      if (FindInList(lp->tails, bl->blk))
+      {
+         for (ip = bl->blk->inst1; ip; ip = ip->next)
+         {
+            if (ip->inst[0] == LD && ip->inst[2] == SToff[lp->I-1].sa[2])
+               return(1);
+/*
+ *          below the CF_LOOP_UPDATE, index is used to control the loop
+ *          so, skip those
+ */
+            if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_LOOP_UPDATE)
+               break;
+         }
+      }
+      else
+         for (ip = bl->blk->ainst1; ip; ip=ip->next)
+            if (ip->inst[0] == LD && ip->inst[2] == SToff[lp->I-1].sa[2])
+               return(1);
+   }
+   return(0);
+}
+
+int DelLoopControl(LOOPQ *lp)
+{
+   BBLOCK *bp;
+   INSTQ *ip;
+   extern BBLOCK *bbbase;
+/*
+ * Main idea: we will delete loop init and loop control (lp->I) if index
+ * is never used inside the loop body, only branching otherwise
+ */
+#if 0
+   fprintf(stderr, "before delloop\n");
+   PrintInst(stderr, bbbase);
+#endif
+/*
+ * NOTE: we can't use FindIndexRef here.. it works only after killing the 
+ * loop control... we are not willing to do that here
+ */
+   if (IsIndexRefInBody(lp))
+   {
+/*
+ *    index variable is used.. delete only the loop testing 
+ */
+      assert(lp->tails && !lp->tails->next);
+      bp = lp->tails->blk;
+      ip = FindCompilerFlag(bp, CF_LOOP_TEST);
+      assert(ip);
+/*
+ *    FIXME: is it possible to be messed up with any fundamental optimizations?
+ *    there shouldn't be any other inst after CF_LOOP_TEST
+ */
+      while(ip)
+         ip = DelInst(ip);
+   }
+   else /* loop index is only used to control loop*/
+   {
+/*
+ *    we need to delete loop init, loop update and loop test 
+ */
+      ip = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
+      assert(ip);
+/*
+ *    FIXME: need a checking, it may delete some misplaced inst 
+ */
+      while(ip)
+         ip = DelInst(ip);
+      
+      assert(lp->tails && !lp->tails->next);
+      bp = lp->tails->blk;
+      ip = FindCompilerFlag(bp, CF_LOOP_UPDATE);
+      while(ip)
+         ip = DelInst(ip);
+   }
+/*
+ * recompute cfg 
+ */
+   InvalidateLoopInfo();
+   NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();  /* need to setup optloop for this */
+   CheckFlow(bbbase, __FILE__, __LINE__);
+#if 0 
+   fprintf(stderr, "before delloop\n");
+   PrintInst(stderr, bbbase);
+#endif
+   return(0);
+}
+
+
