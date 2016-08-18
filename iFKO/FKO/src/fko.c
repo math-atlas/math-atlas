@@ -12,7 +12,7 @@ FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL, *fpLOOPINFO=NULL;
 FILE *fpLRSINFO=NULL, *fpARCHINFO=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
-int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
+/*int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;*/ /*not used anymore */
 int FKO_FLAG;
 int VECT_FLAG=0;  /* Majedul: for different vectorization methods */
 /*
@@ -68,10 +68,12 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     L : dump LIL <file>.L\n");
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");*/
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
+   fprintf(stderr, "  -U all : Unroll main loop all the way\n");
    /*fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");*/
    fprintf(stderr, "  -LNZV : loop level no hazard vectorization\n");
    fprintf(stderr, "  -SV <path#> <nvlens> :" 
                    "Apply SpecVec to path# using nvlens bet\n" );
+   //fprintf(stderr, "  -SLPV : basic block level no hazard vectorization\n");
    /*fprintf(stderr, "  -B : Stronger Bet unrolling for SV\n");*/
    fprintf(stderr, "  -M : Maximum paths to be analyzed in SV\n");
    /*fprintf(stderr, 
@@ -109,7 +111,7 @@ void PrintUsageN(char *name)
 
 struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
 {
-   int i;
+   /*int i;*/
    struct optblkq *op;
    op = calloc(1, sizeof(struct optblkq));
    assert(op);
@@ -118,10 +120,11 @@ struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
    op->nopt = nopt;
    op->flag = flag;
    op->next = NULL;
-#if 1
+#if 0
 /*
  * added nspill to keep track of resgister spilling (# of live-range which 
  * doesn't get register), -1 means not calculated yet
+ * FIXED: we will allocate memory when needed(inside DoOptList).
  */
    op->nspill = malloc(NTYPES*sizeof(int));
    assert(op->nspill);
@@ -469,6 +472,10 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             i += 2;
             break;
 #endif
+/*
+ *       SV path sbunroll 
+ *       SLPV = SLP vectorization, at first we only applied to loop
+ */
          case 'S':
             if (args[i][2] && args[i][2]=='V')
             {
@@ -485,6 +492,12 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                  fprintf(stderr, "Invalid path and/or nvlens!\n");
                PrintUsageN(args[0]);
               }
+            }
+            else if (args[i][2] && args[i][3] && args[i][2] == 'L' 
+                     && args[i][3] == 'P')
+            {
+               FKO_FLAG |= IFF_VECTORIZE;
+               VECT_FLAG |= VECT_SLP;
             }
             else
                PrintUsageN(args[0]);
@@ -664,6 +677,12 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             break;
          case 'U':
             FKO_UR = atoi(args[++i]);
+/*
+ *          we may now have '-U all' as argument. check it. set FKO_UR to -1 
+ */
+            if (!FKO_UR)
+               if (!strcmp(args[i], "all"))
+                  FKO_UR = -1;
             break;
          case 't':
             for(++i, j=0; args[i][j]; j++)
@@ -1898,11 +1917,23 @@ BLIST **LoopBlocks(int *N)
    return(scopes);
 }
 
+int HasScopeIGReg(int nopt, enum FKOOPT *ops)
+{
+   int i;
+
+   for (i=0; i < nopt; i++)
+   {
+      if (ops[i] == RegAsg)
+         return 1;
+   }
+   return(0);
+}
+
 int CheckPreheaderPosttails(BLIST *scope)
 {
    int nerr = 0, pred =0, npred = 0;
    BBLOCK *bp;
-   BLIST *bl, *blp, *bls;
+   BLIST *bl, *blp;
    INT_BVI blkvec;
    extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
@@ -1939,7 +1970,7 @@ int CheckPreheaderPosttails(BLIST *scope)
                nerr++;
                /*fprintf(stderr,"preheader blk-%d has successor other header-%d\n", 
                        blp->blk->bnum, bp->bnum);*/
-               fko_warn(__LINE__,"preheader blk-%d has successor other header-%d\n", 
+               fko_warn(__LINE__,"preheader blk-%d has successor other header-%d\n",
                        blp->blk->bnum, bp->bnum);
             }
          }
@@ -2035,9 +2066,8 @@ void FixPreheaderPosttails(BLIST *scope)
 {
    int npred = 0;
    BBLOCK *bp, *bnew;
-   BLIST *bl, *blp, *bls;
+   BLIST *bl, *blp;
    INT_BVI blkvec;
-   short ilb;
    char label[64];
    extern INT_BVI FKO_BVTMP;
    
@@ -2112,7 +2142,7 @@ void FixPreheaderPosttails(BLIST *scope)
    }
 }
 
-int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int *nspill)
+int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int **nspill)
 /*
  * Performs the nopt optimization in the sequence given by ops, returning
  * 0 if no transformations applied, nonzero if some changes were made
@@ -2128,7 +2158,6 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int *nspill)
    BBLOCK *bp;
    static short nlab=0, labs[4];
    /*static int iopt = 0, bv = 0;*/ /* Majedul: for opt logger, bv -> */
-   static int iopt = 0, bv = 0; /* Majedul: for opt logger, bv -> */
    /*extern LOOPQ *optloop;*/
    extern BBLOCK *bbbase;;
 /*
@@ -2215,14 +2244,21 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int *nspill)
 /*
  *       update nspill 
  *       NOTE: we will save nspill only for the optloop when IOPT_SCOP is 
- *       applied, otherwise for global scope
+ *       applied, otherwise for global scope. we don't save nspill for other
+ *       scopes now, but can do it by changing the following code.
  */
          if (global || !iscope0) /* scope no. 0 represents the optloop */
          {
-            for (j=0; j < NTYPES; j++)
-               nspill[j] = nsp[j];
+            if (*nspill) /* already has old reg info, delete it */
+            {
+               for (j=0; j < NTYPES; j++)
+                  (*nspill)[j] = nsp[j];
+               free(nsp);
+            }
+            else 
+               *nspill = nsp;
          }
-         else
+         else 
             free(nsp); /* delete other nspill info */
          break;
       case CopyProp:
@@ -2268,7 +2304,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int *nspill)
  *    to print the log of all optimizations who make changes
  */
       if (nchanges-nc0)
+      {
          PrintOptInst(stdout, ++iopt, k, scope, global, nchanges-nc0);
+      }
    #endif
    }
    if (scope) KillBlockList(scope);
@@ -2302,24 +2340,12 @@ LOOPQ *LoopOrder()
 }
 #endif
 
-int HasScopeIGReg(int nopt, enum FKOOPT *ops)
-{
-   int i;
-
-   for (i=0; i < nopt; i++)
-   {
-      if (ops[i] == RegAsg)
-         return 1;
-   }
-   return(0);
-}
-
 int DoOptBlock(int igscope, int ilscope, struct optblkq *op)
 /*
  * returns: nchanges applied
  */
 {
-   int i, j, k, nc, tnc=0, global;
+   int i, nc, tnc=0, global;
    struct optblkq *dp;
    int iscope, maxN;
 
@@ -2343,7 +2369,7 @@ int DoOptBlock(int igscope, int ilscope, struct optblkq *op)
  * If we've got a one time list, handle it
  */
    else if (!op->maxN)
-      nc = DoOptList(op->nopt, op->opts, iscope, global, op->nspill);
+      nc = DoOptList(op->nopt, op->opts, iscope, global, &(op->nspill));
 /*
  * otherwise, we have while(changes) optblk ... using down branch
  */
@@ -2352,7 +2378,7 @@ int DoOptBlock(int igscope, int ilscope, struct optblkq *op)
       maxN = op->maxN;
       for (i=0; i < maxN; i++)
       {
-         nc = DoOptList(op->nopt, op->opts, iscope, global, op->nspill);
+         nc = DoOptList(op->nopt, op->opts, iscope, global, &(op->nspill));
          for (dp=op->down; dp; dp = dp->down)
             nc += DoOptBlock(igscope, ilscope, dp);
          if (!nc)
@@ -2663,174 +2689,6 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
       }
    }
 }
-#if 0
-struct optblkq *DefaultOptBlocks(void)
-/*
- * Defaults to command-line flags of:
- *     -L 1 0 6 ls gr 2 3 4 5 -G 2 10 3 bc uj ul -L 3 10 5 ra cp rc u1 lu
- *     -G 4 10 3 ra cp rc -L 5 10 5 ra cp rc u1 lu
- */
-{
-   int i, id, n;
-   struct optblkq *base, *op;
-   BLIST *bl;
-   BLIST **scopes;
-   extern LOOPQ *loopq;
-/*
- * FIXED: there are two kind of register assignment: 
- *          - GlobRegAsg, not applied when vect is applied
- *          - RegAsg
- * I skipped the GlobRegAsg and use only RegAsg 
- */
-/*
- * NOTE: 
- * optimization can only be local and global... no way to specify scope of blocks
- * So, I added blist on the data structure. 
- */
-   id = 1; /* init opt id */
-#if 0   
-   if (DO_VECT(FKO_FLAG))
-   {
-      op = base = NewOptBlock(1, 0, 5, 0);
-      op->opts[0] = EnforceLoadStore;
-      op->opts[1] = MaxOpt+2;
-      op->opts[2] = MaxOpt+3;
-      op->opts[3] = MaxOpt+4;
-      op->opts[4] = MaxOpt+5;
-   }
-   else
-   {
-      op = base = NewOptBlock(1, 0, 6, 0);
-      op->opts[0] = EnforceLoadStore;
-      op->opts[1] = GlobRegAsg;
-      op->opts[2] = MaxOpt+2;
-      op->opts[3] = MaxOpt+3;
-      op->opts[4] = MaxOpt+4;
-      op->opts[5] = MaxOpt+5;
-   }
-#else
-   op = base = NewOptBlock(id++, 0, 5, 0);
-   op->opts[0] = EnforceLoadStore;
-   op->opts[1] = MaxOpt+2;
-   op->opts[2] = MaxOpt+3;
-   op->opts[3] = MaxOpt+4;
-   op->opts[4] = MaxOpt+5;
-#endif
-   op->next = NewOptBlock(id++, 10, 3, IOPT_GLOB);
-   op = op->next;
-   op->opts[0] = BranchChain;
-   op->opts[1] = UselessJmpElim;
-   op->opts[2] = UselessLabElim;
-/*
- * NOTE: we add scope based RegAsg, copyProp, ReverseCopyPro, RemoveOneUseLoads,
- * lastUseLoadRemoval ... 
- * op->blocks keeps the scope ... 
- */
-   
-   op->next = NewOptBlock(id++, 20, 5, 0); /* this is for optloop */
-   op = op->next;
-   op->opts[0] = RegAsg;
-   op->opts[1] = CopyProp;
-   op->opts[2] = ReverseCopyProp;
-   op->opts[3] = RemoveOneUseLoads;
-   op->opts[4] = LastUseLoadRemoval;
-
-   scopes = SplitScope(&n);
-   if (scopes) /* has scopes with loops */
-   {
-      for (i=0; i<n; i++)
-      {  
-         if (scopes[i]) /* scopes[i] may be NULL if no blks in between 2 loops */
-         {
-            bl = CopyBlockList(scopes[i]); /* copy the list */
-            op->next = NewOptBlock(id++, 20, 5, IOPT_SCOP); 
-            op = op->next;
-            op->blocks = bl;
-            op->opts[0] = RegAsg;
-            op->opts[1] = CopyProp;
-            op->opts[2] = ReverseCopyProp;
-            op->opts[3] = RemoveOneUseLoads;
-            op->opts[4] = LastUseLoadRemoval;
-         }
-      }
-/*
- *    now it's safe to delete the list 
- */
-      for (i=0; i<n; i++)
-         if (scopes[i]) free(scopes[i]);
-      free(scopes); /* scopes can be NULL if there in no loop */
-   }
-   else /* no loop, apply global scope */
-   {
-      op->next = NewOptBlock(id++, 10, 5, IOPT_GLOB); /* global scope */
-      op = op->next;
-      op->opts[0] = RegAsg;
-      op->opts[1] = CopyProp;
-      op->opts[2] = ReverseCopyProp;
-      op->opts[3] = RemoveOneUseLoads;
-      op->opts[4] = LastUseLoadRemoval;
-/*
- *    NOTE: adding another one just to make it 5 nodes... look into the 1st node
- */
-      op->next = NewOptBlock(id++, 10, 5, IOPT_GLOB); /* global scope */
-      op = op->next;
-      op->opts[0] = RegAsg;
-      op->opts[1] = CopyProp;
-      op->opts[2] = ReverseCopyProp;
-      op->opts[3] = RemoveOneUseLoads;
-      op->opts[4] = LastUseLoadRemoval;
-   }
-/*
- * just for testing ... ... 
- */
-#if 0
-
-   bl0 = optloop->blocks;
-   op->next = NewOptBlock(id++, 10, 5, IOPT_SCOP); /* this is for global scope */
-   op = op->next;
-   op->blocks = bl0;
-   op->opts[0] = RegAsg;
-   op->opts[1] = CopyProp;
-   op->opts[2] = ReverseCopyProp;
-   op->opts[3] = RemoveOneUseLoads;
-   op->opts[4] = LastUseLoadRemoval; 
-   
-   
-   for (bl=NULL, bp=bbbase;bp; bp=bp->down )
-      bl = AddBlockToList(bl, bp);
-
-   op->next = NewOptBlock(id++, 10, 5, IOPT_SCOP); /* this is for global scope */
-   op = op->next;
-   op->blocks = bl;
-   op->opts[0] = RegAsg;
-   op->opts[1] = CopyProp;
-   op->opts[2] = ReverseCopyProp;
-   op->opts[3] = RemoveOneUseLoads;
-   op->opts[4] = LastUseLoadRemoval; 
-#endif
-
-#if 0
-   op->next = NewOptBlock(id++, 10, 5, IOPT_GLOB); /* this is for global scope */
-   op = op->next;
-   op->opts[0] = RegAsg;
-   op->opts[1] = CopyProp;
-   op->opts[2] = ReverseCopyProp;
-   op->opts[3] = RemoveOneUseLoads;
-   op->opts[4] = LastUseLoadRemoval;
-#endif
-
-#if 0
-   op->next = NewOptBlock(id++, 10, 5, 0);
-   op = op->next;
-   op->opts[0] = RegAsg;
-   op->opts[1] = CopyProp;
-   op->opts[2] = ReverseCopyProp;
-   op->opts[3] = RemoveOneUseLoads;
-   op->opts[4] = LastUseLoadRemoval;
-#endif
-   return(base);
-}
-#else
 
 struct optblkq *DefaultOptBlocks(void)
 /*
@@ -2885,7 +2743,6 @@ struct optblkq *DefaultOptBlocks(void)
    
    return(base);
 }
-#endif
 
 static short FindNameMatch(int n, short *pool, char *name)
 /*
@@ -3409,39 +3266,6 @@ void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
    int rglob[nreg];
    int nropt, nrglob, tnr;
 
-#if 0
-   for (op=optblks; op; op=op->next)
-   {
-      if (!op->flag && op->opts[0] == RegAsg) /* optloop */
-      {  
-         /*int,short,char */
-         ropt[R_INT] = op->nspill[T_INT] + op->nspill[T_SHORT] + 
-                       op->nspill[T_CHAR];
-         ropt[R_FLOAT] = op->nspill[T_FLOAT];
-         ropt[R_DOUBLE] = op->nspill[T_DOUBLE];
-         ropt[R_VINT] = op->nspill[T_VINT];
-         ropt[R_VFLOAT] = op->nspill[T_VFLOAT];
-         ropt[R_VDOUBLE] = op->nspill[T_VDOUBLE];
-         nropt = ropt[R_INT] + ropt[R_FLOAT] + ropt[R_DOUBLE] + ropt[R_VINT] 
-                 + ropt[R_VFLOAT] + ropt[R_VDOUBLE];
-         break;
-      }
-   }
-   assert(op);
-/*
- * last one must be global scope
- */
-   for(; op->next; op=op->next);
-   
-   rglob[R_INT] = op->nspill[T_INT] + op->nspill[T_SHORT] + op->nspill[T_CHAR];
-   rglob[R_FLOAT] = op->nspill[T_FLOAT];
-   rglob[R_DOUBLE] = op->nspill[T_DOUBLE];
-   rglob[R_VINT] = op->nspill[T_VINT];
-   rglob[R_VFLOAT] = op->nspill[T_VFLOAT];
-   rglob[R_VDOUBLE] = op->nspill[T_VDOUBLE];
-   tnr = nrglob = rglob[R_INT] + rglob[R_FLOAT] + rglob[R_DOUBLE] 
-      + rglob[R_VINT] + rglob[R_VFLOAT] + rglob[R_VDOUBLE];
-#else
    for (op=optblks; op; op=op->next)
    {
 /*
@@ -3474,8 +3298,6 @@ void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
 
       }
    }
-#endif
- 
 /*
  * print all info
  */
@@ -3637,23 +3459,21 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
    optblks = OptBlockQtoTree(optblks);
 
 #if 0
+   PrintST(stdout);
    fprintf(stdout, "LIL before Reveal ARCH MEM  \n");
    PrintInst(stdout, bbbase);
    //exit(0);
 #endif  
-   
+
+#ifdef X86 
    RevealArchMemUses(); /* to handle ABS in X86 */
    if (!CFUSETU2D)
    {
-#if 0
-      bbbase = NewBasicBlocks(bbbase);
-      CheckFlow(bbbase, __FILE__, __LINE__);
-      FindLoops();
-      CheckFlow(bbbase, __FILE__, __LINE__);
-#endif
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
+#endif
+
 #if 0
    PrintInst(stdout, bbbase);
    PrintInst(stdout, bbbase);
@@ -3684,9 +3504,14 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
 #endif   
 
 #if 0
-   //PrintST(stdout);
+   PrintST(stdout);
    fprintf(stdout, "LIL after Repeatable Opt \n");
    PrintInst(stdout, bbbase);
+   ShowFlow("cfg.dot", bbbase);
+   {
+      extern LOOPQ *loopq;
+      PrintLoop(stderr, loopq);
+   }
    exit(0);
 #endif   
 
@@ -3712,9 +3537,10 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
    AddLoopComments();   
 #endif   
 #if 0
+      //PrintST(stderr);
       fprintf(stdout, "\n LIL Before FinalizePrologueEpilogue\n");
       PrintInst(stdout,bbbase);
-      exit(0);
+      //exit(0);
 #endif
    i = FinalizePrologueEpilogue(bbbase,0 );
    KillAllLocinit(ParaDerefQ);
@@ -3723,7 +3549,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
       fprintf(stderr, "ERR from PrologueEpilogue\n");
    CheckFlow(bbbase, __FILE__,__LINE__);
 #if 0
-   PrintST(stdout);
+   //PrintST(stdout);
    fprintf(stdout, "Final LIL \n");
    PrintInst(stdout, bbbase);
    exit(0);
@@ -3792,12 +3618,13 @@ int IsAlignLoopSpecNeeded(LOOPQ *lp)
 {
    int i,j,k,n;
    short *spa[2], *spb[2];
+   short id;
    const int na = 2;
 /*
  * we don't need loop specialization for alignment if there is only one ptr
  * loop peeling would make it aligned to vlen
  */
-   if (lp->varrs[0] < 2)
+   if (!lp->varrs || lp->varrs[0] < 2)
    {
       fko_warn(__LINE__, "NO SPECIALIZATION FOR ALIGNMENT: "
                      "we only have one PTR to manage");
@@ -3832,8 +3659,17 @@ int IsAlignLoopSpecNeeded(LOOPQ *lp)
          for (n=lp->varrs[0], j=1; j <= n; j++)
          {
             k = lp->varrs[j];
+/*
+ *          need to consider 2D array
+ */
             if (!(k = FindInShortList(spa[i][0], spa[i]+1, k)))
-               break;
+            {
+               id = STarrColPtrlookup(lp->varrs[j]);
+               if (id && !FindInShortList(spa[i][0], spa[i]+1, id))
+                  break;
+               else
+                  break;
+            }
             else if (spb[i][k] < type2len(lp->vflag)) /*k = index of aptr */
                break;
          }
@@ -3848,6 +3684,562 @@ int IsAlignLoopSpecNeeded(LOOPQ *lp)
 
    return(1);
 }
+
+int GetLoopVtype(LOOPQ *lp)
+{
+   int i, j, k, n, N;
+   BLIST *bl;
+   short *sp;
+   INT_BVI iv;
+   int type;
+   extern short STderef;
+   extern INT_BVI FKO_BVTMP;
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+
+   if (!CFUSETU2D )
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+   for (bl=lp->blocks; bl; bl=bl->next)
+   {
+      iv = BitVecComb(iv, iv, bl->blk->uses, '|'); 
+      iv = BitVecComb(iv, iv, bl->blk->defs, '|'); 
+   }
+   
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+   
+   sp = BitVec2Array(iv, 1-TNREG);
+   for (N=sp[0],n=0, i=1; i <= N; i++)
+   {
+      if (IS_FP(STflag[sp[i]-1]))
+         sp[n++] = sp[i];
+   }
+   j = FLAG2TYPE(STflag[sp[0]-1]);
+   for (i=1; i < n; i++)
+   {
+      k = FLAG2TYPE(STflag[sp[i]-1]);
+      if (k != j)
+         fko_error(stderr, "mixed type prevents vectorization!");
+   }
+   free(sp); 
+   if (j == T_FLOAT)
+      type = T_VFLOAT;
+   else 
+      type = T_VDOUBLE;
+
+   return(type);
+}
+
+int IsSimpleLoopNestVec(int vflag)
+{
+   int k, type;
+   int lpnest = 0;
+   int vsize;
+   struct ptrinfo *pi;
+   LOOPQ *lpq;
+   extern LOOPQ *optloop;
+   
+   lpq = optloop;
+
+   while (lpq)
+   {
+      lpnest++;
+      lpq = lpq->preheader->loop;
+   }
+/*
+ * we don't have loopnest, return false
+ */
+   if (lpnest <= 1)
+   {
+      fko_warn(__LINE__, "Must have atleast 2 nested loops for loop-nest vect\n");
+      return(0);
+   }
+/*
+ * if we want to apply loopnest vectorization on rolled loop (not by SLP), we 
+ * can't have cleanup and loop peeling for alignment right now
+ */
+#ifdef X86
+/*
+ * should have a function in arch.c ... will check that later
+ */
+   #ifdef AVX
+      vsize=32;
+   #elif defined(SSE3) || defined(SSE41)
+      vsize=16;
+   #else
+      fko_error(__LINE__, "Unknown SIMD unit!!!");
+   #endif
+#else
+   return(0);
+#endif
+   if ( !(vflag & VECT_SLP) )
+   {
+/*
+ *    FIXME: use iter_mult markup to determine whether cleanup is not necessary
+ *    need to figure out the data type used in optloop.. hence the vlen iter!
+ */
+/*
+ *    get type from loop ptr, assuming all of them are of same types. We will
+ *    analyze it later in vector analysis stage
+ */
+#if 0
+      if ( (optloop->LMU_flag & LMU_NO_CLEANUP) )
+      { 
+      }
+      else
+      {
+         fko_warn(__LINE__, "Must not have cleanup\n");
+         return(0);
+      }
+#else
+      type = GetLoopVtype(optloop);
+      k = vtype2elem(type);
+      if (optloop->itermul % k)
+      {
+         fko_warn(__LINE__, "Must not have cleanup: (%d, %d)", optloop->itermul,
+                  k);
+      }
+      /*else 
+         fprintf(stderr, "no need of cleanup in vec");*/
+#endif
+/*
+ *    which vectorization technique? 
+ */
+      if (IsSpeculationNeeded())
+         VECT_FLAG |= VECT_SV;
+      else
+         VECT_FLAG |= VECT_NCONTRL;
+   }
+/*
+ * passed all conditions
+ */
+   /*fprintf(stderr, "loop nest vectorization can be applicatable\n");*/
+   return(1);
+}
+
+int IsUpperLoop(LPLIST *l0, LOOPQ *loop)
+{
+   LPLIST *ll;
+   BLIST *bl;
+
+   for (ll=l0; ll; ll=ll->next)
+   {
+      for (bl=ll->loop->blocks; bl; bl=bl->next)
+         if (!FindBlockInList(loop->blocks, bl->blk))
+            return(0);
+   }
+   return(1);
+}
+
+LPLIST *FindLoopNest(LOOPQ *lp0)
+{
+   LPLIST *ll, *l;
+   LOOPQ *lp;
+   extern LOOPQ *loopq; /* already sorted by decreasing depth */
+   
+   ll = NULL;
+   ll = NewLPlist(ll, optloop);
+   for (lp=loopq->next; lp; lp=lp->next) /* 1st loop is optloop, skip it*/
+   {
+      if (IsUpperLoop(ll, lp))
+         ll = NewLPlist(ll, lp);
+   }
+   return(ll);
+}
+
+
+struct ptrinfo *FindMovingPointers1(BLIST *scope)
+/*
+ * will merge with the old FindMovingPointers() after testing all cases
+ * NOTE: assumes structure of code generated by HandlePtrArith(), so must be
+ *       run before any code transforms.
+ */
+{
+   struct ptrinfo *pbase=NULL, *p;
+   BLIST *bl;
+   INSTQ *ip;
+   short k, j;
+   int flag;
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainstN; ip; ip = ip->prev)
+      {
+/*
+ *       Look for a store to a pointer, and then see how the pointer was
+ *       changed to cause the store
+ */
+         if (ip->inst[0] == ST && ip->prev && 
+             (ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB))
+         {
+            k = FindLocalFromDT(ip->inst[1]);
+            if (k && IS_PTR(STflag[k-1]) )
+            {
+               flag = STflag[k-1];
+/*
+ *             Remove these restrictions later to allow things like
+ *             ptr0 += ptr1 or ptr0 = ptr0 + ptr1
+ */
+               #if IFKO_DEBUG_LEVEL >= 1
+                  assert(ip->prev->inst[1] == ip->inst[2]);
+               #endif
+               p = FindPtrinfo(pbase, k);
+               if (!p)
+               {
+                  pbase = p = NewPtrinfo(k, 0, pbase);
+                  p->nupdate = 1;
+                  if (ip->prev->inst[0] == ADD)
+                     p->flag |= PTRF_INC;
+                  if (ip->inst[2] == ip->prev->inst[2])
+                  {
+                     j = ip->prev->inst[3];
+                     if (j > 0 && IS_CONST(STflag[j-1]))
+                     {
+/*
+ *                      save the ST index of the const updated by
+ */
+                        k = SToff[j-1].i 
+                              >> type2shift(FLAG2TYPE(STflag[p->ptr-1]));
+                        p->upst = STiconstlookup(k);;
+                        p->flag |= PTRF_CONSTINC;
+                        if (SToff[j-1].i == type2len(FLAG2TYPE(flag)))
+                           p->flag |= PTRF_CONTIG;
+                     }
+                  }
+                  else
+                     p->flag |= PTRF_MIXED;
+               }
+               else
+               {
+                  p->nupdate++;
+                  /*p->flag = 0;*/
+
+                  if (p->flag & PTRF_CONSTINC)
+                  {
+                     if (ip->inst[2] == ip->prev->inst[2])
+                     {
+                        j = ip->prev->inst[3];
+                        if (j > 0 && IS_CONST(STflag[j-1]))
+                        {
+                           p->upst = 0; /*invalid since updated multiple times*/
+                           if ((p->flag & PTRF_CONTIG) 
+                                 && SToff[j-1].i != type2len(FLAG2TYPE(flag)))
+                              p->flag &=~PTRF_CONTIG;
+                        }
+                        else
+                        {
+                           p->flag &= ~PTRF_CONSTINC;
+                           p->flag |= PTRF_MIXED;
+                        }
+                     }
+                     else
+                     {
+                        p->flag &= ~PTRF_CONSTINC;
+                        p->flag |= PTRF_MIXED;
+                     }      
+                  }
+/*
+ *                using both ADD and SUB the ptr make it mixed!
+ */
+                  if ( (p->flag & PTRF_INC) && ip->prev->inst[0] == SUB)
+                     p->flag |= PTRF_MIXED;
+                  if ( !(p->flag & PTRF_INC) && ip->prev->inst[0] == ADD)
+                     p->flag |= PTRF_MIXED;
+               }
+               p->ilist = NewIlist(ip, p->ilist);
+            }
+         }
+      }
+   }
+   return(pbase);
+}
+
+struct ptrinfo *FindConstMovingPtr(BBLOCK *bp)
+{
+   ILIST *il, *il0;
+   struct ptrinfo *pi, *pi0, *picon;
+   BLIST *bl;
+
+   bl = NewBlockList(bp, NULL);
+   pi0 = FindMovingPointers1(bl); // new implementation
+
+   picon = NULL;
+   for (pi=pi0; pi; pi=pi->next)
+   {
+/*
+ *    NOTE: we only support MinPtrUpdate for const increment of pointers. 
+ *    we will consider decrement later... HERE HERE, CONSTINC only checks const
+ *    and we need to add check with INC
+ */
+      if ( (pi->flag & PTRF_CONSTINC) 
+            && pi->flag & PTRF_INC ) 
+      {
+         picon = NewPtrinfo(pi->ptr, pi->flag, picon);
+#if 1         
+         picon->nupdate = pi->nupdate;
+         picon->upst = pi->upst;
+         for (il=pi->ilist, il0=NULL; il; il=il->next)
+            il0 = NewIlist(il->inst, il0);
+         for (il=il0; il; il=il->next)
+            picon->ilist = NewIlist(il->inst, picon->ilist);
+         KillAllIlist(il0);
+#endif
+      }
+   }
+   KillBlockList(bl);
+   KillAllPtrinfo(pi0);
+   return(picon);
+}
+
+int IsPtrMinPossible(BLIST *scope)
+/*
+ * Main idea: if any block in the scope has any ptr with const update, we can 
+ * minimize the updates or atleast move it at the end for this block... 
+ */
+{
+   int nbp = 0;
+   BLIST *bl;
+   struct ptrinfo *pi;
+
+   for (bl=scope; bl; bl=bl->next)
+   {
+      pi = FindConstMovingPtr(bl->blk);
+      if (pi)
+      {
+         nbp++;
+         KillAllPtrinfo(pi);
+         //return(1);
+      }
+   }
+   if (nbp)
+   {
+      //fprintf(stderr, " nbp = %d\n");
+      return(1);
+   }
+   return(0);
+}
+
+int MinBlkPtrUpdates(BBLOCK *blk, struct ptrinfo *pi0)
+{
+   int k, inc;
+   INSTQ *ip, *ip0, *ipn;
+   short *sp;
+   short reg, dt;
+   struct ptrinfo *pi;
+   ILIST *il;
+   //fprintf(stderr, "----------blk=%d\n", blk->bnum);
+   for (pi=pi0; pi; pi=pi->next)
+   {
+      //fprintf(stderr, "%s : %d\n", STname[pi->ptr-1], pi->flag);
+/*
+ *    assumption: ilist in ptrinfo is correctly populated and point sequential 
+ *    from up to down
+ */
+#if 0      
+      assert(pi->ilist);
+      ip0 = pi->ilist->inst;
+      assert(ip0->inst[2] == ip0->prev->inst[2]); 
+      assert(IS_CONST(STflag[ip0->prev->inst[3]-1]));
+      pi->upst = SToff[ip0->prev->inst[3]-1].i;
+      
+      fprintf(stderr, "init inc=%d\n", pi->upst);
+      
+      inc = pi->upst;
+#endif
+      assert(pi->ilist);
+      reg = -(pi->ilist->inst->inst[2]);
+      inc = 0;
+      for (il=pi->ilist; il; il=il->next)
+      {
+         ip0 = il->inst;
+         assert(ip0->inst[2] == ip0->prev->inst[2]); 
+         assert(IS_CONST(STflag[ip0->prev->inst[3]-1]));
+         inc += SToff[ip0->prev->inst[3]-1].i;
+         
+         if (il->next)
+            ipn = il->next->inst;
+         ipn = NULL;
+/*
+ *       we assume only const inc of ptr
+ */
+         for (ip = ip0; ip != ipn; ip=ip->next)
+         {
+            dt = 0;
+            if (IS_LOAD(ip->inst[0]) && NonLocalDeref(ip->inst[2]))
+               dt = ip->inst[2];
+            else if (IS_STORE(ip->inst[0]) && NonLocalDeref(ip->inst[1]))
+               dt = ip->inst[1];
+            
+            if (dt && STpts2[dt-1] == pi->ptr)
+            {
+/*
+ *             NOTE: since we are considering only const inc now, we won't have 
+ *             any load of index. this assertion is to protect this assumption 
+ */
+               assert( (ip->prev->inst[0] == LD)
+                     && (STpts2[ip->prev->inst[2]-1])==pi->ptr );
+               k = -ip->prev->inst[1];
+               sp = UpdateDeref(ip, k, inc);
+               if (sp)
+               {
+                  for (k=0; k < 4; k++)
+                     ip->inst[k] = sp[k];
+               }
+               else
+               {
+#if 1
+                  fprintf(stderr, "DT: <%d, %d, %d, %d>\n", 
+                        SToff[dt-1].sa[0],
+                        SToff[dt-1].sa[1],
+                        SToff[dt-1].sa[2],
+                        SToff[dt-1].sa[3] );
+                  assert(0);
+#else
+                  InsNewInst(blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
+#endif
+               }
+            }
+#if 0                   
+            if (IS_LOAD(ip->inst[0]) && NonLocalDeref(ip->inst[2])) 
+            {
+               k = STpts2[ip->inst[2]-1];
+               if (k != pi->ptr)
+                  continue;
+/*
+ *             since it's const inc, there is no load of index.. so, ip->prev 
+ *             should be load of ptr
+ */
+               assert( (ip->prev->inst[0] == LD)
+                     && (k==STpts2[ip->prev->inst[2]-1]) );
+               k = -ip->prev->inst[1];
+               sp = UpdateDeref(ip, k, inc);
+               if (sp)
+               {
+                  for (k=0; k < 4; k++)
+                     ip->inst[k] = sp[k];
+               }
+               else
+               {
+#if 1
+                  fprintf(stderr, "DT: <%d, %d, %d, %d>\n", 
+                        SToff[ip->inst[2]-1].sa[0],
+                        SToff[ip->inst[2]-1].sa[1],
+                        SToff[ip->inst[2]-1].sa[2],
+                        SToff[ip->inst[2]-1].sa[3] );
+                  assert(0);
+#else
+                  InsNewInst(blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
+#endif
+               }
+            }
+            else if (IS_STORE(ip->inst[0]) && NonLocalDeref(ip->inst[1]))
+            {
+               k = STpts2[ip->inst[1]-1];
+               if (k != pi->ptr)
+                  continue;
+               assert( (ip->prev->inst[0] == LD)
+                     && (k==STpts2[ip->prev->inst[2]-1]) );
+               k = -ip->prev->inst[1];
+               sp = UpdateDeref(ip, k, inc);
+               if (sp)
+               {
+                  for (k=0; k < 4; k++)
+                     ip->inst[k] = sp[k];
+               }
+               else
+               {
+#if 1
+                  fprintf(stderr, "DT: <%d, %d, %d, %d>\n", 
+                        SToff[ip->inst[1]-1].sa[0],
+                        SToff[ip->inst[1]-1].sa[1],
+                        SToff[ip->inst[1]-1].sa[2],
+                        SToff[ip->inst[1]-1].sa[3] );
+                  assert(0);
+#else
+                  InsNewInst(blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
+#endif
+               }
+            }
+#endif
+         }
+/*
+ *       delete pointer update... 
+ */
+         ip = ip0->prev->prev;
+         ip = DelInst(ip);
+         ip = DelInst(ip);
+         ip = DelInst(ip);
+         il->inst = NULL;
+      }
+/*
+ *    add pointer update at the end of the block before branch unless we have 
+ *    loop cmpflags 
+ */
+      ip = FindCompilerFlag(blk, CF_LOOP_PTRUPDATE );
+      if (!ip)
+      {
+         ip = FindCompilerFlag(blk, CF_LOOP_UPDATE);
+         if (!ip)
+         {
+            ip = FindCompilerFlag(blk, CF_LOOP_INIT);
+            if (!ip)
+            {
+               ip = blk->instN;
+               if (IS_BRANCH(ip->inst[0]))
+                  ip = ip->prev;
+               while (ip && !IS_STORE(ip->inst[0]) && !IS_BRANCH(ip->inst[0])
+                      && ip->inst[0] != LABEL)
+               {
+                  ip = ip->prev;
+               }
+               ip = ip->next;
+            }
+         }
+         else
+         {
+            ip = InsNewInst(blk, NULL, ip, CMPFLAG, CF_LOOP_PTRUPDATE, 0, 0 );
+            ip = ip->next;
+         }
+      }
+      else
+      {
+         ip = ip->next;
+      }
+/*
+ *    inst shouldn't have any access of ptr after this point
+ *    FIXME: do we need to place a checking in case CMPFLAG got displaced???
+ */
+      InsNewInst(blk, NULL, ip, LD, -reg, SToff[pi->ptr-1].sa[2], 0 );
+      if (pi->flag & PTRF_INC)
+         InsNewInst(blk, NULL, ip, ADD, -reg, -reg, STiconstlookup(inc));
+      else assert(0);
+      InsNewInst(blk, NULL, ip, ST, SToff[pi->ptr-1].sa[2], -reg,  0 );
+   }
+}
+
+int LocalMinPtrUpdate(BLIST *scope)
+{
+   BLIST *bl, *bscope;
+   struct ptrinfo *pi;
+
+   bscope = NewReverseBlockList(scope); /* to reverse the order, not needed! */
+   for (bl=bscope; bl; bl=bl->next)
+   {
+      pi = FindConstMovingPtr(bl->blk);
+      if (pi)
+      {
+         MinBlkPtrUpdates(bl->blk, pi);
+         KillAllPtrinfo(pi);
+      }
+   }
+   KillBlockList(bscope);
+}
+
 
 int main(int nargs, char **args)
 /*
@@ -3904,8 +4296,10 @@ int main(int nargs, char **args)
    struct optblkq *optblks;
    BBLOCK *bp;
    /*int RCapp;*/
+   LPLIST *lpnest;
    extern FILE *yyin;
    extern BBLOCK *bbbase;
+   extern int SKIP_PEELING;
 /*
  * Update flags using command line options and create Optimization block 
  * structures. Note: It's not CFG block, it's block for opts and will be used
@@ -3943,7 +4337,7 @@ int main(int nargs, char **args)
  *       1. Generate 1st LIL after parsing the HIL (Simple ld/st LIL).
  *       2. No CFG, No Prolgue/Epilogue, no extra info
  *==========================================================================*/
-#if 1
+#if 0
    FKO_FLAG |= IFF_OPT2DPTR; /* applying optimize 2d array access by default */
 #endif
    yyin = fpin;
@@ -4098,7 +4492,34 @@ int main(int nargs, char **args)
       SaveFKOState(1);
       exit(0);
    }
-#endif   
+#endif 
+#if 1
+   if (optloop)
+   {
+      lpnest = FindLoopNest(optloop);
+/*--------------------------------------------------------------------------
+ *    new fundamental optimization: loop unswitching... it will make the nested
+ *    loop simple to apply our loop nest vectorization
+ *    we will apply this only if all the if-conditionals can be removed for now
+ *----------------------------------------------------------------------------*/
+      if (optloop && IsLoopUnswitchable(lpnest))
+      {
+         /*fprintf(stderr, "Loop unswitchable!!\n");*/
+         LoopUnswitch(lpnest);
+      }
+/*-----------------------------------------------------------------------------
+ *    new fundamental optimization: Minimize Ptr update
+ *    right now, we will apply this opt when any one pointer is updated
+ *    by const
+ *----------------------------------------------------------------------------*/
+      if (IsPtrMinPossible(lpnest->loop->blocks)) /* blocks of outermost loop */
+      {
+         /*fprintf(stderr, "MPU possible!\n");*/
+         LocalMinPtrUpdate(lpnest->loop->blocks);
+      }
+      KillAllLPlist(lpnest);
+   }
+#endif
 /*============================================================================
  *    STATE2 : Vectorization 
  *    [This state is dedicated for vectorization. Right now, we deal with two 
@@ -4115,6 +4536,7 @@ int main(int nargs, char **args)
  *
  *    NOTE: for speculative vectorization, unrolling is not implemented yet
  *===========================================================================*/
+
 /*
  * we need to update vflag, varrs etc for HIL intrinsic vector loop
  */
@@ -4123,6 +4545,29 @@ int main(int nargs, char **args)
       if (FKO_FLAG & IFF_VECTORIZE)
          fko_warn(__LINE__, "Already vectorize by HIL intrinsic\n");
       UpdateVecLoop(optloop);
+   }
+/*
+ * Vectorization for Simple loop nest 
+ */   
+   else if ( (FKO_FLAG & IFF_VECTORIZE) && IsSimpleLoopNestVec(VECT_FLAG) )
+   {
+      /*fprintf(stderr, "*****applying loop nest vect\n");*/
+      fko_warn(__LINE__,"*****applying loop nest vect\n");
+      assert(!LoopNestVec());
+   }
+   else if ( (FKO_FLAG & IFF_VECTORIZE) && (VECT_FLAG & VECT_SLP) )
+   {
+/*
+ *    apply SLP vectorization method 
+ */
+      /*assert(!SlpVectorization());*/
+      assert(!LoopNestVec());
+      CheckUseSet();
+#if 0
+      fprintf(stdout, "LIL after SLP Vec\n");
+      PrintInst(stdout, bbbase);
+      exit(0);
+#endif
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {
@@ -4170,8 +4615,8 @@ int main(int nargs, char **args)
       {
          VECT_FLAG &= ~VECT_SV;
          VECT_FLAG |= VECT_NCONTRL;
-         assert(!RcVectorAnalysis());
-         assert(!RcVectorization());
+         assert(!RcVectorAnalysis(optloop));
+         assert(!RcVectorization(optloop));
          FinalizeVectorCleanup(optloop, 1);
       }
 #if 0      
@@ -4229,6 +4674,7 @@ int main(int nargs, char **args)
 #if 0
       fprintf(stdout, "LIL AFTER Vectorization \n");
       PrintInst(stdout, bbbase);
+      exit(0);
 #endif
    }
 /*=============================================================================
@@ -4284,6 +4730,18 @@ int main(int nargs, char **args)
          PrintInst(stdout, bbbase);
          exit(0);
 #endif         
+   }
+/*
+ * apply unroll all the way. we will get rid of optloop at the end of 
+ * fundamental opts
+ */
+   else if (FKO_UR == -1)
+   {
+      int ur;
+      ur = CountUnrollFactor(optloop);
+      assert(ur);
+      if(ur > 1) 
+         UnrollLoop(optloop, ur); /* with modified cleanup */ 
    }
    /* neither vectorize nor unrolled ! */
    else if (!DO_VECT(FKO_FLAG) && !(VECT_FLAG & VECT_INTRINSIC) ) 
@@ -4352,8 +4810,7 @@ int main(int nargs, char **args)
       else assert(0); /* must have moving ptr for prefetch */
          
       if (optloop->pfarrs)
-      {
-         
+      { 
          if (!FKO_SB || !(VECT_FLAG & VECT_SV)) FKO_SB = 1;
          if (!FKO_UR) FKO_UR = 1;
          AddPrefetch(optloop, FKO_UR*FKO_SB);
@@ -4366,9 +4823,24 @@ int main(int nargs, char **args)
  * NOTE: this is done after all the fundamental optimizations sothat we can 
  * keep them too in the duplicated loop. 
  */
-   if (VECT_FLAG && VECT_FLAG != VECT_INTRINSIC 
+#if 1   
+   if (VECT_FLAG 
+         && VECT_FLAG != VECT_INTRINSIC 
+         && VECT_FLAG != VECT_SLP
+         && !SKIP_PEELING
          && IsAlignLoopSpecNeeded(optloop))
       UnalignLoopSpecialization(optloop);
+#endif
+/*
+ * applied optloop all the way, now time to delete the optloop control 
+ */
+#if 1
+   if (FKO_UR == -1)
+   {
+      /*UnrollAllTheWay();*/
+      DelLoopControl(optloop);
+   }
+#endif
 /*
  * FINAL STAGE: 
  *    1. Apply repeatable optimization

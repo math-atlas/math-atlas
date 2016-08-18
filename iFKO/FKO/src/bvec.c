@@ -82,6 +82,8 @@ static INT_BVI GetUnusedBVI()
  * function. We can use fixed-size table(or, queue) for this and update the 
  * table for each kill of bvec. When there are no unused bvec, we can search
  * the bvec table to update this table. It should reduce the computation time.
+ * FIXME: for a code with huge unroll factor, this function wastes most of the 
+ * time!
  */
 {
    INT_BVI i;

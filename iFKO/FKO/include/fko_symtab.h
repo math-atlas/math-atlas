@@ -31,6 +31,7 @@
  * .... Should we have two different types like: V_SHORT, V_INT !!!!
  * NOTE: normally, we don't use V_SHORT and V_INT together. So, I decided to
  * use only one type V_INT in my implementation.
+ * NOTE: they are also used in fko_types.h... see flag for SLP_VECTOR
  */
 #define T_VINT       0x8
 /*#define T_VSHORT       0x8
@@ -60,7 +61,7 @@
 #define DEREF_BIT    0x800
 #define UNKILL_BIT   0x1000   /* local must be allocated */
 #define ARRAY_BIT    0x2000   /* indicates an array */
-
+/*#define VELEM_BIT    0x4000 */  /* scalar for vector element, no new var */
 
 #define IS_PTR(flag_)   ((flag_) & PTR_BIT)
 #define IS_CONST(flag_) ((flag_) & CONST_BIT)
@@ -78,7 +79,7 @@
 #endif
 #define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? T_INT : ((flag_) & 0xF) )
 #define IS_ARRAY(flag_) ((flag_) & ARRAY_BIT)
-
+/*#define IS_VECELEM(flag_) ((flag_) & VELEM_BIT)*/
 
 
 #define REG_SP   1

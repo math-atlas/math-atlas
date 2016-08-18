@@ -30,7 +30,7 @@
    static short *maalign=NULL;
    static short *mbalign=NULL;
 */
-   static short maxunroll=0, writedd=1;
+   static short maxunroll=0, itermul=0;
    extern short STderef;
    
    int yylex(void);
@@ -58,6 +58,7 @@
    void HandleVecReduce(short sid, short vid, char op, short ic);
    void HandleVecBroadcast(short vid, short ptrderef);
    void HandlePrefetch(short lvl, short ptrderef, int wpf);
+   short HandleVecElem(short vid, int elem);
 %}
 %union
 {
@@ -106,6 +107,7 @@
 %type <inum> arraydim
 %type <inum> array_access
 %type <inum> unrollfactor
+/*%type <sh> VecElem*/
 
 %%
 
@@ -371,7 +373,10 @@ avar : ID               {$$ = $1;}
      | fconst           {$$ = $1;}
      | dconst           {$$ = $1;}
      | iconst           {$$ = $1;}
+     /*| VecElem          {$$ = $1;}*/
      ;
+/*VecElem : ID '[' icexpr ']' {$$ = HandleVecElem($1, $3);}*/
+        
         /* need to change to if (ID op avar) goto LABEL */
         /* > < NE LE GE * +  / RSHIFT LSHIFT | & ^ */
 IFOP : '>'  {$$ = '>';}
@@ -701,8 +706,8 @@ static void UpdateLoop(struct loopq *lp)
  * Handle markup with ival param    
  */
    lp->maxunroll = maxunroll;
-   lp->writedd  = writedd;
-   maxunroll = writedd = 0;
+   lp->itermul  = itermul;
+   maxunroll = itermul = 0;
 /*
  * Handle markup with list.
  * ========================
@@ -802,8 +807,10 @@ void HandleLoopIntMU(int which, int ival)
  * encoded by which:
  *
  * 0 : Max_unroll - maximum unrolling to try
- * 1 : Write_dep_dist - loop unroll at which a loop-carried write dependence
- *                      will be discovered (0 means there are none)
+ * --1 : Write_dep_dist - loop unroll at which a loop-carried write dependence
+ *                      will be discovered (0 means there are none) -- deleted
+ * 1 : iter_mult - indicates loop iteration is multiple of a number.. 0 means
+                   undetermined
  */
 {
    switch(which)
@@ -812,7 +819,7 @@ void HandleLoopIntMU(int which, int ival)
       maxunroll = ival;
       break;
    case 1:
-      writedd = ival;
+      itermul = ival;
       break;
    default:
       fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
@@ -1171,6 +1178,16 @@ void HandleVecBroadcast(short vid, short ptrderef)
    
    DoArrayBroadcast(vid, ptrderef);
 }
+
+#if 0
+short HandleVecElem(short vid, int elem)
+{
+   short st;
+   st = FindSTVecElem(vid, elem+1);
+   assert(st);
+   return(st);
+}
+#endif
 
 void HandlePrefetch(short lvl, short ptrderef, int wpf)
 {

@@ -105,6 +105,38 @@ ILIST *NewIlist(INSTQ *inst, ILIST *next)
    ip->next = next;
    return(ip);
 }
+ILIST *NewIlistAtEnd(INSTQ *inst, ILIST *top)
+{
+   ILIST *ip, *il;
+   ip = malloc(sizeof(ILIST));
+   assert(ip);
+   ip->inst = inst;
+   ip->next = NULL;
+   il = top;
+   if (!il)
+   {
+      return(ip);
+   }
+   while(il->next)
+      il = il->next;
+   il->next = ip;
+   return(top);
+}
+ILIST *NewIlistInBetween(INSTQ *inst, ILIST *prev, ILIST *next)
+/*
+ * add new ilist (with inst) in between prev and next and return ptr of new
+ * ilist node
+ */
+{
+   ILIST *il;
+   il = malloc(sizeof(ILIST));
+   assert(il);
+   il->inst = inst;
+   il->next = next;
+   if (prev)
+      prev->next = il;
+   return(il);
+}
 
 ILIST *KillIlist(ILIST *ip)
 {

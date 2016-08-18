@@ -187,7 +187,8 @@ struct loopq
    short NE_label;    /* no loop entry label */
    short loopnum;
    short maxunroll;
-   short writedd;    /* write dependence distance */
+   /*short writedd;*/    /* write dependence distance -- deleted since not used*/
+   short itermul; 
    int LMU_flag;     /* to keep track of the loop mark up */
 /* In vectorization, arrays that are not incremented are still called scalars*/
    short *varrs;     /* vectorized arrays */
@@ -342,6 +343,61 @@ struct looppath    /* data structure for paths in loop */
    short *vscal;                /* vectorized scalars */
    short *vsflag;               /* info array for vscal */
    short *vsoflag;              /* info array for output vscal */
+};
+
+#define PK_INIT_MEM 1
+#define PK_INIT_MEM_ACTIVE  2
+#define PK_INIT_VLIST 4
+#define PK_MEM_LOAD 8
+#define PK_MEM_BROADCAST 16
+#define PK_MEM_STORE 32
+#define PK_ARITH_OP 64
+
+typedef struct pack PACK;
+struct pack     /* data structure to manage pack in SLP vectorization */
+{
+   int pnum;         /* pack id */
+   short vflag;      /* type? */
+   int vlen;         /* elements in vector */
+   int isVec;        /* pack vectorizable? */
+   int pktype;       /* pack type based on operation */
+   ILIST *sil;       /* scalar/original instruction list */
+   ILIST *vil;       /* vector instruction list */
+   ILIST *depil;     /* point to the inst which this pack depends on */     
+   INT_BVI uses;     /* uses in pack */
+   INT_BVI defs;     /* defs in pack */
+   short *scdef;     /* scalar vars which defs in sil */
+   short *scuse;     /* scalar vars which in use in sil */
+   short *vsc;       /* created vectors: dest, src1, src2 */
+};
+/*
+ * NOTE: TYPE uses 0x 0~F. See fko_symtab.h
+ */
+#define NSLP_ACC 0x10
+#define NSLP_SCAL 0x20
+
+typedef struct slpvector SLP_VECTOR;
+struct slpvector
+{
+   int flag;          /* type, livein, liveout */
+/*
+ * NOTE: since we have many statuses, we should use them in flag!!
+ */
+   int islivein;      /* need to create it in pre-header */
+   int islive;        /* reached lived or dead by scalar update: schedule */
+   int isused;     /* whether is used in blk slp */
+   short vec;
+   short redvar;      /* reduction var for svars, needed for vvrsums */
+   int vlen;
+   short *svars;      /* consecutive svars which this vector represented*/
+   struct slpvector *next;
+};
+
+typedef struct lplist LPLIST;
+struct lplist
+{
+   LOOPQ *loop;         /* loopq */
+   struct lplist *next; 
 };
 
 #if 0

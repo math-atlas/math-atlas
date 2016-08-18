@@ -194,6 +194,7 @@ ILIST *FindChainDest(ILIST *jumps, ILIST *labs, INSTQ *jump)
  */
    k = GET_INST(jump->inst[0]);
    k = (k == JMP) ? jump->inst[2] : jump->inst[3];
+   assert(k);
 /*
  * Find label we're jumping to, and see if following active inst is JMP
  */
