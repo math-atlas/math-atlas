@@ -42,6 +42,7 @@ void ATL_ReverseAllBitsBV(ATL_BV_t *bv);
 void ATL_SetAllBitsBV(ATL_BV_t *bv);
 void ATL_UnsetAllBitsBV(ATL_BV_t *bv);
 int ATL_IsBitRangeSetBV(ATL_BV_t *bv, unsigned long b0, unsigned long bN);
+int ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos);
 
 #endif
 @ROUT testBV
@@ -444,6 +445,81 @@ int TestAllPos  // returns # of errors found
       printf("FindFirst%sBit: ALL CASES PASSED\n", set ? "Set":"Unset");
    return(nerr);
 }
+
+int testIncorp(long seed)
+{
+   int sl;
+   int nerr=0;
+   ATL_BV_t *src, *dst;
+/*
+ * Sanity test with 0 bounds (1 bounds tested in main loop)
+ */
+   srand48(seed);
+   src = ATL_NewBV(3);
+   dst = ATL_NewBV(5);         //  00000 (right least sig)
+   ATL_ReverseAllBitsBV(src);  //    111
+   ATL_IncorpBV(dst, src, 1);  // 001110
+   nerr = (ATL_IsBitSetBV(dst, 0) != 0);
+   nerr |= (ATL_IsBitSetBV(dst, 1) != 1);
+   nerr |= (ATL_IsBitSetBV(dst, 2) != 1);
+   nerr |= (ATL_IsBitSetBV(dst, 3) != 1);
+   nerr |= (ATL_IsBitSetBV(dst, 4) != 0);
+   nerr |= (ATL_IsBitSetBV(dst, 5) != 0);
+   if (nerr)
+      fprintf(stderr, "INCORP MISMATCH: exp=%x, got=%x\n", 0xE, dst[1]);
+   assert(!nerr);
+   ATL_FreeBV(src);
+   ATL_FreeBV(dst);
+   for (sl=0; sl < 4*bpiBV; sl++)  // source length
+   {
+      const int nselt=(sl+bpiBV-1)>>shBV;
+      ATL_BV_t pos;
+      src = ATL_NewBV(sl);
+      for (pos=0; pos < nselt; pos++)   
+         ATL_SetEltBV(src, pos, lrand48()); // set source to random bit pattern
+      for (pos=0; pos <= 2*bpiBV; pos++)
+      {
+         ATL_BV_t i;
+         const int dl = sl+pos+7;
+         dst = ATL_NewBV(dl);         // all 0s
+         ATL_ReverseAllBitsBV(dst);  // all 1s
+         ATL_IncorpBV(dst, src, pos);
+         for (i=0; i < sl; i++)
+         {
+            if (ATL_IsBitSetBV(src, i) != ATL_IsBitSetBV(dst, i+pos))
+            {
+               fprintf(stderr, "INCORP MISMATCH SLEN=%ld, POS=%ld: bit=%ld\n", 
+                       sl, pos, i);
+               nerr++;
+               ATL_assert(!nerr);
+            }
+         }
+         for (i=0; i < pos; i++)
+         {
+            if (!ATL_IsBitSetBV(dst, i))
+            {
+               fprintf(stderr, "POS=%ld, SLEN=%ld: LOWER BOUND %ld ZEROED!\n", 
+                       pos, sl, i);
+               nerr++;
+               ATL_assert(!nerr);
+            }
+         }
+         for (i=pos+sl; i < dl; i++)
+         {
+            if (!ATL_IsBitSetBV(dst, i))
+            {
+               fprintf(stderr, "POS=%ld, SLEN=%ld: UPPER BOUND %ld ZEROED!\n", 
+                       pos, sl, i);
+               nerr++;
+               ATL_assert(!nerr);
+            }
+         }
+         ATL_FreeBV(dst);
+      }
+      ATL_FreeBV(src);
+   }
+   return(nerr);
+}
 int main(int nargs, char **args)
 {
    ATL_BV_t *bv, *bv0, vv;
@@ -614,6 +690,7 @@ int main(int nargs, char **args)
    assert(ATL_@(rt)BV(bv, 65) == 0);
    @endwhile
    ATL_FreeBV(bv);
+   testIncorp(0xfc135);
    assert(TestAllPos(6,  5, 1) == 0);
    assert(TestAllPos(6,  3, 1) == 0);
    assert(TestAllPos(6,  0, 1) == 0);
@@ -631,6 +708,73 @@ int main(int nargs, char **args)
  */
    printf("\nSUCCESS!\n\n");
    return(0);
+}
+@ROUT ATL_IncorpBV
+#include "atlas_bitvec.h"
+int ATL_IncorpBV(ATL_BV_t *dst, ATL_BV_t *src, unsigned long pos)
+/*
+ * Copy entire contents of src into dst, starting at position pos
+ * RETURNS: number of bits copied.
+ */
+{
+   int iret=0;
+   if (src)
+   {
+      ATL_BV_t ncpy=(*src), i; 
+      const ATL_BV_t nr=ncpy&modmskBV, pr=pos&modmskBV;
+      ATL_assert(dst);
+      ATL_assert(pos+ncpy <= *dst);
+      iret = ncpy;
+      ncpy >>= shBV;             /* # of full array entries to copy */
+      src++;                     /* first src entry to copy */
+      dst += 1 + (pos >> shBV);  /* first affected dest entry */
+      if (pr)     /* usual case wt pos bits from old, to cancatonate */
+      {           /* with 32-pos bits from src */
+         unsigned char nnew = bpiBV - pr;
+         const ATL_BV_t oldmsk = (1L<<pr)-1;
+         ATL_BV_t last = *dst & oldmsk;
+         for (i=0; i < ncpy; i++)
+         {
+            ATL_BV_t s = src[i];
+            dst[i] = (s<<pr) | last;
+            last = s >> nnew;
+         }
+         if (nr)  /* partial last block */
+         {
+            ATL_BV_t d = dst[ncpy], s=src[ncpy], msk=(1L<<nr)-1;
+            int nextra = pr+nr - bpiBV;
+            d = (d&(~oldmsk))|last;  /* new bits below pr, orig above */
+            s = s & msk;             /* kill high bits not copied */
+            msk = ~(msk<<pr);        /* nr 0s starting at pr */
+            d = d & msk;             /* kill middle bits coming from s */
+            d |= s << pr;
+            dst[ncpy] = d;
+            if (nextra > 0) /* nextra bits spill to next dest entry! */
+            {
+               int nhandled = nr-nextra;
+               s >>= nr-nextra;
+               msk = ~((1L<<nextra)-1);
+               d = dst[ncpy+1];
+               dst[ncpy+1] = (d&msk) | s;
+            }
+         }
+         else /* write pr remaining bits to last dst */
+            dst[ncpy] = (dst[ncpy]&(~oldmsk))|last;
+      }
+      else        /* best case, start on bpiBV boundary */
+      {
+         for (i=0; i < ncpy; i++)
+            dst[i] = src[i];
+         if (nr)  /* partial last block */
+         {
+            ATL_BV_t d = dst[ncpy], s=src[ncpy], msk=allsetBV<<nr;
+            d = d & msk;     /* kill low bits overwritten by src */
+            s = s & (~msk);  /* kill high bits not copied */
+            dst[i] = d | s;
+         }
+      }
+   }
+   return(iret);
 }
 @ROUT ATL_NewBV
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
@@ -1071,22 +1215,130 @@ void ATL_ReverseAllBitsBV(ATL_BV_t *bv)
      bv[i] = ((~v) & msk) | (v & ~msk);
   }
 }
-@ROUT ATL_tUnsetSetBitBV ATL_tSetUnsetBitBV
+@ROUT ATL_tInfoBV
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_tbitvec.h"
-#if 0
-long ATL_tUnsetFirstSetBV(void *bv, unsigned int rank)
+long ATL_tInfoBV(const void *vp, long what)
+/*
+ * Provides unsafe answers to global questions
+ */
 {
-   do
+   if (vp)
    {
-      skp = ATL_FindFirstSetBitBV(bv, skp);
-      if (skp == -1)
-         return(-1);
+      const long *gp=ATL_AlignSafeLS(vp);
+      if (what <= ATL_TBV_B)
+         return(gp[what]);
+      else if (what == ATL_TBV_NUNSET)
+      {
+         const unsigned long P=gp[ATL_TBV_P], sumsz=gp[ATL_TBV_SUMSZ],
+               lcksz=gp[ATL_TBV_LCKSZ], bvsz=gp[ATL_TBV_BVSZ];
+         const unsigned long *tp = gp + sumsz + lcksz*P;
+         long nun=0;
+         int i;
+         for (i=0; i < P; i++, tp += bvsz)
+            nun += *tp;
+         return(nun);
+      }
    }
-   while (ATL_tUnsetBitBV(bv, skp) == 0);
-   return(skp);
+   return(-1);
 }
-#endif
+@ROUT ATL_tReverseAllBitsBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_tbitvec.h"
+void ATL_tReverseAllBitsBV(void *vp, unsigned int flg)
+{
+   if (vp)
+   {
+      long *gp=ATL_AlignSafeLS(vp), *bv;
+      void *lk;
+      const unsigned long P=gp[ATL_TBV_P], sumsz=gp[ATL_TBV_SUMSZ],
+         lcksz=gp[ATL_TBV_LCKSZ], bvsz=gp[ATL_TBV_BVSZ], 
+         nlg=gp[ATL_TBV_NLGB], B=gp[ATL_TBV_B];
+      long b;
+      int i;
+      lk = gp + sumsz;
+      bv = lk + lcksz*P;
+      for (i=0; i < P; i++)
+      {
+         long b = (i < nlg) ? b+1 : b;
+         if (flg&1)
+            ATL_lock(lk);
+         bv[0] = b - bv[0];
+         ATL_ReverseAllBitsBV(bv+1);
+         if (flg&1)
+            ATL_unlock(lk);
+         bv += bvsz;
+         lk += lcksz;
+      }
+   }
+}
+@ROUT ATL_tSetUnsetBitBV
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_tbitvec.h"
+long ATL_tSetUnsetBitBV(void *vp, unsigned int rank)
+{
+   if (vp)
+   {
+      long *gp=ATL_AlignSafeLS(vp), *bv, *bv0, *lck0, *lck;
+      unsigned int vrk, i;
+      const unsigned long P=gp[ATL_TBV_P], sumsz=gp[ATL_TBV_SUMSZ],
+         lcksz=gp[ATL_TBV_LCKSZ], bvsz=gp[ATL_TBV_BVSZ];
+
+      if (rank >= P)
+         rank = rank - (rank / P)*P;
+/*
+ *    Make an unsafe pass looking for unset bits.  Note that the return of -1
+ *    only means no bits possibly unset if this is used on a vector that 
+ *    starts all unset, and sets bits during execution (the usual case).
+ *    If other threads can unset bits, we may return -1 with unset bits due
+ *    to another thread unsetting a rank's bit after we check it.
+ */
+      lck0 = gp + sumsz;
+      bv0 = lck0 + lcksz*P;
+      lck = lck0 + rank*lcksz;
+      bv  = bv0  + rank*bvsz;
+      vrk = rank;
+      for (i=0; i < P; i++)
+      {
+         if (bv[0])  /* found a bv with unset bits */
+         {
+            ATL_lock(lck);
+            if (bv[0])
+            {
+               long ret, nlrg, nsm, b;
+               (*bv)--;  /* subtract bit I'm setting from nunset */
+               bv++;
+               ret = ATL_FindFirstUnsetBitBV(bv, 0);
+               #ifdef DEBUG
+                  ATL_assert(ret >= 0);
+               #endif
+               ATL_SetBitBV(bv, ret);
+               ATL_unlock(lck);
+
+               b = gp[ATL_TBV_B];
+               nlrg = gp[ATL_TBV_NLGB];
+               nlrg = Mmin(nlrg, vrk);
+               nsm = vrk - nlrg;
+               ret += nlrg*(b+1) + nsm*b;
+               return(ret);
+            }
+            ATL_unlock(lck);
+         }
+         if (++vrk != P)
+         {
+            bv  += bvsz;
+            lck += lcksz;
+         }
+         else
+         {
+            bv = bv0;
+            lck = lck0;
+            vrk = 0;
+         }
+      }
+   }
+   return(-1);
+}
 @ROUT ATL_tGetLocalBoundsBV
 #include "atlas_tbitvec.h"
 unsigned long ATL_tGetLocalBoundsBV(void *vp, unsigned int rank, 
@@ -1099,7 +1351,7 @@ unsigned long ATL_tGetLocalBoundsBV(void *vp, unsigned int rank,
    rank = rank - (rank/P)*P;
    off = Mmin(rank, nlrg);
    off *= B+1;
-   off *= (rank-nlrg)*B;
+   off += (rank-nlrg)*B;
    *LB = off + ((rank < nlrg) ? B : B-1);
    return(off);
 }
@@ -1211,6 +1463,85 @@ unsigned long ATL_tGetTotBitsBV(void *bv)
 @ROUT ATL_tNewBV
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_tbitvec.h"
+#define UL unsigned long
+static UL compSz(UL nbits, unsigned int *P, UL *SUMSZ, UL *LCKSZ, UL *BVSZ, 
+                 UL *LNBITS, UL *NLRG, UL *NSML)
+#undef UL
+{
+   unsigned long sumSz, lckSz, bvSz, bvElts, lnbits, nlrg, nsml;
+   unsigned int p=*P;
+   bvSz = nbits >> 2; 
+   p = *P;
+   p = Mmin(p,bvSz);   /* want at least 4 bits per locBV! */
+   p = Mmax(p,1);
+   lnbits = nbits / p; 
+   nlrg = nbits - lnbits * p; 
+   nsml = p - nlrg; 
+   sumSz = 8*sizeof(long) ; 
+   sumSz = (unsigned long) ATL_AlignSafeLS(sumSz); 
+   bvElts = (nlrg) ? lnbits+1 : lnbits; 
+   bvElts = (bvElts+bpiBV-1)>>shBV; 
+   bvSz = (bvElts + 2) * sizeof(long); 
+   bvSz = (unsigned long) ATL_AlignSafeLS(bvSz); 
+   lckSz = sizeof(ATL_lock_t); 
+   lckSz = (unsigned long) ATL_AlignSafeLS(lckSz);
+   *P = p;
+   *SUMSZ = sumSz;
+   *LCKSZ = lckSz;
+   *BVSZ  = bvSz;
+   *LNBITS = lnbits;
+   *NLRG = nlrg;
+   *NSML = nsml;
+   return(bvElts);
+}
+
+size_t ATL_tSizeofBV(unsigned long nbits, unsigned int P)
+{
+   unsigned long sumSz, lckSz, bvSz, lnbits, nlrg, nsml;
+
+   compSz(nbits, &P, &sumSz, &lckSz, &bvSz, &lnbits, &nlrg, &nsml);
+   return(sumSz + P*(lckSz + bvSz) + ATL_SAFELS); 
+}
+
+void ATL_tInitBV(void *vp, unsigned long nbits, unsigned int P)
+{
+   if (vp)
+   {
+      unsigned long sumSz, lckSz, bvSz, bvElts, lnbits, nlrg, nsml, i;
+      long *lp=ATL_AlignSafeLS(vp);
+
+      bvElts = compSz(nbits, &P, &sumSz, &lckSz, &bvSz, &lnbits, &nlrg, &nsml);
+      lp = ATL_AlignSafeLS(vp);
+      sumSz = ATL_lDivBySize(sumSz);
+      lckSz = ATL_lDivBySize(lckSz);
+      bvSz  = ATL_lDivBySize(bvSz);
+      lp[ATL_TBV_P] = P;
+      lp[ATL_TBV_GNBITS] = nbits;
+      lp[ATL_TBV_SUMSZ] = sumSz;
+      lp[ATL_TBV_LCKSZ] = lckSz;
+      lp[ATL_TBV_BVSZ] = bvSz;
+      lp[ATL_TBV_NLGB] = nlrg;
+      lp[ATL_TBV_NSMB] = nsml;
+      lp[ATL_TBV_B] = lnbits;
+/*
+ *    Initialize all locks
+ */
+      lp += sumSz;
+      for (i=0; i < P; i++, lp += lckSz)
+         ATL_lock_init(lp);
+/*
+ *    Initialize all locBVs & return
+ */
+      for (i=0; i < P; i++, lp += bvSz)
+      {
+         unsigned long k;
+         lp[0] = lp[1] = (i < nlrg) ? lnbits+1 : lnbits;
+         for (k=0; k < bvElts; k++)
+            lp[k+2] = 0;
+      }
+   }
+}
+
 /*
  * 3 areas, each rounded up to 128 bytes:
  * 1. summary area: 
@@ -1220,28 +1551,18 @@ unsigned long ATL_tGetTotBitsBV(void *bv)
  */
 void *ATL_tNewBV(unsigned long nbits, unsigned int P)
 {
-   unsigned long sumSz, lckSz, bvSz, bvElts, lnbits, nlrg, nsml, i;
+   unsigned long sumSz, lckSz, bvSz, lnbits, nlrg, nsml;
    void *vp;
    long *lp;
 
-   bvSz = nbits >> 2;
-   P = Mmin(P,bvSz);   /* want at least 4 bits per locBV! */
-   lnbits = nbits / P;
-   nlrg = nbits - lnbits * P;
-   nsml = P - nlrg;
-   sumSz = 8*sizeof(long) ;
-   sumSz = (unsigned long) ATL_AlignSafeLS(sumSz);
-   bvElts = (nlrg) ? lnbits+1 : lnbits;
-   bvElts = (bvElts+bpiBV-1)>>shBV;
-   bvSz = (bvElts + 2) * sizeof(long);
-   bvSz = (unsigned long) ATL_AlignSafeLS(bvSz);
-   lckSz = sizeof(ATL_lock_t);
-   lckSz = (unsigned long) ATL_AlignSafeLS(lckSz);
+   compSz(nbits, &P, &sumSz, &lckSz, &bvSz, &lnbits, &nlrg, &nsml);
 /*
  * Allocate memory, and fill in summary area 
  */
    vp = malloc(sumSz + P*(lckSz + bvSz) + ATL_SAFELS); 
    ATL_assert(vp);
+   ATL_tInitBV(vp, nbits, P);
+@beginskip
 
    lp = ATL_AlignSafeLS(vp);
    sumSz /= sizeof(long);
@@ -1271,7 +1592,115 @@ void *ATL_tNewBV(unsigned long nbits, unsigned int P)
       for (k=0; k < bvElts; k++)
          lp[k+2] = 0;
    }
+@endskip
    return(vp);
+}
+@ROUT ATL_tGlb2locBV
+#include "atlas_tbitvec.h"
+long ATL_tGlb2locBV(ATL_BV_t *lbv, void *gbv, unsigned long pos)
+/*
+ * Combines all P individual global bitvecs into one local bitvec.
+ * Mutexes are not locked, so info may be wrong.
+ * RETURNS: number of unset bits in new local bitvec
+ */
+{
+   long nunset = 0;
+   if (gbv)
+   {
+      long *gp=ATL_AlignSafeLS(gbv), *tp;
+      const long P=gp[0], nbits=gp[1], inc=gp[4];
+      long i, nb;
+
+      ATL_assert(lbv);
+      ATL_assert(lbv[0] >= nbits+pos);
+      nb = pos;
+      tp = gp + gp[2] + P*gp[3];
+      for (i=0; i < P; i++)
+      {
+         nunset += tp[0];
+         nb += ATL_IncorpBV(lbv, tp+1, nb);
+         tp += inc;
+      }
+   }
+   return(nunset);
+}
+@ROUT ATL_tSetRangeBV
+#include "atlas_tbitvec.h"
+unsigned long ATL_tSetRangeBV(void *bv, unsigned int *NBITS, unsigned long pos,
+                              unsigned long setmsk)
+/*
+ * On input *nbits is the max number of bits in bv to set to the bit pattern
+ * in the least significant bits of mask.  On exit, the number of bits actually
+ * set (may be less if some bits owned by another mutex; only one lock will
+ * be made).
+ * RETURNED: original bitpattern, *nbits set to the number of bits
+ */
+{
+   if (bv)
+   {
+      void *lck;
+      ATL_BV_t *lbv;
+      unsigned long *gp=ATL_AlignSafeLS(bv);
+      unsigned long nbits=(*NBITS), b=gp[7], ornk, elt, lret, nn, i, v, msk, n2;
+      long nch;
+      const unsigned long P=gp[0], gnbits=gp[1], sumSz=gp[2], lckSz=gp[3],
+         bvSz=gp[4], nlrg=gp[5], nsm=gp[6], lrgN=(b+1)*nlrg;
+
+      if (pos >= gnbits)
+      {
+         *NBITS = 0;
+         return(0);
+      }
+      ornk  = gnbits - pos;
+      nbits = Mmin(nbits, ornk);  // replace with local comp?
+      if (lrgN > pos) /* contained in a large block */
+      {
+         ornk = pos/(++b);
+         pos -= ornk*b;      /* local position */
+      }
+      else
+      {
+         pos -= lrgN;
+         ornk = pos/b;
+         pos -= ornk*b;  /* local position */
+         ornk += nlrg;
+      }
+      v = b - pos;           /* # of bits from pos prot by this lock */
+      nbits = Mmin(nbits, v);/* max bits: number prot by this lock */
+      lck = gp + sumSz + ornk*lckSz;
+      lbv = gp + sumSz + P*lckSz + ornk*bvSz;
+      elt = pos >> shBV;     /* local elt */
+      pos &= modmskBV;       /* pos within elt */
+      nn = bpiBV-pos;        /* bits left in this elt */
+      nn = Mmin(nn, nbits);  /* # of bits from this elt */
+      msk = (1L<<nn)-1;      /* only lower nn bits set */
+
+      ATL_lock(lck);
+      v = lbv[2+elt];
+      lret = (v>>pos)&msk;   /* lret holds original low nn bits */
+      msk = ~(msk<<pos);     /* all set except for target range */
+      lbv[2+elt] = (v&msk)|(setmsk<<pos);
+      n2 = nbits - nn;       /* # of bits in next element */
+      if (n2)
+      {
+         msk = (1L<<n2)-1;  /* low n2 bits set */
+         v = lbv[3+elt];
+         lret |= (v&msk)<<nn;
+         lbv[3+elt] = (v&(~msk))|(setmsk>>nn);
+      }
+/*
+ *    Compute change in unset
+ */
+      for (nch=i=0; i < nbits; i++)
+         nch += ((lret>>i)&1) - ((setmsk>>i)&1);
+      lbv[0] += nch;
+      ATL_unlock(lck);
+
+      *NBITS = nbits;
+      return(lret);
+   }
+   *NBITS = 0;
+   return(0);
 }
 @ROUT atlas_tbitvec.h
 #ifndef ATLAS_TBITVEC_H
@@ -1295,9 +1724,39 @@ void *ATL_tNewBV(unsigned long nbits, unsigned int P)
  *    <P> <gnbits> <sumSz> <lckSz> <bvSz> <nLrgBlks> <nSmlBlks> <b>
  * 2. local lock storage area : *each lock* rounded up to 128 bytes
  * 3. locBV area: <nunset> [serial BV] -> <nleft> <nbits> <BV> => 128 rounded 
+ * -> <b> is the number of bits in a small block, big block as b+1 bits
  */
+#define ATL_TBV_P      0
+#define ATL_TBV_GNBITS 1
+#define ATL_TBV_SUMSZ  2
+#define ATL_TBV_LCKSZ  3
+#define ATL_TBV_BVSZ   4
+#define ATL_TBV_NLGB   5
+#define ATL_TBV_NSMB   6
+#define ATL_TBV_B      7
+#define ATL_TBV_NUNSET 8
+#ifndef ATL_UL_t
+   #define ATL_UL_t unsigned long
+#endif
+#ifndef ATL_CUL_t
+   #define ATL_CUL_t const unsigned long
+#endif
+size_t ATL_tSizeofBV(unsigned long nbits, unsigned int P);
+void ATL_tInitBV(void *vp, unsigned long nbits, unsigned int P);
 void *ATL_tNewBV(unsigned long nbits, unsigned int P);
 void ATL_tFreeBV(void *bv);
+unsigned long ATL_tGetTotBitsBV(void *bv); /* global number bits in bv */
+long ATL_tInfoBV(const void *vp, long what); /* what is TBV_* above */
+/*
+ * if (flg&1): no need to set locks before changing
+ */
+void ATL_tReverseAllBitsBV(void *vp, unsigned int flg);
+/*
+ * sets *lastbit to the last global bit "owned" by thread rank, and
+ * RETURNS: first global bit owned by thread rank.
+ */
+unsigned long ATL_tGetLocalBoundsBV(void *bv, unsigned int rank, 
+                                    unsigned long *lastbit);
 /*
  * Read and optionally change bit at position pos, return old value
  */
@@ -1305,7 +1764,21 @@ long ATL_tScopeBitBV(void *vp, unsigned long bit, unsigned int flg);
 #define ATL_tIsBitSetBV(bv_, p_) ATL_tScopeBitBV(bv_, p_, 1)
 #define ATL_tSetBitBV(bv_, p_) ATL_tScopeBitBV(bv_, p_, 2)
 #define ATL_tUnsetBitBV(bv_, p_) ATL_tScopeBitBV(bv_, p_, 4)
-
+/*
+ * Combines all P individual global bitvecs into one local bitvec.
+ * Mutexes are not locked, so info may be wrong.
+ * RETURNS: number of unset bits in new local bitvec
+ */
+long ATL_tGlb2locBV(ATL_BV_t *lbv, void *gbv, unsigned long pos);
+/*
+ * On input *nbits is the max number of bits in bv to set to the bit pattern
+ * in the least significant bits of mask.  On exit, the number of bits actually
+ * set (may be less if some bits owned by another mutex; only one lock will
+ * be made).
+ * RETURNED: original bitpattern, *nbits set to the number of bits
+ */
+unsigned long ATL_tSetRangeBV(void *bv, unsigned int *nbits, unsigned long pos,
+                              unsigned long mask);
 /*
  * These functions find a [set,unset] bit, and complement it.
  * They return the global bit position that was changed.  They first look
@@ -1317,14 +1790,9 @@ long ATL_tScopeBitBV(void *vp, unsigned long bit, unsigned int flg);
  * A return of -1 indicates that all bits are [unset,set].
  */
 long ATL_tSetUnsetBitBV(void *bv, unsigned int rank);
-long ATL_tUnsetSetBitBV(void *bv, unsigned int rank);
-/*
- * sets *lastbit to the last global bit "owned" by thread rank, and
- * RETURNS: first global bit owned by thread rank.
- */
-unsigned long ATL_tGetLocalBoundsBV(void *bv, unsigned int rank, 
-                                    unsigned long *lastbit);
+@skip long ATL_tUnsetSetBitBV(void *bv, unsigned int rank);
 
+@beginskip
 /*
  * When you want all your changes posted before the bit change, you need
  * to do a write barrier on weakly ordered systems, which is what the 
@@ -1353,12 +1821,23 @@ unsigned long ATL_tGetLocalBoundsBV(void *bv, unsigned int rank,
    @endwhile
    #undef my_bar
 #endif
+@endskip
 
 #endif
 @ROUT testtBV
 #include "atlas_tbitvec.h"
 #include <assert.h>
 #define ulong unsigned long
+
+long FindGlobUnset(void *bv)
+{
+   long nunset=0, nb, i;
+   nb = ATL_tGetTotBitsBV(bv);
+   for (i=0; i < nb; i++)
+      if (!ATL_tIsBitSetBV(bv, i))
+         nunset++;
+   return(nunset);
+}
 
 void setRange(void *bv, ulong b0, ulong mask)
 {
@@ -1393,11 +1872,184 @@ void testRange(ulong b0, ulong mask, unsigned int P)
    ATL_tFreeBV(bv);
 }
 
+void testSetUnset(ulong len, unsigned int P)
+{
+   void *bv;
+   unsigned long i;
+   bv = ATL_tNewBV(len, P);
+   for (i=0; i < len; i++)
+   {
+      unsigned long r;
+      r  = ATL_tSetUnsetBitBV(bv, 0);
+      if (r != i)
+         fprintf(stderr, "   ERR: testSetUns, exp=%ld, got=%ld\n", i, r);
+      assert(r == i);
+   }
+   assert(ATL_tSetUnsetBitBV(bv, 0) == -1);
+   i = (len > 2) ? 2 : 0;
+   assert(ATL_tUnsetBitBV(bv, i) == 1);
+   assert(ATL_tSetUnsetBitBV(bv, 1) == i);
+   assert(ATL_tSetUnsetBitBV(bv, 0) == -1);
+   if (P > 1)
+   {
+      unsigned long beg1, end1;
+      beg1 = ATL_tGetLocalBoundsBV(bv, 1, &end1);
+      if (beg1 < len)
+      {
+         assert(ATL_tUnsetBitBV(bv, 0) == 1);
+         assert(ATL_tUnsetBitBV(bv, beg1) == 1);
+         assert(ATL_tSetUnsetBitBV(bv, 1) == beg1);
+         assert(ATL_tSetUnsetBitBV(bv, 1) == 0);
+         assert(ATL_tSetUnsetBitBV(bv, 0) == -1);
+      }
+   }
+   ATL_tFreeBV(bv);
+}
+
+void testGlb2loc(ulong nbits, unsigned int P)
+{
+   void *gbv;
+   ATL_BV_t *lbv;
+   long i, pos;
+
+   gbv = ATL_tNewBV(nbits, P);
+   lbv = ATL_NewBV(nbits+bpiBV);
+   srand48(nbits+(P<<3)+77);
+   for (i=0; i < nbits; i += bpiBV)
+      setRange(gbv, i, lrand48());
+
+   for (pos=0; pos < bpiBV; pos++)
+   {
+      long nunset, un=0;
+      nunset = ATL_tGlb2locBV(lbv, gbv, pos);
+      for (i=0; i < nbits; i++)
+      {
+         int SET;
+         SET = ATL_IsBitSetBV(lbv, pos+i);
+         if (!SET)
+            un++;
+         if (SET != ATL_tIsBitSetBV(gbv, i))
+         {
+            fprintf(stderr, "Gbl2loc MISMATCH: nbits=%ld, pos=%ld, idx=%ld\n",
+                    nbits, pos, i);
+            ATL_assert(0);
+         }
+      }
+      if (nunset != un)
+         fprintf(stderr, "Gbl2loc NUNSET WRONG: exp=%ld, got=%ld\n",
+                 un, nunset);
+
+      ATL_assert(nunset == un);
+   }
+   ATL_tFreeBV(gbv);
+   ATL_FreeBV(lbv);
+}
+
+int testSetRange0(void *gbv, ATL_BV_t *lbv, unsigned int nbits, 
+                  unsigned long pos, unsigned long setmsk)
+{
+   unsigned long oldmsk, omsk, nerr=0;
+   unsigned int onbits=nbits, i;
+
+   ATL_tGlb2locBV(lbv, gbv, 0);  // local copy of gbv
+   oldmsk = ATL_tSetRangeBV(gbv, &nbits, pos, setmsk);
+   if (!nbits && onbits)  /* made no change */
+   {
+      fprintf(stderr, "   NO BITS AT ALL!!\n");
+      return(-1);        
+   }
+   for (omsk=i=0; i < nbits; i++)
+   {
+      long v;
+      if ((setmsk>>i)&1L)
+         v = ATL_SetBitBV(lbv, pos+i);
+      else
+         v = ATL_UnsetBitBV(lbv, pos+i);
+      omsk |= v<<i;
+   }
+   for (i=0; i < nbits; i++)
+   {
+       int exp, tst;
+       exp = ATL_IsBitSetBV(lbv, pos+i);
+       tst = ATL_tIsBitSetBV(gbv, pos+i);
+       if (exp != tst)
+       {
+          fprintf(stderr, 
+                  "   tSetRng ERR: nbits=(%u,%u), pos0=%lu, i=%u, exp=%d\n",
+                  nbits, onbits, pos, i, exp);
+          nerr++;
+       }
+   }
+   if (omsk != oldmsk)  /* didn't get same return value! */
+   {
+      fprintf(stderr, "    OLD ERR  exp=%x, got=%x\n", omsk, oldmsk);
+      return(-2);       /* return err */
+   }
+   if (!nerr)
+   {
+      long *gp = ATL_AlignSafeLS(gbv);
+      long tst, exp;
+      exp = FindGlobUnset(gbv);
+      tst = ATL_tInfoBV(gbv, ATL_TBV_NUNSET);
+      if (tst != exp)
+      {
+         fprintf(stderr, "   NUNSET WRONG: exp=%ld, got=%ld\n", exp, tst);
+         return(-3);
+      }
+   }
+   return(nerr);
+}
+
+void testSetRange(ulong nbits, unsigned int P)
+{
+   void *gbv;
+   ATL_BV_t *lbv;
+   const unsigned long nelt=nbits>>shBV;
+   unsigned int off, itst=0;
+
+   srand48(nbits+(P<<3)+77);
+   gbv = ATL_tNewBV(nbits, P);
+   lbv = ATL_NewBV(nbits);
+   for (off=0; off < bpiBV; off++)
+   {
+      unsigned int len;
+      for (len=0; len < bpiBV; len++)
+      {
+         unsigned long setmsk, elt, pos;
+         int err;
+
+         if (len == bpiBV)
+            setmsk = allsetBV;
+         else
+            setmsk = (1L<<len)-1;
+         setmsk &= lrand48();
+         elt = lrand48()%nelt;
+         pos = (elt<<shBV)+off;
+         if (pos >= nbits) 
+            pos -= nbits;
+         err = testSetRange0(gbv, lbv, len, pos, setmsk);
+         if (err)
+         {
+            fprintf(stderr, "   FAILED TEST %d: ret=%d, setmsk=%x\n", 
+                    itst, err, setmsk);
+            assert(0);
+         }
+         itst++;
+      }
+   }
+   ATL_tFreeBV(gbv);
+   ATL_FreeBV(lbv);
+}
+
 int main(int nargs, char **args)
 {
    ATL_BV_t *bv, *bv0, vv;
    unsigned long i;
    unsigned long k;
+   int P=ATL_NTHREADS;
+
+   if (nargs > 1)
+      P = atoi(args[1]);
 /*
  * First, we will sanity-check basic routs
  */
@@ -1496,55 +2148,13 @@ int main(int nargs, char **args)
    ATL_tFreeBV(bv);
    testRange(3, lrand48(), 7);
    testRange(11, lrand48(), 77);
-#if 0
-   #if bpiBV == 64
-      assert(ATL_GetEltBV(bv, 0) == 0x1FFFFFFFF);
-   #else
-      assert(ATL_GetEltBV(bv, 0) == 0xFFFFFFFF);
-   #endif
-   #if bpiBV > 32
-   bv = ATL_ExpandBV(bv, bpiBV+1);
-   ATL_SetEltBV(bv, 0, 0xF854B36D00000000L);
-   assert(ATL_GetEltBV(bv, 0) ==  0xF854B36D00000000L);
-   for (i=0; i < 32; i++)
-   {
-      if (ATL_IsBitSetBV(bv, i+32))
-         assert(ATL_SetBitBV(bv, i) == 0);
-   }
-   assert(ATL_GetEltBV(bv, 0) ==  0xF854B36DF854B36DL);
-   assert((ATL_GetEltBV(bv, 0)>>32) == 0xF854B36D);
-   #endif
-   ATL_FreeBV(bv);
-/*
- * Check error exits of accessor functions
- */
-   bv = ATL_NewBV(65);
-   assert(ATL_UnsetBitBV(NULL, 100000) == -1);
-   assert(ATL_UnsetBitBV(bv, 100000) == -1);
-   assert(ATL_UnsetBitBV(bv, 65) == -1);
-   assert(ATL_SetBitBV(NULL, 100000) == -1);
-   assert(ATL_SetBitBV(bv, 100000) == -1);
-   assert(ATL_SetBitBV(bv, 65) == -1);
-   assert(ATL_GetEltBV(NULL, 100000) == 0);
-   assert(ATL_GetEltBV(bv, 100000) == 0);
-   assert(ATL_GetEltBV(bv, 65) == 0);
-   assert(ATL_IsBitSetBV(NULL, 100000) == 0);
-   assert(ATL_IsBitSetBV(bv, 100000) == 0);
-   assert(ATL_IsBitSetBV(bv, 65) == 0);
-   ATL_FreeBV(bv);
-   assert(TestAllPos(6,  5, 1) == 0);
-   assert(TestAllPos(6,  3, 1) == 0);
-   assert(TestAllPos(6,  0, 1) == 0);
-   assert(TestAllPos(6,  5, 0) == 0);
-   assert(TestAllPos(6,  3, 0) == 0);
-   assert(TestAllPos(6,  0, 0) == 0);
-
-   assert(TestRandPos(7777, 8000, 1) == 0);
-   assert(TestRandPos(6400, 8000, 1) == 0);
-   assert(TestRandPos(5555, 8000, 0) == 0);
-   assert(TestRandPos(3200, 8000, 0) == 0);
-   assert(TestRandRange(7777, 2) == 0);
-#endif
+   testSetUnset(P*7,  P);
+   testSetUnset(P*7+1,  P);
+   if (P > 1)
+      testSetUnset(P*7+1,  (P>>1));
+   testGlb2loc(777, P);
+   testSetRange(777, P);
+   testSetRange(111, P);
 /*
  * If no assertion failed, print success and return 0 for no error!
  */

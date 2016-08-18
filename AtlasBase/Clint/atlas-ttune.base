@@ -2626,12 +2626,14 @@ int main(int nargs, char **args)
 #include "atlas_threads.h"
 #include "atlas_misc.h"
 #include "atlas_atmctr.h"
-// #include "atlas_gatmctr.h"
+#include "atlas_gatmctr.h"
 #define ATL_GETFLAGS 1
 #include "atlas_genparse.h"
-void *ATL_SetAtomicCount_mut(long long);
-int   ATL_DecAtomicCount_mut(void *);
-void  ATL_FreeAtomicCount_mut(void *);
+
+void *ATL_atmctr_new_mut(long N);
+void ATL_atmctr_free_mut(void *ac);
+long ATL_atmctr_dec_mut(void *ac);
+
 
 static double DELAY, timearr[ATL_NTHREADS];
 static unsigned long cntPerRank[ATL_NTHREADS];
@@ -2663,7 +2665,7 @@ FILE *GetFlags(int nargs, char **args, double *TPL, int *P, double *mula)
 {
    int p=ATL_NTHREADS, i, verb=0;
    FILE *fpout=stdout;
-   double tpl=0.5;
+   double tpl=8.0;
 
    mula[0] = 1e-6; mula[1] = 2.0; mula[2] = .01;
    for (i=1; i < nargs; i++)
@@ -2731,13 +2733,9 @@ FILE *GetFlags(int nargs, char **args, double *TPL, int *P, double *mula)
 
 @define a2 @@
 @define a2 @@
-@multidef a2 ,vrank ,vrank
-@multidef rt
-   ATL_DecAtomicCount_mut ATL_atmctr_dec ATL_DecGlobalAtomicCountDown 
-   ATL_DecGlobalAtomicCount
-@skip   ATL_gDecAtmCtr
-@endmultidef
-@whiledef sf mut loc pub prv
+@define a2 @,vrank@
+@multidef rt ATL_atmctr_dec_mut ATL_atmctr_dec ATL_gatmctr_dec 
+@whiledef sf mut loc glb
 static void DoWork_@(sf)(void *vpp, int rank, int vrank)
 {
 @skip   ATL_tpool_t *pp=vpp;
@@ -2783,9 +2781,9 @@ double PerCallSec(int P)
    return(cost);
 }
 
-#define PRVDEF ((1L<<ATL_GAC_NOPUB))
-#define PUBDEF ((1L<<ATL_GAC_NOPRV))
-#define DEFDEF (
+#define PRVDEF ATL_GAC_PRV
+#define PUBDEF ATL_GAC_PUB
+#define STLDEF ATL_GAC_MIX
 int main(int nargs, char **args)
 {
    FILE *fpout;
@@ -2795,55 +2793,48 @@ int main(int nargs, char **args)
 
    fpout=GetFlags(nargs, args, &tpl, &P, ma);
    fprintf(fpout,
-"   DELAY   COUNT    ATMCTR_mut   ATMCTR    g_PUB    g_def    g_PRV\n");
+"   DELAY   COUNT    ATMCTR_mut   ATMCTR    g_PUB    g_STL    g_PRV\n");
    fprintf(fpout,
 "========  ======  ============  =======  =======  =======  =======\n");
    del = 0.0; mul = ma[1]; max = ma[2];
    while (del <= max)
    {
-      double tmut, tloc=0, tprv, tpub;
+      double tmut, tloc=0, tprv, tpub, tstl;
       unsigned long cnt;
 
       DELAY = del;
       if (del <= 0.0)
-         cnt = 200000;
+         cnt = tpl / (5.0e-6);
       else
-      {
          cnt = tpl / (5.0*del);
-         cnt = Mmax(400, cnt);
-      }
+      cnt = Mmax(1000, cnt);
 
+      @whiledef rt prv pub stl
+      ACNT = ATL_gatmctr_new(P, cnt, @up@(rt)DEF);
+      ATL_goParallel(P, DoWork_glb, NULL, NULL, NULL);
+      ATL_gatmctr_free(ACNT);
+      t@(rt) = PerCallSec(P);
+
+      @endwhile
       @BEGINSKIP
-      @whiledef rt prv pub
-      ACNT = ATL_gNewAtmCtr(P, cnt, @up@(rt)DEF);
-      ATL_goParallel(P, DoWork_@(rt), NULL, NULL, NULL);
-      ATL_gFreeAtmCtr(ACNT);
-      t@(rt) = PerCallSec(P);
-
-      @endwhile
-      @ENDSKIP
-      ACNT = ATL_SetGlobalAtomicCountDown(P, cnt);
-      ATL_goParallel(P, DoWork_pub, NULL, NULL, NULL);
-      ATL_FreeGlobalAtomicCountDown(ACNT);
-      tpub = PerCallSec(P);
-
-      ACNT = ATL_SetGlobalAtomicCount(P, cnt, 100);
-      ATL_goParallel(P, DoWork_prv, NULL, NULL, NULL);
+      ACNT = ATL_SetGlobalAtomicCount(P, cnt, 0);
+      ATL_goParallel(P, DoWork_pub2, NULL, NULL, NULL);
       ATL_FreeGlobalAtomicCount(ACNT);
-      tprv = PerCallSec(P);
+      tpub2 = PerCallSec(P);
 
-      @define sf @_mut@
-      @define sf @@
-      @whiledef rt mut loc
-      ACNT =  ATL_SetAtomicCount@(sf)(cnt);
-      ATL_goParallel(P, DoWork_@(rt), NULL, NULL, NULL);
-      ATL_FreeAtomicCount@(sf)(ACNT);
-      t@(rt) = PerCallSec(P);
+      @ENDSKIP
+      ACNT = ATL_atmctr_new(cnt);
+      ATL_goParallel(P, DoWork_loc, NULL, NULL, NULL);
+      ATL_atmctr_free(ACNT);
+      tloc = PerCallSec(P);
 
-         @undef sf
-      @endwhile
-      fprintf(fpout, "%.2e %7d  %12e %8.2f %8.2f %8.2f\n", del, tmut, 
-              tmut/tloc, cnt, tmut/tpub, tmut/tprv, tmut/tprv);
+      ACNT = ATL_atmctr_new_mut(cnt);
+      ATL_goParallel(P, DoWork_mut, NULL, NULL, NULL);
+      ATL_atmctr_free_mut(ACNT);
+      tmut = PerCallSec(P);
+
+      fprintf(fpout, "%.2e %7d  %12e %8.2f %8.2f %8.2f %8.2f\n", del, cnt, tmut,
+              tmut/tloc, tmut/tpub, tmut/tstl, tmut/tprv);
       if (del == 0.0)
          del = ma[0];
       else 

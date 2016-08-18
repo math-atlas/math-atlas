@@ -13,11 +13,13 @@
  * If <off> is nonzero it is the bytes to add to ac to get to the 
  * original malloc-returned ptr (used only in _free).
  */
-   #if defined(ATL_GAS_x8632) || defined(ATL_GAS_x8664) || \
-       defined(ATL_GAS_ARM64) || defined(ATL_GAS_WOW64)
-      #define ATL_ATM_ASM 1  /* I've got assembly atomic ops */
-   #else
-      #define ATL_ATM_ASM 0  /* I do not have assembly atomic ops */
+   #ifndef ATL_ATM_ASM
+      #if defined(ATL_GAS_x8632) || defined(ATL_GAS_x8664) || \
+          defined(ATL_GAS_ARM64) || defined(ATL_GAS_WOW64)
+         #define ATL_ATM_ASM 1  /* I've got assembly atomic ops */
+      #else
+         #define ATL_ATM_ASM 0  /* I do not have assembly atomic ops */
+      #endif
    #endif
 
 void *ATL_atmctr_init(void *vp, long cnt);
@@ -315,14 +317,16 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -P <nthr0> <nthrN> <nthrINC> [ATL_NTHREAD]\n");
    fprintf(stderr, "   -n <cnt> [8111]\n");
    fprintf(stderr, "   -N <cnt0> <cntN> <cntINC> [8111]\n");
+   fprintf(stderr, "   -g <gap> : nctrs = P-gap [0]\n");
    exit(ierr ? ierr : -1);
 }
 
 int GetFlags(int nargs, char **args, int *N0, int *NN, int *NINC,
-             int *P0, int *PN, int *PINC, int **FLAGs)
+             int *P0, int *PN, int *PINC, int **FLAGs, int *GAP)
 {
    int i, P, verb=1;
    
+   *GAP = 0;
    *P0 = *PN = *PINC = ATL_NTHREADS;
    *N0 = *NN = *NINC = 8111;
    *FLAGs=NULL;
@@ -339,6 +343,11 @@ int GetFlags(int nargs, char **args, int *N0, int *NN, int *NINC,
          *P0 = *PN = *PINC = atoi(args[i]);
          if (*P0 == 0)
             *PN = -1;
+         break;
+      case 'g':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *GAP = atoi(args[i]);
          break;
       case 'n':
          if (++i >= nargs)
@@ -394,9 +403,9 @@ int main(int nargs, char **args)
 {
    void *ac;
    long i;
-   int p, f, verb, N0, NN, incN, P0, PN, incP, *flgs;
+   int p, f, verb, N0, NN, incN, P0, PN, incP, *flgs, gap;
    unsigned long nerr=0;
-   verb = GetFlags(nargs, args, &N0, &NN, &incN, &P0, &PN, &incP, &flgs);
+   verb = GetFlags(nargs, args, &N0, &NN, &incN, &P0, &PN, &incP, &flgs, &gap);
 
 /*
  * First just check that we can alloc/free (use valgrind to validate)
@@ -430,11 +439,12 @@ int main(int nargs, char **args)
       int flg = flgs[f+1];
       for (p=P0; p <= PN; p += incP)
       {
+         int nctr = (p > gap) ? p-gap : 1;
          for (GN=N0; GN <= NN; GN += incN)
          {
             int err=0;
             CNT = calloc(GN, sizeof(char));
-            AC = ac = ATL_gatmctr_new(p, GN, flg);
+            AC = ac = ATL_gatmctr_new(nctr, GN, flg);
             fprintf(stderr, "\n\n");
             ATL_gatmctr_print(stderr, ac);
             fprintf(stderr, "TESTING P=%d, N=%d:\n", p, GN);
@@ -458,5 +468,6 @@ int main(int nargs, char **args)
       }
    }
    fprintf(stderr, "\nDONE ALL TESTING, NERR=%d\n", nerr);
+   free(flgs);
    return(nerr);
 }
