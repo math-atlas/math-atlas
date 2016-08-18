@@ -28734,6 +28734,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 char *GetFlags(int nargs, char **args, char *PRE, ATL_mmnode_t **lists)
 {
    int i, j=0, n, k;
+   int GotAnySumFile = 0;
    char pre='d', cpre, ch;
    char *outd=NULL;
    char *fn[2]={"uAMMRES.sum","uAMMKCLEAN.sum"};
@@ -28766,6 +28767,7 @@ char *GetFlags(int nargs, char **args, char *PRE, ATL_mmnode_t **lists)
             UIL++;
          break;
       case 'u':
+         GotAnySumFile = 1;
          switch(args[i][2])
          {
       @multidef i   0 1
@@ -28809,7 +28811,7 @@ char *GetFlags(int nargs, char **args, char *PRE, ATL_mmnode_t **lists)
    {
       const char pr=(i<NMMLISTS) ? pre : cpre;
       const int k = (i<NMMLISTS) ? i : i-NMMLISTS;
-      if (!lists[i])
+      if (!lists[i] && (!GotAnySumFile || (i&1==0)))
          lists[i] = ReadMMFileWithPath(pr, "res", fn[k]);
       if (!lists[i])
          fprintf(stderr, "CANNOT FIND FILE 'res/%c%s'!\n", pr, fn[k]);
@@ -29027,6 +29029,41 @@ void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
    CloseGenHeader(fp);
 }
 
+int StrFindReplace(char **org, char *find, char *replace)
+{
+   char *pre, *post, *final;
+   char *orig = *(org);
+   int idx = (strstr(orig, find) - orig) / sizeof(char);
+   int len = strlen(orig);
+   int flen = strlen(find);
+   int rlen = strlen(replace);
+   if (idx < 0) return(len); /* not found */
+   pre = malloc(sizeof(char)*idx + 1);
+   post = malloc(sizeof(char)*(len - idx - flen) + 1);
+   strncpy(pre, orig, idx);
+   pre[idx] = '\0';
+   strcpy(post, orig+idx+flen);
+   len = len - flen + rlen;
+   free(orig);
+   orig = malloc(sizeof(char)*(len) + 1);
+   strcpy(orig, pre);
+   strcat(orig, replace);
+   strcat(orig, post);
+   *org = orig;
+   return(len);
+}
+
+void AdjustCPNamesWithID(char pre, ATL_mmcp_t *cb)
+{
+   char find[24] = "";
+   char replace[24] = "";
+   ATL_mmcp_t *cp;
+   sprintf(find, "ATL_%c", pre);
+   sprintf(replace, "ATL_%cu%d", pre, UID);
+   for (cp=cb; cp; cp=cp->next)
+      cp->rtlen = StrFindReplace(&cp->rout, find, replace);
+}
+
 void GenCpyA(char pre, char *outd, char *cn, char dir, char alp, 
              ATL_mmnode_t *mb)
 // presently leaving alp='[1,n,X]', cn=[ge,sq,rk], dir='[F,T]' to caller
@@ -29066,6 +29103,7 @@ void GenCpyA(char pre, char *outd, char *cn, char dir, char alp,
          arrnm[transi] = ta;
          cb = GetMMCopyFromMMNodes(MMCopyEncode(pre, dir, mats[im], ta), mb);
          assert(cb);
+         AdjustCPNamesWithID(pre, cb);
          ucb = AddUniqueCopyNode(NULL, cb);
          arrnm[6] = '\0';
          PrintMMCpProtosA(fp, arrnm, ucb, dir, alp);
@@ -29087,6 +29125,7 @@ void GenCpyC(FILE *fp, char pre, char *outd, char *cn, char dir, char *type,
 
    cb = GetMMCopyFromMMNodes(MMCopyEncode(pre, dir, 'c', 'n'), mb);
    assert(cb);
+   AdjustCPNamesWithID(pre, cb);
    #ifdef Debug
       i = CountListEntries(cb, GetOffset(&cb->next, cb));
       j = CountListEntries(mb, GetOffset(&mb->next, mb));
@@ -29168,6 +29207,7 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
       fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "szC", mb);
       cb = GetMMCopyFromMMNodes(MMCopyEncode(pre, dir, 'c', 'n'), mb);
       assert(cb);
+      AdjustCPNamesWithID(pre, cb);
       ucb = AddUniqueCopyNode(NULL, cb);
       KillAllCopyNodes(cb);
 /*
@@ -29307,7 +29347,7 @@ void GenSumH(char pre, char *outd, ATL_mmnode_t *ub)
    int i;
 
    fp = OpenMMGenHeader(outd, 0, pre, unam, 0, 0, "sum", ub);
-   mf = PrintSum(fp, "ub", ub, 0.0);
+   mf = PrintSum(fp, unam, ub, 0.0);
    CloseGenHeader(fp);
 }
 
@@ -29356,12 +29396,12 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
    GenAllCpyA(pre, outd, 'T', lists[IUSR]);
    GenAllCpyA(pre, outd, 'F', lists[IUSR]);
    GenAllCpyA(pr, outd, 'T', lists[IUSR+NMMLISTS]);
-   //GenAllCpyA(pr, outd, 'F', lists[IUSR+NMMLISTS]); // for now
+   GenAllCpyA(pr, outd, 'F', lists[IUSR+NMMLISTS]); // for now
 
    GenAllCpyC(pre, outd, 'F', lists[IUSR]);
    GenAllCpyC(pre, outd, 'T', lists[IUSR]);
    GenAllCpyC(pr, outd, 'F', lists[IUSR+NMMLISTS]);
-   //GenAllCpyC(pr, outd, 'T', lists[IUSR+NMMLISTS]); // for now
+   GenAllCpyC(pr, outd, 'T', lists[IUSR+NMMLISTS]); // for now
 }
 
 static void AddAlpBetSuf(char *rt, int rl, int ial, int ibe)
@@ -29593,15 +29633,15 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
    fprintf(fp, "\n\nlib : %clib.grd\nall : %clib.grd\n%clib : %clib.grd\n",
            pre, pre, pre, pre);
    fprintf(fp, "%clib.grd : $(objs)\n", pre);
-   fprintf(fp, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(objs)\n");
-   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t$(ARCHIVER) $(ARFLAGS) $(UAMMlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(UAMMlib)\n");
    fprintf(fp, "\t touch %clib.grd\n", pre);
    fprintf(fp, "clean : %cclean\n", pre);
    fprintf(fp, "%cclean:\n\t- rm -f $(objs)\n", pre);
    fprintf(fp, "killall : %ckillall\n", pre);
    fprintf(fp, "%ckillall : %cclean\n", pre, pre);
-   fprintf(fp, "\t- $(ARCHIVER) d $(ATLASlib) $(objs)\n");
-   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t- $(ARCHIVER) d $(UAMMlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(UAMMlib)\n");
    fprintf(fp, "\t- rm -f ATL_%c*.[S,c]\n\n", pre);
 /*
  * Make targets for amm kerns
@@ -29740,18 +29780,33 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
    GetMMAllUniqueCopyFromMMNodes(pre, 'F', 'T', rb, &cpA, &cpC);
    GetMMAllUniqueCopyFromMMNodes(pre, 'T', 'F', rb, &cpA, &cpC);
    GetMMAllUniqueCopyFromMMNodes(cpr, 'F', 'T', ib, &cpA, &cpC);
-   //GetMMAllUniqueCopyFromMMNodes(cpr, 'T', 'F', ib, &cpA, &cpC); // for now
+   GetMMAllUniqueCopyFromMMNodes(cpr, 'T', 'F', ib, &cpA, &cpC); // for now
 /*
  * Now, kerns are compiled the same for real and complex, so reduce real
  * and complex to one unique list
  */
    rb = AddUniqueMMKernCompList(rb, ib);
    KillAllMMNodes(ib);
+   AdjustCPNamesWithID(pre, cpA);
+   AdjustCPNamesWithID(cpr, cpA);
+   AdjustCPNamesWithID(pre, cpC);
+   AdjustCPNamesWithID(cpr, cpC);
    GenAllKerns(pre, outd, rb, cpA, cpC);
    GenMake(pre, outd, rb, cpA, cpC);
    KillAllMMNodes(rb);
    KillAllCopyNodes(cpA);
    KillAllCopyNodes(cpC);
+}
+
+void AdjustMMNamesWithID(char pre, ATL_mmnode_t *mb)
+{
+   char find[24] = "";
+   char replace[24] = "";
+   ATL_mmnode_t *mp;
+   sprintf(find, "ATL_%c", pre);
+   sprintf(replace, "ATL_%cu%d", pre, UID);
+   for (mp=mb; mp; mp=mp->next)
+      StrFindReplace(&mp->auth, find, replace);
 }
 
 int main(int nargs, char **args)
@@ -29773,6 +29828,8 @@ int main(int nargs, char **args)
    {
       PrepMMForGen(pre, outd, "amm", lists[i]);
    }
+   for (i=0; i < 2*NMMLISTS; i++)
+      AdjustMMNamesWithID(pre, lists[i]);
 
    GenAllFiles(pre, outd, lists);
 
