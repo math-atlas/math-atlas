@@ -15788,10 +15788,22 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd,const unsigned int P)
       void *cblkBV;
       const long b = ndiag / P, bs=b*rank, ndi=(UPPER) ? ndiag : ndiag-1;
       long j;
+      size_t skpA, skpB;
 
+      if (UPPER)  /* Upper skips 1st colpan B */
+      {
+         skpA = 0;
+         skpB = IdxBw_ip(ip, wB, 0, 1) - wB;
+      }
+      else        /* Lower skips 1st rowpan A */
+      {
+         skpA = IdxAw_ip(ip, wA, 1, 0) - wA;
+         skpB = 0;
+      }
       for (j=(UPPER)?1:0; j < ndi; j++)
       {
          long r, c;
+         TYPE *wa, *wb;
          c = bs + j;
          c = (c < ndiag) ? c : ndiag - c;
          cblkBV = ATL_AddBytesPtr(pd->cblkBV, pd->Cstr*c);
@@ -15799,11 +15811,13 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd,const unsigned int P)
             r = ATL_tSetUnsetBitBV(cblkBV, rank);
             if (r < 0)
                goto DONE_ROWS;
-            r = (UPPER) ? r : (1+c+r);
+            r = (UPPER) ? r : 1+c+r;
+            wa = IdxAw_ip(ip, wA, r, 0) - skpA;
+            wb = IdxBw_ip(ip, wB, 0, c) - skpB;
             fprintf(stderr, "Nondiag(%ld,%ld)\n", r, c);
             Mjoin(PATL,iploopsK)(ip, r, c, NULL, NULL, IdxC_ip(ip, C, r, c), 
-                                 3, IdxAw_ip(ip, wA, r, 0), 
-                                 IdxBw_ip(ip, wB, 0, c), rC, wC, beta, blk2c);
+                                 3, wa, wb, rC, wC, beta, blk2c);
+         goto DOROWS;
          DONE_ROWS:;
       }
    }
@@ -16049,8 +16063,8 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
       vp0 = pd.cblkBV;
       for (i=0; i < ndiag; i++)
       {
-         int n = (Uplo == AtlasUpper) ? ndiag-i-1 : i;
-         ATL_tInitBV(vp0, ndiag-i-1, P);
+         int n = (Uplo == AtlasUpper) ? i : ndiag-i-1;
+         ATL_tInitBV(vp0, n, P);
          vp0 = ATL_AddBytesPtr(vp0, pd.Cstr);
       }
       ATL_tInitBV(pd.cpydonBV, ndiag, P);
