@@ -15476,34 +15476,6 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 }
 
 #endif
-static INLINE void GetWrkAB
-   (ipinfo_t *ip, unsigned int flg, size_t pan0, size_t ndiag, size_t dblk, 
-    size_t kblk, TYPE **wA, TYPE **wB)
-   
-{
-   if (flg & 1) /* Upper */
-   {
-      if (dblk != ndiag-1)
-         *wA = IdxAw_ip(ip, *wA, dblk, kblk);
-      else
-         *wA = NULL;
-      if (dblk)
-         *wB = IdxBw_ip(ip, *wB, kblk, dblk) - pan0;
-      else 
-         *wB = NULL;
-   }
-   else  /* Lower */
-   {
-      if (dblk)
-         *wA = IdxAw_ip(ip, *wA, dblk, kblk) - pan0;
-      else
-         *wA = NULL;
-      if (dblk != ndiag-1)
-         *wB = IdxBw_ip(ip, *wB, kblk, dblk);
-      else
-         *wB = NULL;
-   }
-}
 
 static void DoBlksWtCpy
 (
@@ -15522,6 +15494,7 @@ static void DoBlksWtCpy
    ablk2cmat_t syblk2c=pd->syblk2c_b1;
    cm2am_t sya2blk = pd->sya2blk;
    const size_t ldc = ip->ldc;
+   size_t skpA, skpB;
    #ifdef TCPLX
       const TYPE *beta=ip->ONE;
       #define ONE ip->ONE
@@ -15533,16 +15506,36 @@ static void DoBlksWtCpy
    #endif
    ATL_UINT szC=ip->szC;
    const unsigned int flg = pd->flg;
-   const size_t pansz0=pd->pansz0, nkblks=pd->nkblks, ndiag=pd->ndiag;
+   const size_t nkblks=pd->nkblks, ndiag=pd->ndiag;
    long kblk = pd->nkblks - kctr, b;
    void *KbegCtr = ATL_AddBytesPtr(pd->KbegCtr, dblk*pd->KBCstr);
    void *KdonCtr = ATL_AddBytesPtr(pd->KdonCtr, dblk*pd->KDCstr);
    void *cpydonBV = pd->cpydonBV;
-   TYPE *wA=pd->wA, *wB=pd->wAt;
+   TYPE *wA0=pd->wA, *wB0=pd->wAt, *wA, *wB;
    const TYPE *A = pd->A;
    void *Cdmut;
 
-   GetWrkAB(ip, flg, pansz0, ndiag, dblk, kblk, &wA, &wB);
+   if (flg & 1) /* Upper */
+   {
+      skpA = 0;
+      skpB = pd->pansz0;
+      if (dblk == ndiag-1)
+         wA0 = NULL;
+      if (!dblk)
+         wB0 = NULL;
+   }
+   else         /* Lower */
+   {
+      skpA = pd->pansz0;
+      skpB = 0;
+      if (dblk == ndiag-1)
+         wB0 = NULL;
+      if (!dblk)
+         wA0 = NULL;
+   }
+   wA = (wA0) ? (IdxAw_ip(ip, wA0, dblk, 0) - skpA) : NULL;
+   wB = (wB0) ? (IdxBw_ip(ip, wB0, 0, dblk) - skpB) : NULL;
+@skip   fprintf(stderr, "Diag=%ld, K=0, wA=%p, wB=%p\n", dblk, wA, wB);
    syrkBlk(ip, flg|4, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
            rS, iS, wA, wA, wB, wB, rC, iC, U);
    if (ATL_gatmctr_dec(KdonCtr, rank) == 1)
@@ -15550,7 +15543,10 @@ static void DoBlksWtCpy
    while ((kctr = ATL_gatmctr_dec(KbegCtr, rank)))
    {
       kblk = nkblks - kctr;
-      GetWrkAB(ip, flg, pansz0, ndiag, dblk, kblk, &wA, &wB);
+      wA = (wA0) ? (IdxAw_ip(ip, wA0, dblk, kblk) - skpA) : NULL;
+      wB = (wB0) ? (IdxBw_ip(ip, wB0, kblk, dblk) - skpB) : NULL;
+
+@skip   fprintf(stderr, "Diag=%ld, K=%d, wA=%p, wB=%p\n", dblk, kblk, wA, wB);
       syrkBlk(ip, flg, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
               rS, iS, wA, wA, wB, wB, rC, iC, U);
       if (ATL_gatmctr_dec(KdonCtr, rank) == 1)
@@ -15616,25 +15612,14 @@ static void DoBlksWtCpy
  * threads don't have to query all the counters to know they should proceed
  * to non-diagonal work.
  */
-static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd, unsigned long diP)
+static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd, unsigned long diP,
+                   TYPE *rS, TYPE *iS, TYPE *rC, TYPE *iC, TYPE *U)
 {
    const size_t KBinc = pd->KBCstr;
    void *KbegCtr;
    unsigned long k;
-   TYPE *iS = pd->wC + rank*pd->wrksz, *rS, *rC, *iC, *U;
    int DIAG=1;
 
-   #ifdef TCPLX
-      rS = iS + pd->szS;
-      iC = rS + pd->szS;
-      rC = iC + pd->szCs;
-      U = rC + pd->szCs;
-   #else
-      rS = iS;
-      rC = iC = rS + pd->szS;
-      U = iC + pd->szCs;
-   #endif
-   U = (pd->flg & 1) ? U : NULL;
    while (!(pd->NODWORK))
    {
        long d=0;
@@ -15692,7 +15677,8 @@ static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd, unsigned long diP)
  * For now, just idle in this loop, and get main case DoNonDiag working,
  * then come back and fix this.
  */
-static void DoNonDiag_dep(const int rank, ATL_tsyrk_ammN_t *pd)
+static void DoNonDiag_dep(const int rank, ATL_tsyrk_ammN_t *pd, 
+                          TYPE *rC, TYPE *iC)
 {
    const long ndiag = pd->ndiag;
    void *locBV = ATL_AddBytesPtr(pd->locBVs,rank*pd->LOCstr);
@@ -15715,19 +15701,24 @@ static void DoNonDiag_dep(const int rank, ATL_tsyrk_ammN_t *pd)
 }
 
 
-static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd,const unsigned int P)
+static void DoNonDiag
+(
+   const int rank,       /* worker # 0 <= rank < P */
+   ATL_tsyrk_ammN_t *pd, /* problem definition */
+   const unsigned int P, /* # of workers; rank < P */
+   TYPE *rC,             /* real C, same as iC for real */
+   TYPE *iC              /* imag C, same as rC for real */
+)
 {
    ipinfo_t *ip=pd->ip;
    const unsigned long ndiag=pd->ndiag;
    const int UPPER = (pd->flg & 1);
-   TYPE *wC = pd->wC + rank*pd->wrksz, *wA = pd->wA, *wB = pd->wAt;
+   TYPE *wA = pd->wA, *wB = pd->wAt;
    TYPE *C = pd->C;
    #ifdef TCPLX
       const TYPE *beta=pd->beta;
-      TYPE *rC = wC + ip->szC;
    #else
       const TYPE beta=pd->beta;
-      #define rC wC
    #endif
    const ablk2cmat_t blk2c=ip->blk2c;
 #if 0   /* ignore this until the high-overhead cleanup debugged */
@@ -15770,7 +15761,7 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd,const unsigned int P)
                {
                   Mjoin(PATL,iploopsK)(ip, k+r, c, NULL, NULL, 
                      IdxC_ip(ip, C, r+k, c), 3, IdxAw_ip(ip, wA, r+k, 0), 
-                     IdxBw_ip(ip, wB, 0, c), rC, wC, beta, blk2c);
+                     IdxBw_ip(ip, wB, 0, c), rC, iC, beta, blk2c);
                }
             }
          }
@@ -15793,11 +15784,11 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd,const unsigned int P)
       if (UPPER)  /* Upper skips 1st colpan B */
       {
          skpA = 0;
-         skpB = IdxBw_ip(ip, wB, 0, 1) - wB;
+         skpB = pd->pansz0;
       }
       else        /* Lower skips 1st rowpan A */
       {
-         skpA = IdxAw_ip(ip, wA, 1, 0) - wA;
+         skpA = pd->pansz0;
          skpB = 0;
       }
       for (j=(UPPER)?1:0; j < ndi; j++)
@@ -15814,9 +15805,9 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd,const unsigned int P)
             r = (UPPER) ? r : 1+c+r;
             wa = IdxAw_ip(ip, wA, r, 0) - skpA;
             wb = IdxBw_ip(ip, wB, 0, c) - skpB;
-            fprintf(stderr, "Nondiag(%ld,%ld)\n", r, c);
+@skip            fprintf(stderr, "Nondiag(%ld,%ld), wA=%p, wB=%p\n", r, c, wa, wb);
             Mjoin(PATL,iploopsK)(ip, r, c, NULL, NULL, IdxC_ip(ip, C, r, c), 
-                                 3, wa, wb, rC, wC, beta, blk2c);
+                                 3, wa, wb, rC, iC, beta, blk2c);
          goto DOROWS;
          DONE_ROWS:;
       }
@@ -15830,13 +15821,25 @@ static void DoWorkN(void *vpp, int rank, int vrank)
    ATL_tsyrk_ammN_t *pd = pp->PD;
    const unsigned int P = pp->nworkers;
    const unsigned long diP = pd->ndiag / P;
+   TYPE *iS = pd->wC + rank*pd->wrksz, *rS, *rC, *iC, *U;
 
+   #ifdef TCPLX
+      rS = iS + pd->szS;
+      iC = rS + pd->szS;
+      rC = iC + pd->szCs;
+      U = rC + pd->szCs;
+   #else
+      rS = iS;
+      rC = iC = rS + pd->szS;
+      U = iC + pd->szCs;
+   #endif
+   U = (pd->flg & 1) ? U : NULL;
    if (!(pd->NODWORK))
-      DoDiag(vrank, pd, diP);
+      DoDiag(vrank, pd, diP, rS, iS, rC, iC, U);
    if (!pd->cpydone)
-      DoNonDiag_dep(vrank, pd);
+      DoNonDiag_dep(vrank, pd, rC, iC);
    if (!pd->DONE)
-      DoNonDiag(vrank, pd, P);
+      DoNonDiag(vrank, pd, P, rC, iC);
 }
 /*
  * SYRK where all parallelism comes from blocks of N, built atop amm directly
@@ -15920,8 +15923,7 @@ printf("N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", (int)N, (int)ip.nfnblks,
    szThr = nb * nb;
    if (Uplo == AtlasUpper)
       extra = Mmax(extra, szThr);
-   nbS = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
-   nbS *= ATL_SYRKK_NU;
+   nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
    szC = ((nbS+1)*nbS)>>1; /* only need lower tri blks, not full nnu*nnu */
    szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
           * ATL_SYRKK_VLEN;
