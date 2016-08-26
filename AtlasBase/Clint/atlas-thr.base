@@ -19683,15 +19683,16 @@ void ATL_gatmctr_initByRank(void *ac, unsigned int rank, long lowPrv,
          {
             const long incLow=ap[2], incCnt=ap[3];
             long *lp=ATL_IncBySafeLS(ac), *atc;
-            atc = ATL_AddBytesPtr(lp, incLow+incCnt*rank);
             npub += npriv;
             if (rank)
             {
+               atc = ATL_AddBytesPtr(lp, incLow+incCnt*rank);
                lp[rank] = lowPrv-1;
                ATL_atmctr_init(atc, npub);
             }
             else /* rank == 0, reserve one count for last */
             {
+               atc = ATL_AddBytesPtr(lp, incLow);
                *lp = lowPrv;
                ATL_assert(npub && lowPrv == 1);
                ATL_atmctr_init(atc, --npub);
@@ -19891,7 +19892,7 @@ void ATL_gatmctr_print(FILE *fpout, void *ac)
 static INLINE long allPub(unsigned int rank, long *lp)
 {
    const unsigned long P=lp[ATL_GAC_P];
-   unsigned long i;
+   unsigned long i, PP;
    const long incCnt = lp[3];
    long *lowp = ATL_IncBySafeLS(lp), *acp = ATL_AddBytesPtr(lowp, lp[2]), *ac;
    unsigned long vrk;
@@ -19913,14 +19914,18 @@ static INLINE long allPub(unsigned int rank, long *lp)
             return(lret+lowp[rank]);
       }
       vrk = (rank == P-1) ? 0 : rank+1;
+      PP = P-1;
    }
    else
+   {
       vrk = rank - (rank/P)*P;
+      PP = P;
+   }
 /*
  * See if anybody else has count I can steal
  */
    ac = ATL_AddBytesPtr(acp, incCnt*vrk);
-   for (i=0; i < P; i++)
+   for (i=0; i < PP; i++)
    {
       if (*ac)
       {
@@ -19929,7 +19934,13 @@ static INLINE long allPub(unsigned int rank, long *lp)
          if (lret)
             return(lret+lowp[vrk]);
       }
-      ac = (++vrk != P) ? ATL_AddBytesPtr(ac, incCnt) : acp;
+      if (++vrk != P)
+         ac = ATL_AddBytesPtr(ac, incCnt);
+      else
+      {
+         vrk = 0;
+         ac = acp;
+      }
    }
 /*
  * Finally, check 1/0 counter
