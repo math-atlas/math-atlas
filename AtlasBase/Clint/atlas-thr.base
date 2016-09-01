@@ -15603,13 +15603,14 @@ static void Do1Diag(const int rank, ATL_tsyrk_ammN_t *pd, long d,
       else
          wA = NULL;
    }
+   #if DEBUG > 1
+      fprintf(stderr, "%d:C(%ld,%ld), wA=%p, wB=%p\n", rank, d, d, wA, wB);
+   #endif
    syrk_K(ip, flg, d, pd->A, pd->sya2blk, pd->syblk2c, pd->beta, C, rS, iS, 
           wA, wB, rC, iC, U);
    ATL_tSetBitBV(pd->cpydonBV, d);
-   #if 1
    if (!ATL_tInfoBV(pd->cpydonBV, ATL_TBV_NUNSET))
       pd->cpydone = 1;
-   #endif
    #if DEBUG > 1
       fprintf(stderr, "%d: DONE  Do1Diag\n", rank);
    #endif
@@ -15836,10 +15837,7 @@ static int DoDepBlks(const int rank, ATL_tsyrk_ammN_t *pd,
       skpA = pd->pansz0;
       skpB = 0;
    }
-   while (1)
    DEPLOOP:
-      if (pd->DONE)     /* if computation done */
-         return(mycnt); /* quit */
       if (pd->cpydone || pd->DONE)  /* if copying or full computation done */
          return(mycnt);             /* this routine is complete */
 /*
@@ -15858,7 +15856,10 @@ static int DoDepBlks(const int rank, ATL_tsyrk_ammN_t *pd,
       {
          nun = ATL_tInfoBV(gCpanDonBV, ATL_TBV_NUNSET);
          if (!nun)          /* if no Cpans left undone */
+         {
+            pd->DONE = 1;
             return(mycnt);  /* all non-diag work complete, so leave */
+         }
          RECALC = (nun != nunCpan);
          nunCpan = nun;
       }
@@ -15866,6 +15867,11 @@ static int DoDepBlks(const int rank, ATL_tsyrk_ammN_t *pd,
       {
          RECALC = 1;      /* # of copied blks changed, so recalc! */
          nunCpy = ATL_tGlb2locBV(lcpyDonBV, gcpyDonBV, 0);
+         if (nunCpy == 0)
+         {
+            pd->cpydone = 1;
+            return(mycnt);
+         }
       }
       if (RECALC)
          nunCpan = compPossCols(gCpanDonBV, lcpyDonBV, lcolsBV);
@@ -15893,7 +15899,8 @@ static int DoDepBlks(const int rank, ATL_tsyrk_ammN_t *pd,
                Mjoin(PATL,iploopsK)(ip, I, J, NULL, NULL, IdxC_ip(ip, C, I, J),
                                     3, wa, wb, rC, iC, beta, blk2c);
                #if DEBUG > 1
-               fprintf(stderr, "%d: comp C(%ld,%ld)\n", rank, I, J);
+                  fprintf(stderr, "%d: C(%ld,%ld), wA=%p, wB=%p\n", 
+                          rank, I, J, wa, wb);
                #endif
                #if DEBUG
                   mycnt++;
@@ -16083,6 +16090,7 @@ static void DoWorkN(void *vpp, int rank, int vrank)
    const unsigned int P = pp->nworkers;
    TYPE *iS = pd->wC + vrank*pd->wrksz, *rS, *rC, *iC, *U;
 
+   iS = ATL_AlignPtr(iS);
    #ifdef TCPLX
       rS = iS + pd->szS;
       iC = rS + pd->szS;
@@ -16103,7 +16111,7 @@ static void DoWorkN(void *vpp, int rank, int vrank)
    if (!pd->DONE)
       nindep = DoNonDiag(vrank, pd, P, rC, iC);
    #if DEBUG
-      fprintf(stderr, "%d: Cblks=%ld+%ld, ndiag=%ld,%d Dblks=%ld(%d)\n", 
+      fprintf(stdout, "%d: Cblks=%ld+%ld, ndiag=%ld,%d Dblks=%ld(%d)\n", 
               vrank, ndep, nindep, pd->ndiag, pd->ninit, ndiag, pd->ncpDiag);
    #endif
 }
@@ -16143,7 +16151,7 @@ int tsyrk_amm_N
    void *vp=NULL, *vp0;
    size_t szA, szC, szKpan, sz, extra, szThr, szAll;
    size_t ndiag, ninit, ncblks;
-   unsigned int i, P, idx, nb, nbS, szS, szPO;
+   unsigned int i, P, idx, nb, nbS, kbS, szS, szPO;
    ATL_tsyrk_ammN_t pd;
    ipinfo_t ip;
    #ifdef Conj_
@@ -16157,10 +16165,10 @@ int tsyrk_amm_N
    pd.flg = (Uplo == AtlasUpper);
    pd.flg |= (TA == AtlasNoTrans) ? 2 : 0;
    #if 0
-   idx = Mjoin(PATL,tGetParTriCIndx)(ATL_NTHREADS, pd.flg, N, K, &nb);
+      idx = Mjoin(PATL,tGetParTriCIndx)(ATL_NTHREADS, pd.flg, N, K, &nb);
    #else
-   idx=0;
-   nb = 4;
+      idx = 3;
+      nb = 10;
    #endif
    Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc,
                               alpha, beta, nb);
@@ -16198,14 +16206,16 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
    if (Uplo == AtlasUpper)
       extra = Mmax(extra, szThr);
    nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
+   kbS = ((nb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    szC = ((nbS+1)*nbS)>>1; /* only need lower tri blks, not full nnu*nnu */
    szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
           * ATL_SYRKK_VLEN;
    if (Uplo == AtlasUpper)
       extra = Mmax(extra, ip.szC);
-   szS = nbS * ip.kb;
+   szS = nbS * kbS;
+   szS = ((szS+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)*ATL_SYRKK_VLEN;
    szThr = (nbS == nb) ? szThr : szC;  /* spc for amm/syrk C */
-   szThr = ATL_MulBySize(szS + szThr + extra) + 3*ATL_Cachelen + ATL_sizeof-1;
+   szThr = ATL_MulBySize(szS + szThr + extra) + ATL_Cachelen + ATL_sizeof-1;
    szThr = ATL_DivBySize(szThr);
    pd.dCgap = pd.Cgap = ATL_tSizeofBV(ndiag, P);
    pd.KBCgap = ATL_gatmctr_sizeof(P, ATL_GAC_PUB);
@@ -16245,7 +16255,8 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
    if (P <= 4)
       pd.ncpDiag = 1;
    else
-      pd.ncpDiag = (P >= 6) ? 3 : P>>1;
+      pd.ncpDiag = 2;
+@skip      pd.ncpDiag = (P >= 6) ? 3 : P>>1;
    pd.ncblks = ncblks;
    pd.beta = beta;
    pd.szCs = szC;
