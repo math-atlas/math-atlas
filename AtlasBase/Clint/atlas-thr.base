@@ -15915,6 +15915,10 @@ static int DoDepBlks(const int rank, ATL_tsyrk_ammN_t *pd,
 /*
  *       If I computed some blocks, see if this column is finished
  *       If column is finished, see if whole problem is finished.
+ *
+ *       This is unsafe, and can result in not marking completed column.
+ *       This is OK, because eventually we'll exit this function due to
+ *       the copying finishing, and DoNonDiag will mark column safely.
  */
          if (DIDSOME)
          {
@@ -15992,8 +15996,12 @@ static long DoNonDiag
  *       Attempt to get ngrab rowblks of C from this c's cblkBV starting @ r
  */
          r = ATL_tFindUnsetBitBV(cblkBV, rank);
-         if (r < 0)
+         if (r == -1)
+         {
+            if (!ATL_tIsBitSetBV(cpanDonBV, c))
+               ATL_tSetBitBV(cpanDonBV, c);
             continue;
+         }
          ngot = ngrab;
          old = ATL_tSetRangeBV(cblkBV, &ngot, r, msk);
          if (ngot)
@@ -16048,7 +16056,12 @@ static long DoNonDiag
          DOROWS:
             r = ATL_tSetUnsetBitBV(cblkBV, rank);
             if (r < 0)
-               goto DONE_ROWS;
+            {
+               if (!ATL_tIsBitSetBV(cpanDonBV, c))
+                  ATL_tSetBitBV(cpanDonBV, c);
+               continue;
+@skip               goto DONE_ROWS;
+            }
             r = (UPPER) ? r : 1+c+r;
             wa = IdxAw_ip(ip, wA, r, 0) - skpA;
             wb = IdxBw_ip(ip, wB, 0, c) - skpB;
@@ -16061,7 +16074,8 @@ static long DoNonDiag
             DIDSOME = 1;
             mycnt++;
          goto DOROWS;
-         DONE_ROWS:
+@skip         DONE_ROWS:;
+         @beginskip
          if (DIDSOME)
          {
             if (!ATL_tInfoBV(cblkBV, ATL_TBV_NUNSET))
@@ -16077,6 +16091,7 @@ static long DoNonDiag
                }
             }
          }
+         @endskip
       }
    }
    return(mycnt);
@@ -16164,7 +16179,7 @@ int tsyrk_amm_N
 
    pd.flg = (Uplo == AtlasUpper);
    pd.flg |= (TA == AtlasNoTrans) ? 2 : 0;
-   #if 0
+   #if 1
       idx = Mjoin(PATL,tGetParTriCIndx)(ATL_NTHREADS, pd.flg, N, K, &nb);
    #else
       idx = 3;
