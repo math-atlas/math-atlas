@@ -21211,13 +21211,12 @@ int Mjoin(PATL,GetSyrkIdx) /* returns square amm index to use */
 {
    double timB;
    int i, iB=0;
-   ATL_CSZT minNK = Mmin(N,K);
 
    timB = SyrkTime(0, flg, N, K);
    for (i=1; i < ATL_sqAMM_NCASES; i++)
    {
       double tim;
-      if (ATL_AMM_KBs[i] > minNK)
+      if (ATL_AMM_KBs[i] > K)
          break;
       tim = SyrkTime(i, flg, N, K);
       if (tim < timB)
@@ -22410,13 +22409,21 @@ int Mjoin(PATL,tGetParTriCIndx)(int P, int flg, size_t N, size_t K, int *NB)
    unsigned int ik=ATL_sqAMM_NCASES-1, nb0, nb, mu, nu, U;
    size_t nmblks, nnblks, ncblks;
 
-@skip   if (K < ATL_@(sh)AMM_LASTKB)
-@skip      for (ik=0; ik < ATL_sqAMM_NCASES && ATL_AMM_KBs[ik] < K; ik++);
-   ik = Mjoin(PATL,GetSyrkIdx)(flg, N, K);
+   if (K < ATL_@(sh)AMM_LASTKB)
+      for (ik=0; ik < ATL_sqAMM_NCASES && ATL_AMM_KBs[ik] < K; ik++);
+/*   ik = Mjoin(PATL,GetSyrkIdx)(flg, N, K); */
    mu = ATL_AMM_MUs[ik];
    nu = ATL_AMM_NUs[ik];
    U = ATL_lcm(mu,nu);
    nb0 = nb = ATL_AMM_NBs[ik];
+   if (nb > N)
+   {
+      U = Mmax(mu, nu);
+      nb0 = nb = ((N+U-1)/U)*U;  /* for large U, small N, could be bad! */
+   }
+   *NB = nb;
+   return(ik);
+   #if 0
 /*
  * If blocking tuned to KB provides enough parallelism, just use it
  */
@@ -22437,6 +22444,7 @@ int Mjoin(PATL,tGetParTriCIndx)(int P, int flg, size_t N, size_t K, int *NB)
       nb = U*((ATL_sqAMM_66NB+U-1)/U);
    else
       nb = U*(ATL_sqAMM_66NB/U);
+   #endif
    nnblks = N/nb;
    ncblks = (((nnblks-1)*nnblks)>>1 + nnblks);
    if (ncblks < P)  /* nb at min, so reduce parallelism */
@@ -31363,7 +31371,14 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
 {
    const size_t nfkblks = ip->nfkblks;
    size_t k;
-   ATL_UINT szA = (d < ip->nfnblks) ? ip->szA : ip->pszA;
+   ATL_UINT szA, szB;
+   if (d < ip->nfnblks)
+      szA = szB = ip->szA;
+   else
+   {
+      szA = ip->pszA;
+      szB = ip->pszB;
+   }
    #ifdef TCPLX
       szA += szA;
    #endif
@@ -31372,7 +31387,7 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
  */
    if (nfkblks)
    {
-      TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szA : NULL;
+      TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szB : NULL;
       syrkBlk(ip, flag|4, d, 0, A, sy2blk, NULL, beta, NULL, rS, wS, 
               wA, wAn, wB, wBn, rC, wC, wU);
       wA = wAn;
@@ -31389,7 +31404,7 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
  */
    for (k=1; k < nfkblks; k++)
    {
-      TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szA : NULL;
+      TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szB : NULL;
       syrkBlk(ip, flag, d, k, A, sy2blk, NULL, beta, NULL, rS, wS, 
               wA, wAn, wB, wBn, rC, wC, wU);
       wA = wAn;

@@ -1211,7 +1211,7 @@ struct ATL_tsyrk_ammN
       TYPE beta;
    #endif
    ulong ndiag;   /* # of diagonal blocks */
-   ulong ninit;   /* # of diag blks using max parallism/overhead */
+   ulong nshar;   /* # of diag blks using max parallism/overhead */
    ulong ncblks;  /* # of non-diagonal blocks left to be assigned */
    ulong nkblks;  /* # of k blocks, including any partial block */
    VINT cpydone;  /* set when all A/A' copying complete */
@@ -8226,7 +8226,8 @@ void Mjoin(PATL,t@(rt))
 @ROUT ATL_tsyrk ATL_therk
       return;
    }
-   if (Uplo == AtlasLower && N > ATL_sqAMM_LASTNB)
+//   if (Uplo == AtlasLower && N > ATL_sqAMM_LASTNB)
+   if (N > 3)
    {
       void Mjoin(PATL,t@(rt)_amm)
          (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT N,
@@ -15313,7 +15314,7 @@ int Mjoin(PATL,tammm)
    #define syrkBlk Mjoin(PATL,syrkBlk)
    #define syrk_K  Mjoin(PATL,syrk_KLoop)
 #endif
-#define DEBUG 1
+#define DEBUG 0
 #ifndef DEBUG
    #define DEBUG 0
 #endif
@@ -15470,14 +15471,14 @@ static void DoBlksWtCpy
 #undef ONE
 
 /*
- * In the first phase, we work only on ninit diagonal blocks, while copying both
+ * In this phase, we work only on nshar diagonal blocks, while copying both
  * A & A'.  For init diag work, we parallelize both N & K dims so that the copy
  * is done as quickly as possible.  Threads coming in first choose differing
  * diag blks; diagonal blocks are dealt out using the diCtr local
- * counter (which starts at ninit).
- * Once all init diagonal blocks are dealt out, new threads will start using
+ * counter (which starts at nshar).
+ * Once all shared diagonal blocks are dealt out, new threads will start using
  * the atomic ctr array KbegCtr array to share K work for each diagonal.
- * both KbegCtr & KdonCtr are ninit-len arrays of atomic counters.  Each
+ * both KbegCtr & KdonCtr are nshar-len arrays of atomic counters.  Each
  * counter starts at nkblks.  Once the block pointed to by KbegCtr is
  * completely copied, the copying array increments the KdonCtr.  Only one
  * core per diag will get KdonCtr == 1 after doing his copy, and this
@@ -15495,22 +15496,22 @@ static void DoBlksWtCpy
  * threads don't have to query all the counters to know they should proceed
  * to working on non-init diagonals or non-diagonal block.
  */
-static void DoInitDiag(const int P, const int rank, ATL_tsyrk_ammN_t *pd, 
+static void DoSharDiag(const int P, const int rank, ATL_tsyrk_ammN_t *pd, 
                        TYPE *rS, TYPE *iS, TYPE *rC, TYPE *iC, TYPE *U)
 {
    const size_t KBinc = pd->KBCgap;
    void *KbegCtr;
-   const unsigned long ninit=pd->ninit;
+   const unsigned long nshar=pd->nshar;
    unsigned long jstart, k;
    int DIAG=1;
 
-   if (ninit >= P)
-      jstart = rank * (ninit/P);
+   if (nshar >= P)
+      jstart = rank * (nshar/P);
    else
-      jstart = rank - (rank/ninit)*ninit;
+      jstart = rank - (rank/nshar)*nshar;
 
    #if DEBUG > 1
-      fprintf(stderr, "%d: start DoInitDiag\n", rank);
+      fprintf(stderr, "%d: start DoSharDiag\n", rank);
    #endif
    while (!(pd->NOINICPY))
    {
@@ -15523,7 +15524,7 @@ static void DoInitDiag(const int P, const int rank, ATL_tsyrk_ammN_t *pd,
          d = ATL_atmctr_dec(pd->diCtr);
          if (d)
          {
-            k = ninit - d;
+            k = nshar - d;
             KbegCtr = ATL_AddBytesPtr(pd->KbegCtr, k*KBinc);
             k = ATL_gatmctr_dec(KbegCtr, rank);
             if (!k)     /* if no more K work to do */
@@ -15538,19 +15539,19 @@ static void DoInitDiag(const int P, const int rank, ATL_tsyrk_ammN_t *pd,
       {
          unsigned long i;
          DIAG = 0;
-         for (i=0; i < ninit; i++)
+         for (i=0; i < nshar; i++)
          {
             unsigned long j = i+jstart;
-            j = (j < ninit) ? j : j-ninit;
+            j = (j < nshar) ? j : j-nshar;
             KbegCtr = ATL_AddBytesPtr(pd->KbegCtr, j*KBinc);
             k = ATL_gatmctr_dec(KbegCtr, rank);
-            d = ninit-j;
+            d = nshar-j;
             if (k)
               goto FOUNDDK;
          }
          pd->NOINICPY = 1;    /* no initial work left to assign */
          #if DEBUG > 1
-            fprintf(stderr, "%d: DONE  DoInitDiag\n", rank);
+            fprintf(stderr, "%d: DONE  DoSharDiag\n", rank);
          #endif
          return;             /* so done with copy of A/A' & this func */
       }
@@ -15561,10 +15562,10 @@ static void DoInitDiag(const int P, const int rank, ATL_tsyrk_ammN_t *pd,
  *    return to this loop to see if it can help with another diag.
  */
       FOUNDDK:
-         DoBlksWtCpy(rank, pd, ninit-d, k, rS, iS, rC, iC, U);
+         DoBlksWtCpy(rank, pd, nshar-d, k, rS, iS, rC, iC, U);
    }
    #if DEBUG > 1
-      fprintf(stderr, "%d: DONE  DoInitDiag\n", rank);
+      fprintf(stderr, "%d: DONE  DoSharDiag\n", rank);
    #endif
 }
 /*
@@ -15624,7 +15625,7 @@ static void Do1Diag(const int rank, ATL_tsyrk_ammN_t *pd, long d,
 static int DoDiag(const int rank, ATL_tsyrk_ammN_t *pd, 
                   TYPE *rS, TYPE *iS, TYPE *rC, TYPE *iC, TYPE *U)
 {
-   const unsigned long ninit=pd->ninit, ndiag=pd->ndiag, nhere=ndiag-ninit;
+   const unsigned long nshar=pd->nshar, ndiag=pd->ndiag, nhere=ndiag-nshar;
    void *dCtr=pd->dCtr, *cpydonBV=pd->cpydonBV;
    unsigned long mycnt=0;
    #if DEBUG > 1
@@ -15642,7 +15643,7 @@ static int DoDiag(const int rank, ATL_tsyrk_ammN_t *pd,
          pd->NODWORK = 0;
          break;
       }
-      d = nhere - d + ninit;
+      d = nhere - d + nshar;
       Do1Diag(rank, pd, d, rS, iS, rC, iC, U);
       mycnt++;
    }
@@ -16061,7 +16062,6 @@ static long DoNonDiag
                if (!ATL_tIsBitSetBV(cpanDonBV, c))
                   ATL_tSetBitBV(cpanDonBV, c);
                continue;
-@skip               goto DONE_ROWS;
             }
             r = (UPPER) ? r : 1+c+r;
             wa = IdxAw_ip(ip, wA, r, 0) - skpA;
@@ -16075,7 +16075,6 @@ static long DoNonDiag
             DIDSOME = 1;
             mycnt++;
          goto DOROWS;
-@skip         DONE_ROWS:;
          @beginskip
          if (DIDSOME)
          {
@@ -16103,32 +16102,32 @@ static void DoWorkN(void *vpp, int rank, int vrank)
    ATL_tpool_t *pp=vpp;
    ATL_tsyrk_ammN_t *pd = pp->PD;
    long ndiag=0, ndep=0, nindep=0;
-   const unsigned int P = pp->nworkers;
+   const unsigned int P = pp->nworkers, szC = Mmax(pd->ip->szC,pd->szCs);
    TYPE *iS = pd->wC + vrank*pd->wrksz, *rS, *rC, *iC, *U;
 
    iS = ATL_AlignPtr(iS);
    #ifdef TCPLX
       rS = iS + pd->szS;
       iC = rS + pd->szS;
-      rC = iC + pd->szCs;
-      U = rC + pd->szCs;
+      rC = iC + szC;
+      U  = rC + szC;
    #else
       rS = iS;
       rC = iC = rS + pd->szS;
-      U = iC + pd->szCs;
+      U  = iC + szC;
    #endif
    U = (pd->flg & 1) ? U : NULL;
-   if (!(pd->NOINICPY))
-      DoInitDiag(P, vrank, pd, rS, iS, rC, iC, U);
    if (!(pd->NODWORK) && vrank < pd->ncpDiag)
       ndiag = DoDiag(vrank, pd, rS, iS, rC, iC, U);
+   if (!(pd->NOINICPY))
+      DoSharDiag(P, vrank, pd, rS, iS, rC, iC, U);
    if (!pd->cpydone && !pd->DONE)
       ndep = DoDepBlks(vrank, pd, rS, iS, rC, iC, U);
    if (!pd->DONE)
       nindep = DoNonDiag(vrank, pd, P, rC, iC);
    #if DEBUG
       fprintf(stdout, "%d: Cblks=%ld+%ld, ndiag=%ld,%d Dblks=%ld(%d)\n", 
-              vrank, ndep, nindep, pd->ndiag, pd->ninit, ndiag, pd->ncpDiag);
+              vrank, ndep, nindep, pd->ndiag, pd->nshar, ndiag, pd->ncpDiag);
    #endif
 }
 /*
@@ -16166,8 +16165,8 @@ int tsyrk_amm_N
 {
    void *vp=NULL, *vp0;
    size_t szA, szC, szKpan, sz, extra, szThr, szAll;
-   size_t ndiag, ninit, ncblks;
-   unsigned int i, P, idx, nb, nbS, kbS, szS, szPO;
+   size_t ndiag, ncblks;
+   unsigned int i, P, idx, nb, nbS, kbS, szS, szPO, nshar, ncpDiag, n;
    ATL_tsyrk_ammN_t pd;
    ipinfo_t ip;
    #ifdef Conj_
@@ -16189,22 +16188,29 @@ int tsyrk_amm_N
    Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc,
                               alpha, beta, nb);
    ndiag = ip.nfnblks + ip.npnblks;
-   ninit = 1;
    ncblks = ((ndiag-1)*ndiag)>>1;
 
-   if (ncblks > ATL_NTHREADS)
+   ncpDiag = 0;
+   if (ndiag >= ATL_NTHREADS)  /* Can we get full copy parallelism from N? */
+   {
       P = ATL_NTHREADS;
-   else
-      P = Mmin(ndiag, ATL_NTHREADS);
-@skip   P = 1;
-@skip   P = Mmin(3,P);
+      nshar = (ndiag >= ATL_NTHREADS+2) ? 0 : 2;
+      nshar = Mmin(nshar, ndiag);
+   }
+   else  /* need to use K dim for parallelism */
+   {
+      size_t ncpblks;
+      ncpblks = ndiag * (ip.nfkblks+1);
+      nshar = ndiag;
+      P = Mmin(ATL_NTHREADS, ncpblks);
+   }
    if (0 && P < 2)
    {
       Mjoin(PATL,syrk)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       return(0);
    }
-printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks, 
-       ip.nb, ip.pnb, ip.mF, ip.nF, ip.nmuF, ip.nnuF);
+printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d\n", P, (int)N, 
+       (int)ip.nfnblks, ip.nb, ip.pnb, ip.mF, ip.nF, ip.nmuF, ip.nnuF, ip.kb);
 /*
  * Set up parallel data structure
  */
@@ -16218,7 +16224,7 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
  */
    extra = Mmax(extra, (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU);
    nb = (ip.nfnblks) ? ip.nb : ip.pnb;
-   szThr = nb * nb;
+   szThr = ip.szC;
    if (Uplo == AtlasUpper)
       extra = Mmax(extra, szThr);
    nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
@@ -16230,7 +16236,7 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
       extra = Mmax(extra, ip.szC);
    szS = nbS * kbS;
    szS = ((szS+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)*ATL_SYRKK_VLEN;
-   szThr = (nbS == nb) ? szThr : szC;  /* spc for amm/syrk C */
+   szThr = Mmax(szThr, szC);         /* spc for amm/syrk C */
    szThr = ATL_MulBySize(szS + szThr + extra) + ATL_Cachelen + ATL_sizeof-1;
    szThr = ATL_DivBySize(szThr);
    pd.dCgap = pd.Cgap = ATL_tSizeofBV(ndiag, P);
@@ -16243,7 +16249,7 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
    pd.LOCgap = (pd.LOCgap+1)*sizeof(ATL_BV_t);
    pd.LOCgap = (size_t) ATL_AlignSafeLS(pd.LOCgap);
    pd.diCgap = ATL_atmctr_sizeof;
-   szPO = ninit*(pd.KBCgap+pd.KDCgap+pd.dCinc+pd.diCgap);  /* init wrk */
+   szPO = nshar*(pd.KBCgap+pd.KDCgap+pd.dCinc+pd.diCgap);  /* init wrk */
    szPO += ndiag*pd.Cgap;                    /* sz of cblkBV */
    szPO += pd.KBCgap;                        /* dCtr */
    szPO += pd.dCgap<<1;                      /* cpydonBV,dbetaBV */
@@ -16257,21 +16263,18 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
 
    pd.wrksz = szThr SHIFT;
    pd.KbegCtr  = ATL_AlignSafeLS(vp);
-   pd.KdonCtr  = ATL_AddBytesPtr(pd.KbegCtr, pd.KBCgap*ninit);
-   pd.cpydonBV = ATL_AddBytesPtr(pd.KdonCtr, pd.KDCgap*ninit);
+   pd.KdonCtr  = ATL_AddBytesPtr(pd.KbegCtr, pd.KBCgap*nshar);
+   pd.cpydonBV = ATL_AddBytesPtr(pd.KdonCtr, pd.KDCgap*nshar);
    pd.locBVs   = ATL_AddBytesPtr(pd.cpydonBV, pd.dCgap);
    pd.cblkBV   = ATL_AddBytesPtr(pd.locBVs, (P+(P<<1))*pd.LOCgap);
    pd.Cdmuts   = ATL_AddBytesPtr(pd.cblkBV, pd.dCgap*ndiag);
-   pd.dbetaBV  = ATL_AddBytesPtr(pd.Cdmuts, pd.dCinc*ninit);
+   pd.dbetaBV  = ATL_AddBytesPtr(pd.Cdmuts, pd.dCinc*nshar);
    pd.diCtr    = ATL_AddBytesPtr(pd.dbetaBV, pd.dCgap);
    pd.dCtr     = ATL_AddBytesPtr(pd.diCtr, pd.diCgap);
    pd.ip = &ip;
    pd.ndiag = ndiag;
-   pd.ninit = ninit;
-   if (P <= 4)
-      pd.ncpDiag = 1;
-   else
-      pd.ncpDiag = 2;
+   pd.nshar = nshar;
+   pd.ncpDiag = ncpDiag;
 @skip      pd.ncpDiag = (P >= 6) ? 3 : P>>1;
    pd.ncblks = ncblks;
    pd.beta = beta;
@@ -16339,8 +16342,8 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
       }
    }
    pd.pansz0 /= sizeof(TYPE);
-   pd.NODWORK = (ndiag > ninit) ? 0 : 1;
-   pd.NOINICPY = !ninit;
+   pd.NODWORK = (ndiag > nshar) ? 0 : 1;
+   pd.NOINICPY = !nshar;
    pd.cpydone = 0;
    pd.wA = ATL_AddBytesPtr(pd.dCtr, pd.KBCgap);
    pd.wA = ATL_AlignPtr(pd.wA);
@@ -16359,22 +16362,22 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
    {
       void *vp1;
 
-      for (vp0=pd.Cdmuts,i=0; i < ninit; i++,vp0=ATL_AddBytesPtr(vp0,pd.dCinc))
+      for (vp0=pd.Cdmuts,i=0; i < nshar; i++,vp0=ATL_AddBytesPtr(vp0,pd.dCinc))
          ATL_lock_init(vp0);
 
       vp0 = pd.KbegCtr;
       vp1 = pd.KdonCtr;
-      for (i=0; i < ninit; i++)
+      for (i=0; i < nshar; i++)
       {
          ATL_gatmctr_init(vp0, P, pd.nkblks, ATL_GAC_PUB);
          ATL_gatmctr_init(vp1, P, pd.nkblks, ATL_GAC_PUB);
          vp0 = ATL_AddBytesPtr(vp0, pd.KBCgap);
          vp1 = ATL_AddBytesPtr(vp1, pd.KDCgap);
       }
-      if (ndiag > ninit)
-         ATL_gatmctr_init(pd.dCtr, P, ndiag-ninit, ATL_GAC_PUB);
-      if (ninit)
-         ATL_atmctr_init(pd.diCtr, ninit);
+      if (ndiag > nshar)
+         ATL_gatmctr_init(pd.dCtr, P, ndiag-nshar, ATL_GAC_PUB);
+      if (nshar)
+         ATL_atmctr_init(pd.diCtr, nshar);
 
       vp0 = pd.cblkBV;
       for (i=0; i < ndiag; i++)
@@ -16385,7 +16388,7 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
          vp0 = ATL_AddBytesPtr(vp0, pd.Cgap);
       }
       ATL_tInitBV(pd.cpydonBV, ndiag, P);
-      ATL_tInitBV(pd.dbetaBV, ninit, P);
+      ATL_tInitBV(pd.dbetaBV, nshar, P);
 /*
  *    cpanDonBV is set to the colpan with no non-diag work: 1st for Upper,
  *    last for Lower
@@ -16412,7 +16415,7 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d)\n", P, (int)N, (int)ip.nfnblks,
 /*
  * Free allocated structures and return; 
  */
-   for (vp0=pd.Cdmuts,i=0; i < ninit; i++,vp0=ATL_AddBytesPtr(vp0,pd.dCinc))
+   for (vp0=pd.Cdmuts,i=0; i < nshar; i++,vp0=ATL_AddBytesPtr(vp0,pd.dCinc))
       ATL_lock_destroy(vp0);
    free(vp);
    return(0);
