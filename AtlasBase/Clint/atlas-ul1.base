@@ -7660,10 +7660,10 @@ void ATL_UDOT(const int N, const TYPE *X, const int incx,
  * If neither ptr is alignable, to to unaligned code.  Otherwise, make X
  * be the alignable array, and peel to force X alignment
  */
-   if ( ((size_t)X) & (ATL_sizeof-1) )
+   if ( ((size_t)X) & (ATL_sizeof-1L) )
    {
       const TYPE *p;
-      if ( ((size_t)Y) & (ATL_sizeof-1) )
+      if ( ((size_t)Y) & (ATL_sizeof-1L) )
          goto NOALIGN;
       p = X;  /* Y can be aligned, and X cannot */
       X = Y;  /* so set X ptr to alignable array */
@@ -7672,31 +7672,55 @@ void ATL_UDOT(const int N, const TYPE *X, const int incx,
 /*
  * See if either array is already aligned, and let that one be X if so
  */
-   i = (int)(((size_t)X) & (ATL_VLENb-1));
+   i = (int)(((size_t)X) & (ATL_VLENb-1L));
    if (i)
    {
       int j;
-      j = (int)(((size_t)Y) & (ATL_VLENb-1));
-      if (!j)
-      {
+      j = (int)(((size_t)Y) & (ATL_VLENb-1L));
+      if (!j)  /* if Y is already aligned */
+      {        /* accept Y as X/aligned, other vec unaligned */
          const TYPE *p=X;
          X = Y;
          Y = p;
-         i = 0;
+         i = 0;  /* no peel necessary, since Y was aligned! */
+      }
+      else    /* if neither already aligned, see if either can be aligned */
+      {
+         int k;
+         i = ATL_VLENb-i;  /* # of bytes until aligned ptr */
+         j = ATL_VLENb-j;  /* # of bytes until aligned ptr */
+         k = ATL_DivBySize(i);
+         if (ATL_MulBySize(k) == i)    /* is X vector alignable? */
+            i = k;                     /* set i to cplx elts to align X */
+         else                          /* X unalignable, how about Y? */
+         {
+            k = ATL_DivBySize(j);
+            if (ATL_MulBySize(k) == j) /* Is Y alignable? */
+            {                          /* then make it X */
+               const TYPE *p=X;
+               X = Y;
+               Y = p;
+               i = k;
+            }
+            else                       /* neither vector is alignable! */
+               goto NOALIGN;
+         }
       }
    }
 /*
  * If X is not aligned, but is alignable, peel to force alignment, or if
  * we don't have a full vect it, peel to fully handle the operation
  */
-   if (i)
+/*
+ * If we reach here, X is alignable, i is # of elts to make it aligned
+ */
+   if (i)                                /* Do I need to peel i elts? */
    {
-      i = ATL_DivBySize(i);
       ATL_vcxlduXuYR(vX, X, vY, Y, i);
       X += i+i;
       Y += i+i;
    }
-   else  /* otherwise, peel full vec iteration to zero dot */
+   else  /* No align peel, peel full vec iteration to zero dot */
    {
       i = ATL_VLEN>>1;
       ATL_vld(vX, X);
@@ -7716,7 +7740,7 @@ ONEANDDONE:
    nr -= NV<<ATL_CXVLSH;
    if (NV)  /* have some vector its left */
    {
-      if ( ((size_t)Y) & (ATL_VLENb-1) )  /* if Y not aligned */
+      if ( ((size_t)Y) & (ATL_VLENb-1L) )  /* if Y not aligned */
           goto NOALIGNY;
       do
       {
