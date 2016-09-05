@@ -1191,12 +1191,12 @@ struct ATL_tsyrk_ammN
    void *locBVs;       /* P ndiag-len local bitvecs */
    void *cblkBV;       /* arr of tBVs for dealing out work on col 0<=j<nnblks */
    void *cpanDonBV;    /* ndiag tBV: set means this col fully computed */
-   void *dbetaBV;      /* ndiag tBV: unset means beta not yet applied */
+   void *dbetaBV;      /* nshar BV, prot Cdmuts; unset: beta not yet applied */
    void *diCtr;        /* atmctr deals init diag blks */
    void *dCtr;         /* gatmctr deals out non-init diagonal blocks */
    void *KbegCtr;      /* K-counters for dealing out init diagonal blocks */
    void *KdonCtr;      /* K-counters for completed init diagonal blocks */
-   void *Cdmuts;       /* mutex locks for each diagonal block of C */
+   void *Cdmuts;       /* mutex locks for nshar diagonal block of C */
    size_t wrksz;       /* total elts in each threads' wC array */
    size_t LOCgap;      /* gap in bytes between the P locBVs */
    size_t diCgap;      /* gap in bytes between diCtrs */
@@ -15454,7 +15454,7 @@ static void DoBlksWtCpy
 @skip fprintf(stderr, "%u: get lock diag %lu\n", rank, dblk);
    Cdmut = ATL_AddBytesPtr(pd->Cdmuts, dblk*pd->dCinc);
    ATL_lock(Cdmut);
-   if (!ATL_tSetBitBV(pd->dbetaBV, dblk))  /* I'm first, so tell rest of  */
+   if (!ATL_SetBitBV(pd->dbetaBV, dblk))   /* I'm first, so tell rest of  */
    {                                       /* thrs don't apply beta */
       beta = pd->beta;                     /* because I'm going to do it */
       syblk2c = pd->syblk2c;
@@ -15568,20 +15568,20 @@ static void DoSharDiag(const int P, const int rank, ATL_tsyrk_ammN_t *pd,
       fprintf(stderr, "%d: DONE  DoSharDiag\n", rank);
    #endif
 }
-/*
- * This routine does non-initial diag blocks by accessing dCtr, and then
- * each core will copy the entire K-panel
- */
+
 static void Do1Diag(const int rank, ATL_tsyrk_ammN_t *pd, long d,
                     TYPE *rS, TYPE *iS, TYPE *rC, TYPE *iC, TYPE *U)
+/*
+ * This routine computes 1 diagonal block using SYRK
+ */
 {
    ipinfo_t *ip=pd->ip;
-   TYPE *wA=pd->wA, *wB=pd->wAt, *C=pd->C;
+   TYPE *wA=pd->wA, *wB=pd->wAt;
    const size_t skp=pd->pansz0;
    const unsigned long ndiag=pd->ndiag;
    const unsigned int flg=pd->flg;
    #if DEBUG > 1
-      fprintf(stderr, "%d: start Do1Diag\n", rank);
+      fprintf(stderr, "%d: start Do1Diag %ld\n", rank, d);
    #endif
    if (flg&1)
    {
@@ -15608,15 +15608,83 @@ static void Do1Diag(const int rank, ATL_tsyrk_ammN_t *pd, long d,
    #if DEBUG > 1
       fprintf(stderr, "%d:C(%ld,%ld), wA=%p, wB=%p\n", rank, d, d, wA, wB);
    #endif
-   syrk_K(ip, flg, d, pd->A, pd->sya2blk, pd->syblk2c, pd->beta, C, rS, iS, 
-          wA, wB, rC, iC, U);
+   if (pd->sya2blk)
+      syrk_K(ip, flg, d, pd->A, pd->sya2blk, pd->syblk2c, pd->beta, pd->C, 
+             rS, iS, wA, wB, rC, iC, U);
+   else  /* using gemm instead of SYRK! */
+   {
+      const int B0=ip->nb, B = (d < ip->nfnblks) ? B0 : ip->nF;
+      const SCALAR beta=pd->beta;
+      const TYPE *lA;
+      #ifdef TCPLX
+         const TYPE ONE[2]={ATL_rone,ATL_rzero}, ZERO[2]={ATL_rzero,ATL_rzero};
+      #else
+         #define ONE ATL_rone
+         #define ZERO ATL_rzero
+      #endif
+      TYPE *c;
+      int MV=3;
+
+      if (!wA)
+      {
+         wA = iS;
+         MV = 2;
+      }
+      else if (!wB)
+      {
+         MV = 1;
+         wB = iS;
+      }
+      lA = IdxA_ip(ip, pd->A, d, 0);
+      Mjoin(PATL,iploopsK)(ip, d, d, lA, lA, NULL, MV, wA, wB, rC, iC, 
+                           pd->beta, NULL);
+/*
+ *    Copy from access-major rC to block-major U, then update Upper/lower Cblk
+ */
+      #ifdef TCPLX
+         pd->syblk2c(B, B, ip->alpC, rC, iC, ZERO, U, B);
+      #else
+         pd->syblk2c(B, B, ip->alpC, iC, ZERO, U, B);
+      #endif
+      c = IdxC_ip(ip, pd->C, d, d);
+      if (pd->flg & 1)  /* Upper */
+      {
+         int j;
+         const size_t ldc=(ip->ldc)SHIFT;
+
+         for (j=0; j < B; j++, c += ldc, U += (B SHIFT)) 
+         {
+            Mjoin(PATL,axpby)(j+1, ONE, U, 1, beta, c, 1);
+            #ifdef Conj_
+               c[j+j+1] = ATL_rzero;
+            #endif
+         }
+      }
+      else              /* Lower */
+      {
+         const size_t ldp1=(ip->ldc+1)SHIFT;
+         int j;
+
+         for (j=0; j < B; j++, c += ldp1, U += (B+1)SHIFT)
+         {
+            Mjoin(PATL,axpby)(B-j, ONE, U, 1, beta, c, 1);
+            #ifdef Conj_
+               c[1] = ATL_rzero;
+            #endif
+         }
+      }
+   }
    ATL_tSetBitBV(pd->cpydonBV, d);
    if (!ATL_tInfoBV(pd->cpydonBV, ATL_TBV_NUNSET))
       pd->cpydone = 1;
    #if DEBUG > 1
-      fprintf(stderr, "%d: DONE  Do1Diag\n", rank);
+      fprintf(stderr, "%d: DONE  Do1Diag %ld\n", rank, d);
    #endif
 }
+#ifndef TCPLX
+   #undef ONE
+   #undef ZERO
+#endif
 
 /*
  * This routine does non-initial diag blocks by accessing dCtr, and then
@@ -16109,14 +16177,17 @@ static void DoWorkN(void *vpp, int rank, int vrank)
    #ifdef TCPLX
       rS = iS + pd->szS;
       iC = rS + pd->szS;
+      iC = ATL_AlignPtr(iC);
       rC = iC + szC;
       U  = rC + szC;
    #else
       rS = iS;
-      rC = iC = rS + pd->szS;
+      iC = rS + pd->szS;
+      rC = iC = ATL_AlignPtr(iC);
       U  = iC + szC;
    #endif
-   U = (pd->flg & 1) ? U : NULL;
+   if (pd->sya2blk && !(pd->flg & 1))
+      U = NULL;
    if (!(pd->NODWORK) && vrank < pd->ncpDiag)
       ndiag = DoDiag(vrank, pd, rS, iS, rC, iC, U);
    if (!(pd->NOINICPY))
@@ -16167,6 +16238,7 @@ int tsyrk_amm_N
    size_t szA, szC, szKpan, sz, extra, szThr, szAll;
    size_t ndiag, ncblks;
    unsigned int i, P, idx, nb, nbS, kbS, szS, szPO, nshar, ncpDiag, n;
+   unsigned int szBETABV=0, DISYRK=0;
    ATL_tsyrk_ammN_t pd;
    ipinfo_t ip;
    #ifdef Conj_
@@ -16182,16 +16254,33 @@ int tsyrk_amm_N
    #if 1
       idx = Mjoin(PATL,tGetParTriCIndx)(ATL_NTHREADS, pd.flg, N, K, &nb);
    #else
-      idx = 3;
-      nb = 10;
+      idx = 0;
+      nb = 4;
    #endif
    Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc,
                               alpha, beta, nb);
    ndiag = ip.nfnblks + ip.npnblks;
    ncblks = ((ndiag-1)*ndiag)>>1;
-
    ncpDiag = 0;
-   if (ndiag >= ATL_NTHREADS)  /* Can we get full copy parallelism from N? */
+/*
+ * If N <= NB, always use SYRK, in this case all computation done by SYRK.
+ * -> This means we can only copy A once, while doing half the computation.
+ * If we do SYRK for diagonals, but GEMM for off-diagonals, we must make
+ * 3 copies of of A: 2 for GEMM, one for SYRK (if SYRK's copy is the same
+ * as GEMM's A or B copy, this isn't true, but this is only rarely the case,
+ * since SYRK always uses K-major wt MU=NU, which is a loser on modern x86).
+ * -> Cost of extra copy is N*K*(Mt) (Mt = time to copy from mem)
+ * -> Diagonal computation savings is nb*N*K
+ * ==> Use syrk when NB > Mt; we estimate Mt as 16*P
+ *     -> compute speed scales perfectly with P, but Mt doesn't
+ */
+   DISYRK = (N <= nb || nb > (ATL_NTHREADS<<4));
+   if (!DISYRK)
+   {
+      nshar = 0;
+      P = Mmin(ATL_NTHREADS, ncblks);
+   }
+   else if (ndiag >= ATL_NTHREADS)  /* Full copy parallelism from N? */
    {
       P = ATL_NTHREADS;
       nshar = (ndiag >= ATL_NTHREADS+2) ? 0 : 2;
@@ -16209,36 +16298,53 @@ int tsyrk_amm_N
       Mjoin(PATL,syrk)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       return(0);
    }
-printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d\n", P, (int)N, 
-       (int)ip.nfnblks, ip.nb, ip.pnb, ip.mF, ip.nF, ip.nmuF, ip.nnuF, ip.kb);
+printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d SYRK=%d\n", P, (int)N, 
+       (int)ip.nfnblks, ip.nb, ip.pnb, ip.mF, ip.nF, ip.nmuF, ip.nnuF, ip.kb, 
+       DISYRK);
 /*
  * Set up parallel data structure
  */
    szKpan = ip.nfnblks ? ip.szA : ip.pszA;
    szKpan *= ip.nfkblks+1;
-   szA = szKpan * (ndiag-1);
+   if (ndiag > 1)
+   {
+      szA = szKpan * (ndiag-1);
+      szAll = ATL_MulBySize(szA + szA) + 2*ATL_Cachelen;
+   }
+   else 
+      szA = szAll = 0;
    extra = (ip.mu<<1)*ip.nu;
-   szAll = ATL_MulBySize(szA + szA + extra) + 2*ATL_Cachelen;
 /*
  * Each thread needs: spc C (max(SYRK,GEMM)) + spc for U (if Upper) + 1 blk syrk
  */
-   extra = Mmax(extra, (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU);
    nb = (ip.nfnblks) ? ip.nb : ip.pnb;
    szThr = ip.szC;
-   if (Uplo == AtlasUpper)
-      extra = Mmax(extra, szThr);
-   nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
-   kbS = ((ip.kb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
-   szC = ((nbS+1)*nbS)>>1; /* only need lower tri blks, not full nnu*nnu */
-   szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
-          * ATL_SYRKK_VLEN;
-   if (Uplo == AtlasUpper)
-      extra = Mmax(extra, ip.szC);
-   szS = nbS * kbS;
-   szS = ((szS+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)*ATL_SYRKK_VLEN;
-   szThr = Mmax(szThr, szC);         /* spc for amm/syrk C */
-   szThr = ATL_MulBySize(szS + szThr + extra) + ATL_Cachelen + ATL_sizeof-1;
-   szThr = ATL_DivBySize(szThr);
+   if (DISYRK)   /* need extra workspace if doing SYRK */
+   {
+      extra = Mmax(extra, (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU);
+      nbS = ((nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
+      kbS = ((ip.kb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+      szC = ((nbS+1)*nbS)>>1; /* only need lower tri blks, not full nnu*nnu */
+      szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+             * ATL_SYRKK_VLEN;
+      if (Uplo == AtlasUpper)
+         extra = Mmax(extra, ip.szC);
+      szS = nbS * kbS;
+      szS = ((szS+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)*ATL_SYRKK_VLEN;
+      szThr = Mmax(szThr, szC);         /* spc for amm/syrk C */
+      szThr = ATL_MulBySize(szS + szThr + extra) + ATL_Cachelen + ATL_sizeof-1;
+      szThr = ATL_DivBySize(szThr);
+   }
+   else 
+   {
+      szS = (ip.nfnblks) ? ip.szA : ip.pszA;
+      szC = (ip.nfnblks) ? ip.nb : ip.pnb;
+      szC *= szC;
+      szC = Mmax(szC, extra);
+      szThr += szS + szC;
+      szC = 0;
+      szThr += ATL_DivBySize(ATL_Cachelen+ATL_Cachelen);
+   }
    pd.dCgap = pd.Cgap = ATL_tSizeofBV(ndiag, P);
    pd.KBCgap = ATL_gatmctr_sizeof(P, ATL_GAC_PUB);
    pd.KDCgap = pd.KBCgap; /* ATL_gatmctr_sizeof(P, ATL_GAC_PUB); */
@@ -16249,11 +16355,19 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d\n", P, (int)N,
    pd.LOCgap = (pd.LOCgap+1)*sizeof(ATL_BV_t);
    pd.LOCgap = (size_t) ATL_AlignSafeLS(pd.LOCgap);
    pd.diCgap = ATL_atmctr_sizeof;
-   szPO = nshar*(pd.KBCgap+pd.KDCgap+pd.dCinc+pd.diCgap);  /* init wrk */
+   if (nshar)  /* do I need space for nshar-based work? */
+   {
+      szBETABV = (((nshar+bpiBV-1)>>shBV)+1)*sizeof(ATL_BV_t);
+      szBETABV = (size_t) ATL_AlignSafeLS(szBETABV);
+      szPO = nshar*(pd.KBCgap+pd.KDCgap+pd.dCinc+pd.diCgap) + szBETABV;
+   }
+   else
+      szPO = 0;
    szPO += ndiag*pd.Cgap;                    /* sz of cblkBV */
    szPO += pd.KBCgap;                        /* dCtr */
-   szPO += pd.dCgap<<1;                      /* cpydonBV,dbetaBV */
+   szPO += pd.dCgap;                         /* cpydonBV */
    szPO += (P+(P<<1))*pd.LOCgap;             /* each core has 3 locBVs */
+   szPO += szBETABV;                         /* dbetaBV */
    sz = ATL_MulBySize(szAll + P*szThr) + szPO + ATL_SAFELS;
 
    if (sz <= ATL_PTMAXMALLOC)
@@ -16268,9 +16382,24 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d\n", P, (int)N,
    pd.locBVs   = ATL_AddBytesPtr(pd.cpydonBV, pd.dCgap);
    pd.cblkBV   = ATL_AddBytesPtr(pd.locBVs, (P+(P<<1))*pd.LOCgap);
    pd.Cdmuts   = ATL_AddBytesPtr(pd.cblkBV, pd.dCgap*ndiag);
-   pd.dbetaBV  = ATL_AddBytesPtr(pd.Cdmuts, pd.dCinc*nshar);
-   pd.diCtr    = ATL_AddBytesPtr(pd.dbetaBV, pd.dCgap);
+   pd.diCtr    = ATL_AddBytesPtr(pd.Cdmuts, pd.dCinc*nshar);
    pd.dCtr     = ATL_AddBytesPtr(pd.diCtr, pd.diCgap);
+   pd.dbetaBV  = ATL_AddBytesPtr(pd.dCtr, pd.KBCgap);
+   if (ndiag > 1)
+   {
+      pd.wA    = ATL_AddBytesPtr(pd.dbetaBV, szBETABV);
+      pd.wA    = ATL_AlignPtr(pd.wA);
+      pd.wAt   = pd.wA + (szA SHIFT);
+      pd.wAt   = ATL_AlignPtr(pd.wAt);
+      pd.wC    = pd.wAt + (szA SHIFT);
+   }
+   else
+   {
+      pd.wA    = pd.wAt = NULL;
+      pd.wC    = ATL_AddBytesPtr(pd.dbetaBV, szBETABV);
+   }
+   pd.wC       = ATL_AlignPtr(pd.wC);
+
    pd.ip = &ip;
    pd.ndiag = ndiag;
    pd.nshar = nshar;
@@ -16284,74 +16413,85 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d\n", P, (int)N,
    pd.DONE = (ndiag > 1) ? 0 : 1;
    pd.ngrab = 4;  /* adjust this later */
       
-   pd.sya2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT):Mjoin(PATL,a2blk_syrkN);
-   if (Uplo == AtlasLower)
+   if (DISYRK)
    {
-      pd.pansz0 = (size_t)IdxAw_ip(&ip, NULL, 1, 0);
-      if (SCALAR_IS_NONE(alpha))
+      pd.sya2blk=IS_COLMAJ(TA)?Mjoin(PATL,a2blk_syrkT):Mjoin(PATL,a2blk_syrkN);
+      if (Uplo == AtlasLower)
       {
-         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
-         if (SCALAR_IS_ONE(beta))
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b1);
-         else if (SCALAR_IS_NONE(beta))
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_an_bn);
-         else 
-            pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
-               Mjoin(PATL,syblk2cmat_an_b0) : Mjoin(PATL,syblk2cmat_an_bX);
-      }
-      else if (SCALAR_IS_ONE(alpha))
-      {
-         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
-         if (SCALAR_IS_ONE(beta))
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b1);
-         else if (SCALAR_IS_NONE(beta))
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_bn);
-         else 
-            pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
-               Mjoin(PATL,syblk2cmat_a1_b0) : Mjoin(PATL,syblk2cmat_a1_bX);
+         pd.pansz0 = (size_t)IdxAw_ip(&ip, NULL, 1, 0);
+         if (SCALAR_IS_NONE(alpha))
+         {
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+            if (SCALAR_IS_ONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b1);
+            else if (SCALAR_IS_NONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_an_bn);
+            else 
+               pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
+                  Mjoin(PATL,syblk2cmat_an_b0) : Mjoin(PATL,syblk2cmat_an_bX);
+         }
+         else if (SCALAR_IS_ONE(alpha))
+         {
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+            if (SCALAR_IS_ONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b1);
+            else if (SCALAR_IS_NONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_bn);
+            else 
+               pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
+                  Mjoin(PATL,syblk2cmat_a1_b0) : Mjoin(PATL,syblk2cmat_a1_bX);
+         }
+         else
+         {
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+            if (SCALAR_IS_ONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b1);
+            else if (SCALAR_IS_NONE(beta))
+               pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_bn);
+            else 
+               pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
+                  Mjoin(PATL,syblk2cmat_aX_b0) : Mjoin(PATL,syblk2cmat_aX_bX);
+         }
       }
       else
       {
-         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
-         if (SCALAR_IS_ONE(beta))
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b1);
-         else if (SCALAR_IS_NONE(beta))
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_bn);
-         else 
-            pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
-               Mjoin(PATL,syblk2cmat_aX_b0) : Mjoin(PATL,syblk2cmat_aX_bX);
+         pd.pansz0 = (size_t)IdxBw_ip(&ip, NULL, 0, 1);
+         if (SCALAR_IS_NONE(alpha))
+         {
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b0);
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+         }
+         else if (SCALAR_IS_ONE(alpha))
+         {
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b0);
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+         }
+         else
+         {
+            pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b0);
+            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+         }
       }
    }
    else
    {
-      pd.pansz0 = (size_t)IdxBw_ip(&ip, NULL, 0, 1);
-      if (SCALAR_IS_NONE(alpha))
-      {
-         pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b0);
-         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
-      }
-      else if (SCALAR_IS_ONE(alpha))
-      {
-         pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b0);
-         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
-      }
+      int ialp;
+
+      if (Uplo == AtlasLower)
+         pd.pansz0 = (size_t)IdxAw_ip(&ip, NULL, 1, 0);
       else
-      {
-         pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b0);
-         pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
-      }
+         pd.pansz0 = (size_t)IdxBw_ip(&ip, NULL, 0, 1);
+      if (SCALAR_IS_NONE(alpha))
+         ialp = -1;
+      else
+         ialp = SCALAR_IS_ONE(alpha) ? 1 : 2;
+      pd.syblk2c = Mjoin(PATL,sqGetAmmInfoPtr)(idx, 1, ialp, 0);
+      pd.sya2blk = NULL;
    }
    pd.pansz0 /= sizeof(TYPE);
    pd.NODWORK = (ndiag > nshar) ? 0 : 1;
    pd.NOINICPY = !nshar;
    pd.cpydone = 0;
-   pd.wA = ATL_AddBytesPtr(pd.dCtr, pd.KBCgap);
-   pd.wA = ATL_AlignPtr(pd.wA);
-   pd.wAt = pd.wA + (szA SHIFT);
-   pd.wAt = ATL_AlignPtr(pd.wAt);
-
-   pd.wC = pd.wAt + (szA SHIFT);
-   pd.wC = ATL_AlignPtr(pd.wC);
    pd.A = A;
    pd.lda = lda;
    pd.C = C;
@@ -16388,7 +16528,8 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d\n", P, (int)N,
          vp0 = ATL_AddBytesPtr(vp0, pd.Cgap);
       }
       ATL_tInitBV(pd.cpydonBV, ndiag, P);
-      ATL_tInitBV(pd.dbetaBV, nshar, P);
+@skip      ATL_tInitBV(pd.dbetaBV, nshar, P);
+      ATL_InitBV(nshar, pd.dbetaBV, 0);
 /*
  *    cpanDonBV is set to the colpan with no non-diag work: 1st for Upper,
  *    last for Lower
