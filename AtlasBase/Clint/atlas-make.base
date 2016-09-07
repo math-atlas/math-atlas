@@ -367,6 +367,12 @@ killgrd :
 lib :
 	mkdir lib
 
+include/atlas_tperf.h
+	echo "#ifndef ATLAS_TPERF_H" >> $(perff)
+	echo "   #define ATLAS_TPERF_H" >> $(perff)
+        echo "   #define ATL_tstart_sec 1e-5"
+        echo "   #define ATL_tstartgap_sec 1e-6"
+	echo "#endif" >> $(perff)
 include:
 	mkdir include
 @whiledef pre z c d s
@@ -379,6 +385,8 @@ include:
 @endwhile
 	touch include/atlas_tsumm.h
 	touch include/atlas_taffinity.h
+        make include/atlas_tperf.h
+	touch include/atlas_tperf.h
 	touch include/atlas_ssyrNX.h
 	touch include/atlas_ssyrNX.h
 	touch include/atlas_ssyrNX.h
@@ -888,6 +896,7 @@ IThreadTune :
 @skip	- $(MAKE) ITune_aff
 @skip	$(MAKE) IRun_nthr
 @skip	$(MAKE) iTune_atomic
+@skip	$(MAKE) iTune_startup
 	$(MAKE) MakeThreadSum
 force_build :
 
@@ -907,15 +916,27 @@ MakeThreadSum :
            echo "#define ATL_ATOMIC_COUNT_MUT 0" >> $(sumf) ; \
         fi
 	echo "#endif" >> $(sumf)
+perff = $(INCAdir)/atlas_tperf.h
+res/thrbeg.h : 
+	$(MAKE) iTune_startup
+MakeThreadPerf: res/thrbeg.h
+	- rm -f $(perff)
+	echo "/* created make MakeThreadPerf in thread/tune */" > $(perff)
+	echo "#ifndef ATLAS_TPERF_H" >> $(perff)
+	echo "   #define ATLAS_TPERF_H" >> $(perff)
+	cat res/thrbeg.h >> $(perff) 
+	echo "#endif" >> $(perff)
+
 IRun_aff : xprobe_aff force_build
 	- rm res/probe.out
 	./xprobe_aff -v 1 -o $(INCAdir)/atlas_taffinity.h $(TIDLIST)
-
 IRun_nthr : IRun_aff xprobe_nthr
 	rm -f $(INCAdir)/atlas_pthreads.h
 	./xprobe_nthr -o $(INCAdir)/atlas_pthreads.h
 ITune_aff : IRun_nthr xtune_aff
 	$(ATLRUN) $(myBLDdir) xtune_aff -o $(INCAdir)/atlas_taffinity.h
+iTune_startup : xtune_startup
+	$(ATLRUN) $(myBLDdir) xtune_startup
 tlib : 
 	cd $(BLDdir)/src/threads ; $(MAKE)
 
@@ -7756,7 +7777,7 @@ clean : iclean dclean sclean cclean zclean
 deps = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h \
        $(INCSdir)/atlas_lvl3.h $(INCSdir)/atlas_tlvl3.h \
        $(INCAdir)/atlas_pthreads.h $(INCSdir)/atlas_threads.h \
-       $(INCAdir)/atlas_tsumm.h
+       $(INCAdir)/atlas_tsumm.h $(INCAdir)/atlas_tperf.h
 
 @multidef crt her2k hemm herk
 @multidef rtt trsm trmm symm NumGemmThreads 

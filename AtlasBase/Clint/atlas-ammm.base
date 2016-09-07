@@ -693,7 +693,9 @@ void Mjoin(PATL,GetRKInfo)
    (rkinfo_t*, int, enum ATLAS_TRANS, enum ATLAS_TRANS,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
-int Mjoin(PATL,GetSyrkIdx)(unsigned int flg, ATL_CSZT N, ATL_CSZT K);
+int Mjoin(PATL,GetSyrkIdx)(unsigned int flg, ATL_CSZT N, ATL_CSZT K, double);
+double Mjoin(PATL,sSyrkTimeEst)
+   (int id, unsigned int flg, size_t N, size_t K, double symul);
 int Mjoin(PATL,GetSyrkInfo)
    (amminfo_t*,int, enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,int);
 void Mjoin(PATL,GetSyrkOP)
@@ -21166,12 +21168,15 @@ static INLINE ablk2cmat_t GetBlk2C(int id, int ialp, int ibet)
 }
 @ROUT ATL_GetAmmmInfoSQ
 
-static double SyrkTime(int id, unsigned int flg, size_t N, size_t K)
+#define SyrkTime Mjoin(PATL,sSyrkTimeEst)
+double SyrkTime(int id, unsigned int flg, size_t N, size_t K, double symul)
 {
    double tot, kfrac;
    size_t nfnblks, nondiag, nfkblks;
    unsigned int nb, kr;
 
+   if (symul > 1.0)  /* <=1.0 means using GEMM for diag blks, not SYRK */
+      symul *= 0.5;  /* syrk does half as many flops */
    nb = ATL_AMM_KBs[id];
    nfkblks = K / nb;
    kr = K - nfkblks*nb;
@@ -21182,7 +21187,7 @@ static double SyrkTime(int id, unsigned int flg, size_t N, size_t K)
  * Find total time to compute full GEMM & SYRK blocks
  */
    tot = nondiag * ATL_sqAMM_TIME[id] * (nfkblks + kfrac/ATL_sqAMM_K1RATIO[id]);
-   tot += nfnblks * ATL_skAMM_TIME[id] * (nfkblks + kfrac);
+   tot += symul * nfnblks * ATL_skAMM_TIME[id] * (nfkblks + kfrac);
    kr = N - nfnblks*nb;
    if (kr)  /* have partial GEMM panel & SYRK block */
    {
@@ -21205,7 +21210,7 @@ static double SyrkTime(int id, unsigned int flg, size_t N, size_t K)
       nb = ATL_AMM_KBs[i];
       nkb = (K+nb-1) / nb;
       nnb = (N+nb-1) / nb;
-      tot += nkb*ATL_skAMM_TIME[i]; /* SYRK cleanup */
+      tot += symul*nkb*ATL_skAMM_TIME[i]; /* SYRK cleanup */
       tot += nkb*pen*nnb*ATL_sqAMM_TIME[i];
    }
 
@@ -21220,26 +21225,27 @@ int Mjoin(PATL,GetSyrkIdx) /* returns square amm index to use */
 (
    unsigned int flg,     /* bit 0 set: Upper, else Lower */
    ATL_CSZT N,           /* size of triangular matrix */
-   ATL_CSZT K            /* K dim of A/A^T */
+   ATL_CSZT K,           /* K dim of A/A^T */
+   double symul          /* <= 1: use gemm, else syrk/gemm speed (>1) */
 )
 {
    double timB;
    int i, iB=0;
 
-   timB = SyrkTime(0, flg, N, K);
+   timB = SyrkTime(0, flg, N, K, symul);
    for (i=1; i < ATL_sqAMM_NCASES; i++)
    {
       double tim;
       if (ATL_AMM_KBs[i] > K)
          break;
-      tim = SyrkTime(i, flg, N, K);
+      tim = SyrkTime(i, flg, N, K, symul);
       if (tim < timB)
       {
          timB = tim;
          iB = i;
       }
    }
-   printf("IDX=%d, NB=%d, tim=%e, mf=%.0f\n", iB, ATL_AMM_KBs[iB], timB, 1.0e-6*N*N*K / timB); 
+/*   printf("IDX=%d, NB=%d, tim=%e, mf=%.0f\n", iB, ATL_AMM_KBs[iB], timB, 1.0e-6*N*N*K / timB);  */
    return(iB);
 }
 
@@ -22490,20 +22496,19 @@ void *Mjoin(PATL,@(sh)GetAmmInfoPtr)(int idx, int what, int alp, int bet)
  */
 int Mjoin(PATL,tGetParTriCIndx)(int P, int flg, size_t N, size_t K, int *NB)
 {
-   unsigned int ik=ATL_sqAMM_NCASES-1, nb;
+   unsigned int ik=ATL_sqAMM_NCASES-1, nb, mu, nu, U;
 @skip   size_t nmblks, nnblks, ncblks;
 
    if (K < ATL_@(sh)AMM_LASTKB)
       for (ik=0; ik < ATL_sqAMM_NCASES && ATL_AMM_KBs[ik] < K; ik++);
 /*   ik = Mjoin(PATL,GetSyrkIdx)(flg, N, K); */
    nb = ATL_AMM_NBs[ik];
+@skip   mu = ATL_AMM_MUs[ik];
+@skip   nu = ATL_AMM_NUs[ik];
+   U = ATL_lcm(ATL_AMM_MUs[ik],ATL_AMM_NUs[ik]);
    if (N < ATL_sqAMM_LASTNB || 
-       (nb < ATL_sqAMM_LASTNB+ATL_sqAMM_LASTNB && K >= P*nb) )
-   {
-      unsigned int U;
-      U = ATL_lcm(ATL_AMM_MUs[ik],ATL_AMM_NUs[ik]);
+       (N < ATL_sqAMM_LASTNB+U && K >= P*nb) )
       nb = ((N+U-1)/U)*U;  /* for large U, small N, could be bad! */
-   }
 @skip   nb0 = nb;
    *NB = nb;
    return(ik);
@@ -31467,6 +31472,7 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
    }
    #ifdef TCPLX
       szA += szA;
+      szB += szB;
    #endif
 /*
  * For first K block, use beta=0 kernel to init wC
@@ -31566,7 +31572,7 @@ int syrk_amm
  * For now, just pretend syrk time doesn't matter
  */
 #if 1
-   idx = Mjoin(PATL,GetSyrkIdx)((Uplo == AtlasUpper), N, K);
+   idx = Mjoin(PATL,GetSyrkIdx)((Uplo == AtlasUpper), N, K, 1.33);
 #else
    idx = 0;
 #endif

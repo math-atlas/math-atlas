@@ -15306,6 +15306,11 @@ int Mjoin(PATL,tammm)
 #include "atlas_tlvl3.h"
 #include "atlas_tbitvec.h"
 #include "atlas_gatmctr.h"
+#include "atlas_tperf.h"
+#ifndef ATL_tstartgap_sec
+   #define ATL_tstart_sec 1.0e-5
+   #define ATL_tstartgap_sec 1.0e-6
+#endif
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #ifdef Conj_
    #define syrkBlk Mjoin(PATL,herkBlk)
@@ -15346,6 +15351,192 @@ void syrk_K(ipinfo_t*, int flg, size_t d, const TYPE*A, cm2am_t,
    (I_) = j_ + b_ + 1; \
 }
 
+static void DoBlkWtCpy
+(
+   unsigned const int rank,   /* my thread rank */
+   ATL_tsyrk_ammN_t *pd,      /* problem def structure */
+   unsigned const long dblk,  /* diagonal block of C to compute */
+   unsigned long kblk,        /* kblk to compute */
+   unsigned const int flg,    /* 0: amm_b0: else: amm_b1 */
+   TYPE *rS,                  /* real wrk for SYRK's A (unused for real) */
+   TYPE *iS,                  /* imag wrk for SYRK's A (real for real */
+   TYPE *rC,                  /* real wrk for C (unused for real) */
+   TYPE *iC                   /* imag wrk for C (real for real) */
+)
+{
+   ipinfo_t *ip=pd->ip;
+   const TYPE *A;             /* ptr to original matrix */
+   TYPE *wA, *wB;             /* ptr to copy space */
+   #ifdef TCPLX
+      TYPE *rA, *rB;
+      ammkern_t amm_bn, amm_b1, ammR, ammC;
+   #else
+      ammkern_t amm;          /* amm kern to use  */
+   #endif
+   void *KdonCtr = ATL_AddBytesPtr(pd->KdonCtr, dblk*pd->KDCgap);
+   const size_t skp=pd->pansz0, ndiag=pd->ndiag, lda=ip->lda;
+   size_t i, k;
+   const int UPPER=flg&1;
+   const int kb0=ip->kb;
+   int kb = kb0, KB=kb0, b=ip->nb;
+   int kk, nmu=ip->nmu, nnu=ip->nnu;
+/*
+ * K cleanup needs to use special kern
+ */
+   if (!kblk)
+   {
+      #ifdef TCPLX
+         if (flg&4)
+            ammR = ammC = ip->ammK1_b0;
+         else
+         {
+            ammR = ip->ammK1_bn;
+            ammC = ip->ammK1_b1;
+         }
+         amm_b1 = ip->ammK1_b1;
+         amm_bn = ip->ammK1_bn;
+      #else
+         amm = (flg&4) ? ip->ammK1_b0 : ip->ammK1_b1;
+      #endif
+      KB = ip->KB0;
+      kb = ip->kb0;
+   }
+   else
+   {
+      #ifdef TCPLX
+         if (flg&4)
+            ammR = ammC = ip->amm_b0;
+         else
+         {
+            ammR = ip->amm_bn;
+            ammC = ip->amm_b1;
+         }
+         amm_b1 = ip->amm_b1;
+         amm_bn = ip->amm_bn;
+      #else
+         amm = (flg&4) ? ip->amm_b0 : ip->amm_b1;
+      #endif
+   }
+   if (dblk == ndiag-1)
+   {
+      nmu = ip->nmuF;
+      nnu = ip->nnuF;
+      b = ip->nF;
+   }
+/*
+ * If last K block of different size, take it from end of vector to avoid
+ * screwing up alignment
+ */
+   if (kb0 != ip->kb0)
+      kblk = (kblk) ? kblk-1 : ip->nfkblks;
+// fprintf(stderr, "%d: dblk=%d, kblk=%d\n", rank, dblk, kblk);
+   A = IdxA_ip(ip, pd->A, dblk, kblk);
+   if (UPPER)
+   {
+      if (dblk != ndiag-1)
+         wA = IdxAw_ip(ip, pd->wA, dblk, kblk);
+      else
+         wA = iS;
+      if (dblk)
+         wB = IdxBw_ip(ip, pd->wAt, kblk, dblk) - skp;
+      else
+         wB = iS;
+   }
+   else         /* Lower */
+   {
+      if (dblk != ndiag-1)
+         wB = IdxBw_ip(ip, pd->wAt, kblk, dblk);
+      else
+         wB = iS;
+      if (dblk)
+          wA = IdxAw_ip(ip, pd->wA, dblk, kblk) - skp;
+      else
+         wA = iS;
+   }
+   #if DEBUG > 1
+      fprintf(stderr, "%d: DIAMM(%ld,%ld), wA=%p, wB=%p\n", rank, dblk, kblk, 
+              wA, wB);
+   #endif
+
+   #ifdef TCPLX
+      if (dblk < ip->nfnblks)
+      {
+         rA = wA + ip->szA;
+         rB = wB + ip->szB;
+      }
+      else
+      {
+         rA = wA + ip->pszA;
+         rB = wB + ip->pszB;
+      }
+      ip->a2blk(kb, b, ip->alpA, A, lda, rA, wA);
+      ip->b2blk(kb, b, ip->alpB, A, lda, rA, wB);
+   #else
+      ip->a2blk(kb, b, ip->alpA, A, lda, wA);
+      ip->b2blk(kb, b, ip->alpB, A, lda, wB);
+   #endif
+/*
+ * Signal copy of this K-panel of A/A' is complete iff I just copied the 
+ * last block
+ */
+   if (ATL_gatmctr_dec(KdonCtr, rank) == 1)
+      ATL_tSetBitBV(pd->cpydonBV, dblk);
+   #ifdef TCPLX
+      ammR(nmu, nnu, KB, wA, wB, rC, rA, wB, iC);
+      ammC(nmu, nnu, KB, rA, wB, iC, rA, rB, iC);
+      amm_bn(nmu, nnu, KB, rA, rB, rC, wA, rB, iC);
+      amm_b1(nmu, nnu, KB, wA, rB, iC, wA, rB, iC);
+   #else
+      amm(nmu, nnu, KB, wA, wB, iC, wA, wB, iC);
+   #endif
+}
+
+static void WriteAmmDiag
+   (ATL_tsyrk_ammN_t *pd, const long d, const int B, const SCALAR beta, 
+    const TYPE *W)
+/*
+ * Copies from BxB block-major W to upper/lower portion of pd->C
+ */
+{
+   ipinfo_t *ip=pd->ip;
+   TYPE *c;
+   #ifdef TCPLX
+      const SCALAR ONE=ip->ONE;
+   #else
+      #define ONE ATL_rone
+   #endif
+   c = IdxC_ip(ip, pd->C, d, d);
+   if (pd->flg & 1)  /* Upper */
+   {
+      int j;
+      const size_t ldc=(ip->ldc)SHIFT;
+
+      for (j=0; j < B; j++, c += ldc, W += (B SHIFT))
+      {
+         Mjoin(PATL,axpby)(j+1, ONE, W, 1, beta, c, 1);
+         #ifdef Conj_
+            c[j+j+1] = ATL_rzero;
+         #endif
+      }
+   }
+   else              /* Lower */
+   {
+      const size_t ldp1=(ip->ldc+1)SHIFT;
+      int j;
+
+      for (j=0; j < B; j++, c += ldp1, W += (B+1)SHIFT)
+      {
+         Mjoin(PATL,axpby)(B-j, ONE, W, 1, beta, c, 1);
+         #ifdef Conj_
+            c[1] = ATL_rzero;
+         #endif
+      }
+   }
+}
+#ifndef TCPLX
+   #undef ONE
+#endif
+
 static void DoBlksWtCpy
 (
    unsigned const int rank,   /* my thread rank */
@@ -15375,6 +15566,7 @@ static void DoBlksWtCpy
    #endif
    ATL_UINT szC=ip->szC;
    const unsigned int flg = pd->flg;
+   unsigned int nb;
    const size_t nkblks=pd->nkblks, ndiag=pd->ndiag;
    long kblk = nkblks - kctr, b;
    void *KbegCtr = ATL_AddBytesPtr(pd->KbegCtr, dblk*pd->KBCgap);
@@ -15384,65 +15576,75 @@ static void DoBlksWtCpy
    const TYPE *A = pd->A;
    void *Cdmut;
 
-   if (flg & 1) /* Upper */
+   if (sya2blk)
    {
-      skpA = 0;
-      skpB = pd->pansz0;
-      if (dblk == ndiag-1)
-         wA0 = NULL;
-      if (!dblk)
-         wB0 = NULL;
+      if (flg & 1) /* Upper */
+      {
+         skpA = 0;
+         skpB = pd->pansz0;
+         if (dblk == ndiag-1)
+            wA0 = NULL;
+         if (!dblk)
+            wB0 = NULL;
+      }
+      else         /* Lower */
+      {
+         skpA = pd->pansz0;
+         skpB = 0;
+         if (dblk == ndiag-1)
+            wB0 = NULL;
+         if (!dblk)
+            wA0 = NULL;
+      }
+      wA = (wA0) ? (IdxAw_ip(ip, wA0, dblk, kblk) - skpA) : NULL;
+      wB = (wB0) ? (IdxBw_ip(ip, wB0, kblk, dblk) - skpB) : NULL;
+      syrkBlk(ip, flg|4, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
+              rS, iS, wA, wA, wB, wB, rC, iC, U);
+      if (ATL_gatmctr_dec(KdonCtr, rank) == 1)
+      {
+         ATL_tSetBitBV(cpydonBV, dblk);
+         #if DEBUG > 1
+            ATL_tPrintBV(stderr, "00", cpydonBV);
+         #endif
+      }
    }
-   else         /* Lower */
-   {
-      skpA = pd->pansz0;
-      skpB = 0;
-      if (dblk == ndiag-1)
-         wB0 = NULL;
-      if (!dblk)
-         wA0 = NULL;
-   }
-   wA = (wA0) ? (IdxAw_ip(ip, wA0, dblk, kblk) - skpA) : NULL;
-   wB = (wB0) ? (IdxBw_ip(ip, wB0, kblk, dblk) - skpB) : NULL;
-@skip   fprintf(stderr, "%u:Diag=%ld, K=%d, kB=%p, kD=%p\n",rank,dblk, kblk, KbegCtr, KdonCtr);
-   syrkBlk(ip, flg|4, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
-           rS, iS, wA, wA, wB, wB, rC, iC, U);
-   if (ATL_gatmctr_dec(KdonCtr, rank) == 1)
-   {
-      ATL_tSetBitBV(cpydonBV, dblk);
-      #if DEBUG > 1
-         ATL_tPrintBV(stderr, "00", cpydonBV);
-      #endif
-   }
+   else
+      DoBlkWtCpy(rank, pd, dblk, kblk, flg|4, rS, iS, rC, iC);
    while ((kctr = ATL_gatmctr_dec(KbegCtr, rank)))
    {
       long kk;
       kblk = nkblks - kctr;
-      wA = (wA0) ? (IdxAw_ip(ip, wA0, dblk, kblk) - skpA) : NULL;
-      wB = (wB0) ? (IdxBw_ip(ip, wB0, kblk, dblk) - skpB) : NULL;
 
-      syrkBlk(ip, flg, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
-              rS, iS, wA, wA, wB, wB, rC, iC, U);
-      kk = ATL_gatmctr_dec(KdonCtr, rank);
-@skip   fprintf(stderr, "%u:Diag=%ld, K=%d, kB=%p, kD=%p, kk=%lu\n",rank,dblk, kblk, KbegCtr, KdonCtr, kk);
-@skip      if (ATL_gatmctr_dec(KdonCtr, rank) == 1)
-      if (kk == 1)
+      if (sya2blk)
       {
-         ATL_tSetBitBV(cpydonBV, dblk);
-         #if DEBUG > 1
-            ATL_tPrintBV(stdout, "HH", pd->cpydonBV);
-         #endif
+         wA = (wA0) ? (IdxAw_ip(ip, wA0, dblk, kblk) - skpA) : NULL;
+         wB = (wB0) ? (IdxBw_ip(ip, wB0, kblk, dblk) - skpB) : NULL;
+
+         syrkBlk(ip, flg, dblk, kblk, A, sya2blk, NULL, ZERO, NULL, 
+                 rS, iS, wA, wA, wB, wB, rC, iC, U);
+         kk = ATL_gatmctr_dec(KdonCtr, rank);
+         if (kk == 1)
+            ATL_tSetBitBV(cpydonBV, dblk);
       }
+      else
+         DoBlkWtCpy(rank, pd, dblk, kblk, flg, rS, iS, rC, iC);
    }
 /*
- * For upper, write to U ptr before seizing mutex.  After getting mutex,
- * we will reflect this Lower matrix to make the real Upper one
+ * For upper or amm, write to U ptr before seizing mutex.  After getting mutex,
+ * we will reflect/copy this matrix to Upper one
  */
-   if (flg&1)  /* Upper must use workspace */
+   if (!sya2blk)  /* copy from access-major iC to block-major U */
    {
+      nb = (dblk < ip->nfnblks) ? ip->nb : ip->pnb;
+      #ifdef TCPLX
+         pd->syblk2c(nb, nb, ip->alpC, rC, iC, ZERO, U, nb);
+      #else
+         pd->syblk2c(nb, nb, ip->alpC, iC, ATL_rzero, U, nb);
+      #endif
+   }
+   else if (flg&1)  /* Upper must use workspace */
       syrkBlk(ip, flg, dblk, 0, NULL, NULL, pd->syblk2c, ZERO, NULL, 
               NULL, NULL, NULL, NULL, NULL, NULL, rC, iC, U);
-   }
 /*
  * Now, seize mutex for diagonal block of original C, and copy back out
  * only above/below diagonal
@@ -15459,12 +15661,17 @@ static void DoBlksWtCpy
       beta = pd->beta;                     /* because I'm going to do it */
       syblk2c = pd->syblk2c;
    }
-   if (flg&1)  /* upper just needs to reflect from U to C */
-      syrkBlk(ip, flg, dblk, 0, NULL, NULL, NULL, beta, pd->C,
-              NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, U);
-   else /* Lower writes directly to C from rC,iC */
-      syrkBlk(ip, flg, dblk, 0, NULL, NULL, syblk2c, beta, pd->C,
-              NULL, NULL, NULL, NULL, NULL, NULL, rC, iC, NULL);
+   if (sya2blk)
+   {
+      if (flg&1)  /* upper just needs to reflect from U to C */
+         syrkBlk(ip, flg, dblk, 0, NULL, NULL, NULL, beta, pd->C,
+                 NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, U);
+      else /* Lower writes directly to C from rC,iC */
+         syrkBlk(ip, flg, dblk, 0, NULL, NULL, syblk2c, beta, pd->C,
+                 NULL, NULL, NULL, NULL, NULL, NULL, rC, iC, NULL);
+   }
+   else
+      WriteAmmDiag(pd, dblk, nb, beta, U);
    ATL_unlock(Cdmut);
 @skip fprintf(stdout, "%u: unlock diag %lu\n", rank, dblk);
 }
@@ -15686,6 +15893,7 @@ static void Do1Diag(const int rank, ATL_tsyrk_ammN_t *pd, long d,
    #undef ZERO
 #endif
 
+@beginskip
 /*
  * This routine does non-initial diag blocks by accessing dCtr, and then
  * each core will copy the entire K-panel
@@ -15721,6 +15929,7 @@ static int DoDiag(const int rank, ATL_tsyrk_ammN_t *pd,
    return(mycnt);
 }
 
+@endskip
 static int compPossCols
 (
    void *gcpanDonBV,
@@ -15907,6 +16116,8 @@ static int DoDepBlks(const int rank, ATL_tsyrk_ammN_t *pd,
       skpA = pd->pansz0;
       skpB = 0;
    }
+   if (!pd->NODWORK && rank < pd->ncpDiag)  /* If I'm a thread asked to */
+      goto DODIAG;                          /* copy before computing dep */
    DEPLOOP:
       if (pd->cpydone || pd->DONE)  /* if copying or full computation done */
          return(mycnt);             /* this routine is complete */
@@ -16188,8 +16399,9 @@ static void DoWorkN(void *vpp, int rank, int vrank)
    #endif
    if (pd->sya2blk && !(pd->flg & 1))
       U = NULL;
-   if (!(pd->NODWORK) && vrank < pd->ncpDiag)
-      ndiag = DoDiag(vrank, pd, rS, iS, rC, iC, U);
+@skip   if (!(pd->NODWORK) && vrank < pd->ncpDiag)
+@skip      ndiag = DoDiag(vrank, pd, rS, iS, rC, iC, U);
+
    if (!(pd->NOINICPY))
       DoSharDiag(P, vrank, pd, rS, iS, rC, iC, U);
    if (!pd->cpydone && !pd->DONE)
@@ -16237,10 +16449,17 @@ int tsyrk_amm_N
    void *vp=NULL, *vp0;
    size_t szA, szC, szKpan, sz, extra, szThr, szAll;
    size_t ndiag, ncblks;
-   unsigned int i, P, idx, nb, nbS, kbS, szS, szPO, nshar, ncpDiag, n;
+   double stim;
+   unsigned int i, P, idx, nb, nbS, kbS, szS, szPO, nshar=0, ncpDiag, n;
    unsigned int szBETABV=0, DISYRK=0;
    ATL_tsyrk_ammN_t pd;
    ipinfo_t ip;
+   #ifdef ATL_AVX
+      #define symul 1.34
+   #else
+      #define symul 1.2
+   #endif
+   #define parpen (2.0*ATL_tstart_sec)
    #ifdef Conj_
       const enum ATLAS_TRANS TB = (TA == AtlasNoTrans) ?
                                   AtlasConjTrans : AtlasNoTrans;
@@ -16248,20 +16467,126 @@ int tsyrk_amm_N
       const enum ATLAS_TRANS TB = (TA == AtlasNoTrans) ?
                                   AtlasTrans : AtlasNoTrans;
    #endif
-
+/*
+ * Demand at least 2 large blocks along some dimension
+ */
+   n = ATL_sqAMM_LASTNB<<1;
+   n = Mmin(200, n);
+   if (N < n && K < n)
+      goto DO_SERIAL;
    pd.flg = (Uplo == AtlasUpper);
    pd.flg |= (TA == AtlasNoTrans) ? 2 : 0;
    #if 1
-      idx = Mjoin(PATL,tGetParTriCIndx)(ATL_NTHREADS, pd.flg, N, K, &nb);
+@skip      idx = Mjoin(PATL,tGetParTriCIndx)(ATL_NTHREADS, pd.flg, N, K, &nb);
+      if (K >= (ATL_sqAMM_LASTKB<<3))
+         idx = ATL_sqAMM_NCASES-1;
+      else
+         idx = Mjoin(PATL,GetSyrkIdx)(pd.flg, N, K, symul);
    #else
       idx = 0;
       nb = 4;
    #endif
-   Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc,
-                              alpha, beta, nb);
-   ndiag = ip.nfnblks + ip.npnblks;
+   stim = Mjoin(PATL,sSyrkTimeEst)(idx, pd.flg, N, K, symul);
+   if (stim <= parpen+ATL_tstart_sec+4.0*ATL_tstartgap_sec)
+      goto DO_SERIAL;
+   nb = Mjoin(PATL,sqGetAmmInfoInt)('K', idx);
+   P = ATL_NTHREADS;
+   if (N <= nb)  /* only possible parallelism is along K */
+   {
+      nshar = 1;                      /* share all K blocks */
+      szKpan = (K+nb-1) / nb;
+      P = Mmin(szKpan, ATL_NTHREADS); /* limit parallism to k blocks */
+      goto GOT_NB;
+   }
+   ndiag = nb*ATL_NTHREADS;
+   if (ndiag < N)            /* is there enough paralleism along N? */
+      goto GOT_NB;
+   if (ndiag < K)  /* is there enough parallism from K? */
+   {
+      nshar = 1;   /* means make all blks shared */
+      goto GOT_NB;
+   }
+/*
+ * See if we can create enough parallelism by sharing nshar initial
+ * K-panels, which will unleash at least ncblks parallelism afterwords
+ */
+   szKpan = (K+nb-1) / nb;
+   ndiag = (N+nb-1) / nb;
+   if (nshar == 1)
+      nshar = ndiag;
    ncblks = ((ndiag-1)*ndiag)>>1;
-   ncpDiag = 0;
+   if (szKpan*ndiag >= P)
+   {
+      nshar = P / szKpan;
+      if (nshar < 2)      /* need at least 2 panels complete */
+         nshar = 2;       /* before non-diag comp begins */
+      goto GOT_NB;
+   }
+/*
+ * If we reach here, need to try reducing nb to increase parallelism;
+ * If this doesn't work, reduce parallelism.
+ */
+   nshar = 1;         /* get max parallism from K */
+   nbS = nb;
+   n = ATL_lcm(Mjoin(PATL,sqGetAmmInfoInt)('m', idx),
+               Mjoin(PATL,sqGetAmmInfoInt)('n', idx));
+   if (n <= nb)
+   {
+      P = szKpan;
+      goto GOT_NB;
+   }
+   nb = (nb/n)*n;
+   TRY_ANOTHER_NB:
+      ndiag = N / nb;
+      ncblks = ((ndiag-1)*ndiag)>>1;
+      if (ndiag*szKpan+ncblks >= ATL_NTHREADS)
+         goto GOT_NB;
+      nbS = nb;
+      nb -= n;
+   if (nb > 24)
+      goto TRY_ANOTHER_NB;
+
+   nb = nbS;
+   ndiag = N / nb;
+   ncblks = ((ndiag-1)*ndiag)>>1;
+   P = ndiag*szKpan+ncblks;
+GOT_NB:
+   if (P > 1)
+   {
+      double trem, ptim;
+      trem = stim;
+      ptim = parpen + ATL_tstart_sec;
+      for (i=0; i < P; i++)
+      {
+         double t1;
+         t1 = (i+1)*ATL_tstartgap_sec;
+         if (trem > t1)
+         {
+            trem -= t1;
+            ptim += ATL_tstartgap_sec;
+         }
+         else
+         {
+            ptim += trem/(i+1);
+            break;
+         }
+      }
+      ptim += trem / P;
+      if (stim <= 1.2*ptim) /* don't accept less than 20% win */
+         goto DO_SERIAL;    /* since parallel times hugely variable */
+      else
+         P = (ptim < stim) ? i : 1;
+      fprintf(stdout, "   predicted speedup = %.2f (%d)\n", stim/ptim, i);
+      if (P < 1)
+         goto DO_SERIAL;
+      Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc,
+                                 alpha, beta, nb);
+      ndiag = ip.nfnblks + ip.npnblks;
+      ncblks = ((ndiag-1)*ndiag)>>1;
+      ncpDiag = 0;
+@skip   ncpDiag = ndiag - nshar;  /* max kpans that can be copied all at once */
+@skip   n = P>>1;
+@skip   ncpDiag = Mmin(n,ncpDiag);
 /*
  * If N <= NB, always use SYRK, in this case all computation done by SYRK.
  * -> This means we can only copy A once, while doing half the computation.
@@ -16270,37 +16595,25 @@ int tsyrk_amm_N
  * as GEMM's A or B copy, this isn't true, but this is only rarely the case,
  * since SYRK always uses K-major wt MU=NU, which is a loser on modern x86).
  * -> Cost of extra copy is N*K*(Mt) (Mt = time to copy from mem)
- * -> Diagonal computation savings is nb*N*K
+ * -> Diagonal computation savings is nb*N*K (4*nb*N*K for cplx)
  * ==> Use syrk when NB > Mt; we estimate Mt as 16*P
  *     -> compute speed scales perfectly with P, but Mt doesn't
  */
-   DISYRK = (N <= nb || nb > (ATL_NTHREADS<<4));
-   if (!DISYRK)
-   {
-      nshar = 0;
-      P = Mmin(ATL_NTHREADS, ncblks);
+      #ifdef TCPLX
+         DISYRK = (N <= nb || nb > (ATL_NTHREADS<<2));
+      #else
+         DISYRK = (N <= nb || nb > (ATL_NTHREADS<<4));
+      #endif
    }
-   else if (ndiag >= ATL_NTHREADS)  /* Full copy parallelism from N? */
+   if (P < 2)
    {
-      P = ATL_NTHREADS;
-      nshar = (ndiag >= ATL_NTHREADS+2) ? 0 : 2;
-      nshar = Mmin(nshar, ndiag);
-   }
-   else  /* need to use K dim for parallelism */
-   {
-      size_t ncpblks;
-      ncpblks = ndiag * (ip.nfkblks+1);
-      nshar = ndiag;
-      P = Mmin(ATL_NTHREADS, ncpblks);
-   }
-   if (0 && P < 2)
-   {
+DO_SERIAL:
       Mjoin(PATL,syrk)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       return(0);
    }
-printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d SYRK=%d\n", P, (int)N, 
-       (int)ip.nfnblks, ip.nb, ip.pnb, ip.mF, ip.nF, ip.nmuF, ip.nnuF, ip.kb, 
-       DISYRK);
+printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d SY=%d, nshar=%ld\n", P, 
+       (int)N, (int)ip.nfnblks, ip.nb, ip.pnb, ip.mF, ip.nF, ip.nmuF, ip.nnuF, 
+        ip.kb, DISYRK, nshar);
 /*
  * Set up parallel data structure
  */
@@ -16481,10 +16794,10 @@ printf("%u: N=%d (%d*%d+%d) F=(%d,%d;%d,%d), kb=%d SYRK=%d\n", P, (int)N,
          pd.pansz0 = (size_t)IdxAw_ip(&ip, NULL, 1, 0);
       else
          pd.pansz0 = (size_t)IdxBw_ip(&ip, NULL, 0, 1);
-      if (SCALAR_IS_NONE(alpha))
+      if (SCALAR_IS_NONE(ip.alpC))
          ialp = -1;
       else
-         ialp = SCALAR_IS_ONE(alpha) ? 1 : 2;
+         ialp = SCALAR_IS_ONE(ip.alpC) ? 1 : 2;
       pd.syblk2c = Mjoin(PATL,sqGetAmmInfoPtr)(idx, 1, ialp, 0);
       pd.sya2blk = NULL;
    }
@@ -16575,8 +16888,10 @@ void tsyrk_amm
 {
    #ifdef TCPLX
       const TYPE ONE[2]={ATL_rone, ATL_rzero};
+      size_t kmul = (Trans==AtlasNoTrans||Trans==AtlasConj) ? lda+lda : 2;
    #else
       #define ONE ATL_rone
+      size_t kmul = (Trans==AtlasNoTrans) ? lda : 1;
    #endif
 @beginskip
    ATL_assert(N > ATL_sqAMM_LASTNB);
@@ -16593,7 +16908,7 @@ void tsyrk_amm
     if (tsyrk_amm_N(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc))
     {
        unsigned int kL = K>>1, kR=K-kL;
-       const TYPE *a = (Trans == AtlasNoTrans) ? A+((size_t)lda)*kL : A+kL;
+       const TYPE *a = A + kL*kmul;
 /*
  *     This stopping criteria should never happen, but it's here in case
  *     we have a system where you can't malloc much of anything, where we'll

@@ -875,7 +875,6 @@ int main(int nargs, char **args)
 
 #if defined(__MINGW32__) || defined(__MINGW64__)
 @extract -b @(topd)/Clint/atlconf.base rout=MinGWPATH
-
 #endif
 
 
@@ -2430,6 +2429,61 @@ int main(int nargs, char **args)
    free(GLCK);
    return(GCNT != ans);
 }
+@ROUT gensumh
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+#if defined(__MINGW32__) || defined(__MINGW64__)
+@extract -b @(topd)/Clint/atlconf.base rout=MinGWPATH
+#endif
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "\nUSAGE: %s [-o <outfile>]\n", nam);
+   exit(-1);
+}
+
+FILE *GetFlags(int nargs, char **args)
+{
+   int i;
+   FILE *fpout=stdout;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'o':
+         #if defined(__MINGW32__) || defined(__MINGW64__)
+         {
+            char *wp;
+            wp = malloc(sizeof(char)*(strlen(args[++i])+1));;
+            strcpy(wp, args[i]);
+            slashsub(wp);
+            cygdrivesub(wp);
+            fpout = fopen(wp, "w");
+            free(wp);
+         }
+         #else
+            fpout = fopen(args[++i], "w");
+         #endif
+         assert(fpout);
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   return(fpout);
+}
+int main(int nargs, char **args)
+{
+   FILE *fpout;
+   fpout = GetFlags(nargs, args);
+
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
+   return(0);
+}
 @ROUT tune_startup
 #include <stdlib.h>
 #include <stdio.h>
@@ -2474,7 +2528,7 @@ int@^nargs char@^**args unsigned@^long@^*REPS
 @enddeclare
 {
    int p=ATL_NTHREADS, i, verb=0;
-   unsigned long reps=20000;
+   unsigned long reps=40000;
    FILE *fpout=stdout;
    for (i=1; i < nargs; i++)
    {
@@ -2606,6 +2660,13 @@ int main(int nargs, char **args)
          if (fpres)
          {
             fprintf(fpres, "%lu\n%le\n%le\n", reps, avgInit, avgGap);
+            fclose(fpres);
+         }
+         fpres = fopen("res/thrbeg.h", "w");
+         if (fpres)
+         {
+            fprintf(fpres, "   #define ATL_tstart_sec %le\n", avgInit);
+            fprintf(fpres, "   #define ATL_tstartgap_sec %le\n", avgGap);
             fclose(fpres);
          }
       }
