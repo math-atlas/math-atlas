@@ -9994,6 +9994,352 @@ void DoTRSM(char pre, int verb)
    KillAllMMNodes(tb);
 }
 
+ATL_mmnode_t *FindBestNK_M
+   (char pre, int verb, ATL_mmnode_t *mmb, unsigned int mb)
+/*
+ * RETURNS: Clone of node that provides best perf for a problem with MB=mb.
+ *          We try finding best nb&kb by using ones near any that are near
+ *          those in list of mmb.  NULL if no kern can do MB=mb.
+ */
+{
+   ATL_mmnode_t *mp, *mpMax=NULL;
+   unsigned int kbB=0, nbB=0;
+   double mf, mfMax=0.0;
+/*
+ * Try all candidate kernels for this mb
+ */
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      int kb=mp->kbB, nb=mp->nbB;
+      if (mb % mp->mu)
+         continue;
+      mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 1, 0, -1);
+/*
+ *    Try NB (and if allowed KB) from larger kerns to see if they improve
+ *    small mb perf
+ */
+      if (mp->next)  /* larger KB/NB kerns exist */
+      {
+         ATL_mmnode_t *mpG; /* kerns of greater size */
+         int KB, lastK=kb, lastN=nb;
+         const int ku=mp->ku, nu=mp->nu; 
+         const int CHGK=FLAG_IS_SET(mp->flag, MMF_KRUNTIME);
+
+         for (mpG=mp->next; mpG; mpG = mpG->next)
+         {
+            int k = mpG->kbB, n=mpG->nbB;
+            double mfG;
+
+            if (nu <= 8)
+               n = ((n+nu-1)/nu)*nu;
+            else
+               n = (n/nu)*nu;
+            if (CHGK)
+            {
+               if (ku <= 8)
+                  k = ((k+ku-1)/ku)*ku;
+               else
+                  k = (k/ku)*ku;
+            }
+            else 
+               k = kb;
+            if (n <= lastN || k <= lastK)
+               continue;
+            mfG = TimeMMKernel(verb, 0, mp, pre, mb, n, k, 1, 0, -1);
+            if (mfG > mf)
+            {
+               mf = mfG;
+               nb = n;
+               kb = k;
+            }
+            lastN = n;
+            lastK = k;
+         }
+      }
+      if (mf > mfMax)
+      {
+         nbB = nb;
+         kbB = kb;
+         mfMax = mf;
+         mpMax = mp;
+      }
+   }
+   if (mpMax)
+   {
+      mp = mpMax;
+      mpMax = CloneMMNode(mpMax);
+      mpMax->mflop[0] = mfMax;
+      mpMax->mbB = mb;
+      mpMax->nbB = nbB;
+      mpMax->kbB = kbB;
+   }
+   return(mpMax);
+}
+
+ATL_mmnode_t *FindBestMK_N
+   (char pre, int verb, ATL_mmnode_t *mmb, unsigned int nb)
+/*
+ * RETURNS: Clone of node that provides best perf for a problem with NB=nb.
+ *          We try finding best mb&kb by using ones near any that are near
+ *          those in list of mmb.  NULL if no kern can do NB=nb.
+ */
+{
+   ATL_mmnode_t *mp, *mpMax=NULL;
+   unsigned int kbB=0, mbB=0;
+   double mf, mfMax=0.0;
+/*
+ * Try all candidate kernels for this nb
+ */
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      int kb=mp->kbB, mb=mp->mbB;
+      if (nb % mp->nu)
+         continue;
+      mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 1, 0, -1);
+/*
+ *    Try MB (and if allowed KB) from larger kerns to see if they improve
+ *    small nb perf
+ */
+      if (mp->next)  /* larger KB/MB kerns exist */
+      {
+         ATL_mmnode_t *mpG; /* kerns of greater size */
+         int KB, lastK=kb, lastM=mb;
+         const int ku=mp->ku, mu=mp->mu; 
+         const int CHGK=FLAG_IS_SET(mp->flag, MMF_KRUNTIME);
+
+         for (mpG=mp->next; mpG; mpG = mpG->next)
+         {
+            int k = mpG->kbB, m=mpG->mbB;
+            double mfG;
+
+            if (mu <= 8)
+               m = ((m+mu-1)/mu)*mu;
+            else
+               m = (m/mu)*mu;
+            if (CHGK)
+            {
+               if (ku <= 8)
+                  k = ((k+ku-1)/ku)*ku;
+               else
+                  k = (k/ku)*ku;
+            }
+            else 
+               k = kb;
+            if (m <= lastM || k <= lastK)
+               continue;
+            mfG = TimeMMKernel(verb, 0, mp, pre, m, nb, k, 1, 0, -1);
+            if (mfG > mf)
+            {
+               mf = mfG;
+               mb = m;
+               kb = k;
+            }
+            lastM = m;
+            lastK = k;
+         }
+      }
+      if (mf > mfMax)
+      {
+         mbB = mb;
+         kbB = kb;
+         mfMax = mf;
+         mpMax = mp;
+      }
+   }
+   if (mpMax)
+   {
+      mp = mpMax;
+      mpMax = CloneMMNode(mpMax);
+      mpMax->mflop[0] = mfMax;
+      mpMax->nbB = nb;
+      mpMax->mbB = mbB;
+      mpMax->kbB = kbB;
+   }
+   return(mpMax);
+}
+
+ATL_mmnode_t *FindBestK_MN
+   (char pre, int verb, ATL_mmnode_t *mmb, unsigned int nb)
+/*
+ * RETURNS: Clone of node that provides best perf for a problem with MB=NB=nb,
+ *          and any KB in the list of mmb.  NULL if no kern can do MB=NB=nb.
+ */
+{
+   ATL_mmnode_t *mp, *mpMax=NULL;
+   unsigned int kbB=0;
+   double mf, mfMax=0.0;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      int kb=mp->kbB;
+      if (nb % mp->mu || nb % mp->nu)
+         continue;
+      mf = TimeMMKernel(verb, 0, mp, pre, nb, nb, kb, 1, 0, -1);
+/*
+ *    If we can change KB, try larger ones before giving up on this kern
+ */
+      if (mp->next && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      {
+         ATL_mmnode_t *mpK;
+         int KB, lastK=kb;
+         const int ku=mp->ku;
+
+         for (mpK=mp->next; mpK; mpK = mpK->next)
+         {
+            int k = mpK->kbB;
+            double mfK;
+
+            if (ku <= 8)
+               k = (k+ku-1)/ku;
+            else
+            {
+               k = (k/ku)*ku;
+               if (k <= lastK)
+                  continue;
+            }
+            mfK = TimeMMKernel(verb, 0, mp, pre, nb, nb, k, 1, 0, -1);
+            if (mfK > mf)
+            {
+               mf = mfK;
+               kb = k;
+            }
+            lastK = k;
+         }
+      }
+      if (mf > mfMax)
+      {
+         kbB = kb;
+         mfMax = mf;
+         mpMax = mp;
+      }
+   }
+   if (mpMax)
+   {
+      mp = mpMax;
+      mpMax = CloneMMNode(mpMax);
+      mpMax->mflop[0] = mfMax;
+      mpMax->mbB = mpMax->nbB = nb;
+      mpMax->kbB = kbB;
+   }
+   return(mpMax);
+}
+
+void GenAllViews(char pre, int verb)
+/*
+ * Generates performance views of [ge,rk]AMMRES.sum
+ */
+{
+   ATL_mmnode_t *mmb, *mp, *mpL;
+   mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
+   assert(mmb);
+//   mp = TimeMMFileWithPath(pre, "res", "ipmnPERF.sum", 0, verb, 0, 1, 0, -1);
+   mp = NULL;
+   if (mp)
+      KillAllMMNodes(mp);
+   else /* generate inner-product MB=NB, KB free view */
+   {
+      int i, nb, NBMAX, k;
+      ATL_mmnode_t *mb=NULL;
+      double mfL=0.0;
+
+      printf("   FINDING BEST CASE FOR DEGENERATE MB=NB\n");
+      i = GetOffset(mmb, &(mmb->next));
+      GetIntMaxMinAtOff(mmb, i, GetOffset(mmb, &(mmb->nbB)), &NBMAX, &nb);
+      GetIntMaxMinAtOff(mmb, i, GetOffset(mmb, &(mmb->mbB)), &k, &i);
+      NBMAX = Mmax(NBMAX,k);
+      nb = Mmin(nb, i);
+      for (mpL=mmb; mpL->next; mpL=mpL->next);
+      while (nb <= NBMAX)
+      {
+         mp = FindBestK_MN(pre, verb, mmb, nb);
+         if (mp && mp->mflop[0] >= mfL)
+         {
+            mfL = mp->mflop[0];
+            printf("      BEST CASE NB=%d: %d-%s, KB=%d  mf=%.2f.\n", mp->nbB,
+                   mp->ID, mp->rout ? mp->rout:"gen", mp->kbB, mfL);
+            mp->next = mb;
+            mb = mp;
+         }
+         nb++;
+@skip         while (mb->kbB < nb && mb->next)
+@skip            mb = mb->next;
+      }
+      mb = ReverseMMQ(mb);
+@skip      MMPruneMflopTol(mb, 0, 1.0);
+      WriteMMFileWithPath(pre, "res", "ipmnPERF.sum", mb);
+      KillAllMMNodes(mb);
+      printf("   DONE DEGENERATE MB/NB SEARCH.\n\n");
+   }
+
+//   mp = TimeMMFileWithPath(pre, "res", "ipnPERF.sum", 0, verb, 0, 1, 0, -1);
+   mp = NULL;
+   if (mp)
+      KillAllMMNodes(mp);
+   else /* generate inner-product NB < MAXNB, MB,KB free view */
+   {
+      int i, nb, NBMAX, k;
+      ATL_mmnode_t *mb=NULL;
+      double mfL=0.0;
+
+      printf("   FINDING BEST CASE FOR DEGENERATE NB\n");
+      i = GetOffset(mmb, &(mmb->next));
+      GetIntMaxMinAtOff(mmb, i, GetOffset(mmb, &(mmb->nbB)), &NBMAX, &nb);
+      while (nb <= NBMAX)
+      {
+         mp = FindBestMK_N(pre, verb, mmb, nb);
+         if (mp && mp->mflop[0] >= mfL)
+         {
+            mfL = mp->mflop[0];
+            printf("      BEST CASE NB=%d: %d-%s, MB=%d, KB=%d  mf=%.2f.\n", 
+                   mp->nbB, mp->ID, mp->rout ? mp->rout:"gen", 
+                   mp->mbB, mp->kbB, mfL);
+            mp->next = mb;
+            mb = mp;
+         }
+         nb++;
+      }
+      mb = ReverseMMQ(mb);
+@skip      MMPruneMflopTol(mb, 0, 1.0);
+      WriteMMFileWithPath(pre, "res", "ipnPERF.sum", mb);
+      KillAllMMNodes(mb);
+      printf("   DONE DEGENERATE NB SEARCH.\n\n");
+   }
+
+//   mp = TimeMMFileWithPath(pre, "res", "ipmPERF.sum", 0, verb, 0, 1, 0, -1);
+   mp = NULL;
+   if (mp)
+      KillAllMMNodes(mp);
+   else /* generate inner-product NB < MAXNB, MB,KB free view */
+   {
+      int i, nb, NBMAX, k;
+      ATL_mmnode_t *mb=NULL;
+      double mfL=0.0;
+
+      printf("   FINDING BEST CASE FOR DEGENERATE MB\n");
+      i = GetOffset(mmb, &(mmb->next));
+      GetIntMaxMinAtOff(mmb, i, GetOffset(mmb, &(mmb->mbB)), &NBMAX, &nb);
+      while (nb <= NBMAX)
+      {
+         mp = FindBestNK_M(pre, verb, mmb, nb);
+         if (mp && mp->mflop[0] >= mfL)
+         {
+            mfL = mp->mflop[0];
+            printf("      BEST CASE MB=%d: %d-%s, NB=%d, KB=%d  mf=%.2f.\n", 
+                   mp->mbB, mp->ID, mp->rout ? mp->rout:"gen", 
+                   mp->nbB, mp->kbB, mfL);
+            mp->next = mb;
+            mb = mp;
+         }
+         nb++;
+      }
+      mb = ReverseMMQ(mb);
+@skip      MMPruneMflopTol(mb, 0, 1.0);
+      WriteMMFileWithPath(pre, "res", "ipmPERF.sum", mb);
+      KillAllMMNodes(mb);
+      printf("   DONE DEGENERATE MB SEARCH.\n\n");
+   }
+
+   KillAllMMNodes(mmb);
+}
 /*
  * Finds main amm kernels
  */
@@ -10324,6 +10670,7 @@ int main(int nargs, char **args)
    WriteRefreshedMMFileWithPath(pre, "res", "AMMFRCLST.sum", mp);
    KillAllMMNodes(mp);
    GetGenKernForNB(pre, 0);  /* dealloc static mmnodes */
+   GenAllViews(pre, verb);
    exit(0);
 }
 @ROUT uammsearch
