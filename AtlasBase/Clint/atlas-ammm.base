@@ -10066,8 +10066,11 @@ ATL_mmnode_t *FindBestNK_M
    }
    if (mpMax)
    {
+      int i;
+      for (i=0, mp=mmb; mp != mpMax; i++, mp = mp->next);
       mp = mpMax;
       mpMax = CloneMMNode(mpMax);
+      mpMax->ivar = i + 1;
       mpMax->mflop[0] = mfMax;
       mpMax->mbB = mb;
       mpMax->nbB = nbB;
@@ -10148,8 +10151,11 @@ ATL_mmnode_t *FindBestMK_N
    }
    if (mpMax)
    {
+      int i;
+      for (i=0, mp=mmb; mp != mpMax; i++, mp = mp->next);
       mp = mpMax;
       mpMax = CloneMMNode(mpMax);
+      mpMax->ivar = i + 1;
       mpMax->mflop[0] = mfMax;
       mpMax->nbB = nb;
       mpMax->mbB = mbB;
@@ -10214,8 +10220,10 @@ ATL_mmnode_t *FindBestK_MN
    }
    if (mpMax)
    {
-      mp = mpMax;
+      int i;
+      for (i=0, mp=mmb; mp != mpMax; i++, mp = mp->next);
       mpMax = CloneMMNode(mpMax);
+      mpMax->ivar = i + 1;
       mpMax->mflop[0] = mfMax;
       mpMax->mbB = mpMax->nbB = nb;
       mpMax->kbB = kbB;
@@ -10231,8 +10239,7 @@ void GenAllViews(char pre, int verb)
    ATL_mmnode_t *mmb, *mp, *mpL;
    mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    assert(mmb);
-//   mp = TimeMMFileWithPath(pre, "res", "ipmnPERF.sum", 0, verb, 0, 1, 0, -1);
-   mp = NULL;
+   mp = TimeMMFileWithPath(pre, "res", "ipmnPERF.sum", 0, verb, 0, 1, 0, -1);
    if (mp)
       KillAllMMNodes(mp);
    else /* generate inner-product MB=NB, KB free view */
@@ -10270,8 +10277,7 @@ void GenAllViews(char pre, int verb)
       printf("   DONE DEGENERATE MB/NB SEARCH.\n\n");
    }
 
-//   mp = TimeMMFileWithPath(pre, "res", "ipnPERF.sum", 0, verb, 0, 1, 0, -1);
-   mp = NULL;
+   mp = TimeMMFileWithPath(pre, "res", "ipnPERF.sum", 0, verb, 0, 1, 0, -1);
    if (mp)
       KillAllMMNodes(mp);
    else /* generate inner-product NB < MAXNB, MB,KB free view */
@@ -10304,8 +10310,7 @@ void GenAllViews(char pre, int verb)
       printf("   DONE DEGENERATE NB SEARCH.\n\n");
    }
 
-//   mp = TimeMMFileWithPath(pre, "res", "ipmPERF.sum", 0, verb, 0, 1, 0, -1);
-   mp = NULL;
+   mp = TimeMMFileWithPath(pre, "res", "ipmPERF.sum", 0, verb, 0, 1, 0, -1);
    if (mp)
       KillAllMMNodes(mp);
    else /* generate inner-product NB < MAXNB, MB,KB free view */
@@ -29267,6 +29272,7 @@ char *GetFlags(int nargs, char **args, char *PRE, ATL_mmnode_t **lists)
    return(outd);
 }
 
+
 double GenPerfH(char pre, char *outd, char *cn, double mfMax,
                 ATL_mmnode_t *mb, ATL_mmnode_t *k1)
 {
@@ -29801,6 +29807,7 @@ void GenSumH(char pre, char *outd, ATL_mmnode_t *ub)
 void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
 {
    ATL_mmcp_t *cb;
+   ATL_mmnode_t *mb;
    char *nm="perf";
    double mfMax;
    int i, k, SKSAME;
@@ -31024,15 +31031,96 @@ void GenSumH(char pre, char *outd, ATL_mmnode_t *gb, ATL_mmnode_t *sb,
    CloseGenHeader(fp);
 }
 
+void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
+/*
+ * Used to generate timing/index file for when one or more dims are degenerate
+ * for inner product.  mb should be ordered by the degen dim(s), ivar should
+ * have the index of kern.h that corresponds to this kern.
+ */
+{
+   FILE *fp;
+   ATL_mmnode_t *mp;
+   int i, n, idxMax=0, maxM=0, maxN=0, maxK=0;
+   double fcnt, mfMax=0.0;
+
+   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "degen", mb);
+/*
+ * Compute max perf & M,N,K
+ */
+   for (n=0,mp=mb; mp; n++, mp = mp->next)
+   {
+      maxM = Mmax(maxM, mp->mbB);
+      maxN = Mmax(maxN, mp->nbB);
+      maxK = Mmax(maxK, mp->kbB);
+      if (mp->mflop[0] > mfMax)
+      {
+         if (mp->ivar > 0)
+            (mp->ivar)--;
+         mfMax = mp->mflop[0];
+         idxMax = n;
+      }
+   }
+   fprintf(fp, "#define ATL_%sAMM_NCASES %d\n", cn, n);
+   fprintf(fp, "#define ATL_%sAMM_DENOM %le /* (%.2f)*/ \n", cn,
+           mfMax, mfMax);
+   fprintf(fp, "#define ATL_%sAMM_MAXMFLOPIDX %d\n\n", cn, idxMax);
+
+   fprintf(fp, "#if !defined(NOPERF) && !defined(NOARRS)\n");
+   fprintf(fp, "static const float ATL_%sAMM_PERF[%d] =\n", cn, n);
+   fprintf(fp, "{  /* %% of performance of best kernel */\n");
+   for (i=0,mp=mb; mp; i++,mp = mp->next)
+      fprintf(fp, "   %f%c  /* CNT=%d, KB=%d, mf=%.0f */\n", mp->mflop[0]/mfMax,
+              (mp->next)?',':' ', i, mp->kbB, mp->mflop[0]);
+   fprintf(fp, "};\n#endif\n\n");
+
+   fprintf(fp, "#if !defined(NOTIME) && !defined(NOARRS)\n");
+   fprintf(fp, "static const float ATL_%sAMM_TIME[%d] =\n", cn, n);
+   fprintf(fp, "{  /* actual seconds to compute one block */\n");
+   for (i=0,mp=mb; mp; i++,mp = mp->next)
+   {
+      if (mp->blask == 0)
+         fcnt = (2.0*mp->mbB)*mp->nbB*mp->kbB;  /* gemm flop count */
+      else
+         fcnt = (1.0*mp->mbB)*mp->nbB*mp->kbB;  /* roughly right */
+      fprintf(fp, "   %e%c  /* CNT=%d, B=(%d,%d,%d) */\n",
+              fcnt / (mp->mflop[0]*1.0e6),
+              (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
+   }
+   fprintf(fp, "};\n#endif\n");
+
+   PrintIntArrAtOff(fp, pre, "KIDX", mb, GetOffset(&mb->next, mb), 
+                    GetOffset(&mb->ivar, mb), 0, 0);
+   CloseGenHeader(fp);
+}
+
 void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
 {
    ATL_mmcp_t *cb;
+   ATL_mmnode_t *mmb;
    char *nm="perf";
    char *cn[4]={"ge", "sq", "rk", "ts"};
    double mfMax;
    int i, k, SKSAME;
    char pr;
-
+/*
+ * Write degenerate case header files.  Kind of ugly hardwiring names here,
+ * but I don't see point in taking these from command line.
+ */
+   pr=pre;
+   DO_TYPE:
+   @whiledef nm n m mn
+   mmb = ReadMMFileWithPath(pr, "res", "ip@(nm)PERF.sum");
+   if (mmb)
+   {
+      GenDegenH_IP(pr, outd, "p@(nm)", mmb);
+      KillAllMMNodes(mmb);  /* done with these! */
+   }
+   @endwhile
+   if (pr == pre)
+   {
+      pr = (pre == 'd') ? 'z' : 'c';
+      goto DO_TYPE;
+   }
    SKSAME = MMKernsPerfSame(lists[ISYRK], lists[ISYRK+NMMLISTS]);
 /*
  * Handle [perf,blk,flag,sum] which require only ordered lists
