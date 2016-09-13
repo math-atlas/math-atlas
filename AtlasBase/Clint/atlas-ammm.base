@@ -21504,6 +21504,9 @@ static INLINE ablk2cmat_t GetBlk2C(int id, int ialp, int ibet)
 }
 @ROUT ATL_GetAmmmInfoSQ
 
+#define NOPERF
+#include "atlas_dpmnamm_degen.h"
+#undef NOPERF
 #define SyrkTime Mjoin(PATL,sSyrkTimeEst)
 double SyrkTime(int id, unsigned int flg, size_t N, size_t K, double symul)
 {
@@ -21562,12 +21565,21 @@ int Mjoin(PATL,GetSyrkIdx) /* returns square amm index to use */
    unsigned int flg,     /* bit 0 set: Upper, else Lower */
    ATL_CSZT N,           /* size of triangular matrix */
    ATL_CSZT K,           /* K dim of A/A^T */
-   double symul          /* <= 1: use gemm, else syrk/gemm speed (>1) */
+   double symul         /* <= 1: use gemm, else syrk/gemm speed (>1) */
+@skip   int *NB               /* OUTPUT: suggested nb */
 )
 {
    double timB;
    int i, iB=0;
 
+   #if 0
+   if (K >=  ATL_pmnAMM_MAXKB)
+   {
+      int *ip = ATL_AMM_NBs;
+      if (N >= ATL_pmnAMM_MAXNB)
+      for (i=0; i < ATL_pmnAMM_NCASES && ip[i] < N; i++)
+   }
+   #endif
    timB = SyrkTime(0, flg, N, K, symul);
    for (i=1; i < ATL_sqAMM_NCASES; i++)
    {
@@ -31060,12 +31072,21 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
          idxMax = n;
       }
    }
+   fprintf(fp, "#ifdef NOARRS\n");
+   fprintf(fp, "   #define NOPERF 1\n");
+   fprintf(fp, "   #define NOTIME 1\n");
+   fprintf(fp, "   #define NOKIDX 1\n");
+   fprintf(fp, "   #define NONBs  1\n");
+   fprintf(fp, "#endif\n");
    fprintf(fp, "#define ATL_%sAMM_NCASES %d\n", cn, n);
    fprintf(fp, "#define ATL_%sAMM_DENOM %le /* (%.2f)*/ \n", cn,
            mfMax, mfMax);
-   fprintf(fp, "#define ATL_%sAMM_MAXMFLOPIDX %d\n\n", cn, idxMax);
+   fprintf(fp, "#define ATL_%sAMM_MAXMFLOPIDX %d\n", cn, idxMax);
+   fprintf(fp, "#define ATL_%sAMM_MAXMB %d\n", cn, maxM);
+   fprintf(fp, "#define ATL_%sAMM_MAXNB %d\n", cn, maxN);
+   fprintf(fp, "#define ATL_%sAMM_MAXKB %d\n\n", cn, maxK);
 
-   fprintf(fp, "#if !defined(NOPERF) && !defined(NOARRS)\n");
+   fprintf(fp, "#ifndef NOPERF\n");
    fprintf(fp, "static const float ATL_%sAMM_PERF[%d] =\n", cn, n);
    fprintf(fp, "{  /* %% of performance of best kernel */\n");
    for (i=0,mp=mb; mp; i++,mp = mp->next)
@@ -31088,8 +31109,16 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
    }
    fprintf(fp, "};\n#endif\n");
 
+   PrintIntArrAtOff(fp, pre, "NBs", mb, GetOffset(&mb->next, mb), 
+                    GetOffset(&mb->nbB, mb), 0, 0);
    PrintIntArrAtOff(fp, pre, "KIDX", mb, GetOffset(&mb->next, mb), 
                     GetOffset(&mb->ivar, mb), 0, 0);
+   fprintf(fp, "#ifdef NOARRS\n");
+   fprintf(fp, "   #undef NOPERF\n");
+   fprintf(fp, "   #undef NOTIME\n");
+   fprintf(fp, "   #undef NOKIDX\n");
+   fprintf(fp, "   #undef NONBs\n");
+   fprintf(fp, "#endif\n");
    CloseGenHeader(fp);
 }
 
