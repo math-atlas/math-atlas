@@ -2690,6 +2690,11 @@ int main(int nargs, char **args)
 #include "atlas_gatmctr.h"
 #define ATL_GETFLAGS 1
 #include "atlas_genparse.h"
+#ifdef ATL_USE_PERF_H
+   #define NOPERF    1
+   #define NOK1RATIO 1
+   #include "atlas_dgeamm_perf.h"
+#endif
 
 void *ATL_atmctr_new_mut(long N);
 void ATL_atmctr_free_mut(void *ac);
@@ -2851,18 +2856,39 @@ int main(int nargs, char **args)
    int P;
    unsigned long cnt;
    double ma[3], del, max, mul, tpl;
+   #ifdef ATL_USE_PERF_H
+      #define NFILE 4
+      char *NMs[NFILE]={"res/mut.tim", "lac.tim", "pub.tim", "mix.tim", 
+                        "prv.tim"};
+      FILE *FPs[NFILE];
+      int I;
+   #endif
 
    fpout=GetFlags(nargs, args, &tpl, &P, ma);
+   #ifdef ATL_USE_PERF_H
+      for (I=0; I < NFILE; I++)
+      {
+         FPs[I] = fopen(NMs[I], "w");
+         assert(FPs[i]);
+      }
+   #endif
    fprintf(fpout,
 "   DELAY   COUNT    ATMCTR_mut   ATMCTR    g_PUB    g_STL    g_PRV\n");
    fprintf(fpout,
 "========  ======  ============  =======  =======  =======  =======\n");
    del = 0.0; mul = ma[1]; max = ma[2];
+   #ifdef ATL_USE_PERF_H
+   for (I=0; I <= ATL_geAMM_NCASES; I++)
+   #else
    while (del <= max)
+   #endif
    {
       double tmut, tloc=0, tprv, tpub, tstl;
       unsigned long cnt;
 
+      #ifdef ATL_USE_PERF_H
+         del = ATL_geAMM_TIME[I];
+      #endif
       DELAY = del;
       if (del <= 0.0)
          cnt = tpl / (5.0e-6);
@@ -2896,9 +2922,17 @@ int main(int nargs, char **args)
 
       fprintf(fpout, "%.2e %7d  %12e %8.2f %8.2f %8.2f %8.2f\n", del, cnt, tmut,
               tmut/tloc, tmut/tpub, tmut/tstl, tmut/tprv);
-      if (del == 0.0)
-         del = ma[0];
-      else 
-         del *= mul;
+      #ifdef ATL_USE_PERF_H
+      @multidef in   4   3   2   1  0
+      @whiledef nm prv stl pub loc mut
+         fprintf(FPs[@(in)], "   %e,  /* CNT=%u */\n", t@(nm), I);
+      @endwhile
+      #endif
+      #ifndef ATL_USE_PERF_H
+         if (del == 0.0)
+            del = ma[0];
+         else 
+            del *= mul;
+      #endif
    }
 }
