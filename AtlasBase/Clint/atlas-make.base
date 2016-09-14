@@ -385,6 +385,8 @@ include:
 @endwhile
 	touch include/atlas_tsumm.h
 	touch include/atlas_taffinity.h
+        touch include/atlas_tsched_time.h
+        touch include/atlas_tsched_dly.h
 	$(MAKE) -f Make.top include/atlas_tperf.h
 	touch include/atlas_tperf.h
 	touch include/atlas_ssyrNX.h
@@ -919,6 +921,28 @@ MakeThreadSum :
 perff = $(INCAdir)/atlas_tperf.h
 res/thrbeg.h : 
 	$(MAKE) iTune_startup
+res/sdly.tim: xstune_sched
+	$(ATLRUN) $(myBLDdir) xstune_sched
+MakeSched : 
+	$(MAKE) $(INCAdir)/atlas_tsched_time.h
+$(INCAdir)/atlas_tsched_time.h: res/sdly.tim
+	rm -f $(INCAdir)/atlas_tsched_dly.h $(INCAdir)/atlas_tsched_time.h
+	echo "/* created make MakeSched in thread/tune */" > \
+              $(INCAdir)/atlas_tsched_dly.h
+	echo "#ifndef ATLAS_TSCHED_DLY_H" >> $(INCAdir)/atlas_tsched_dly.h
+	echo "   #define ATLAS_TSCHED_DLY_H " >> $(INCAdir)/atlas_tsched_dly.h
+	cat res/sdly.tim >> $(INCAdir)/atlas_tsched_dly.h
+	echo "#endif" >> $(INCAdir)/atlas_tsched_dly.h
+	echo "/* created make MakeSched in thread/tune */" > \
+              $(INCAdir)/atlas_tsched_time.h
+	echo "#ifndef ATLAS_TSCHED_TIME_H" >> $(INCAdir)/atlas_tsched_time.h
+	echo "   #define ATLAS_TSCHED_TIME_H " >> $(INCAdir)/atlas_tsched_time.h
+	cat res/smut.tim >> $(INCAdir)/atlas_tsched_time.h
+	cat res/slac.tim >> $(INCAdir)/atlas_tsched_time.h
+	cat res/spub.tim >> $(INCAdir)/atlas_tsched_time.h
+	cat res/smix.tim >> $(INCAdir)/atlas_tsched_time.h
+	cat res/sprv.tim >> $(INCAdir)/atlas_tsched_time.h
+	echo "#endif" >> $(INCAdir)/atlas_tsched_time.h
 MakeThreadPerf: res/thrbeg.h
 	- rm -f $(perff)
 	echo "/* created make MakeThreadPerf in thread/tune */" > $(perff)
@@ -1062,6 +1086,14 @@ x@(rt) : @(rt).o tlib
 @whiledef rt count cntdly
 xtune_@(rt) : tune_@(rt).o tlib mutcnt
 	$(CC) $(CCFLAGS) -o $@ tune_@(rt).o $(mut_cnt) $(ATLASlib) $(LIBS)
+@endwhile
+@multidef typ SREAL DREAL SCPLX DCPLX
+@whiledef pre s d c z
+x@(pre)tune_sched: $(mySRCdir)/tune_cntdly.c
+	$(MAKE) mutcnt
+	$(CC) $(CCFLAGS) -o $@ -DATL_USE_PERF_H -D@(typ) \
+              $(mySRCdir)/tune_cntdly.c $(mut_cnt) $(ATLASlib) $(LIBS)
+   @undef typ
 @endwhile
 xtest_lock_mut : $(mySRCdir)/test_lock.c $(INCSdir)/atlas_tprim.h \
         $(myTHRdir)/ATL_lock_mut.c $(myTHRdir)/ATL_unlock_mut.c
@@ -7472,6 +7504,10 @@ dep = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_pthreads.h \
    ATL_atmctr_set_asm.o ATL_atmctr_set_mut.o
    ATL_atmctr_dec_asm.o ATL_atmctr_dec_mut.o
    ATL_atmctr_add_asm.o ATL_atmctr_add_mut.o
+   ATL_GetSchedDelayIdx.o
+   @whiledef sy mut lac pub mix prv
+      ATL_GetSchedTime_@(sy).o
+   @endwhile
 @enddeclare
 
 all : lib
@@ -7559,7 +7595,14 @@ ATL_atmctr_@(rt)_mut_mut.o : $(dep) $(INCSdir)/atlas_atmctr.h \
               -DATL_atmctr_@(rt)=ATL_atmctr_@(rt)_mut \
               -c $(mySRCdir)/ATL_atmctr_@(rt)_mut.c
 @endwhile
+ATL_GetSchedDelayIdx.o : $(dep) $(INCAdir)/atlas_tsched_dly.h
+	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_GetSchedDelayIdx.c
 
+@whiledef sy mut lac pub mix prv
+ATL_GetSchedTime_@(sy).o : $(dep) $(INCAdir)/atlas_tsched_time.h \
+                           $(mySRCdir)/ATL_GetSchedTime.c
+	$(KC) $(KCFLAGS) -o $@ -DATL_@up@(sy) -c $(mySRCdir)/ATL_GetSchedTime.c
+@endwhile
 @skip ATL_gccstackfix.o : $(mySRCdir)/ATL_gccstackfix.S
 @skip 	$(GOODGCC) $(CDEFS) -m32 -o $@ -c $(mySRCdir)/ATL_gccstackfix.S
 @ROUT Make.l2thr

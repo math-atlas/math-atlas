@@ -538,6 +538,11 @@ void ATL_cond_wait(void *cond, void *mut);
 #define MindxT(A_,i_) ((void*)( ((char*)(A_)) + ((size_t)i_) ))
 #define ATL_tlaunch ATL_log2tlaunch   /* may want linear launch later */
 void ATL_tDistMemTouch(size_t N, void *vp);
+unsigned int ATL_GetSchedDelayIdx(float dly);
+@whiledef sy mut lac pub mix prv
+float ATL_GetSchedTime_@(sy)(unsigned int idx);
+@endwhile
+int ATL_IsFirstThreadedCall(void);
 
 #endif   /* end of #ifdef protecting include file from redundant inclusion */
 
@@ -20957,3 +20962,86 @@ long ATL_gatmctr_dec(void *ac, unsigned int rank)
    }
    return(0);
 }
+@ROUT ATL_GetSchedDelayIdx
+#include "atlas_tsched_dly.h"
+#ifdef ATL_AMM_NSCHED
+unsigned int ATL_GetSchedDelayIdx(float dly)
+/*
+ * Searches ATL_AMM_NSCHED-entry array ATL_AMM_SCHEDdly for last entry <= dly.
+ * Uses binary search with assumption time is strictly increasing, which may
+ * not always be true due to timing variance & kernel choice, but it should
+ * be good enough for estimation.  Don't want the overhead of linear search
+ * everytime we want to estimate parallel schedule overhead!
+ */
+{
+   unsigned int i0=0, dist=ATL_AMM_NSCHED>>1, iret;
+   float mid;
+/*
+ * Early exit for out-of-range delay 
+ */
+   if (ATL_AMM_NSCHED<2 || dly <= *ATL_AMM_SCHEDdly)
+      return(0);
+   else if (dly >= ATL_AMM_SCHEDdly[ATL_AMM_NSCHED-1])
+      return(ATL_AMM_NSCHED-1);
+/*
+ * DELAY[0] < dly < DELAY[N-1], do binary search
+ */
+   do
+   {
+      iret = i0 + dist;
+      mid=ATL_AMM_SCHEDdly[iret];
+      if (mid < dly) /* change i0 */
+         i0 = iret;
+      else if (mid == dly)
+         return(iret);
+      dist >>= 1;     /* eliminated half of entries, endpt dist halved too */
+   }
+   while (dist > 1);
+   iret = (mid > dly) ? iret-1 : iret;
+   return(iret);
+}
+#endif
+@ROUT ATL_GetSchedTime
+#ifdef ATL_MUT
+   #define ATL_GetSchedTime ATL_GetSchedTime_mut
+   #define ATL_TIMEs ATL_AMM_SCHEDmut
+   #define NOSCHEDlac 1
+   #define NOSCHEDpub 1
+   #define NOSCHEDprv 1
+   #define NOSCHEDmix 1
+#elif defined(ATL_LAC)
+   #define ATL_GetSchedTime ATL_GetSchedTime_lac
+   #define ATL_TIMEs ATL_AMM_SCHEDlac
+   #define NOSCHEDmut 1
+   #define NOSCHEDpub 1
+   #define NOSCHEDprv 1
+   #define NOSCHEDmix 1
+#elif defined(ATL_PUB)
+   #define ATL_GetSchedTime ATL_GetSchedTime_pub
+   #define ATL_TIMEs ATL_AMM_SCHEDpub
+   #define NOSCHEDmut 1
+   #define NOSCHEDlac 1
+   #define NOSCHEDprv 1
+   #define NOSCHEDmix 1
+#elif defined(ATL_MIX)
+   #define ATL_GetSchedTime ATL_GetSchedTime_mix
+   #define ATL_TIMEs ATL_AMM_SCHEDmix
+   #define NOSCHEDmut 1
+   #define NOSCHEDpub 1
+   #define NOSCHEDprv 1
+   #define NOSCHEDlac 1
+#elif defined(ATL_PRV)
+   #define ATL_GetSchedTime ATL_GetSchedTime_prv
+   #define ATL_TIMEs ATL_AMM_SCHEDprv
+   #define NOSCHEDmut 1
+   #define NOSCHEDpub 1
+   #define NOSCHEDlac 1
+   #define NOSCHEDmix 1
+#endif
+#include "atlas_tsched_time.h"
+#ifdef ATL_AMM_NSCHED
+float ATL_GetSchedTime(unsigned int idx)
+{
+   return(ATL_TIMEs[idx]);
+}
+#endif

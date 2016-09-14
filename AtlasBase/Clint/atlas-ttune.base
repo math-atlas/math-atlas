@@ -2693,7 +2693,7 @@ int main(int nargs, char **args)
 #ifdef ATL_USE_PERF_H
    #define NOPERF    1
    #define NOK1RATIO 1
-   #include "atlas_dgeamm_perf.h"
+   #include Mstr(Mjoin(ATLAS_PRE,geamm_perf.h))
 #endif
 
 void *ATL_atmctr_new_mut(long N);
@@ -2857,9 +2857,9 @@ int main(int nargs, char **args)
    unsigned long cnt;
    double ma[3], del, max, mul, tpl;
    #ifdef ATL_USE_PERF_H
-      #define NFILE 4
-      char *NMs[NFILE]={"res/mut.tim", "lac.tim", "pub.tim", "mix.tim", 
-                        "prv.tim"};
+      #define NFILE 5
+      char fnam[13]={'r','e','s','/',0, 0,0,0,'.','t','i','m'};
+      char *NMs[NFILE]={"mut", "lac", "pub", "mix", "prv"};
       FILE *FPs[NFILE];
       int I;
    #endif
@@ -2868,17 +2868,35 @@ int main(int nargs, char **args)
    #ifdef ATL_USE_PERF_H
       for (I=0; I < NFILE; I++)
       {
-         FPs[I] = fopen(NMs[I], "w");
-         assert(FPs[i]);
+         #ifdef DCPLX
+            fnam[4] = 'z'
+         #elif defined(SCPLX)
+            fnam[4] = 'c';
+         #elif defined(SREAL)
+            fnam[4] = 's';
+         #else
+            fnam[4] = 'd';
+         #endif
+         fnam[5] = NMs[I][0];
+         fnam[6] = NMs[I][1];
+         fnam[7] = NMs[I][2];
+         FPs[I] = fopen(fnam, "w");
+         assert(FPs[I]);
+         if (!I)
+            fprintf(FPs[0], "#define ATL_AMM_NSCHED %d\n", ATL_geAMM_NCASES);
+         fprintf(FPs[I], "#if !defined(NoARRS) && !defined(NOSCHED%s)\n",
+                 NMs[I]);
+         fprintf(FPs[I], "static const float ATL_AMM_SCHED%s[%d] =\n{\n", 
+                 NMs[I], ATL_geAMM_NCASES);
       }
    #endif
    fprintf(fpout,
-"   DELAY   COUNT    ATMCTR_mut   ATMCTR    g_PUB    g_STL    g_PRV\n");
+"   DELAY      COUNT    ATMCTR_mut   ATMCTR    g_PUB    g_STL    g_PRV\n");
    fprintf(fpout,
-"========  ======  ============  =======  =======  =======  =======\n");
+"========  =========  ============  =======  =======  =======  =======\n");
    del = 0.0; mul = ma[1]; max = ma[2];
    #ifdef ATL_USE_PERF_H
-   for (I=0; I <= ATL_geAMM_NCASES; I++)
+   for (I=0; I < ATL_geAMM_NCASES; I++)
    #else
    while (del <= max)
    #endif
@@ -2920,12 +2938,13 @@ int main(int nargs, char **args)
       ATL_atmctr_free_mut(ACNT);
       tmut = PerCallSec(P);
 
-      fprintf(fpout, "%.2e %7d  %12e %8.2f %8.2f %8.2f %8.2f\n", del, cnt, tmut,
+      fprintf(fpout, "%.2e %10d  %12e %8.2f %8.2f %8.2f %8.2f\n", del,cnt,tmut,
               tmut/tloc, tmut/tpub, tmut/tstl, tmut/tprv);
       #ifdef ATL_USE_PERF_H
       @multidef in   4   3   2   1  0
       @whiledef nm prv stl pub loc mut
          fprintf(FPs[@(in)], "   %e,  /* CNT=%u */\n", t@(nm), I);
+         @undef in
       @endwhile
       #endif
       #ifndef ATL_USE_PERF_H
@@ -2935,4 +2954,25 @@ int main(int nargs, char **args)
             del *= mul;
       #endif
    }
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
+   #ifdef ATL_USE_PERF_H
+      for (I=0; I < NFILE; I++)
+      {
+         fprintf(FPs[I], "};\n#endif\n");
+         fclose(FPs[I]);
+      }
+      fnam[5] = 'd'; fnam[6] = 'l'; fnam[7] = 'y';
+      fpout = fopen(fnam, "w");
+      assert(fpout);
+      fprintf(fpout, "#define ATL_AMM_NSCHED %d\n", ATL_geAMM_NCASES);
+      fprintf(fpout, "#if !defined(NOARRS) && !defined(NOTIMEdly)\n");
+      fprintf(fpout, "static const float ATL_AMM_SCHEDdly[%d] =\n{\n", 
+              ATL_geAMM_NCASES);
+      for (I=0; I < ATL_geAMM_NCASES; I++)
+         fprintf(fpout, "   %e,  /* CNT=%u */\n", ATL_geAMM_TIME[I], I);
+      fprintf(fpout, "};\n#endif\n");
+      fclose(fpout);
+   #endif
+   return(0);
 }
