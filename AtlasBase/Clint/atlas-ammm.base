@@ -11532,7 +11532,8 @@ int UseBcast(int flg, int verb, char pre, int kb, int nreg, int VL)
    return(1);
 }
 
-ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
+ATL_mmnode_t *DoSyrkMUNU
+   (int flg, int vrb, char pre, int nreg, int nb, int kb, int VL)
 {
    ATL_mmnode_t *pM, *pB, *pK, *mp;
    double mfB = 0.0;
@@ -11547,9 +11548,9 @@ ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
    pM->next = pB;
 
    pM->ku = pB->ku = 1;
-   pM->kbB = pB->kbB = nb;
+   pM->kbB = pB->kbB = kb;
    pK->ku = VL;
-   pK->kbB = ((nb+VL-1)/VL)*VL;
+   pK->kbB = ((kb+VL-1)/VL)*VL;
    free(pM->genstr); free(pB->genstr); free(pK->genstr);
 
    printf("Full search for SYRK kernel for nb=%d, NREG=%d, VLEN=%d\n",
@@ -11571,19 +11572,19 @@ ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
             pB->mbB = pB->nbB = pM->mbB = pM->nbB = b;
             pM->genstr = MMGetGenString(pre, pM);
             pB->genstr = MMGetGenString(pre, pB);
-            mf = TimeMMKernel(vrb, 0, pM, pre, b, b, nb, 1, 0, -1);
-            assert(!MMKernelFailsTest(pre, b, b, nb, 1, pM));
-            printf(frm, 'M', 'b', b, nb, j, mf);
+            mf = TimeMMKernel(vrb, 0, pM, pre, b, b, kb, 1, 0, -1);
+            assert(!MMKernelFailsTest(pre, b, b, kb, 1, pM));
+            printf(frm, 'M', 'b', b, kb, j, mf);
             if (mf > mfB)
             {
                mfB = mf;
                uB = j;
                kvecB = 0;
                bcB = 0;
-               kbB = nb;
+               kbB = kb;
             }
-            mf = TimeMMKernel(vrb, 0, pB, pre, b, b, nb, 1, 0, -1);
-            assert(!MMKernelFailsTest(pre, b, b, nb, 1, pB));
+            mf = TimeMMKernel(vrb, 0, pB, pre, b, b, kb, 1, 0, -1);
+            assert(!MMKernelFailsTest(pre, b, b, kb, 1, pB));
             printf(frm, 'M', 's', b, nb, j, mf);
             if (mf > mfB)
             {
@@ -11591,7 +11592,7 @@ ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
                uB = j;
                kvecB = 0;
                bcB = 1;
-               kbB = nb;
+               kbB = kb;
             }
             free(pM->genstr);
             free(pB->genstr);
@@ -11631,6 +11632,7 @@ ATL_mmnode_t *DoSyrkMUNU(int flg, int vrb, char pre, int nreg, int nb, int VL)
    pK->blask = 1;
    return(pK);
 }
+@beginskip
 ATL_mmnode_t *GetSyrkCases(int flg, int vrb, char pre, int nreg, int nb, int VL)
 {
    ATL_mmnode_t *mb, *mp, *mp4;
@@ -11649,6 +11651,7 @@ ATL_mmnode_t *GetSyrkCases(int flg, int vrb, char pre, int nreg, int nb, int VL)
    WriteRefreshedMMFileWithPath(pre, "res", "gAMSYRKU.sum", mb);
    return(mb);
 }
+@endskip
 
 ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb, 
                            int VL, int KVEC)
@@ -13397,6 +13400,44 @@ int SyrkXover(int flg, int vrb, char pre, ATL_mmnode_t *ms,/* syrk kerns */
    return(nb);
 }
 
+void DoAllSyrkNB(char pre, int vrb, ATL_mmnode_t *mSQ, ATL_mmnode_t *sy)
+{
+   ATL_mmnode_t *mSY, *mp;
+   const unsigned int nu=sy->nu, ku=sy->ku;
+/*
+ * Make a syrk node for all nodes in mSQ
+ */
+   printf("TIMING SYRK KERN FOR ALL NBs:\n");
+   for (mSY=NULL,mp=mSQ; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *syp;
+      double mf, mul=1.0, mfG;
+
+      syp = CloneMMNode(sy);
+      syp->mbB = syp->nbB = ((mp->nbB+nu-1) / nu)*nu;
+      syp->kbB = ((mp->kbB+ku-1)/ku)*ku;
+      mf = TimeMMKernel(vrb, 0, syp, pre, syp->mbB, syp->nbB, syp->kbB, 1,0,-1);
+      if (syp->nbB != mp->nbB)
+      {
+         mul = mp->nbB;
+         mul /= syp->nbB;
+         mul *= mul;
+      }
+      if (syp->kbB != mp->kbB)
+         mul *= ((double)mp->kbB)/((double)syp->kbB);
+      syp->mflop[0] = mul*mf;
+      printf("   NB=%4d, KB=%4d: GEMM=%.0f,(%.0f), SYRK=%.0f,(%.0f)\n", 
+             mp->nbB, mp->kbB, mp->mflop[0]/2.0,mp->mflop[0],syp->mflop[0],mf);
+      syp->next = mSY;
+      mSY = syp;
+   }
+   printf("DONE TIMING SYRK KERN FOR ALL NBs.\n");
+   if (mSY->next && mSY->nbB > mSY->next->nbB)
+      mSY = ReverseMMQ(mSY);
+   WriteMMFileWithPath(pre, "res", "gAMSYRK.tim", mSY);
+   KillAllMMNodes(mSY);
+}
+
 void DoSyrkTim(char pre, int verb)
 {
    ATL_mmnode_t *tb, *tp, *sb, *syp, *syb=NULL;
@@ -13458,37 +13499,74 @@ void DoSyrkTim(char pre, int verb)
 
 void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
 {
-   ATL_mmnode_t *mb, *mSQ, *mp;
+   ATL_mmnode_t *mb, *mSQ, *mp, *mSY;
    int L1ELTS, i, maxNB, nu, ku, kb;
    char upr = (pre == 'c' || pre == 's') ? 's' : 'd';
    double mf0, mfB;
 
    
+   mSQ = TimeMMFileWithPath(pre, "res", "ipmnPERF.sum", 0, vrb, 0, 1, 0, -1);
+   if (!mSQ)
+      return;
    mb = TimeMMFileWithPath(pre, "res", "gAMSYRK.sum", 0, vrb, 0, 1, 0, -1);
    if (mb)
    {
+      mSY = TimeMMFileWithPath(pre, "res", "gAMSYRK.tim", 0, vrb, 0, 1, 0, -1);
+      if (!mSY)
+         DoAllSyrkNB(pre, vrb, mSQ, mb);
+      else
+         KillAllMMNodes(mSY);
       KillAllMMNodes(mb);
+      KillAllMMNodes(mSQ);
       DoSyrkTim(pre, vrb);
       return;
    }
-   mSQ = TimeMMFileWithPath(pre, "res", "sqAMMRES.sum", 0, vrb, 0, 1, 0, -1);
-   if (!mSQ)
-      return;
    mSQ = ReverseMMQ(mSQ);  /* sorted from large to small NB */
-   mb = DoSyrkMUNU(flg, vrb, pre, nreg, nb, VL);  /* asymptotic kern */
+   mb = DoSyrkMUNU(flg, vrb, pre, nreg, mSQ->nbB, mSQ->kbB, VL); 
    mp = mb;
    nu = mp->nu;
    ku = mp->ku;
    mp->nbB = mp->mbB = nb = (mSQ->nbB / nu)*nu;
-   mp->kbB = kb = (mSQ->nbB / ku)*ku;
+   mp->kbB = kb = (mSQ->kbB / ku)*ku;
    assert(nb && kb);
    TryAllSyrkPref(flg, vrb, pre, mp, nb, kb);
    maxNB = SyrkXover(flg, vrb, pre, mp, mSQ);
-   KillAllMMNodes(mSQ);
    mb->mbB = mb->nbB = mb->kbB = maxNB;
    WriteMMFileWithPath(pre, "res", "gAMSYRK.sum", mp);
+/*
+ * Make a syrk node for all nodes in mSQ
+ */
+   DoAllSyrkNB(pre, vrb, mSQ, mb);
+@beginskip
+   printf("TIMING SYRK KERN FOR ALL NBs:\n");
+   for (mSY=NULL,mp=mSQ; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *syp;
+      double mf, mul=1.0, mfG;
 
-@skip   KillAllMMNodes(mB);
+      syp = CloneMMNode(mb);
+      syp->mbB = syp->nbB = ((mp->nbB+nu-1) / nu)*nu;
+      syp->kbB = ((mp->kbB+ku-1)/ku)*ku;
+      mf = TimeMMKernel(vrb, 0, syp, pre, syp->mbB, syp->nbB, syp->kbB, 1,0,-1);
+      if (syp->nbB != mp->nbB)
+      {
+         mul = mp->nbB;
+         mul /= syp->nbB;
+         mul *= mul;
+      }
+      if (syp->kbB != mp->kbB)
+         mul *= ((double)mp->kbB)/((double)syp->kbB);
+      syp->mflop[0] = mul*mf;
+      printf("   NB=%4d, KB=%4d: GEMM=%.0f,(%.0f), SYRK=%.0f,(%.0f)\n", 
+             mp->nbB, mp->kbB, mp->mflop[0]/2.0,mp->mflop[0],syp->mflop[0],mf);
+      syp->next = mSY;
+      mSY = syp;
+   }
+   printf("DONE TIMING SYRK KERN FOR ALL NBs.\n");
+   WriteMMFileWithPath(pre, "res", "gAMSYRK.tim", mSY);
+   KillAllMMNodes(mSY);
+@endskip
+   KillAllMMNodes(mSQ);
    KillMMNode(mb);
    DoSyrkTim(pre, vrb);
 }
@@ -21504,9 +21582,6 @@ static INLINE ablk2cmat_t GetBlk2C(int id, int ialp, int ibet)
 }
 @ROUT ATL_GetAmmmInfoSQ
 
-#define NOPERF
-#include "atlas_dpmnamm_degen.h"
-#undef NOPERF
 #define SyrkTime Mjoin(PATL,sSyrkTimeEst)
 double SyrkTime(int id, unsigned int flg, size_t N, size_t K, double symul)
 {
@@ -23976,6 +24051,53 @@ void Mjoin(PATL,@(sh)ComputeIPInfo)
 #endif
 @endskip
 
+@ROUT ATL_GetAmmmInfo
+@beginskip
+#define NOPERF 1
+#include "atlas_dpmnamm_degen.h"
+#undef NOPERF
+static double SyrkTimeKpan
+   (int id, ATL_UINT flg, size_t N, size_t K, double symul)
+/* 
+ * NOTE: replace symul wt timings eventually
+ */
+{
+}
+int Mjoin(PATL,tGetSyrkInfo)
+/*
+ * RETURNS: bitvec: 0:use PRV ac; 1:use PUB ac,
+ */
+(
+   amminfo_t *out,
+   int ialp,             /* 1:alpha=1.0, -1:-1.0, else alpha=X */
+   enum ATLAS_TRANS TA,
+   ATL_CSZT N,           /* size of triangular matrix */
+   ATL_CSZT K,           /* K dim of A/A^T */
+   int ibet,             /* 0:beta=0.0 1:beta=1.0, -1:-1.0, else beta=X */
+   int *P0,              /* number of threads to use */
+   int *NKSHAR,
+)
+{
+   unsigned int idx=ATL_pmnAMM_NCASES-1; /* not amm idx yet */
+   unsigned int P=*P0, nkshar=0, i;
+
+   if (K < ATL_pmnAMM_MAXKB) /* handled by outprod view eventually */
+   {                         /* for now, accept any kern that works */
+       for (i=ATL_pmnAMM_NCASES-1; i >= 0; i--)
+       {
+          idx = ATL_AMM_KIDX[i];
+          if (ATL_pmnAMM_KBs[i] 
+       }
+   }
+   if (P*(size_t)ATL_pmnAMM_MAXNB > N) /* N may not provide full scale */
+   {
+      if (P*(size_t)ATL_pmnAMM_MAXKB
+   }
+
+   *P0 = P;
+   *NKSHAR = nkshar;
+}
+@endskip
 @ROUT ATL_GetRankKInfo
 @beginskip
 static INLINE int ATL_ComputeB   /* RETURNS: selected blocking */
@@ -31109,8 +31231,14 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
    }
    fprintf(fp, "};\n#endif\n");
 
+   fprintf(fp, "#define ATL_AMM_NBs ATL_pmnAMM_NBs\n");
    PrintIntArrAtOff(fp, pre, "NBs", mb, GetOffset(&mb->next, mb), 
                     GetOffset(&mb->nbB, mb), 0, 0);
+   fprintf(fp, "#undef ATL_AMM_NBs\n");
+   fprintf(fp, "#define ATL_AMM_KBs ATL_pmnAMM_KBs\n");
+   PrintIntArrAtOff(fp, pre, "KBs", mb, GetOffset(&mb->next, mb), 
+                    GetOffset(&mb->kbB, mb), 0, 0);
+   fprintf(fp, "#undef ATL_AMM_KBs\n");
    PrintIntArrAtOff(fp, pre, "KIDX", mb, GetOffset(&mb->next, mb), 
                     GetOffset(&mb->ivar, mb), 0, 0);
    fprintf(fp, "#ifdef NOARRS\n");
