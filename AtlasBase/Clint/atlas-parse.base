@@ -3404,6 +3404,16 @@ double MMTime2Mflop(char pre, int M, int N, int K, double time)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static double CopyMflop2Time(char pre, int M, int N, double mf)
+/*
+ * Translates mflop rate mf into time, assuming M*N flops
+ */
+{
+   return(((2.0*M)*N) / (1e6*mf));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
 #ifdef ATL_GENERATE  /* generating funcs get unique name */
@@ -4298,27 +4308,51 @@ double TimeMMKernel
       "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
               pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, KU, 
               mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
-      if (mmp->blask == 1)
+      switch(mmp->blask)
       {
+      case 1:
          fnam[5] = 's';
          fnam[6] = 'y';
          fnam[7] = 'r';
          fnam[8] = 'k';
-      }
-      else if (mmp->blask == 2)
-      {
+         break;
+      case 2:
          fnam[5] = 's';
          fnam[6] = 'y';
          fnam[7] = 'm';
          fnam[8] = 'm';
-      }
-      else if (mmp->blask == 3)
-      {
+         break;
+      case 3:
          fnam[5] = 't';
          fnam[6] = 'r';
          fnam[7] = 'm';
          fnam[8] = 'm';
-      }
+         break;
+      case 4:
+         fnam[5] = 'c';
+         fnam[6] = 'p';
+         fnam[7] = 'F';
+         fnam[8] = 'A';
+         break;
+      case 5:
+         fnam[5] = 'c';
+         fnam[6] = 'p';
+         fnam[7] = '2';
+         fnam[8] = 'A';
+         break;
+      case 6:
+         fnam[5] = 'c';
+         fnam[6] = 'p';
+         fnam[7] = '2';
+         fnam[8] = 'C';
+         break;
+      case 7:
+         fnam[5] = 'c';
+         fnam[6] = 'p';
+         fnam[7] = 'F';
+         fnam[8] = 'C';
+         break;
+      default: ;
    }
 /* 
  * If we actually need to do timing, must also construct timer call
@@ -4335,16 +4369,37 @@ double TimeMMKernel
          nm = "sym";
       else if (mmp->blask == 3)
          nm = "trm";
-      i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
-                  pre, nm, mb, nb, KB);
+      ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+      if (mmp->blask >= 4 && mmp->blask <= 7)
+      {
+         i = make x%ccpytime 
+         i = sprintf(ln, "make x%ccpytime mb=%d nb=%d TA=%c", pre, mb, nb, 
+                     TA == AtlasTrans ? 'T' : 'N');
+         if (TB == AtlasTrans) /* time row-wise access */
+            i += sprintf(ln+i, " -D 8000 8000 8000 1");
+         i += sprintf(ln+i, " kfnam=%s", mmp->rout);
+         if (mmp->comp)
+            i += sprintf(ln+i, " %cKC=\"%s\"", ch, mmp->comp);
+         if (mmp->cflags)
+            i += sprintf(ln+i, " %cKCFLAGS=\"%s\"", ch, mmp->cflags);
+      }
+      else
+      {
+         i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
+                     pre, nm, mb, nb, KB);
+         if (mmp->genstr)
+            i += sprintf(ln+i, " mmrout=%s", mmp->rout);
+         else
+            i += sprintf(ln+i, " mmrout=AMMCASES/%s", mmp->rout);
+         if (mmp->comp)
+            i += sprintf(ln+i, " %cMC=\"%s\"", ch, mmp->comp);
+         if (mmp->cflags)
+            i += sprintf(ln+i, " %cMCFLAGS=\"%s\"", ch, mmp->cflags);
+      }
       if (mflop)
          i += sprintf(ln+i, " FMFS=\"-Rf %d\"", mflop);
       if (SERIAL)
          i += sprintf(ln+i, " NPROC=1");
-      if (mmp->genstr)
-         i += sprintf(ln+i, " mmrout=%s", mmp->rout);
-      else
-         i += sprintf(ln+i, " mmrout=AMMCASES/%s", mmp->rout);
       i += sprintf(ln+i, " mu=%d nu=%d ku=%d", mmp->mu, mmp->nu, KU);
    @whiledef iv szA szB szC szExtra vlen
     if (mmp->@(iv))
@@ -4371,11 +4426,6 @@ double TimeMMKernel
          i += sprintf(ln+i, " beta=%d", beta);
       else
          i += sprintf(ln+i, " beta=-1 betan=\"N1\"");
-      ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
-      if (mmp->comp)
-         i += sprintf(ln+i, " %cMC=\"%s\"", ch, mmp->comp);
-      if (mmp->cflags)
-         i += sprintf(ln+i, " %cMCFLAGS=\"%s\"", ch, mmp->cflags);
       i += sprintf(ln+i, " outF=\"-f %s\"", fnam);
    }
    if (FORCETIME || !FileExists(fnam))
