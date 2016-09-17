@@ -40,7 +40,23 @@
 
 #include "atlas_genparse.h"
 #include "atlas_enum.h"
-
+/*
+ * BLAS kernel types that we've potentially got generators for
+ */
+#define ATL_KGEMM       0
+#define ATL_KSYRK       1
+#define ATL_KSYMM       2 /* not yet supported */
+#define ATL_KTRMM       3 /* not yet supported */
+#define ATL_KTRSM       4 /* only supported for non-generated case */
+#define ATL_KGECPFA     5 /* TA trans setting, TB row/col matrix access */
+#define ATL_KGECP2A     6 /* TA trans setting, TB row/col matrix access */
+#define ATL_KGECPFC     7
+#define ATL_KGECP2C     8
+#define ATL_KSKCPFA     9 /* syrk A/B copy */
+#define ATL_KSKCP2A    10 /* syrk A/B copy */
+/*
+ * Structure bit position in flag
+ */
 #define MMF_SINGLE      0  /* 1: single precision, else double */
 #define MMF_COMPLEX     1  /* 1: complex type, else real */
 #define MMF_LDCTOP      2  /* 1: load C before K-loop, 0: ld after */
@@ -3417,15 +3433,43 @@ static double CopyMflop2Time(char pre, int M, int N, double mf)
 char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 {
 #ifdef ATL_GENERATE  /* generating funcs get unique name */
-   char *nm="amm";
-   if (mp->blask == 1)
-      nm = "syrk";
-   else if (mp->blask == 2)
-      nm = "symm";
-   else if (mp->blask == 2)
-      nm = "symm";
-   else if (mp->blask == 3)
-      nm = "trmm";
+   char *nm;
+   switch(mp->blask)
+   {
+   case ATL_KSYRK:
+      amm = "syrk";
+      break;
+   case ATL_KSYMM:
+      amm = "symm";
+      break;
+   case ATL_KTRMM:
+      amm = "trmm";
+      break;
+   case ATL_KTRSM:
+      amm = "trsm";
+      break;
+   case ATL_KGECP2A:
+      amm = "cp2A";
+      break;
+   case ATL_KGECPFA:
+      amm = "cpFA";
+      break;
+   case ATL_KGECP2C:
+      amm = "cp2C";
+      break;
+   case ATL_KGECPFC:
+      amm = "cpFC";
+      break;
+   case ATL_KSKCP2C:
+      amm = "cp2SK";
+      break;
+   case ATL_KSKCPFC:
+      amm = "cpFSK";
+      break;
+   case ATL_KGEMM:
+   default:
+      nm = "amm";
+   }
    return(GetMMFilename(pre, nm, mp));
 #else                       /* tuning gets default name that is overwritten */
    return(DupString("ATL_tmp.c")); /* avoids cluttering dir wt unused files */
@@ -3468,14 +3512,55 @@ char *MMGetGenString
    }
    else 
       assert(mp->mu % mp->vlen == 0);
-   if (mp->blask == 1) /* 0:ammm, 1:syrk, 2:symm, 3:trmm */
+   switch(mp->blask)
+   {/* 0:ammm, 1:syrk, 2:symm, 3:trmm */
+   case ATL_KSYRK:
       sp = "amsyrk";
-   else if (mp->blask == 2)
+      break;
+   case ATL_KSYMM:
       sp = "amsymm";
-   else if (mp->blask == 3)
+      break;
+   case ATL_KTRMM:
       sp = "amtrmm";
-   else
+      break;
+   case ATL_KTRSM:
+      sp = "amtrsm";
+      break;
+   case ATL_KGECPFA:
+      if (mp->TA == AtlasTrans)
+         sp = "AT2blk";
+      else if (mp->TA == AtlasConjTrans)
+         sp = "cAT2blk";
+      else if (mp->TA == AtlasConj)
+         sp = "cAN2blk";
+      else
+         sp = "AN2blk";
+      break;
+   case ATL_KGECP2A:
+      if (mp->TA == AtlasTrans)
+         sp = "blk2AT";
+      else if (mp->TA == AtlasConjTrans)
+         sp = "cblk2AT";
+      else if (mp->TA == AtlasConj)
+         sp = "cblk2AN";
+      else
+         sp = "blk2AN";
+      break;
+   case ATL_KGECPFC:
+      sp = "blk2C";
+      break;
+   case ATL_KGECP2C:
+      sp = "C2blk";
+      break;
+   case ATL_KSKCPFA:
+      sp = "SY2blk";
+      break;
+   case ATL_KSKCP2A:
+      sp = "blk2SY";
+      break;
+   default:
       sp = "amm";
+   }
 
    if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
       kb = 0;
@@ -3646,16 +3731,16 @@ char *MMGetTestString
  */
    switch(mp->blask)
    {
-   case 1:
+   case ATL_KSYRK:
       nm = "syrk";
       break;
-   case 2:
+   case ATL_KSYMM:
       nm = "symm";
       break;
-   case 3:
+   case ATL_KTRMM:
       nm = "trmm";
       break;
-   default:
+   default:   /* need to add copy kerns later */
       nm = "ammm";
    }
    len = 22 + 21;                              /* begin & end */
@@ -4024,6 +4109,7 @@ double TimeMMKernel3F
  * flag - take actions the following actions if bit location is set:
  *    0 : ignore any prior output file on output
  *    1 : time in serial rather than parallel
+ * NOTE: this kernel not updated to time copy codes.  AFAIK, doesn't need to
  */
 {
    char fnam[128], ln[4096];  /* security from 1991 */
@@ -4083,21 +4169,28 @@ double TimeMMKernel3F
       "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
               pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, KU,
               mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
-      if (mmp->blask == 1)
+      if (mmp->blask == ATL_KSYRK)
       {
          fnam[5] = 's';
          fnam[6] = 'y';
          fnam[7] = 'r';
          fnam[8] = 'k';
       }
-      else if (mmp->blask == 2)
+      else if (mmp->blask == ATL_KSYMM)
       {
          fnam[5] = 's';
          fnam[6] = 'y';
          fnam[7] = 'm';
          fnam[8] = 'm';
       }
-      else if (mmp->blask == 3)
+      else if (mmp->blask == ATL_KSYRK)
+      {
+         fnam[5] = 's';
+         fnam[6] = 'y';
+         fnam[7] = 'r';
+         fnam[8] = 'k';
+      }
+      else if (mmp->blask == ATL_KTRMM)
       {
          fnam[5] = 't';
          fnam[6] = 'r';
@@ -4114,11 +4207,11 @@ double TimeMMKernel3F
    if (DOTIME)
    {
       char *nm="amm";
-      if (mmp->blask == 1)
+      if (mmp->blask == ATL_KSYRK)
          nm = "syk";
-      else if (mmp->blask == 2)
+      else if (mmp->blask == ATL_KSYMM)
          nm = "sym";
-      else if (mmp->blask == 3)
+      else if (mmp->blask == ATL_KTRSM)
          nm = "trm";
       i = sprintf(ln, "make x%c%stime_pt3f mb=%d nb=%d kb=%d",
                   pre, nm, mb, nb, KB);
@@ -4310,43 +4403,49 @@ double TimeMMKernel
               mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
       switch(mmp->blask)
       {
-      case 1:
+      case ATL_KSYRK:
          fnam[5] = 's';
          fnam[6] = 'y';
          fnam[7] = 'r';
          fnam[8] = 'k';
          break;
-      case 2:
+      case ATL_KSYMM:
          fnam[5] = 's';
          fnam[6] = 'y';
          fnam[7] = 'm';
          fnam[8] = 'm';
          break;
-      case 3:
+      case ATL_KTRSM:
+         fnam[5] = 't';
+         fnam[6] = 'r';
+         fnam[7] = 's';
+         fnam[8] = 'm';
+         break;
+      case ATL_KTRMM:
          fnam[5] = 't';
          fnam[6] = 'r';
          fnam[7] = 'm';
          fnam[8] = 'm';
          break;
-      case 4:
+      case ATL_KGECPFA:
          fnam[5] = 'c';
          fnam[6] = 'p';
          fnam[7] = 'F';
          fnam[8] = 'A';
          break;
-      case 5:
+      case ATL_KGECP2A:
          fnam[5] = 'c';
          fnam[6] = 'p';
          fnam[7] = '2';
          fnam[8] = 'A';
          break;
-      case 6:
+      case ATL_KGECPFC:
          fnam[5] = 'c';
          fnam[6] = 'p';
          fnam[7] = '2';
          fnam[8] = 'C';
          break;
-      case 7:
+      case ATL_KGECP2C:
          fnam[5] = 'c';
          fnam[6] = 'p';
          fnam[7] = 'F';
@@ -4364,14 +4463,16 @@ double TimeMMKernel
    if (DOTIME)
    {
       char *nm="amm";
-      if (mmp->blask == 1)
+      if (mmp->blask == ATL_KSYRK)
          nm = "syk";
-      else if (mmp->blask == 2)
+      else if (mmp->blask == ATL_KSYMM)
          nm = "sym";
-      else if (mmp->blask == 3)
+      else if (mmp->blask == ATL_KTRSM)
+         nm = "trs";
+      else if (mmp->blask == ATL_KTRMM)
          nm = "trm";
       ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
-      if (mmp->blask >= 4 && mmp->blask <= 7)
+      if (mmp->blask >= ATL_KGECPFA && mmp->blask <= ATL_KGECP2C)
       {
          i = sprintf(ln, "make x%ccpytime mb=%d nb=%d TA=%c", pre, mb, nb, 
                      mmp->TA == AtlasTrans ? 'T' : 'N');
