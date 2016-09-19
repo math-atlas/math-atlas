@@ -10276,6 +10276,40 @@ void GenAllViews(char pre, int verb)
       KillAllMMNodes(mb);
       printf("   DONE DEGENERATE MB/NB SEARCH.\n\n");
    }
+   mp = TimeMMFileWithPath(pre, "res", "ipmnPERFcp.sum", 0, verb, 0, 1, 0, -1);
+   if (!mp)
+   {
+      ATL_mmnode_t *mb;
+      printf("TIMING COPY ROUTINES FOR DEG MB/NB:\n");
+      mb = ReadMMFileWithPath(pre, "res", "ipmnPERF.sum");
+      for (mp=mb; mp; mp = mp->next)
+      {
+         double mf;
+         mp->blask = ATL_KGECPFA;
+         mp->TB = mp->TA = AtlasTrans; /* generally, worst case perf-wise */
+         if (mp->rout)
+           free(mp->rout);
+         mp->rout = DupString("ATL_tmp.c");
+         if (mp->comp)
+            free(mp->comp);
+         if (mp->cflags)
+            free(mp->cflags);
+         if (mp->auth)
+            free(mp->auth);
+         mp->auth = mp->comp = mp->cflags = NULL;
+         if (mp->genstr)
+           free(mp->genstr);
+         mp->genstr = MMGetGenString(pre, mp);
+         mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1,0,-1);
+         mp->mflop[0] = mf;
+         printf("      NB=%d: %d-%s, KB=%d  mf=%.2f.\n", mp->nbB,
+                mp->ID, mp->rout ? mp->rout:"gen", mp->kbB, mf);
+      }
+      WriteMMFileWithPath(pre, "res", "ipmnPERFcp.sum", mb);
+      printf("DONE TIMING COPY ROUTINES FOR DEG MB/NB.\n\n");
+      mp = mb;
+   }
+   KillAllMMNodes(mp);
 
    mp = TimeMMFileWithPath(pre, "res", "ipnPERF.sum", 0, verb, 0, 1, 0, -1);
    if (mp)
@@ -31165,7 +31199,8 @@ void GenSumH(char pre, char *outd, ATL_mmnode_t *gb, ATL_mmnode_t *sb,
    CloseGenHeader(fp);
 }
 
-void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
+void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb, 
+                  ATL_mmnode_t *cpb)
 /*
  * Used to generate timing/index file for when one or more dims are degenerate
  * for inner product.  mb should be ordered by the degen dim(s), ivar should
@@ -31230,6 +31265,22 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
               (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
    }
    fprintf(fp, "};\n#endif\n");
+   if (cpb)
+   {
+      fprintf(fp, "#if !defined(NOCPTIME) && !defined(NOARRS)\n");
+      fprintf(fp, "static const float ATL_%sAMM_CPTIME[%d] =\n", cn, n);
+      fprintf(fp, "{  /* actual seconds to coy one A block row-wise */\n");
+      for (i=0,mp=mb; mp; i++,mp = mp->next)
+      {
+         fcnt = ((double)mp->nbB)*mp->kbB;  /* copy flop count */
+         if (pre == 'z' || pre == 'c')
+            fcnt *= 2.0;
+         fprintf(fp, "   %e%c  /* CNT=%d, B=(%d,%d,%d) */\n",
+                 fcnt / (mp->mflop[0]*1.0e6),
+                 (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
+      }
+      fprintf(fp, "};\n#endif\n");
+   }
 
    fprintf(fp, "#define ATL_AMM_NBs ATL_pmnAMM_NBs\n");
    PrintIntArrAtOff(fp, pre, "NBs", mb, GetOffset(&mb->next, mb), 
@@ -31269,7 +31320,9 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
    mmb = ReadMMFileWithPath(pr, "res", "ip@(nm)PERF.sum");
    if (mmb)
    {
-      GenDegenH_IP(pr, outd, "p@(nm)", mmb);
+      ATL_mmnode_t *cpb;
+      cpb = ReadMMFileWithPath(pr, "res", "ip@(nm)PERFcp.sum");
+      GenDegenH_IP(pr, outd, "p@(nm)", mmb, cpb);
       KillAllMMNodes(mmb);  /* done with these! */
    }
    @endwhile

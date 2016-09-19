@@ -52,8 +52,8 @@
 #define ATL_KGECP2A     6 /* TA trans setting, TB row/col matrix access */
 #define ATL_KGECPFC     7
 #define ATL_KGECP2C     8
-#define ATL_KSKCPFA     9 /* syrk A/B copy */
-#define ATL_KSKCP2A    10 /* syrk A/B copy */
+#define ATL_KSKCPFC     9 /* syrk C copy */
+#define ATL_KSKCP2C    10 /* syrk C copy */
 /*
  * Structure bit position in flag
  */
@@ -3437,34 +3437,34 @@ char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
    switch(mp->blask)
    {
    case ATL_KSYRK:
-      amm = "syrk";
+      nm = "syrk";
       break;
    case ATL_KSYMM:
-      amm = "symm";
+      nm = "symm";
       break;
    case ATL_KTRMM:
-      amm = "trmm";
+      nm = "trmm";
       break;
    case ATL_KTRSM:
-      amm = "trsm";
+      nm = "trsm";
       break;
    case ATL_KGECP2A:
-      amm = "cp2A";
+      nm = "cp2A";
       break;
    case ATL_KGECPFA:
-      amm = "cpFA";
+      nm = "cpFA";
       break;
    case ATL_KGECP2C:
-      amm = "cp2C";
+      nm = "cp2C";
       break;
    case ATL_KGECPFC:
-      amm = "cpFC";
+      nm = "cpFC";
       break;
    case ATL_KSKCP2C:
-      amm = "cp2SK";
+      nm = "cp2SK";
       break;
    case ATL_KSKCPFC:
-      amm = "cpFSK";
+      nm = "cpFSK";
       break;
    case ATL_KGEMM:
    default:
@@ -3476,6 +3476,60 @@ char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 #endif
 }
 
+char *MMGetCpGenString
+(
+   char pre,                    /* precision/type prefix */
+   ATL_mmnode_t *mp             /* mmkern ptr */
+)
+{
+   char *sp, *gen, *vec;
+   size_t sz;
+
+   if (mp->vlen < 2)
+      vec = "no";
+   else if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      vec = "kdim";
+   else
+      vec = "mdim";
+
+   if (mp->blask == ATL_KGECPFC || mp->blask == ATL_KGECP2C || 
+       mp->blask == ATL_KSKCPFC || mp->blask == ATL_KSKCP2C)
+   {
+      switch (mp->blask)
+      {
+      case ATL_KGECPFC:
+         gen = "C2blk";
+         break;
+      case ATL_KGECP2C:
+         gen = "blk2C";
+         break;
+      case ATL_KSKCPFC:
+         gen = "syC2blk";
+         break;
+      case ATL_KSKCP2C:
+         gen = "syblk2C";
+         break;
+      }
+      sz = 59 + NumDecDigits(mp->mu);
+      sz += NumDecDigits(mp->nu);
+      sz += NumDecDigits(mp->vlen);
+      sz += strlen(mp->rout);
+      sp = malloc(sz);
+      assert(sp);
+      sprintf(sp, 
+"make gen_%s vl=%d mu=%d nu=%d cpvl=1 alpha=1 beta=-1 vec=%s rt=%s",
+              gen, mp->vlen, mp->mu, mp->nu, vec, mp->rout);
+      return(sp);
+   }
+   sz = 53 + NumDecDigits(Mmax(mp->mu, mp->nu));
+   sz += strlen(mp->rout);
+   sp = malloc(sz);
+   assert(sp);
+   sprintf(sp, "make gen_A%c2blk UR=%d alpha=1 kmaj=%d vec=%s rt=%s", 
+           mp->TA==AtlasTrans?'T':'N', Mmax(mp->mu, mp->nu), 
+           FLAG_IS_SET(mp->flag,MMF_KVEC), vec, mp->rout);
+   return(sp);
+}
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 char *MMGetGenString
@@ -3492,6 +3546,8 @@ char *MMGetGenString
    int ku=mp->ku;
    int kb;
 
+   if (mp->blask >= ATL_KGECPFA && mp->blask <= ATL_KSKCP2C)
+      return(MMGetCpGenString(pre, mp));
    if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
    {
       if (FLAG_IS_SET(mp->flag, MMF_KVEC))
@@ -3552,11 +3608,11 @@ char *MMGetGenString
    case ATL_KGECP2C:
       sp = "C2blk";
       break;
-   case ATL_KSKCPFA:
-      sp = "SY2blk";
+   case ATL_KSKCPFC:
+      sp = "SYC2blk";
       break;
-   case ATL_KSKCP2A:
-      sp = "blk2SY";
+   case ATL_KSKCP2C:
+      sp = "SYblk2C";
       break;
    default:
       sp = "amm";
@@ -4474,10 +4530,10 @@ double TimeMMKernel
       ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
       if (mmp->blask >= ATL_KGECPFA && mmp->blask <= ATL_KGECP2C)
       {
-         i = sprintf(ln, "make x%ccpytime mb=%d nb=%d TA=%c", pre, mb, nb, 
+         i = sprintf(ln, "make %ccpytime mb=%d nb=%d TA=%c", pre, mb, nb, 
                      mmp->TA == AtlasTrans ? 'T' : 'N');
          if (mmp->TB == AtlasTrans) /* time row-wise access */
-            i += sprintf(ln+i, " -D 8000 8000 8000 1");
+            i += sprintf(ln+i, " MTDX='-D 8000 8000 8000 1'");
          i += sprintf(ln+i, " kfnam=%s", mmp->rout);
          if (mmp->comp)
             i += sprintf(ln+i, " %cKC=\"%s\"", ch, mmp->comp);
