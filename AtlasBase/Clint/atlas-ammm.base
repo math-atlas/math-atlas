@@ -10302,7 +10302,15 @@ void GenAllViews(char pre, int verb)
          mp->genstr = MMGetGenString(pre, mp);
          mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1,0,-1);
          mp->mflop[0] = mf;
-         printf("      NB=%d: %d-%s, KB=%d  mf=%.2f.\n", mp->nbB,
+         printf("      cpA, NB=%d: %d-%s, KB=%d  mf=%.2f.\n", mp->nbB,
+                mp->ID, mp->rout ? mp->rout:"gen", mp->kbB, mf);
+         mp->blask = ATL_KGECP2C;
+         if (mp->genstr)
+           free(mp->genstr);
+         mp->genstr = MMGetGenString(pre, mp);
+         mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1,0,-1);
+         mp->mflop[1] = mf;
+         printf("      cpC, NB=%d: %d-%s, KB=%d  mf=%.2f.\n", mp->nbB,
                 mp->ID, mp->rout ? mp->rout:"gen", mp->kbB, mf);
       }
       WriteMMFileWithPath(pre, "res", "ipmnPERFcp.sum", mb);
@@ -31267,8 +31275,8 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb,
    fprintf(fp, "};\n#endif\n");
    if (cpb)
    {
-      fprintf(fp, "#if !defined(NOCPTIME) && !defined(NOARRS)\n");
-      fprintf(fp, "static const float ATL_%sAMM_CPTIME[%d] =\n", cn, n);
+      fprintf(fp, "#if !defined(NOCPTIMEA) && !defined(NOARRS)\n");
+      fprintf(fp, "static const float ATL_%sAMM_CPTIMEA[%d] =\n", cn, n);
       fprintf(fp, "{  /* actual seconds to coy one A block row-wise */\n");
       for (i=0,mp=mb; mp; i++,mp = mp->next)
       {
@@ -31280,6 +31288,22 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb,
                  (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
       }
       fprintf(fp, "};\n#endif\n");
+      if (mb->mflop[0] > 0.0)
+      {
+         fprintf(fp, "#if !defined(NOCPTIMEC) && !defined(NOARRS)\n");
+         fprintf(fp, "static const float ATL_%sAMM_CPTIMEC[%d] =\n", cn, n);
+         fprintf(fp, "{  /* actual seconds to coy one A block row-wise */\n");
+         for (i=0,mp=mb; mp; i++,mp = mp->next)
+         {
+            fcnt = ((double)mp->mbB)*mp->nbB;  /* copy flop count */
+            if (pre == 'z' || pre == 'c')
+               fcnt *= 2.0;
+            fprintf(fp, "   %e%c  /* CNT=%d, B=(%d,%d,%d) */\n",
+                    fcnt / (mp->mflop[0]*1.0e6),
+                    (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
+         }
+         fprintf(fp, "};\n#endif\n");
+      }
    }
 
    fprintf(fp, "#define ATL_AMM_NBs ATL_pmnAMM_NBs\n");

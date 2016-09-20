@@ -36502,10 +36502,10 @@ int main(int nargs, char **args)
    #ifndef COPYK
       #define COPYK ATL_USERCPMM
    #endif
-   #ifdef REAL
+   #ifdef TREAL
       #ifdef COPY_C
          void COPYK(const size_t, const size_t, const TYPE, const TYPE*, 
-                    const size_t, const TYPE, TYPE*);
+                    const TYPE, TYPE*, const size_t);
       #else
          void COPYK(const size_t, const size_t, const TYPE,
                     const TYPE*, const size_t, TYPE*);
@@ -36604,7 +36604,7 @@ struct kmm_struct{
    #ifdef TIME_COPY
       TYPE *A;
       size_t nmblks, nnblks, lda;
-      int COLWISE;
+      int COLWISE, BM, BN;
    #endif
    int mb, nb, kb;                      /* C: mbxnb, At: kbxmb, B: kbXnb */
    int mu, nu, ku;                      /* needed to compute mblks/nblks */
@@ -36807,6 +36807,11 @@ double GetKmmMflop
          KMM(mblks, nblks, kb, a, a, c, an, an, cn);
       #elif defined(TIME_COPY)
          #ifdef COPY_C
+            #ifdef TCPLX
+               COPYK(mb, nb, alpha, c+(incC>>1), c, beta, AA, lda);
+            #else
+               COPYK(mb, nb, alpha, c, beta, AA, lda);
+            #endif
          #else
             #ifdef TREAL
                COPYK(B0, B1, alpha, AA, lda, c);
@@ -36991,6 +36996,9 @@ void PrintUsage(char *name, int iarg, char *arg)
    fprintf(stderr, "   -V <veclen>\n");
    #ifdef TIME_COPY
       fprintf(stderr, "   -D <M> <lda> <N> <COLWISE>: copy only\n");
+      #ifndef COPY_C
+      fprintf(stderr, "   -A [a,b]: for A/B copy, set which you are copying\n");
+      #endif
    #endif
    fprintf(stderr, "   -u[mnk] <#> : M/N/K loop unrolling is #\n");
    fprintf(stderr, "   -r <#> : set the # of times to call KMM\n");
@@ -37006,14 +37014,18 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    FILE *fp;
    struct kmm_struct *kp;
    double mflops=750.0;
-   int i, j, IGMF=0;  /* ignore mflops.frc file? */
+   int i, j, ACPY=1, IGMF=0;  /* ignore mflops.frc file? */
    
    *fpout = NULL;
    kp = malloc(sizeof(struct kmm_struct));
    assert(kp);
    #ifdef TIME_COPY
       kp->nmblks = kp->nnblks = kp->lda = 2000;
-      kp->COLWISE = 0;
+      #ifdef COPY_C
+         kp->COLWISE = 1;
+      #else
+         kp->COLWISE = 0;
+      #endif
    #endif
    kp->pids = NULL;
    kp->p = 1;
@@ -37030,6 +37042,13 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
          PrintUsage(args[0], i, args[i]);
       switch(args[i][1])
       {
+      #if defined(TIME_COPY) && !defined(COPY_C)
+      case 'A':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         ACPY = (args[i][0] != 'b' && args[i][0] != 'B');
+         break;
+      #endif
       case 'f':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
@@ -37204,17 +37223,34 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    #ifdef TIME_COPY  /* Reduce M/N to nmblks, nnblks, handle P */
    {
       const size_t gap = kp->lda - kp->nmblks;
-      unsigned int nb = kp->mb;
+      unsigned int nb;
 
+      #ifdef TIME_C
+      if (ACPY)
+      {
+         kp->BM = kp->mb;
+         kp->BN = kp->kb;
+      }
+      else
+      {
+         kp->BM = kp->kb;
+         kp->BN = kp->nb;
+      }
+      #else
+         kp->BM = kp->mb;
+         kp->BN = kp->nb;
+      #endif
+      nb = kp->BM;
       kp->nmblks = (kp->nmblks+nb-1)/nb;
       if (!kp->COLWISE)
          kp->nmblks = (kp->nmblks >= kp->p) ? kp->nmblks : kp->p;
       kp->lda = kp->nmblks + gap;
-      nb = kp->nb;
+      nb = kp->BN;
       kp->nnblks = (kp->nnblks+nb-1)/nb;
       if (kp->COLWISE)
          kp->nnblks = (kp->nnblks >= kp->p) ? kp->nnblks : kp->p;
       kp->movA = kp->movB = 0;
+      cp->movC = 1;
    }
    #endif
    #ifdef TIME_SYRKK
