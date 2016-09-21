@@ -1,0 +1,100 @@
+@ROUT storage.idx scopy.idx dcopy.idx ccopy.idx zcopy.idx
+#
+# In this file, any line beginning with a '#' is ignored, but the # must be in
+# column 0.  All multiple whitespace is reduced to one space (i.e. used only
+# to distinguish where words begin/end).  Lines may be extended by putting '\'
+# as the *last* character of line.
+#
+@ROUT storage.idx
+# This file indexes the user-supplied storage schemes, and has the following
+# format:
+# The file has the following format (default values in []):
+# ID=<id> FLAG=<bitfield> BLKSZF='iexp' EXTELTF='iexp'
+# ID must be a unique >100 number identifying the storage scheme.  A copy
+#    routine with a matching STGID must be found for both copy directions
+#    in the appropriate [s,c,d,z]blkcpy.idx types.  The storage IDs that
+#    are so far in use by ATLAS itself (<100) are:
+#      0: access major storage as used in generator, details in struct
+#      1: access major (unvectorized or m-vec) storage for A or B
+#      2: access major (unvectorized or m-vec) storage for C
+#      3: K-vectorized access major storage for A or B
+#      4: K-vectorized access major storage for C
+#      5: block major (ATLAS 3.10 or older code gen support)
+# 'iexp': must contain in '' a valid ANSI C integer expression which computes
+#         the indicated storage using only constants and the key-specific
+#         variables.
+# BLKSZF [((M+mu-1)/mu)*((N+nu-1)/nu)*mu*nu]
+#        must contain in '' a valid ANSI C integer expression which computes
+#        iexp computes the number of elements to store one block using this
+#        storage pattern.  ATLAS assumes real & imag components stored 
+#        separately, so complex size should be half of total size.
+#        The only variables that can be used will be chosen by the search after
+#        tuning and passed to a function with the following prototype:
+#           int getsz(int M, int N, int mu, int nu, int vlen);
+#        to allow ATLAS to allocate storage for an individual block. j
+#        The expression may use the following variables, in addition
+#        to any constants (these args themselved might be constants for some
+#        storage formats):
+#          M : number of rows chosen for block factor
+#          N : number of cols chosen for block factor
+#         mu : unroll&jam chosen for M dim
+#         nu : unroll&jam chosen for N dim
+#       vlen : length of vectorization employed
+# EXTELTF: [4*mu*nu]
+#          how many elements must be allocated past the end of allocated
+#          block memory so that advanced loads don't seg fault.  This number
+#          should be small.  The generated size function will have prototype:
+#            int getsz(int mu, int nu, int vlen);
+#
+@ROUT scopy.idx dcopy.idx ccopy.idx zcopy.idx
+# This file indexes the user-supplied copy routines for the storage schemes
+# indexed in storage.ids, and has the following format (non-mandatory
+# keys show the default in []):
+# ID=<id> STGID=<stgid> FROMCM=[0,1] TRANS=[0,1] CONJ=[0,1] MU=<mu> NU=<nu> \
+#         VLEN=<vlen> ROUT='rt' AUTH='name' COMP='gcc' CFLAGS='flags'
+# ID: Mandatory.  Unique (in this file only) int >= 0.  
+# STGID: Mandatory.  Number >0 matching and ID in storage.idx.  Predefined:
+#    1: access major (unvectorized or m-vec) storage for A or B
+#    2: access major (unvectorized or m-vec) storage for C
+#    3: K-vectorized access major storage for A or B
+#    4: K-vectorized access major storage for C
+#    5 : KB-major for A or B
+#    6 : MB-major for C
+#    7 : uses original col-major C directly (like ATLAS 3.10 kernel)
+# FROMCM: Mandatory. 
+#         1: copies from column-major to STGID storage
+#         2: copies from STGID storage to column-major
+# MU/NU: [0] unrolling along rows/cols
+# TRANS: [n] Needed only for A/B storage, indicates transpose being done:
+#    N: cols of matrix stored contiguously, rows strided (col-major)
+#    T: rows of matrix stored contiguously, cols strided (row-major)
+#
+# NOTE: for a storage format to be used by ATLAS, enough copy funcs must
+#       be supplied for use, and the number required varies by whether the
+#       format is for GEMM's A/B or C matrix:
+#       A&B: FROMCM=1 and for real TRANS=N&T, cplx TRANS=N&T&C&H
+#            FROMCM=0 must be present for testing & custom uses.
+#       C  : FROMCM=0 required. FROMCM=1 needed. for testing & custom uses.
+#
+@ROUT cpysearch
+#include "atlas_cpparse.h"
+#include "atlas_mmtesttime.h"
+
+int main(int nargs, char **args)
+{
+   char pre='d';
+   ATL_cpnode_t *cb, *cp;
+   ATL_mmnode_t *mb, *mp;
+   cb = ReadCPFileWithPath(pre, "./", "copy.idx");
+   if (!cb)
+   {
+      printf("NO USER-SUPPLIED COPY ROUTINES!\n");
+      return(0);
+   }
+   mb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
+   assert(mb);
+
+   KillAllMMNodes(mb);
+   KillAllCPNodes(cb);
+   return(0);
+}
