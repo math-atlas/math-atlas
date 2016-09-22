@@ -10,7 +10,7 @@
    ATLAS/tune/blas/gemm/CASES/objs
    ATLAS/tune/blas/ger/R1CASES ATLAS/tune/blas/ger/R2CASES 
    ATLAS/tune/blas/gemm/CASES ATLAS/tune/blas/gemm/AMMCASES 
-   ATLAS/tune/blas/gemv/CASES
+   ATLAS/tune/blas/gemm/CPYCASES ATLAS/tune/blas/gemv/CASES
    ATLAS/tune/blas/gemv/MVTCASES ATLAS/tune/blas/gemv/MVNCASES
    ATLAS/tune/blas/level1 ATLAS/tune/blas/level3
    ATLAS/tune/blas/gemm ATLAS/tune/blas/gemv ATLAS/tune/blas/ger
@@ -374,9 +374,12 @@ tar cvf atlas.tar \
      ATLAS/tune/blas/gemm/emit_amm.c ATLAS/tune/blas/gemm/emit_uamm.c \
      ATLAS/tune/blas/gemm/ammsearch.c ATLAS/tune/blas/gemm/uammsrch.c \
      ATLAS/tune/blas/gemm/gmmsearch.c ATLAS/tune/blas/gemm/prefparse.c \
+     ATLAS/tune/blas/gemm/cpsearch.c \
      ATLAS/tune/blas/gemm/peaktim.c ATLAS/tune/blas/gemm/cnbtune.c \
      ATLAS/tune/blas/gemm/AMMCASES/*.idx \
      ATLAS/tune/blas/gemm/AMMCASES/ATL_*.[c,S] \
+     ATLAS/tune/blas/gemm/CPYCASES/*.idx \
+     ATLAS/tune/blas/gemm/CPYCASES/ATL_*.[c,S] \
 @skip     ATLAS/tune/blas/gemm/txover.c \
      ATLAS/tune/blas/gemv/mvktime.c  ATLAS/tune/blas/gemv/mv[t,n]ktest.c \
      ATLAS/tune/blas/gemv/mv[t,n]test.c ATLAS/tune/blas/gemv/MV[N,T]CASES/* \
@@ -1357,6 +1360,29 @@ Makefile :$(basjr) $(incf)
 @(jr1) : $(basjr) $(incf)
 	$(extC) -b $(basjr) -o $@ rout=$@ -def rout $@
 @endwhile
+@ROUT ATLAS/tune/blas/gemm/CPYCASES
+basfn = $(basdRCW)/atlas-mmcpy.base
+@multidef rcw_cp
+   @whiledef pre z c d s
+      @(pre)copy.idx
+   @endwhile
+@endmultidef
+@declare "files = " y y
+   @whiledef rcw_cp
+      @define rcw_cp2 @@(rcw_cp)@
+      @(rcw_cp)
+   @endwhile
+@enddeclare
+
+all : $(files)
+
+@whiledef rcw_cp2
+@(rcw_cp2) : $(basfn)
+	$(extC) -b $(basfn) -o $@ rout=$@
+@endwhile
+Make.ext : $(topd)/make.base
+	$(extM) -o Make.ext -b $(topd)/make.base \
+                rout=ATLAS/tune/blas/gemm/CPYCASES
 @ROUT ATLAS/tune/blas/gemm/AMMCASES
 basrwd = @(topd)/kernel/ClintWhaley
 basfn = $(basrwd)/clint_am.base
@@ -1620,7 +1646,7 @@ all : $(files)
 @skip @ROUT ATLAS/tune/blas/gemv `emit_head.c emit_rmvT.c mvgen_sse.c atlas-l2g.base`
 @ROUT ATLAS/tune/blas/gemv `atlas-l2g.base`
 @skip @ROUT ATLAS/tune/blas/gemm `emit_mm.c vnbmmsearch.c emit_vKB.c mm_old2new.c vmmf_gccsub.c`
-@ROUT ATLAS/tune/blas/gemm `emit_mm.c mmflagsearch.c uammsrch.c uammsearch.c gmmsearch.c ammsearch.c emit_uamm.c emit_amm.c uammgen.c ammgen.c cm2amtst.c peaktim.c cnbtune.c prefparse.c szblk.c`
+@ROUT ATLAS/tune/blas/gemm `emit_mm.c mmflagsearch.c uammsrch.c uammsearch.c gmmsearch.c ammsearch.c emit_uamm.c emit_amm.c uammgen.c ammgen.c cm2amtst.c peaktim.c cnbtune.c prefparse.c szblk.c cpysearch.c`
 @ROUT ATLAS/tune/sysinfo `emit_typ.c emit_lamch.c cacheSweep.c`
 @enddeclare
 
@@ -1682,6 +1708,10 @@ atlas-mmg.base : $(basd)/atlas-mmg.base
 
 mmflagsearch.c : $(basfn) $(incf)
 	$(extC) -b $(basfn) -o $@ rout=$*
+@whiledef rt cpysearch
+@(rt).c : $(basdRCW)/atlas-mmcpy.base $(incf)
+	$(extC) -b $(basdRCW)/atlas-mmcpy.base -o $@ rout=$*
+@endwhile
 @multidef rt gmmsearch prefparse szblk ammgen uammgen
 @whiledef rt uammsrch uammsearch ammsearch emit_amm emit_uamm cm2amtst peaktim cnbtune
 @(rt).c : $(basdRCW)/atlas-ammm.base $(incf)
@@ -3073,6 +3103,7 @@ $(topd)/TexDoc/@(rt).pdf : $(topd)/TexDoc/@(rt).tex
    atlas_tlapack.h
    atlas_asm.h atlas_C2Flapack.h C_lapack.h atlas_lamch.h
 @skip   atlas_omplvl3.h
+   atlas_cpparse.h
    atlas_mvparse.h atlas_r1parse.h atlas_mmparse.h atlas_genparse.h
    atlas_mmtesttime.h atlas_r1testtime.h atlas_r2testtime.h atlas_gentesttime.h
    atlas_mvtesttime.h atlas_mmgen.h
@@ -3086,8 +3117,8 @@ all : $(files)
 
 @skip atlas_vnbcase.h : $(basdRCW)/gemmVNB.base
 @skip 	$(extC) -b $(basdRCW)/gemmVNB.base -o $@ rout=$@
-@multidef rt mvread r1read mmread genparse
-@whiledef pr mv r1 mm gen
+@multidef rt mvread r1read mmread cpread genparse
+@whiledef pr mv r1 mm cp gen
 atlas_@(pr)parse.h : $(basdRCW)/atlas-parse.base
 	$(extC) -b $(basdRCW)/atlas-parse.base -o $@ rout=@(rt)
    @undef rt

@@ -34,6 +34,40 @@
 # PFTUNEx   : Kernel uses pref_x(mem) macro for each op=x (A,y,x).  prefetch
 #             inst can be varied wt this macro, as can fetch distance.
 #
+@ROUT cpread
+#ifndef ATLAS_CPPARSE_H
+   #define ATLAS_CPPARSE_H
+
+#include "atlas_genparse.h"
+#include "atlas_enum.h"
+
+#define ATL_CPMVECAB  1
+#define ATL_CPMVECC   2
+#define ATL_CPKVECAB  3
+#define ATL_CPKVECC   4
+#define ATL_CPBLKMJAB 5
+#define ATL_CPBLKMJC  6
+
+#define CPF_TRANS     0  /* 1: transpose, else NoTrans */
+#define CPF_CONJ      1  /* 1: Conjugate, else NoConj */
+#define CPF_FROMCM    2  /* 1: copy from col-maj, else copy to col-major */
+
+#define CPF_DEFAULT   0  /* default is no bits set */
+typedef struct CPNode ATL_cpnode_t;
+struct CPNode
+{
+   ATL_cpnode_t *next;
+   char *rout, *auth, *comp, *cflags;
+   char *genstr;
+   char *exflags;
+   char *str;
+   double mflop[4];
+   int ID;       /* ID unique in <pre>copy.idx */
+   int STGID;    /* storage ID predefined vals: [1-6] */
+   int mu, nu;   /* unrolling along M & N dims, respectively */
+   int vlen;     /* vector length, or 0 if doesn't matter to storage */
+   unsigned int flag, asmbits;
+};
 @ROUT mmread
 #ifndef ATLAS_MMPARSE_H
    #define ATLAS_MMPARSE_H
@@ -1053,6 +1087,8 @@ void *RemoveNodeFromList(void *vb, void *vp, int nxtoff)
 }
 
 #endif /* end atlas_genparse.h guard */
+@ROUT cpread
+   @define rt @cp@
 @ROUT mmread
 #ifndef ATL_DEF_MMFLAG
    #define ATL_DEF_MMFLAG @up@(rt)F_DEFAULT
@@ -1062,7 +1098,7 @@ void *RemoveNodeFromList(void *vb, void *vp, int nxtoff)
    @define rt @mv@
 @ROUT r1read
    @define rt @r1@
-@ROUT r1read mvread mmread
+@ROUT r1read mvread mmread cpread
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static ATL_@(rt)node_t *Get@up@(rt)Node(void)
@@ -1104,7 +1140,7 @@ static ATL_@(rt)node_t *Clone@up@(rt)Node(ATL_@(rt)node_t *dup)
 @ROUT r1read mvread
    if (dup->kname)
       p->kname = DupString(dup->kname);
-@ROUT r1read mvread mmread
+@ROUT r1read mvread mmread cpread
    p->next = NULL;
    return(p);
 }
@@ -1189,7 +1225,7 @@ static ATL_@(rt)node_t *Kill@up@(rt)Node(ATL_@(rt)node_t *die)
 @ROUT r1read mvread
       if (die->kname)
          free(die->kname);
-@ROUT r1read mvread mmread
+@ROUT r1read mvread mmread cpread
       free(die);
    }
    return(p);
@@ -1270,7 +1306,7 @@ void *KillAllMMStrings(ATL_mmnode_t *mb)
    }
 }
 
-@ROUT r1read mvread mmread
+@ROUT r1read mvread mmread cpread
 @iexp ip @(ip) 1 +
 /* procedure @(ip): frees all ->genstr entries in queue b */
 static void KillAll@up@(rt)Genstr(ATL_@(rt)node_t *b)
@@ -1654,7 +1690,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
       p->@(kk) = 0;
 
 @endwhile
-@ROUT mmread 
+@ROUT mmread cpread
 @whiledef jj vlen
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
@@ -1662,6 +1698,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
    else
       p->@(jj) = 1;
 @endwhile
+@ROUT mmread
 @whiledef jj mu nu ku kbmin kbmax pref ivar pfLS szExtra stgA stgB stgC blask
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
@@ -1677,6 +1714,8 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
       p->@(jj)B = 0;
 @endwhile
    @multidef jj ID SSE
+@ROUT cpread
+   @multidef jj ID MU NU STGID
 @ROUT mvread r1read 
    @multidef jj ID MU NU minN minM alignX alignY alignA SSE CacheElts rankR
 @ROUT r1read mvread mmread
@@ -1701,11 +1740,13 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
    KUISKB NOBCAST
 @endmultidef
 
+@ROUT cpread
+@multidef fl TRANS CONJ FROMCM
 @ROUT mvread
 @multidef fl X87 LDYTOP ALLALIGNXY AXPYBASED GEMMBASED CONJDEF FNU ALIGNX2A ADDCFLAGS PFTUNABLE
 @ROUT r1read
 @multidef fl X87 ALLALIGNXY FNU INCYISONE ALIGNX2A ADDCFLAGS PFTUNABLE
-@ROUT r1read mvread mmread
+@ROUT r1read mvread mmread cpread
 @whiledef fl
    sp = strstr(ln, "@(fl)=");
    if (sp)
@@ -1719,6 +1760,9 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
    sp = strstr(ln, "MFLOP=");
    if (sp)
+@ROUT cpread
+      GetDoubleArr(sp+6, 4, p->mflop);
+@ROUT r1read mvread mmread
       GetDoubleArr(sp+6, 8, p->mflop);
 
    sp = strstr(ln, "ASM=");
@@ -1746,9 +1790,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
          assert(0);
    }
 @endwhile
-@ROUT mvread r1read mmread
-@skip   sp = strstr(ln, "MFLOP=");
-@skip   if (sp) p->mflop = atof(sp+6);
+@ROUT mvread r1read mmread cpread
 
 @ROUT mvread r1read `@define kw @kname@`
 @whiledef kw rout auth comp cflags
@@ -1772,6 +1814,10 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
       return;
    if (!np->rout)
       np->ID = 0;
+@ROUT cpread
+   fprintf(fpout, "ID=%d STGID=%d ROUT='%s' AUTH='%s'",
+           np->ID, np->STGID, np->rout ? np->rout : "generated", 
+           np->auth ? np->auth : "R. Clint Whaley");
 @ROUT r1read
    fprintf(fpout, "ID=%d ROUT='%s' AUTH='%s'",
            np->ID, np->rout ? np->rout : "generated", 
@@ -1797,9 +1843,14 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
            np->ID, np->rout ? np->rout : "generated", 
            np->auth ? np->auth : "R. Clint Whaley", ta, tb);
 
-@ROUT mvread r1read mmread
+@ROUT mvread r1read mmread cpread
    fprintf(fpout, "   ");
    i = 3;
+@ROUT cpread
+@whiledef kw mu nu vlen
+   if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
+   i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
+@endwhile
 @ROUT mvread r1read
 @whiledef kw MU NU minN minM alignX alignY alignA SSE CacheElts rankR
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
@@ -1830,6 +1881,8 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
       X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
       KUISKB NOBCAST
    @endmultidef
+@ROUT cpread
+   @define kwd @FROMCM TRANS CONJ@
 @ROUT r1read 
    @define kwd @X87 INCYISONE FNU ADDCFLAGS ALIGNX2A PFTUNABLE@
 @ROUT mvread 
@@ -1840,14 +1893,26 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    if (np->@(jj)B != 0)
       i += fprintf(fpout, "@up@(jj)=%d ", np->@(jj)B);
 @endwhile
-@ROUT mvread r1read mmread
+@ROUT mvread r1read mmread cpread
 @whiledef kw @(kwd)
    if (i+@len@(kw) > 72) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@(kw)=%d ", FLAG_IS_SET(np->flag, @up@(rt)F_@(kw)));
 @endwhile
 
-   if (np->mflop[0]+np->mflop[1]+np->mflop[2]+np->mflop[3]+np->mflop[4]+
-       np->mflop[5]+np->mflop[6] != 0.0)
+   k = 0;  /* no need to write mflop */
+@ROUT cpread
+   for (j=0; j < 4; j++)
+@ROUT mvread r1read mmread
+   for (j=0; j < 8; j++)
+@ROUT mvread r1read mmread cpread
+   {
+      if (np->mflop[j] != 0.0)
+      {
+         k = 1;
+         break;
+      }
+   }
+   if (k)
    {
       if (i > 3) { fprintf(fpout, " \\\n   "); i = 3; }
       i += fprintf(fpout, "MFLOP=%le", np->mflop[0]);
@@ -2754,7 +2819,7 @@ static void MMApplyMoves2Flags
       mmp->flag = ((mmp->flag) & mvMSK) | mvSET;
 }
 
-@ROUT mvread r1read mmread
+@ROUT mvread r1read mmread cpread
 #endif  /* end atlas_@(rt)parse.h guard */
 @ROUT atlas_mvtesttime.h
    @define rt @mv@
@@ -3398,6 +3463,9 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 @ROUT atlas_r1testtime.h atlas_r2testtime.h atlas_mvtesttime.h
 #endif  /* end guard around atlas_@(rt)testtime.h */
 @ROUT atlas_mmtesttime.h
+#ifndef Mmax
+   #define Mmax(x_, y_) ( ((x_) >= (y_)) ? (x_):(y_) )
+#endif
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 double MMMflop2Time(char pre, int M, int N, int K, double mf)
