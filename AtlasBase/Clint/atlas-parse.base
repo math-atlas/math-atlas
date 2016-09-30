@@ -41,6 +41,7 @@
 #include "atlas_genparse.h"
 #include "atlas_enum.h"
 
+#define ATL_CPMAXGEN  6
 #define ATL_CPMVECAB  1
 #define ATL_CPMVECC   2
 #define ATL_CPKVECAB  3
@@ -48,24 +49,36 @@
 #define ATL_CPBLKMJAB 5
 #define ATL_CPBLKMJC  6
 
-#define CPF_TRANS     0  /* 1: transpose, else NoTrans */
-#define CPF_CONJ      1  /* 1: Conjugate, else NoConj */
-#define CPF_FROMCM    2  /* 1: copy from col-maj, else copy to col-major */
+#define CPF_TOBLK    0  /* set: copy to blk format;  unset: opposite direc */
+#define CPF_CBLK     1  /* set: C format;  unset:A/B */
+#define CPF_ABLK     2  /* set: scope mu;  unset: scope nu */
+#define CPF_KVEC     3  /* 1: vectorize on K dim */
+#define CPF_MVEC     4  /* 1: vectorize on M dim */
+#define CPF_NVEC     5  /* 1: vectorize on N dim */
+#define CPF_TRANS    6  /* 1: transpose, else NoTrans */
+#define CPF_CONJ     7  /* 1: Conjugate, else NoConj */
+#define CPF_SINGLE   8  /* 1: single, else double */
+#define CPF_REAL     9  /* 1: real, else complex */
+#define CPF_SYRK    10
+#define CPF_SYMM    11
+#define CPF_TRMM    12
 
 #define CPF_DEFAULT   0  /* default is no bits set */
 typedef struct CPNode ATL_cpnode_t;
 struct CPNode
 {
    ATL_cpnode_t *next;
-   char *rout, *auth, *comp, *cflags;
-   char *genstr;
+   char *auth, *comp, *cflags;
+   char *rout;     /* callable routine name w/o alpha/beta suffix */
+   char *genstr;   /* string that will generate, or NULL for hand-tuned */
    char *exflags;
    char *str;
    double mflop[4];
-   int ID;       /* ID unique in <pre>copy.idx */
-   int STGID;    /* storage ID predefined vals: [1-6] */
-   int mu, nu;   /* unrolling along M & N dims, respectively */
-   int vlen;     /* vector length, or 0 if doesn't matter to storage */
+   int ID;         /* ID unique in <pre>copy.idx */
+   int STGID;      /* storage ID predefined vals: [1-6] */
+   int mu, nu;     /* unrolling along M & N dims, respectively */
+   int vlen;       /* vector length, or 0 if doesn't matter to storage */
+   int rtlen;      /* # of chars/bytes in rout */
    unsigned int flag, asmbits;
 };
 @ROUT mmread
@@ -1741,7 +1754,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 @endmultidef
 
 @ROUT cpread
-@multidef fl TRANS CONJ FROMCM
+@multidef fl TRANS CONJ TOBLK
 @ROUT mvread
 @multidef fl X87 LDYTOP ALLALIGNXY AXPYBASED GEMMBASED CONJDEF FNU ALIGNX2A ADDCFLAGS PFTUNABLE
 @ROUT r1read
@@ -1882,7 +1895,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
       KUISKB NOBCAST
    @endmultidef
 @ROUT cpread
-   @define kwd @FROMCM TRANS CONJ@
+   @define kwd @TOBLK TRANS CONJ@
 @ROUT r1read 
    @define kwd @X87 INCYISONE FNU ADDCFLAGS ALIGNX2A PFTUNABLE@
 @ROUT mvread 
@@ -5245,53 +5258,53 @@ double TimeTSKernel
  * This file contains helper functions for code generation
  */
 #define ATL_GENERATE 1
+#include "atlas_cpparse.h"
 #include "atlas_mmparse.h"
 #include "atlas_mmtesttime.h"
 
-#define MMCP_TOBLK    0  /* set: copy to blk format;  unset: opposite direc */
-#define MMCP_CBLK     1  /* set: C format;  unset:A/B */
-#define MMCP_ABLK     2  /* set: scope mu;  unset: scope nu */
-#define MMCP_TRANS    3
-#define MMCP_CONJ     4
-#define MMCP_SINGLE   5
-#define MMCP_REAL     6
-#define MMCP_SYRK     7
-#define MMCP_SYMM     8
-#define MMCP_TRMM     9
+@beginskip
+#define CPF_TOBLK    0  /* set: copy to blk format;  unset: opposite direc */
+#define CPF_CBLK     1  /* set: C format;  unset:A/B */
+#define CPF_ABLK     2  /* set: scope mu;  unset: scope nu */
+#define CPF_TRANS    3
+#define CPF_CONJ     4
+#define CPF_SINGLE   5
+#define CPF_REAL     6
+#define CPF_SYRK     7
+#define CPF_SYMM     8
+#define CPF_TRMM     9
 /*
  * C copy routines choose: direction, a[1,n,X], b[0,1,n,X]
  * AB copy routines choose: direction, TA=[N,T,C,H], a[1,n,X]
  * -> C comes from N with Conj_ set, H comes from T with Conj_ set
  */
-typedef struct MMCopyFunc ATL_mmcp_t;
+typedef struct MMCopyFunc ATL_cpnode_t;
 struct MMCopyFunc
 {                     /* user defined IDs always unique */
    int ID;            /* 0: access-maj, >0: user defined */
    int mu, nu;        /* unrollings: A/B copies use only nu */
    int kvec;          /* vlen for k-vec storage, else 0 */
-   int flag;          /* bits: vals are MMCP_* */
+   int flag;          /* bits: vals are CPF_* */
 @skip   char *file;        /* filename */
    int rtlen;         /* # of chars/bytes in rout */
    char *rout;        /* callable routine name w/o alpha/beta suffix */
    char *genstr;      /* string that will generate ID=0 kerns */
-   ATL_mmcp_t *next;
+   ATL_cpnode_t *next;
 };
-
+@endskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static int CopyAreDiff(ATL_mmcp_t *c0, ATL_mmcp_t *c1)
+static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
 /*
  * RETURNS: 1 if c0 & c1 have different functionality, 0 if equivalent
  */
 {
    int iret;
-   iret = (c0->ID == c1->ID);
-   if (!c0->ID)
-   {
-      iret &= (c0->nu == c1->nu) & (c0->mu == c1->mu);
-      iret &= (c0->kvec == c1->kvec);
-      iret &= (c0->flag == c1->flag);
-   }
+   iret = (c0->STGID == c1->STGID);
+   iret &= (c0->ID == c1->ID);
+   iret &= (c0->nu == c1->nu) & (c0->mu == c1->mu);
+   iret &= (c0->vlen == c1->vlen);
+   iret &= (c0->flag == c1->flag);
    return(!iret);
 }
 
@@ -5300,10 +5313,10 @@ static int CopyAreDiff(ATL_mmcp_t *c0, ATL_mmcp_t *c1)
 static char MMCopyGetPre(int flag)
 {
    char pre;
-   if (flag & (1<<MMCP_REAL))
-      pre = (flag & (1<<MMCP_SINGLE)) ? 's':'d';
+   if (flag & (1<<CPF_REAL))
+      pre = (flag & (1<<CPF_SINGLE)) ? 's':'d';
    else
-      pre = (flag & (1<<MMCP_SINGLE)) ? 'c':'z';
+      pre = (flag & (1<<CPF_SINGLE)) ? 'c':'z';
    return(pre);
 }
 
@@ -5312,10 +5325,10 @@ static char MMCopyGetPre(int flag)
 static char *MMCopyGetCompType(int flag)
 {
    char *ctyp;
-   if (flag & (1<<MMCP_REAL))
-      ctyp = (flag & (1<<MMCP_SINGLE)) ? "SREAL":"DREAL";
+   if (flag & (1<<CPF_REAL))
+      ctyp = (flag & (1<<CPF_SINGLE)) ? "SREAL":"DREAL";
    else
-      ctyp = (flag & (1<<MMCP_SINGLE)) ? "SCPLX":"DCPLX";
+      ctyp = (flag & (1<<CPF_SINGLE)) ? "SCPLX":"DCPLX";
    return(ctyp);
 }
 
@@ -5323,22 +5336,22 @@ static char *MMCopyGetCompType(int flag)
 /* procedure @(ip) */
 static char MMCopyGetUpr(int flag)
 {
-   return((flag & (1<<MMCP_SINGLE)) ? 's':'d');
+   return((flag & (1<<CPF_SINGLE)) ? 's':'d');
 }
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static char MMCopyGetTrans(int flag)
 {
-   if (flag & (1<<MMCP_TRANS))
-      return((flag & (1<<MMCP_CONJ))?'H':'T');
-   return((flag & (1<<MMCP_CONJ))?'C':'N');
+   if (flag & (1<<CPF_TRANS))
+      return((flag & (1<<CPF_CONJ))?'H':'T');
+   return((flag & (1<<CPF_CONJ))?'C':'N');
 }
 
 /* procedure @(ip) */
 static char *MMCopyGetDirect(int flag)
 {
-   return((flag&(1<<MMCP_TOBLK)) ? "Into" : "From");
+   return((flag&(1<<CPF_TOBLK)) ? "Into" : "From");
 }
 
 
@@ -5352,35 +5365,35 @@ static int MMCopyEncode
    char TA    /* [N,T,C,H] */
 )
 /* 
- * returns arginfo as ATL_mmcp_t flag
+ * returns arginfo as ATL_cpnode_t flag
  */
 {
    int flag;
    if (pre)
    {
-      flag = (pre == 'd' || pre == 's') ? (1<<MMCP_REAL) : 0;
-      flag |= (pre == 's' || pre == 'c') ? (1<<MMCP_SINGLE) : 0;
+      flag = (pre == 'd' || pre == 's') ? (1<<CPF_REAL) : 0;
+      flag |= (pre == 's' || pre == 'c') ? (1<<CPF_SINGLE) : 0;
    }
    if (dir)
    {
       if (!(dir == 'F' || dir == 'f'))
-         flag |= (1<<MMCP_TOBLK);
+         flag |= (1<<CPF_TOBLK);
    }
    if (mat)
    {
       if (mat == 'C' || mat == 'c')
-         flag |= (1<<MMCP_CBLK);
+         flag |= (1<<CPF_CBLK);
       else /* A or B */
       {
-         flag |= (mat == 'a' || mat == 'A') ? (1<<MMCP_ABLK) : 0;
+         flag |= (mat == 'a' || mat == 'A') ? (1<<CPF_ABLK) : 0;
          if (TA)
          {
             if (TA == 't' || TA == 'T')
-               flag |= (1<<MMCP_TRANS);
+               flag |= (1<<CPF_TRANS);
             else if (TA == 'c' || TA == 'C')
-               flag |= (1<<MMCP_CONJ);
+               flag |= (1<<CPF_CONJ);
             else if (TA == 'H' || TA == 'h')
-               flag |= (1<<MMCP_TRANS) | (1<<MMCP_CONJ);
+               flag |= (1<<CPF_TRANS) | (1<<CPF_CONJ);
          }
       }
    }
@@ -5389,7 +5402,7 @@ static int MMCopyEncode
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
+static char *GetMMCopyName(ATL_cpnode_t *p, int *LEN)
 /*
  * RETURNS : Unique name for copy file, with at least 6 extra bytes alloc
  *           so that you can suffix it with _aX_bX or .c
@@ -5405,20 +5418,20 @@ static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
    if (ID)
       len = 9 + NumDecDigits(p->ID);
    else
-      len = 9+NumDecDigits(p->mu)+NumDecDigits(p->nu)+NumDecDigits(p->kvec);
+      len = 9+NumDecDigits(p->mu)+NumDecDigits(p->nu)+NumDecDigits(p->vlen);
 /*
  * For C format routine naming scheme is:
  * ID=0 : ATL_<pre>cp[Into,From]BlkC_<mu>x<nu>_<kvec>
  * ID>0 : ATL_<pre><ID>cp[Into,From]BlkC
  */
-   if (flag & (1<<MMCP_CBLK))
+   if (flag & (1<<CPF_CBLK))
    {
       if (p->ID) /* user-supplied */
       {
          len += 17 - 2*2;
          i = sprintf(sp, "ATL_%c%dcp%sBlkC", pre, ID, dir);
       }
-      else if (p->flag & (1<<MMCP_SYRK)) /* ATL_<pre>syblk2cmat */
+      else if (p->flag & (1<<CPF_SYRK)) /* ATL_<pre>syblk2cmat */
       {
          i = len = 15;          /* 16:ATL_Xsyblk2cmat */
          sp = malloc(len+1);
@@ -5428,11 +5441,12 @@ static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
       }
       else /* ATL_<pre>cpy[To,From]C_<mu>x<nu>_<kvec> */
       {
+         int kvec = (p->flag & (1<<CPF_KVEC)) ? p->vlen : 0;
          len += 24 - 4*2;
          sp = malloc(len+1);
          assert(sp);
          i = sprintf(sp, "ATL_%ccp%sBlkC_%dx%d_%d", pre, dir, 
-                     p->mu, p->nu, p->kvec);
+                     p->mu, p->nu, kvec);
       }
    }
 /*
@@ -5454,10 +5468,11 @@ static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
       }
       else     /* ATL_<pre>cp[To,From]BlkA[N,T]_<u>_<kvec> */
       {
+         int kvec = (p->flag & (1<<CPF_KVEC)) ? p->vlen : 0;
          len += 24 - 4*2;
          sp = malloc(len+1);
          assert(sp);
-         i=sprintf(sp, "ATL_%ccp%sBlkA_%d_%d", pre, dir, p->nu, p->kvec);
+         i=sprintf(sp, "ATL_%ccp%sBlkA_%d_%d", pre, dir, p->nu, kvec);
       }
    }
    assert(i <= len);
@@ -5468,14 +5483,18 @@ static char *GetMMCopyName(ATL_mmcp_t *p, int *LEN)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *GetMMCopyNode(int ID, int mu, int nu, int kvec, int flag)
+static ATL_cpnode_t *GetMMCopyNode(int ID, int mu, int nu, int kvec, int flag)
 {
-   ATL_mmcp_t *cp;
-   cp = calloc(1, sizeof(ATL_mmcp_t));
+   ATL_cpnode_t *cp;
+   cp = calloc(1, sizeof(ATL_cpnode_t));
    cp->ID = ID;
    cp->mu = mu;
    cp->nu = nu;
-   cp->kvec = kvec;
+   if (kvec)
+   {
+      cp->vlen = kvec;
+      flag |= (1<<CPF_KVEC);
+   }
    cp->flag = flag;
    assert(cp);
    return(cp);
@@ -5483,11 +5502,11 @@ static ATL_mmcp_t *GetMMCopyNode(int ID, int mu, int nu, int kvec, int flag)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *CloneCopyNode(ATL_mmcp_t *b)
+static ATL_cpnode_t *CloneCopyNode(ATL_cpnode_t *b)
 {
-   ATL_mmcp_t *p;
-   p = malloc(sizeof(ATL_mmcp_t));
-   memcpy(p, b, sizeof(ATL_mmcp_t));
+   ATL_cpnode_t *p;
+   p = malloc(sizeof(ATL_cpnode_t));
+   memcpy(p, b, sizeof(ATL_cpnode_t));
    p->next = NULL;
 /*
  * Now get our own copies of strings
@@ -5501,9 +5520,9 @@ static ATL_mmcp_t *CloneCopyNode(ATL_mmcp_t *b)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *KillCopyNode(ATL_mmcp_t *cp)
+static ATL_cpnode_t *KillCopyNode(ATL_cpnode_t *cp)
 {
-   ATL_mmcp_t *next=NULL;
+   ATL_cpnode_t *next=NULL;
    if (cp)
    {
       @whiledef st rout genstr
@@ -5518,7 +5537,7 @@ static ATL_mmcp_t *KillCopyNode(ATL_mmcp_t *cp)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *KillAllCopyNodes(ATL_mmcp_t *cp)
+static ATL_cpnode_t *KillAllCopyNodes(ATL_cpnode_t *cp)
 {
    while (cp)
       cp = KillCopyNode(cp);
@@ -5527,9 +5546,9 @@ static ATL_mmcp_t *KillAllCopyNodes(ATL_mmcp_t *cp)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip): RETURNS ptr to entry in b if n already there, else NULL */
-ATL_mmcp_t *FindCopy(ATL_mmcp_t *b, ATL_mmcp_t *n)
+ATL_cpnode_t *FindCopy(ATL_cpnode_t *b, ATL_cpnode_t *n)
 {
-   ATL_mmcp_t *p;
+   ATL_cpnode_t *p;
    for (p=b; p; p = p->next)
       if (!CopyAreDiff(p, n))
          return(p);
@@ -5538,7 +5557,7 @@ ATL_mmcp_t *FindCopy(ATL_mmcp_t *b, ATL_mmcp_t *n)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_mmcp_t *FindLastCopyNode(ATL_mmcp_t *b)
+ATL_cpnode_t *FindLastCopyNode(ATL_cpnode_t *b)
 {
    if (b)
    {
@@ -5550,18 +5569,18 @@ ATL_mmcp_t *FindLastCopyNode(ATL_mmcp_t *b)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static ATL_mmcp_t *AddUniqueCopyNode(ATL_mmcp_t *cb, ATL_mmcp_t *cnb)
+static ATL_cpnode_t *AddUniqueCopyNode(ATL_cpnode_t *cb, ATL_cpnode_t *cnb)
 /*
  * Adds all copy entries in cnb to cb, if cb doesn't already have a 
  * functionally equivalent entry. cnb is unchanged.
  */
 {
-   ATL_mmcp_t *p;
+   ATL_cpnode_t *p;
    for (p=cnb; p; p = p->next)
    {
       if (!FindCopy(cb, p))
       {
-         ATL_mmcp_t *np;
+         ATL_cpnode_t *np;
          np = CloneCopyNode(p);
          np->next = cb;
          cb = np;
@@ -5591,15 +5610,15 @@ void GetMMCopyRefresh(int flag, ATL_mmnode_t *mb)
 @endskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_mmcp_t *GetMMCopyFromMMNodes
+ATL_cpnode_t *GetMMCopyFromMMNodes
 (
    int flag,          /* set with call to MMCopyEncode */
    ATL_mmnode_t *mb   /* list of amm kerns */
 )
 {
-   ATL_mmcp_t *cb, *cp;
+   ATL_cpnode_t *cb, *cp;
    ATL_mmnode_t *mp;
-   const int CP_C = (flag&(1<<MMCP_CBLK)), CP_A = (flag&(1<<MMCP_ABLK));
+   const int CP_C = (flag&(1<<CPF_CBLK)), CP_A = (flag&(1<<CPF_ABLK));
 /*
  * Setup copy list matching the MM kerns in mb 
  */
@@ -5645,8 +5664,8 @@ void GetMMAllUniqueCopyFromMMNodes
    char dirC,  /* '[T,F]' */
    char dirA,  /* '[T,F]' */
    ATL_mmnode_t *mb,  /* list of amm kerns */
-   ATL_mmcp_t **AB,  /* cpy func where A & B can use same routine */
-   ATL_mmcp_t **CB    /* copy routines for C */
+   ATL_cpnode_t **AB,  /* cpy func where A & B can use same routine */
+   ATL_cpnode_t **CB    /* copy routines for C */
 )
 /*
  * Creates seperate lists for copy funcs for A&B, and C.  For types where
@@ -5657,19 +5676,19 @@ void GetMMAllUniqueCopyFromMMNodes
  * have only one stgID!
  */
 {
-   ATL_mmcp_t *ab=(*AB), *cb = (*CB), *np;
+   ATL_cpnode_t *ab=(*AB), *cb = (*CB), *np;
    ATL_mmnode_t *mp;
    int flgA, flgC;
 
-   flgC = (pre == 's' || pre == 'd') ? (1<<MMCP_REAL) : 0;
+   flgC = (pre == 's' || pre == 'd') ? (1<<CPF_REAL) : 0;
    if (pre == 's' || pre == 'c')
-      flgC |= (1<<MMCP_SINGLE);
+      flgC |= (1<<CPF_SINGLE);
    flgA = flgC;
    if (dirA == 'T')
-      flgA |= (1<<MMCP_TOBLK);
+      flgA |= (1<<CPF_TOBLK);
    if (dirC == 'T')
-      flgC |= (1<<MMCP_TOBLK);
-   flgC |= (1<<MMCP_CBLK);
+      flgC |= (1<<CPF_TOBLK);
+   flgC |= (1<<CPF_CBLK);
 
    np = GetMMCopyNode(0, 0, 0, 0, 0);
 
@@ -5678,10 +5697,14 @@ void GetMMAllUniqueCopyFromMMNodes
  */
    for (mp=mb; mp; mp = mp->next)
    {
-      ATL_mmcp_t *p;
+      ATL_cpnode_t *p;
       int kvec = 0;
 
-      np->kvec = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 0;
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      {
+         np->flag = flgC | (1<<CPF_KVEC);
+         np->vlen = mp->vlen;
+      }
       np->ID = mp->stgC; np->mu = mp->mu; np->nu = mp->nu;
       np->flag = flgC;
       if (!FindCopy(cb, np))  /* not already in list, so add it */
@@ -5702,7 +5725,7 @@ void GetMMAllUniqueCopyFromMMNodes
          assert(0); // should not happen yet
       }
       else /* Add two nodes to ab, using [A(mu),B(nu)] */
-      {    /* don't set MMCP_ABLK, since A or B is same for us */
+      {    /* don't set CPF_ABLK, since A or B is same for us */
          np->nu = mp->mu;
          if (!FindCopy(ab, np))
          {
@@ -5734,24 +5757,24 @@ void GetMMAllUniqueCopyFromMMNodes
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_mmcp_t *AddMMCKernCopyFromMMNodes
+ATL_cpnode_t *AddMMCKernCopyFromMMNodes
 (
    char pre,  /* '[s,d,c,z]' */
    char dir,  /* '[T,F]' */
-   int KERN,          /* one of MMCP_[SYRK,SYMM,TRMM], or 0 (GEMM) */
+   int KERN,          /* one of CPF_[SYRK,SYMM,TRMM], or 0 (GEMM) */
    ATL_mmnode_t *mb,  /* list of amm kerns */
-   ATL_mmcp_t *ab     /* cpy func where A & B can use same routine */
+   ATL_cpnode_t *ab     /* cpy func where A & B can use same routine */
 )
 {
    int flag = KERN ? (1<<KERN) : 0;
    ATL_mmnode_t *mp;
    if (!mb)
       return(ab);
-   assert(KERN == MMCP_SYRK);        /* true for now */
+   assert(KERN == CPF_SYRK);        /* true for now */
    flag |= MMCopyEncode(pre, dir, 'C', 'N');
    for (mp=mb; mp; mp = mp->next)
    {
-      ATL_mmcp_t *np;
+      ATL_cpnode_t *np;
       np = GetMMCopyNode(0, mp->mu, mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC) ? 
                          mp->vlen : 0, flag);
       np->rout = GetMMCopyName(np, &np->rtlen);
@@ -5763,15 +5786,15 @@ ATL_mmcp_t *AddMMCKernCopyFromMMNodes
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_mmcp_t *AddMMUniqueACopyFromMMNodes
+ATL_cpnode_t *AddMMUniqueACopyFromMMNodes
 (
    char pre,  /* '[s,d,c,z]' */
    char dirA,  /* '[T,F]' */
    ATL_mmnode_t *mb,  /* list of amm kerns */
-   ATL_mmcp_t *ab     /* cpy func where A & B can use same routine */
+   ATL_cpnode_t *ab     /* cpy func where A & B can use same routine */
 )
 {
-   ATL_mmcp_t *np;
+   ATL_cpnode_t *np;
    ATL_mmnode_t *mp;
    for (mp=mb; mp; mp = mp->next)
    {
@@ -6049,9 +6072,9 @@ void PrintMMProtos(FILE *fp, char pre, char *nm, ATL_mmnode_t *mb, int off,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-void PrintMMCpProtosA(FILE *fp, char *nm, ATL_mmcp_t *cb, char dir, char alp)
+void PrintMMCpProtosA(FILE *fp, char *nm, ATL_cpnode_t *cb, char dir, char alp)
 {
-   ATL_mmcp_t *cp;
+   ATL_cpnode_t *cp;
    char *pro;
    char pre;
 
@@ -6080,10 +6103,10 @@ void PrintMMCpProtosA(FILE *fp, char *nm, ATL_mmcp_t *cb, char dir, char alp)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-void PrintMMCpProtosC(FILE *fp, char *nm, ATL_mmcp_t *cb, 
+void PrintMMCpProtosC(FILE *fp, char *nm, ATL_cpnode_t *cb, 
                       char dir, char alp, char bet)
 {
-   ATL_mmcp_t *cp;
+   ATL_cpnode_t *cp;
    char *ab;
    char *pro;
    char pre;

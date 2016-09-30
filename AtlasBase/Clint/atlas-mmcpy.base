@@ -50,7 +50,7 @@
 # This file indexes the user-supplied copy routines for the storage schemes
 # indexed in storage.ids, and has the following format (non-mandatory
 # keys show the default in []):
-# ID=<id> STGID=<stgid> FROMCM=[0,1] TRANS=[0,1] CONJ=[0,1] MU=<mu> NU=<nu> \
+# ID=<id> STGID=<stgid> TOBLK=[0,1] TRANS=[0,1] CONJ=[0,1] MU=<mu> NU=<nu> \
 #         VLEN=<vlen> ROUT='rt' AUTH='name' COMP='gcc' CFLAGS='flags'
 # ID: Mandatory.  Unique (in this file only) int >= 0.  
 # STGID: Mandatory.  Number >0 matching and ID in storage.idx.  Predefined:
@@ -61,9 +61,9 @@
 #    5 : KB-major for A or B
 #    6 : MB-major for C
 #    7 : uses original col-major C directly (like ATLAS 3.10 kernel)
-# FROMCM: Mandatory. 
-#         1: copies from column-major to STGID storage
-#         2: copies from STGID storage to column-major
+# TOBLK: Mandatory. 
+#         0: copies from STGID block storage to column-major
+#         1: copies from column-major to STGID block storage
 # MU/NU: [0] unrolling along rows/cols
 # TRANS: [n] Needed only for A/B storage, indicates transpose being done:
 #    N: cols of matrix stored contiguously, rows strided (col-major)
@@ -72,9 +72,9 @@
 # NOTE: for a storage format to be used by ATLAS, enough copy funcs must
 #       be supplied for use, and the number required varies by whether the
 #       format is for GEMM's A/B or C matrix:
-#       A&B: FROMCM=1 and for real TRANS=N&T, cplx TRANS=N&T&C&H
-#            FROMCM=0 must be present for testing & custom uses.
-#       C  : FROMCM=0 required. FROMCM=1 needed. for testing & custom uses.
+#       A&B: TOBLK=1 and for real TRANS=N&T, cplx TRANS=N&T&C&H
+#            TOBLK=0 must be present for testing & custom uses.
+#       C  : TOBLK=0 required. TOBLK=1 needed for testing & custom uses.
 #
 @ROUT cptst.c
 /* 
@@ -160,8 +160,21 @@ int main(int nargs, char **args)
 @ROUT cpysearch
 #include "atlas_cpparse.h"
 #include "atlas_mmtesttime.h"
+#include "atlas_mmgen.h"
 
 int main(int nargs, char **args)
+/*
+ * For now read geAMMRES.sum, later add rkAMMRES.sum & SYRK.
+ * Will use this info to find unique lists of AB & C copiers.
+ * -> Later must extend for A & B using possibly different copiers.
+ * It then finds the fastest working copy routine for each case, 
+ * trying each of following:
+ * (1) Codes generated from atlas-mmkg.base (all standard formats)
+ * (2) atlas-mmg.base (vector ops, but only mu%vlen Cblk formats)
+ * (3) User-contributed cases
+ * It creates as output cpAMMRES.sum, which is a list of all required
+ * copy kernels.
+ */
 {
    char pre='d';
    ATL_cpnode_t *cb, *cp;

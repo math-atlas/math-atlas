@@ -2398,6 +2398,10 @@ knam=ATL_USERCPMM
 FMF=750.0
 FMFS=-R $(FMF)
 NRF=-1  # change to -2 to get unconstrained MB
+blk2C=def
+C2blk=def
+CM2blk=def
+RM2blk=def
 @BEGINSKIP
 RunMMDef : xmmsearch
 	./xmmsearch -p $(pre) -r $(nreg)
@@ -2431,6 +2435,7 @@ x@(rout) : $(INCAdir)/atlas_type.h @(rout).o @(dep) $(parsedeps)
 @ENDSKIP
 
 help :
+	@@echo "SEE ALSO: make cpyhelp"
 	@@echo "flags for amm kerns preMCFLAGS='', else preKCFLAGS=''\n"
 	@@echo "make PREcpytime kfnam=FILENAME mu=X nu=X knam=ROUTINE_NAME ta=[N,T] betan=[X,1,n]"
 	@@echo "-->can take MTXD '-D M lda N COLWISE'\n"
@@ -2438,6 +2443,12 @@ help :
 	@@echo "make PREammmtst mu=X nu=X M=X N=X K=X mmrout=<FILE>\n"
 	@@echo "make gen_amm_[sse,avx,gvec,scalar] mu=X nu=X vlen=VL kmaj=VL rt=FILE\n"
 
+cpyhelp :
+	@@echo "make gen_[sy,]blk2C rt= pre= vlen= mu= nu= cpvlen= beta= alpha="
+	@@echo "make gen_[sy,]C2blk rt= pre= vlen= mu= nu= cpvlen= beta= alpha="
+	@@echo "make gen_A[T,N]2blk rt= kmaj= UR= alpha="
+	@@echo "make gen_A[T,N]2blk rt= kmaj= UR= alpha="
+        @@echo "make gen_cA[T,N]2blk rt= kmaj= UR= alpha= rout=FUNCNM"
 DoSzBlk :
 	rm -f szblk.c xszblk
 	echo "int getsz(int M, int N, int mu, int nu, int vlen)" > szblk.c
@@ -3116,6 +3127,37 @@ cwrk3=0
 @(pre)ammtst: @(pre)ammmtst
    @multidef tri   0    1
    @whiledef rt ammm syrk
+@(pre)@(rt)cpytst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
+	- rm -f c@(rt)tst.c
+	if test "$(blk2C)" = "def" ; then \
+           $(extC) -b $(mySRCdir)/atlas-mmkg.base -o c@(rt)tst.c pre=@(pre) \
+           vec=NA -def rtnm ATL_blk2C rout=blk2C -def vl $(vlen) \
+           -def TRI @(tri) -def mu $(mu) -def nu $(nu) \
+           -def cpvl $(cpvlen) -def beta 0 -def alpha 1 ; \
+        else \
+           cat $(blk2C) > c@(rt)tst.c ; \
+        fi
+        @whiledef op RM CM
+	if test "$(@(op)2blk)" != "def" ; then \
+           echo "#define ATL_USERCPMM ATL_@low@(op)2am" >> c@(rt)tst.c ; \
+           cat $(@(op)2blk) >> c@(rt)tst.c ; \
+           echo "#undef  ATL_USERCPMM" >> c@(rt)tst.c ; \
+           echo "#define NO_@(op)2AM" >> c@(rt)tst.c ; \
+        fi
+        @endwhile
+	$(extC) -def mu "${mu}" -def nu "${nu}" -def be "${beta}" \
+                -def M "${M}" -def N "${N}" -def K "${K}" -def kmaj "$(kmaj)" \
+                -def TRI @(tri) rout=cammmtst >> c@(rt)tst.c
+	- rm -f @(pre)ammm_b1.o @(pre)ammm_b0.o @(pre)ammm_bn.o
+	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA1 \
+           -DKB=${kb} -DATL_USERMM=cmm_b1 -o @(pre)ammm_b1.o -c $(mmrout) 
+	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA0 \
+           -DKB=${kb} -DATL_USERMM=cmm_b0 -o @(pre)ammm_b0.o -c $(mmrout)
+	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETAN1 \
+           -DKB=${kb} -DATL_USERMM=cmm_bn -o @(pre)ammm_bn.o -c $(mmrout)
+	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst -DATL_CWRK3=$(cwrk3) \
+              c@(rt)tst.c @(pre)ammm_b1.o @(pre)ammm_b0.o @(pre)ammm_bn.o
+	$(ATLRUN) $(MMTdir) x@(pre)@(rt)tst 
 @(pre)@(rt)tst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
 	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o c@(rt)tst.c pre=@(pre) \
            vec=NA -def rtnm ATL_blk2C rout=blk2C -def vl $(vlen) \
@@ -3142,9 +3184,49 @@ cwrk3=0
 @multidef typ DREAL SREAL
 @multidef upr d s
 @whiledef pre d s
-@(pre)ammtst: @(pre)ammmtst
    @multidef tri   0    1
    @whiledef rt ammm syrk
+@(pre)@(rt)cpytst: 
+	rm -f @(rt)tst.c
+	if test "$(blk2C)" = "def" ; then \
+           $(extC) -b $(mySRCdir)/atlas-mmkg.base -o @(rt)tst.c pre=@(pre) \
+           vec=NA rout=blk2C -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+           -def cpvl $(cpvlen) -def beta 0 -def alpha 1 -def rtnm ATL_blk2C \
+           -def TRI @(tri) ; \
+        else \
+@skip           echo "void ATL_blk2C(const size_t,const size_t,const SCALAR, const TYPE*, const SCALAR, TYPE*, const size_t);" > @(rt)tst.c ; \
+           cat $(blk2C) > @(rt)tst.c ; \
+        fi
+	if test "$(C2blk)" = "def" ; then \
+           $(extC) -b $(mySRCdir)/atlas-mmkg.base pre=@(pre) vec=NA \
+                rout=C2blk -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+                -def rtnm ATL_C2blk -def TRI @(tri) \
+                -def cpvl $(cpvlen) -def beta 0 -def alpha 1 >> @(rt)tst.c ; \
+        else \
+           cat $(C2blk) >> @(rt)tst.c ; \
+@skip           echo "void ATL_C2blk(const size_t,const size_t,const SCALAR, const TYPE*, const size_t, const SCALAR, TYPE*);" >> @(rt)tst.c ; \
+        fi
+	if test "$(CM2blk)" != "def" ; then \
+           echo "#define ATL_USERCPMM ATL_cm2am" >> @(rt)tst.c ; \
+           cat $(CM2blk) >> @(rt)tst.c ; \
+           echo "#undef  ATL_USERCPMM" >> @(rt)tst.c ; \
+           echo "#define NO_CM2AM" >> @(rt)tst.c ; \
+        fi
+	if test "$(RM2blk)" != "def" ; then \
+           echo "#define ATL_USERCPMM ATL_rm2am" >> @(rt)tst.c ; \
+           cat $(RM2blk) >> @(rt)tst.c ; \
+           echo "#undef  ATL_USERCPMM" >> @(rt)tst.c ; \
+           echo "#define NO_RM2AM" >> @(rt)tst.c ; \
+        fi
+	$(extC) -def mu "${mu}" -def nu "${nu}" -def be "${beta}" \
+                -def M "${M}" -def N "${N}" -def K "${K}" -def dupB "${dupB}" \
+                -def kmaj "${kmaj}" -def TRI @(tri) rout=ammmtst >> @(rt)tst.c
+	- rm -f @(pre)ammm.o
+	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA${betan} \
+           -DKB=${kb} -o @(pre)ammm.o -c $(mmrout)
+	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst @(rt)tst.c @(pre)ammm.o
+	$(ATLRUN) $(MMTdir) x@(pre)@(rt)tst 
+@(pre)ammtst: @(pre)ammmtst
 @(pre)@(rt)tst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
 	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o @(rt)tst.c pre=@(pre) vec=NA \
                 rout=blk2C -def vl $(vlen) -def mu $(mu) -def nu $(nu) \

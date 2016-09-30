@@ -29653,11 +29653,11 @@ int StrFindReplace(char **org, char *find, char *replace)
    return(len);
 }
 
-void AdjustCPNamesWithID(char pre, ATL_mmcp_t *cb)
+void AdjustCPNamesWithID(char pre, ATL_cpnode_t *cb)
 {
    char find[24] = "";
    char replace[24] = "";
-   ATL_mmcp_t *cp;
+   ATL_cpnode_t *cp;
    sprintf(find, "ATL_%c", pre);
    sprintf(replace, "ATL_%cu%d", pre, UID);
    for (cp=cb; cp; cp=cp->next)
@@ -29696,7 +29696,7 @@ void GenCpyA(char pre, char *outd, char *cn, char dir, char alp,
       arrnm[mati] = mats[im];
       for (it=0; it < nt; it++)
       {
-         ATL_mmcp_t *cb, *ucb;
+         ATL_cpnode_t *cb, *ucb;
          int i;
          const char ta = tas[it]; 
 
@@ -29720,7 +29720,7 @@ void GenCpyC(FILE *fp, char pre, char *outd, char *cn, char dir, char *type,
              char alp, char bet, ATL_mmnode_t *mb)
 {
    char *arrnm = (dir == 'T') ? "C2BLK" : "BLK2C";
-   ATL_mmcp_t *cb, *ucb;
+   ATL_cpnode_t *cb, *ucb;
    int flag=0, i, j;
 
    cb = GetMMCopyFromMMNodes(MMCopyEncode(pre, dir, 'c', 'n'), mb);
@@ -29801,7 +29801,7 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
          break;
    if (mp)
    {
-      ATL_mmcp_t *cb, *ucb, *cp;
+      ATL_cpnode_t *cb, *ucb, *cp;
       int n;
       NEEDSZF=1;
       fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "szC", mb);
@@ -29815,7 +29815,8 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
  */
       for (cp=ucb; cp; cp = cp->next)
       {
-         const unsigned int mu=cp->mu, nu=cp->nu, kvec=cp->kvec, b = mu*nu;
+         const unsigned kvec=(cp->flag&(1<<CPF_KVEC)) ? cp->vlen : 0
+         const unsigned int mu=cp->mu, nu=cp->nu, b = mu*nu;
          const unsigned int B = (kvec > 1) ? ((b+kvec-1)/kvec)*kvec : 0;
          fprintf(fp, "#define uint unsigned int\n");
          if (b != B)
@@ -29838,7 +29839,8 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
          fprintf(fp, "static szC_t ATL_AMM_SZCW[%d] =\n{\n", n);
          for (cp=cb,n=0; cp; cp = cp->next,n++)
          {
-            const unsigned int mu=cp->mu, nu=cp->nu, kvec=cp->kvec, b = mu*nu;
+            const unsigned kvec=(cp->flag&(1<<CPF_KVEC)) ? cp->vlen : 0
+            const unsigned int mu=cp->mu, nu=cp->nu, b = mu*nu;
             const unsigned int B = (kvec > 1) ? ((b+kvec-1)/kvec)*kvec : 0;
             fprintf(fp, "/* IDX=%d */ ", n);
             if (b != B)
@@ -29953,7 +29955,7 @@ void GenSumH(char pre, char *outd, ATL_mmnode_t *ub)
 
 void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
 {
-   ATL_mmcp_t *cb;
+   ATL_cpnode_t *cb;
    ATL_mmnode_t *mb;
    char *nm="perf";
    double mfMax;
@@ -30028,9 +30030,9 @@ static void AddAlpBetSuf(char *rt, int rl, int ial, int ibe)
 }
 
 void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb, 
-                 ATL_mmcp_t *cpA, ATL_mmcp_t *cpC)
+                 ATL_cpnode_t *cpA, ATL_cpnode_t *cpC)
 {
-   ATL_mmcp_t *last, *cp;
+   ATL_cpnode_t *last, *cp;
    ATL_mmnode_t *mp;
    char *sgen;
    int i, len, dlen, mID, mU;
@@ -30050,7 +30052,8 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
       mID = Mmax(mID, cp->ID);
       mU = Mmax(mU, cp->mu);
       mU = Mmax(mU, cp->nu);
-      mU = Mmax(mU, cp->kvec);
+      if ((cp->flag&(1<<CPF_KVEC)))
+         mU = Mmax(mU, cp->vlen);
    }
    dlen = strlen(outd);
    len += dlen + 1;  /* outd */
@@ -30072,32 +30075,34 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
       char pr;
       pr = MMCopyGetPre(cp->flag);
       printf("   -> %s\n", cp->rout);
-      if (flag & (1<<MMCP_CBLK))
+      if (flag & (1<<CPF_CBLK))
       {
-         if (flag & (1<<MMCP_SYRK))
+         unsigned int kvec = (cp->flag&(1<<CPF_KVEC)) ? cp->vlen : 1;
+         if (flag & (1<<CPF_SYRK))
          {
             k = sprintf(sgen, 
 "make genall_syblk2C pre=%c vec=NA vlen=%d mu=%d nu=%d cpvlen=1 rt=%s/%s.c",
-                        pr, cp->kvec ? cp->kvec:1, cp->mu, cp->nu, outd, cp->rout);
+                        pr, kvec, cp->mu, cp->nu, outd, cp->rout);
          }
-         else if (flag & (1<<MMCP_CBLK))
+         else if (flag & (1<<CPF_CBLK))
          {
             k = sprintf(sgen, 
       "make genall_%s pre=%c vec=NA vlen=%d mu=%d nu=%d cpvlen=1 rt=%s/%s.c",
-                        (flag&(1<<MMCP_TOBLK)) ? "C2blk":"blk2C", pr, 
-                        cp->kvec ? cp->kvec:1, cp->mu, cp->nu, outd, cp->rout);
+                        (flag&(1<<CPF_TOBLK)) ? "C2blk":"blk2C", pr, 
+                        kvec, cp->mu, cp->nu, outd, cp->rout);
          }
       }
       else /* generate A/B copy */
       {
+         unsigned int kvec = (cp->flag&(1<<CPF_KVEC)) ? cp->vlen : 0;
          char *targ;
-         if (flag & (1<<MMCP_REAL))
-            targ = (flag & (1<<MMCP_TOBLK)) ? "A2blk":"blk2A";
+         if (flag & (1<<CPF_REAL))
+            targ = (flag & (1<<CPF_TOBLK)) ? "A2blk":"blk2A";
          else
-            targ = (flag & (1<<MMCP_TOBLK)) ? "cA2blk":"cblk2A";
+            targ = (flag & (1<<CPF_TOBLK)) ? "cA2blk":"cblk2A";
          k = sprintf(sgen, 
              "make genall_%s pre=%c kmaj=%d vlen=%d UR=%d cpvlen=1 rt=%s/%s.c",
-                     targ, pr, cp->kvec, cp->kvec ? cp->kvec:1, 
+                     targ, pr, kvec, kvec ? kvec:1, 
                      cp->nu, outd, cp->rout);
       }
       assert(k < len);
@@ -30168,7 +30173,7 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
 }
 
 void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
-             ATL_mmcp_t *cpA, ATL_mmcp_t *cpC)
+             ATL_cpnode_t *cpA, ATL_cpnode_t *cpC)
 /*
  * mb files have already been made at least compile-time unique (same source
  * file might occur multiple times due to need to compile with -DKB)
@@ -30176,7 +30181,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
 {
    FILE *fp;
    char *fn;
-   ATL_mmcp_t *cp;
+   ATL_cpnode_t *cp;
    ATL_mmnode_t *mp;
    char *sals[3] = {"1", "N1", "X"};
    char als[3] = {'1', 'n', 'X'};
@@ -30218,7 +30223,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
 
    for (cp=cpA; cp; cp = cp->next)  /* A/B copy routs */
    {
-      const int NTA = (cp->flag & (1<<MMCP_REAL)) ? 2:4;
+      const int NTA = (cp->flag & (1<<CPF_REAL)) ? 2:4;
       int it;
       for (it=0; it < NTA; it++)
       {
@@ -30316,7 +30321,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
    {
       char *styp, *cnj[2] = {"", "-DConj_=1"};
       const int flag = cp->flag;
-      const int NC = (flag&(1<<MMCP_REAL)) ? 1 : 2;
+      const int NC = (flag&(1<<CPF_REAL)) ? 1 : 2;
       int ic;
       char pr;
       styp = MMCopyGetCompType(cp->flag);
@@ -30351,7 +30356,7 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
    FILE *fp;
    int i, RCSAME;
    ATL_mmnode_t *rb=NULL, *ib=NULL, *mp;
-   ATL_mmcp_t *cpA=NULL, *cpC=NULL, *ncp;
+   ATL_cpnode_t *cpA=NULL, *cpC=NULL, *ncp;
    const char cpr = (pre == 'd') ? 'z' : 'c';
 /*
  * First, generate performance files, which require routs separated by
@@ -30586,7 +30591,7 @@ char *GetFlags(int nargs, char **args, char *PRE, ATL_mmnode_t **lists)
 
 void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
 {
-   ATL_mmcp_t *cb;
+   ATL_cpnode_t *cb;
    FILE *fp;
    const int ntr = (pre == 'd' || pre == 's') ? 2 : 4;
    int ial, ibe, itr;
@@ -30911,7 +30916,7 @@ void GenCpyA(char pre, char *outd, char *cn, char dir, char alp,
       arrnm[0] = mats[im];
       for (it=0; it < nt; it++)
       {
-         ATL_mmcp_t *cb, *ucb;
+         ATL_cpnode_t *cb, *ucb;
          int i;
          const char ta = tas[it]; 
 
@@ -30934,7 +30939,7 @@ void GenCpyC(FILE *fp, char pre, char *outd, char *cn, char dir, char *type,
              char alp, char bet, ATL_mmnode_t *mb)
 {
    char *arrnm = (dir == 'T') ? "C2BLK" : "BLK2C";
-   ATL_mmcp_t *cb, *ucb;
+   ATL_cpnode_t *cb, *ucb;
    int flag=0, i, j;
 
    cb = GetMMCopyFromMMNodes(MMCopyEncode(pre, dir, 'c', 'n'), mb);
@@ -31014,7 +31019,7 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
          break;
    if (mp)
    {
-      ATL_mmcp_t *cb, *ucb, *cp;
+      ATL_cpnode_t *cb, *ucb, *cp;
       int n;
       NEEDSZF=1;
       fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "szC", mb);
@@ -31027,7 +31032,8 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
  */
       for (cp=ucb; cp; cp = cp->next)
       {
-         const unsigned int mu=cp->mu, nu=cp->nu, kvec=cp->kvec, b = mu*nu;
+         const unsigned int kvec=(cp->flag&(1<<CPF_KVEC))? cp->vlen:0;
+         const unsigned int mu=cp->mu, nu=cp->nu, b = mu*nu;
          const unsigned int B = (kvec > 1) ? ((b+kvec-1)/kvec)*kvec : 0;
          fprintf(fp, "#define uint unsigned int\n");
          if (b != B)
@@ -31050,7 +31056,8 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
          fprintf(fp, "static szC_t ATL_AMM_SZCW[%d] =\n{\n", n);
          for (cp=cb,n=0; cp; cp = cp->next,n++)
          {
-            const unsigned int mu=cp->mu, nu=cp->nu, kvec=cp->kvec, b = mu*nu;
+            const unsigned int kvec=(cp->flag&(1<<CPF_KVEC))? cp->vlen:0;
+            const unsigned int mu=cp->mu, nu=cp->nu, b = mu*nu;
             const unsigned int B = (kvec > 1) ? ((b+kvec-1)/kvec)*kvec : 0;
             fprintf(fp, "/* IDX=%d */ ", n);
             if (b != B)
@@ -31298,7 +31305,7 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb,
 
 void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
 {
-   ATL_mmcp_t *cb;
+   ATL_cpnode_t *cb;
    ATL_mmnode_t *mmb;
    char *nm="perf";
    char *cn[4]={"ge", "sq", "rk", "ts"};
@@ -31414,9 +31421,9 @@ static void AddAlpBetSuf(char *rt, int rl, int ial, int ibe)
 }
 
 void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb, 
-                 ATL_mmcp_t *cpA, ATL_mmcp_t *cpC)
+                 ATL_cpnode_t *cpA, ATL_cpnode_t *cpC)
 {
-   ATL_mmcp_t *last, *cp;
+   ATL_cpnode_t *last, *cp;
    ATL_mmnode_t *mp;
    char *sgen;
    int i, len, dlen, mID, mU;
@@ -31436,7 +31443,8 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
       mID = Mmax(mID, cp->ID);
       mU = Mmax(mU, cp->mu);
       mU = Mmax(mU, cp->nu);
-      mU = Mmax(mU, cp->kvec);
+      if (cp->flag&(1<<CPF_KVEC))
+         mU = Mmax(mU, cp->vlen);
    }
    dlen = strlen(outd);
    len += dlen + 1;  /* outd */
@@ -31458,33 +31466,34 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
       char pr;
       pr = MMCopyGetPre(cp->flag);
       printf("   -> %s\n", cp->rout);
-      if (flag & (1<<MMCP_CBLK))
+      if (flag & (1<<CPF_CBLK))
       {
-         if (flag & (1<<MMCP_SYRK))
+         const unsigned int kvec=(cp->flag&(1<<CPF_KVEC))? cp->vlen:1;
+         if (flag & (1<<CPF_SYRK))
          {
             k = sprintf(sgen, 
 "make genall_syblk2C pre=%c vec=NA vlen=%d mu=%d nu=%d cpvlen=1 rt=%s/%s.c",
-                        pr, cp->kvec ? cp->kvec:1, cp->mu, cp->nu, outd, cp->rout);
+                        pr, kvec, cp->mu, cp->nu, outd, cp->rout);
          }
-         else if (flag & (1<<MMCP_CBLK))
+         else if (flag & (1<<CPF_CBLK))
          {
             k = sprintf(sgen, 
       "make genall_%s pre=%c vec=NA vlen=%d mu=%d nu=%d cpvlen=1 rt=%s/%s.c",
-                        (flag&(1<<MMCP_TOBLK)) ? "C2blk":"blk2C", pr, 
-                        cp->kvec ? cp->kvec:1, cp->mu, cp->nu, outd, cp->rout);
+                        (flag&(1<<CPF_TOBLK)) ? "C2blk":"blk2C", pr, 
+                        kvec, cp->mu, cp->nu, outd, cp->rout);
          }
       }
       else /* generate A/B copy */
       {
          char *targ;
-         if (flag & (1<<MMCP_REAL))
-            targ = (flag & (1<<MMCP_TOBLK)) ? "A2blk":"blk2A";
+         const unsigned int kvec=(cp->flag&(1<<CPF_KVEC))? cp->vlen:0;
+         if (flag & (1<<CPF_REAL))
+            targ = (flag & (1<<CPF_TOBLK)) ? "A2blk":"blk2A";
          else
-            targ = (flag & (1<<MMCP_TOBLK)) ? "cA2blk":"cblk2A";
+            targ = (flag & (1<<CPF_TOBLK)) ? "cA2blk":"cblk2A";
          k = sprintf(sgen, 
              "make genall_%s pre=%c kmaj=%d vlen=%d UR=%d cpvlen=1 rt=%s/%s.c",
-                     targ, pr, cp->kvec, cp->kvec ? cp->kvec:1, 
-                     cp->nu, outd, cp->rout);
+                     targ, pr, kvec, kvec ? cp->vlen:1, cp->nu, outd, cp->rout);
       }
       assert(k < len);
       k += sprintf(sgen+k, " > /dev/null 2>&1");
@@ -31554,7 +31563,7 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
 }
 
 void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
-             ATL_mmcp_t *cpA, ATL_mmcp_t *cpC)
+             ATL_cpnode_t *cpA, ATL_cpnode_t *cpC)
 /*
  * mb files have already been made at least compile-time unique (same source
  * file might occur multiple times due to need to compile with -DKB)
@@ -31562,7 +31571,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
 {
    FILE *fp;
    char *fn;
-   ATL_mmcp_t *cp;
+   ATL_cpnode_t *cp;
    ATL_mmnode_t *mp;
    char *sals[3] = {"1", "N1", "X"};
    char als[3] = {'1', 'n', 'X'};
@@ -31604,7 +31613,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
 
    for (cp=cpA; cp; cp = cp->next)  /* A/B copy routs */
    {
-      const int NTA = (cp->flag & (1<<MMCP_REAL)) ? 2:4;
+      const int NTA = (cp->flag & (1<<CPF_REAL)) ? 2:4;
       int it;
       for (it=0; it < NTA; it++)
       {
@@ -31702,7 +31711,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
    {
       char *styp, *cnj[2] = {"", "-DConj_=1"};
       const int flag = cp->flag;
-      const int NC = (flag&(1<<MMCP_REAL)) ? 1 : 2;
+      const int NC = (flag&(1<<CPF_REAL)) ? 1 : 2;
       int ic;
       char pr;
       styp = MMCopyGetCompType(cp->flag);
@@ -31737,7 +31746,7 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
    FILE *fp;
    int i, RCSAME;
    ATL_mmnode_t *rb=NULL, *ib=NULL, *mp;
-   ATL_mmcp_t *cpA=NULL, *cpC=NULL, *ncp;
+   ATL_cpnode_t *cpA=NULL, *cpC=NULL, *ncp;
    const char cpr = (pre == 'd') ? 'z' : 'c';
 /*
  * First, generate performance files, which require routs separated by
@@ -31774,8 +31783,8 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
  */
    cpA = AddMMUniqueACopyFromMMNodes(pre, 'T', lists[ISYRK], cpA);
    cpA = AddMMUniqueACopyFromMMNodes(cpr, 'T', lists[NMMLISTS+ISYRK], cpA);
-   cpC = AddMMCKernCopyFromMMNodes(pre, 'F', MMCP_SYRK, lists[ISYRK], cpC);
-   cpC = AddMMCKernCopyFromMMNodes(cpr, 'F', MMCP_SYRK, 
+   cpC = AddMMCKernCopyFromMMNodes(pre, 'F', CPF_SYRK, lists[ISYRK], cpC);
+   cpC = AddMMCKernCopyFromMMNodes(cpr, 'F', CPF_SYRK, 
                                   lists[NMMLISTS+ISYRK], cpC);
 /*
  * Now, kerns are compiled the same for real and complex, so reduce real
