@@ -41,7 +41,8 @@
 #include "atlas_genparse.h"
 #include "atlas_enum.h"
 
-#define ATL_CPMAXGEN  6
+#define ATL_CPMAXGEN  6  /* maximum generated code */
+#define ATL_CPMAXACCMAJ  4  /* max access-major copy */
 #define ATL_CPMVECAB  1
 #define ATL_CPMVECC   2
 #define ATL_CPKVECAB  3
@@ -5306,6 +5307,121 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
    iret &= (c0->vlen == c1->vlen);
    iret &= (c0->flag == c1->flag);
    return(!iret);
+}
+
+/* procedure @(ip) */
+static int MMCopyAreDiff(int which, ATL_mmnode_t *m0, ATL_mmnode_t *m1)
+/*
+ * RETURNS: 0 if m0 & m1 need same copy for matrix indicated by which:
+ *  0 : C
+ *  1 : A or B (A & B same-style storeage)
+ *  2 : storage special to A only
+ *  3 : storage special to B only
+ */
+{
+   int iret;
+   if (which == 0)  /* copy C */
+   {
+      int KV0, KV1, UU;
+      if (m0->stgC != m1->stgC)
+      {
+         if (m0->stgC > ATL_CPMAXACCMAJ || m1->stgC > ATL_CPMAXACCMAJ)
+            return(1);
+      }
+      if (m0->mu != m1->mu || m0->nu != m1->nu)
+         return(1);
+      KV0 = FLAG_IS_SET(m0->flag, MMF_KVEC);
+      KV1 = FLAG_IS_SET(m1->flag, MMF_KVEC);
+      if (KV0 && KV1)  /* both are kvec kerns */
+      { /* is OK if vlen match or if both vlens evenly divide mu*nu */
+         if (m0->vlen != m1->vlen)
+         {
+            int UU = m0->mu * m0->nu;
+            if ((UU/m0->vlen)*m0->vlen != UU || (UU/m1->vlen)*m1->vlen != UU)
+               return(1);
+         }
+      }
+      else if (KV0) /* only m0 kvec */
+      {
+         int UU = m0->mu * m0->nu;
+         if ((UU/m0->vlen)*m0->vlen != UU)
+            return(1);
+      }
+      else if (KV1)  /* only m1 kvec */
+      {
+         int UU = m1->mu * m1->nu;
+         if ((UU/m1->vlen)*m1->vlen != UU)
+            return(1);
+      }
+   }
+   else if (which == 1) /* copy A or B */
+     ;
+   else if (which == 2) /* copy A only */
+     ;
+   else if (which == 3) /* copy B only */
+     ;
+   return(0);
+}
+
+/* procedure @(ip) */
+ATL_mmnode_t *MMNoCopyRep(int which, int minSz, ATL_mmnode_t *mb)
+/*
+ * Eliminates mmnodes with duplicate copy routines for matrix indicated by 
+ * which.  In throwing away duplicates, retain routine with mb*nb > minSz,
+ * if both > minSz, throw away biggest, if both < minSz throw away smallest.
+ */
+{
+   if (mb && mb->next)
+   {
+      ATL_mmnode_t *up = mb->next;
+      while (up)
+      {
+         ATL_mmnode_t *mp;
+/*
+ *       See if up has same copy routine as prior/unique mmnode
+ */
+         for (mp=mb; mp != up; mp = mp->next)
+            if (!MMCopyAreDiff(which, mp, up))
+               break;
+         if (mp != up) /* duplicate copy routine found, eliminate mp or up */
+         {
+            int sz0, sz1;
+            ATL_mmnode_t *kill, *nxt=up->next;
+            if (!which)
+            {
+               sz0 = mp->mbB*mp->nbB; 
+               sz1 = up->mbB*up->nbB;
+            }
+            else if (which == 1) /* copy A or B */
+            {
+               sz0 = Mmax(mp->mbB,mp->nbB); 
+               sz1 = Mmax(up->mbB,up->nbB);
+               sz0 *= mb->kbB;
+               sz1 *= up->kbB;
+            }
+            else if (which == 2) /* copy A only */
+            {
+               sz0 = mp->mbB*mp->kbB; 
+               sz1 = up->mbB*up->kbB;
+            }
+            else if (which == 3) /* copy B only */
+            {
+               sz0 = mp->kbB*mp->nbB; 
+               sz1 = up->kbB*up->nbB;
+            }
+            if (sz0 > minSz && sz1 > minSz) /* elim largest */
+               kill = (sz0 <= sz1) ? up : mp;
+            else /* eliminate smallest */
+               kill = (sz0 <= sz1) ? mp : up;
+            mb = RemoveMMNodeFromQ(mb, kill);
+            KillMMNode(kill);
+            up = nxt;
+         }
+         else  /* new copy to add to unique list */
+            up = up->next;
+      } /* end while (up) */
+   }
+   return(mb);
 }
 
 @iexp ip @(ip) 1 +
