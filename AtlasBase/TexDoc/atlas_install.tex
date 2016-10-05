@@ -172,8 +172,8 @@ less generic.  For instance, assuming I have saved the tarfile to
 ({\tt SRCdir}) with the following commands:
 \begin{verbatim}
    cd ~/numerics
-   bunzip2 -c ~/dload/atlas3.10.0.tar.bz2 | tar xfm -
-   mv ATLAS ATLAS3.10.0
+   bunzip2 -c ~/dload/atlas3.10.3.tar.bz2 | tar xfm -
+   mv ATLAS ATLAS3.10.3
 \end{verbatim}
 
 Before doing anything else, scope the ATLAS errata file for known 
@@ -187,6 +187,56 @@ This file contains not only all bugs found, but also all kinds
 of platform-specific installation and tuning help.
 
 \subsection{Turn off CPU throttling when installing ATLAS}
+\label{sec-throttle}
+If ATLAS's configure detects that CPU throttling is enabled, it will kill
+itself.  The reason is that ATLAS depends on timings to tune the library
+to your machine.  OS-controlled throttling is so course-grained that 
+essentially all timings become random.  What this means is that instead
+of optimizing the code, ATLAS winds up randomly transforming the code,
+sometimes resulting in better code, and just as often, making the code
+slower.
+
+If throttling is enabled, the only way to get a decent ATLAS install is
+therefore to turn it off.  Most machines can switch it off in the BIOS,
+but on machines with newer Linux kernels even this does not stop pstate
+throttling.  To tell linux not to ignore your bios settings you must
+log in as root/sudo, and issue something similar to:
+\begin{enumerate}
+\item Edit \verb+/etc/default/grub+
+\item Find line with: \verb+GRUB_CMDLINE_LINUX_DEFAULT+
+\item Append the following to args: \verb+intel_pstate=disable+
+\item Update grub: \verb+update-grub+
+\item Reboot
+\end{enumerate}
+
+For modern Linuxes, you can turn off throttling using \verb+cpufreq-set+.
+Some systems allow you to set the speed of individual cores, and others
+force groups of cores to run at same speed.  Therefore, on a 4-core
+system, your frequency settings may not take hold until you've set all
+4-cores to the desired setting.  For instance:
+\begin{verbatim}
+   /usr/bin/cpufreq-set -g performance -c 0
+   /usr/bin/cpufreq-set -g performance -c 1
+   /usr/bin/cpufreq-set -g performance -c 2
+   /usr/bin/cpufreq-set -g performance -c 3
+\end{verbatim}
+
+Under MacOS or Windows, you may be able to change this under the power settings.
+I have reports that issuing "powercfg /q" in cmd.exe under windows will tell
+you whether windows is throttling or not.
+
+Note that if you worry about the system overheating, you should be able to
+get decent (not perfect) tuning by forcing any constant clock rate (rather
+than forcing the maximum rate, as above).
+
+If you cannot turn off cpu throttling you must pray that ATLAS already
+has architectural defaults.  If so, ATLAS will likely still have poor
+performance, but at least not all code transformation decisions will be
+taken at random.  To proceed with a random ATLAS tuning in the face
+of CPU throttling, you can throw the the configure flag:
+\verb+--cripple-atlas-performance+.
+
+\Wskip{
 Most OSes and hardware now turn on CPU throttling for power management\\
 \underline{even if you are using a desktop machine}.  CPU throttling makes
 pretty much all timings completely random, and so any ATLAS install will be
@@ -219,6 +269,7 @@ you may be able to change this under the power settings.
 %\begin{verbatim}
 %   -Si cputhrchk 0
 %\end{verbatim}
+}
 
 \subsection{Basic Steps of an ATLAS install}
 An ATLAS install is performed in 5 steps, only the first two of which
@@ -475,6 +526,7 @@ For more standard information on LAPACK, please scope the following URLs:
 \item \verb|http://www.netlib.org/lapack/lug/index.html|
 \end{itemize}
 
+
 \subsection{Changing the compilers and flags that ATLAS uses for the build}
 \label{sec-comps}
 
@@ -509,16 +561,18 @@ parentheses:
 
 It is almost \underline{never} a good idea to change {\tt DMC} or {\tt SMC},
 and it is only very rarely a good idea to change {\tt DKC} or {\tt SKC}.
-For ATLAS~3.10.0, all architectural defaults are set using gcc 4.7.0 only
-(the one exception is PowerPCG4, where gcc 4.6.2 was used).  In most
+%For ATLAS~3.10.0, all architectural defaults are set using gcc 4.7.0 only
+%(the one exception is PowerPCG4, where gcc 4.6.2 was used).  
+In most
 cases, switching these compilers will get you worse performance and accuracy,
 even when you are \underline{\em absolutely} sure it is a better compiler
-and flag combination!  In particular, our timings indicated that {\tt clang} 
-was always slower on all platforms that gcc, and that it very often produced
-incorrect code.  Intel's {\tt icc} was not tried for this release since
-it is a non-free compiler, but 
-even worse, 
-from the documentation
+and flag combination!  For the open source version of {\tt clang}, gcc was
+always faster on all machines we had access to.  Apple's proprietary clang
+seems to be a good deal faster, so OS~X user's may want to try a search
+with both {\tt clang} and {\tt gcc} to see which is the fastest if both
+are available.  See Section~\ref{sec-OSX} for how to force clang to be used.
+Intel's {\tt icc} was not tried for this release since
+it is a non-free compiler, but even worse, from the documentation
 {\tt icc} does not seem to have any firm IEEE floating point compliance unless
 you want to run so slow that you could compute it by hand faster.  This means
 that whenever {\tt icc} achieves reasonable performance, I
@@ -709,11 +763,15 @@ in Section~\ref{sec-nodefaults}.
 
 \subsubsection{Forcing ATLAS to use a particular gcc}
 ATLAS contains architectural defaults allowing installers to skip most
-of the empirical tuning, and these defaults were built on most systems
-for gcc 4.7.0.  By default, ATLAS will search for this version on
+of the empirical tuning,  with different platforms using different gcc
+versions.  To see what gcc version was used to build archdefs for your
+system, you can scope {\tt GetBestGccVers} in 
+{\tt ATLAS/CONFIG/src/probe\_comp.c}.
+%and these defaults were built on most systems for gcc 4.7.0.  
+By default, ATLAS will search for this version on
 your system during configure, and if it can't find it, it will select
 the closest version number that it can find.  Not even later versions
-of the compiler are necessarily safe to use, since both performance
+of the compiler are necessarily better to use, since both performance
 and correctness regressions are relatively common.  However, many users
 wish to force ATLAS to use a particular gcc, even when they have many
 different gccs installed.  The easiest way to force ATLAS to use a
@@ -731,7 +789,7 @@ additionally add the flag:
    -C if /full/path/to/your/gfortran
 \end{verbatim}
 
-{\bf IMPORTANT NOTE}: If you use a different gcc than 4.7.0,
+{\bf IMPORTANT NOTE}: If you use a different gcc than preferred version,
 you may reduce performance.  Therefore once
 your build is finished, you should make sure to compare your achieved
 performance against what ATLAS's architectural defaults achieved.  See
@@ -860,6 +918,11 @@ whole boatload of flags
 ...
 \end{verbatim}
 
+A similar file will be produced with some clang flags if you substitute
+{\tt clang} for {\tt gcc} above, though I was not able to find any central
+list of flags that I trusted, so the ones produced are probably insufficient
+and may not work on all systems.
+
 Now lets see an example of this working on my ARM embedded machine.  The first
 thing I do is replace the first line with my mandatory flags:
 \begin{verbatim}
@@ -932,6 +995,7 @@ BEST FLAGS GIVE MFLOP=592.68 (6.25% improvement over first case):
 
 \clearpage
 \subsection{Handling hyperthreading, SMT, modules, and other horrors}
+\label{sec-tids}
 Most modern machines include multiple virtual processors on each core;
 this basic idea is called hyperthreading by Intel, SMT by IBM, and other
 names by others.  AMD took it to a new level with the dozer architecture,
@@ -964,6 +1028,7 @@ to your usual configure flags:
     --force-tids="# <thread ID list>"
 \end{verbatim}
 
+\subsubsection{Handling modules on AMD systems}
 For instance, on my AMD Dozer system,
 there are 8 integer cores, but only 4 FPUs, and so for best performance we
 would like to use 4 threads rather than 8, and be sure to not use any
@@ -977,6 +1042,7 @@ adding this flag to configure:
 On my system, this actually slightly reduces parallel GEMM performance, but
 noticably improves factorization performance.
 
+\subsubsection{Handling SMT on IBM POWER}
 Similarly, an IBM Power7 I have access to has 8 physical cores, but offers
 64 SMT units.  If you install with the default flags, your parallel speedup
 for moderate sized DGEMMs is around 4.75.  On the other hand, if you add:
@@ -984,6 +1050,12 @@ for moderate sized DGEMMs is around 4.75.  On the other hand, if you add:
     --force-tids="8 0 8 16 24 32 40 48 56"
 \end{verbatim}
 Then the parallel DGEMM speedup for moderate sized problems is more like 6.5.
+
+I also have access to a POWER8 machine, with four physical cores, that are
+again shared 8-way, leading to the need to add to configure:
+\begin{verbatim}
+    --force-tids="4 0 8 16 24"
+\end{verbatim}
 
 \clearpage
 \subsection{Building dynamic/shared libraries}
@@ -1117,6 +1189,66 @@ the installer wants to use only SSE2, even though this will make the library
 sub-optimal on the machine possessing SSE3.  
 }
 
+\subsection{Explicitly overriding architecture detection}
+\label{sec-arch-override}
+The ATLAS configure script may not recognize your architecture.  If this
+happens, ATLAS will fall back on using generic flags, and a full search.
+To ge the best performance often takes two installs, where first you
+do a generic install, then you search for the best flags 
+(see $\S$\ref{sec-flagsearch}).
+
+Sometimes, however, ATLAS actually has support for your architecture
+(or to a machine that is functionally equivalent), but it doesn't recognize
+it.  In this case, you can explictly tell ATLAS which architecture it should
+assume using the \verb+-A <name>+ configure flag.  To see a list of supported
+architectures, after any ATLAS configure step (even one with bad architecture 
+and flags) you can do:
+\begin{verbatim}
+   make xprint_enums
+   ./xprint_enums
+\end{verbatim}
+
+Note that there is not a one-to-one correspondence between ATLAS's names
+(chosen based on ATLAS-visable changes) and, for instance Intel code 
+or marketing names.  Table~\ref{arch-intel} shows the maping of ATLAS
+architectures to some of the more recent Intel code names.
+\begin{table}
+\begin{center}
+\begin{tabular}{|l|l|}\hline\hline
+{\bf ATLAS} & {\bf Intel code name}\\\hline\hline
+Corei1 & Nahalem / Westmere \\\hline
+Corei2 & Ivy/Sandy bridge \\\hline
+Corei3 & haswell/broadwell[-e] \\\hline
+Corei4 & skylake \\\hline\hline
+\end{tabular}
+\end{center}
+\caption{ATLAS arch string \& Intel code names}
+\label{arch-intel}
+\end{table}
+
+Therefore, if configure was failing to autodetect the architecture, but
+I knew the machine was a haswell, I could add the following to configure
+to get the haswell architectural defaults:
+\begin{verbatim}
+   -A Corei3
+\end{verbatim}
+\subsubsection{Reporting configure failures}
+In general, if ATLAS does not recognize your architecture, I recommend
+submitting a support request (even if you make your own library that you
+are happy with) so that ATLAS can be extended to recognize the architecture
+for others.  
+
+To get support on a configure failure, you'll need to capture the result
+of the failing step, preferably invoking configure in verbose mode by
+adding \texttt{-v 2} to your configure flags.
+On most Unix boxes, you can capture the output by typing ``\texttt{script}'',
+then doing the configure, then typing ``\texttt{exit}'' to stop recoreding.
+This will create a file called ``typescript'' which you can upload to
+show what is happening to you.
+
+You can also get the output of configure by using redirection, just be sure
+to redirect both \texttt{stdout} and \texttt{stderr}!
+
 \subsection{Building Generic x86 libraries}
 Many users ask how ATLAS can be used to build libraries that will run on
 all x86 platforms.  In general, this is a bad idea: ATLAS gets its speed by
@@ -1154,13 +1286,13 @@ x87 FPU unit (I believe this is all Intel architectures from PentiumPRO
 onwards, and any AMD platform since at least the original Athlon), add
 the following flags to your configure line:
 \begin{verbatim}
-    -b 32 -V -1 -A 11
+    -b 32 -V -1 -A x86x87
 \end{verbatim}
 
 \verb+-b 32+ ensures that you build the 32-bit libraries, which is necessary,
 since most older machines do not implement x86-64 (AMD64).  The 
 \verb+-V -1+ says use no ISA extensions beyond the original x86 spec.
-The \verb+-A 11+ selects an artificial architecture called \verb+x86x87+,
+The \verb+-A x86x87+ selects an artificial architecture
 providing you with portable (but slow!) architectural defaults.
 
 \subsubsection{Building generic libraries for SSE1 (PIII \& later)}
@@ -1171,13 +1303,13 @@ Intel chip; for AMD it should work with the Athlon~XP or any following chip.
 
 To build this generic target, add the following flags to your configure line:
 \begin{verbatim}
-    -b 32 -V 128 -A 12
+    -b 32 -V 128 -A x86SSE1
 \end{verbatim}
 
 \verb+-b 32+ ensures that you build the 32-bit libraries, which is necessary,
 since most older machines do not implement x86-64 (AMD64).  The 
 \verb+-V 128+ says that the original x86 ISA is extended by SSE1 only.
-The \verb+-A 12+ selects an artificial architecture called \verb+x86SSE1+,
+The \verb+-A x86SSE1+ selects an artificial architecture
 providing you with portable (but slow!) architectural defaults.
 
 \subsubsection{Building generic libraries for SSE2 (P4 \& later)}
@@ -1190,7 +1322,7 @@ libraries.  Right now, we have introduced architectural defaults only
 for 32-bits (meaning the 64-bit installs will take much longer).  So, to
 limit the ISA to 32-bit, add these flags to your configure line:
 \begin{verbatim}
-    -b 32 -V 192 -A 13
+    -b 32 -V 192 -A x86SSE2
 \end{verbatim}
 
 \subsubsection{Selecting a good generic CacheEdge}
@@ -1577,7 +1709,7 @@ called by {\tt make time} ({\tt xatlbench} to do the comparison.  The most
 common example would
 be you have switched to an unsupported compiler (eg., the Intel compiler),
 and now you want to see if the library you built using it is as fast or faster
-than the one using the default {\tt gcc 4.7} compiler.  Another example would
+than the one using the default compiler.  Another example would
 be that you want to compare the performance of two closely related
 architectures.  This is what we will do here, where we contrast the performance
 of the 32 and 64 bit versions of the library on my Core2Duo.
@@ -2128,7 +2260,11 @@ provides a Unix-style shell environment (including standard utilities such as
 {\tt gcc} and {\tt make}) for Windows.
 Cygwin is free, and can be downloaded from {\tt www.cygwin.com}.  
 Setup is usually as easy as running a install script selecting a mirror
-site, and selecting the right packages.  If you have found you have
+site, and selecting the right packages.  If you are running a 64-bit Windows,
+make sure to use the 64-bit Cygwin installer!  The 64-bit ATLAS install
+depends on Cygwin64.
+
+If you have found you have
 missed a package, just rerun the install script to add it.  The packages
 that I install are pretty much everything that mentions gcc and gfortran.
 You can find these packages by entering ``gcc'' in the search box.  
@@ -2137,12 +2273,17 @@ If you want to build libraries to be used by applications using MSVC++
 or the Intel compilers, you will also want to be sure to install all the
 MinGW compilers and tools (see the following sections for more info).
 
-Microsoft's Interix (AKA Windows Services for Unix, etc.) is not supported;
-Interix does not appear to be actively supported by MS, and its tools
-are very old even when they work.  We now have some support for using
-the MinGW compilers (\verb|http://www.mingw.org/|), but the install itself
-still requires cygwin, and in our MinGW support we have used the MinGW 
-compilers provided by cygwin.
+If you want to compile using MinGW, then obviously you will need to install
+the MinGW compilers.  ATLAS has been tested with the MinGW compilers provided
+by the Cygwin project, but should work with any legal MinGW as long as 
+ATLAS can find them (see following sections for more info).
+
+%Microsoft's Interix (AKA Windows Services for Unix, etc.) is not supported;
+%Interix does not appear to be actively supported by MS, and its tools
+%are very old even when they work.  We now have some support for using
+%the MinGW compilers (\verb|http://www.mingw.org/|), but the install itself
+%still requires cygwin, and in our MinGW support we have used the MinGW 
+%compilers provided by cygwin.
 
 \Wskip{
 \subsubsection{Setting up to use non-GNU native Windows compilers}
@@ -2209,27 +2350,23 @@ settings, I added a rule to accept TCP port 22.
 }
 
 \subsubsection{Choosing cygwin or MinGW compilers}
-ATLAS supports two installation methods under 32-bit Windows installs, and one
-on 64-bit installs.  For Windows where the library will be used in 32-bit
-mode, the user may choose to install ATLAS using the cygwin GNU compilers.
-This is primarily useful when the user's applications are also compiled 
-using the cygwin enviromnent.  This is the default installation method
-when 32-bit is selected.
+ATLAS may be installed using either the cygwin or MinGW compilers.
+The cygwin compilers are usually the method of choice if you are using
+ATLAS exclusively within the cygwin environment.  In this case, all you
+need to do is configure and build as normal, and the resulting ATLAS
+libraries will depend on the cygwin libraries and environment in order
+to run.  For 64-bit windows, please note that the cygwin-built ATLAS
+threaded libraries will depend on cygwin's pthread library, which is GPL.
 
 However, if the user's application uses native Windows compilers such as
-MSVC++ or the Intel compilers, the cygwin libraries can be hard to link to.
-In this case, ATLAS can be installed to use the the MinGW GNU compilers, which
+MSVC++ or the Intel compilers, or if the resulting executable is to invoked
+direclty from Windows (not in a cygwin window), then you need to install
+ATLAS using the MinGW GNU compilers, which
+%the cygwin libraries can be hard to link to.
+%In this case, ATLAS can be installed to use the the MinGW GNU compilers, which
 provide gcc/gfortran that interoperate with native compilers.  To tell
-ATLAS to build the 32-bit libraries using the MinGW compilers, you should add:
-\begin{verbatim}
-   -b 32 -Si nocygwin 1
-\end{verbatim}
-to your normal configure flags.
-
-When ATLAS is configured to build 64-bit libraries, then the only supported
-compilers are MinGW, since cygwin does not work in 64-bit mode.  Therefore,
-no additional flags beyond the usual \verb+-b 64+ need be passed to configure
-in order to build a natively interoperable 64-bit library.
+ATLAS to build using the MinGW compilers, you should add
+`\texttt{-Si nocygwin 1}' to your normal configure flags.
 
 If you are using the MinGW compilers, configure will try to autofind the
 correct MinGW binutils, but this may fail.  If configure does not work,
@@ -2260,7 +2397,7 @@ MinGW compilers provided by cygwin, saved to \verb+BLDdir/MinGW64.dat+:
 \begin{verbatim}
 /usr/bin/x86_64-w64-mingw32-ar.exe
 /usr/bin/x86_64-w64-mingw32-ranlib.exe
-/usr/bin/x86_64-w64-mingw32-gcc-4.5.3.exe
+/usr/bin/x86_64-w64-mingw32-gcc.exe
 /usr/bin/x86_64-w64-mingw32-gfortran.exe
 \end{verbatim}
 Note that the entire file should be 4 (or 3 if gfortran isn't used) lines, 
@@ -2286,125 +2423,133 @@ You can see the genesis of this approach in the e-mail thread:
    https://sf.net/projects/math-atlas/forums/forum/1026734/topic/5349864
 \end{verbatim}
 
-\subsubsection{Special Instructions for 64 bit Windows (eg., Windows 7) users}
-\label{sec-windows64}
+\subsubsection{Building 32-bit libraries on 64-bit Windows and cygwin64}
+\label{sec-Win64-32}
+I have never gotten the 32-bit gcc cygwin compilers to work under cygwin64.
+Therefore, if you need 32-bit libraries compiled with the cygwin compilers
+under Windows, I recommend installing cygwin32.
 
-64-bit capable Windows (like Windows~7) users can choose to build either
-the 32-bit or 64-bit libraries.  If your application requires one or the
-other, then you know which you want to use.  If you have a choice,
-the 64-bit libraries are {\em usually} faster, due to the fact that
-32-bit applications have access to only half as many registers.  However,
-Windows chose not use the standard AMD64 ABI.  This has two
-unfortunate affects: (1) A 64-bit Windows install cannot use ATLAS's
-64-bit assembly kernels, since they require the standard AMD64 ABI.
-(2) A 64-bit Windows install cannot use the architectural defaults,
-since ATLAS's architectural defaults will typically use assembly kernels
-that won't work properly under 64-bit Windows.  This means that 64-bit
-Windows installs can be substantially slower than when using the same
-hardware with another OS (eg., Linux).
+With some hand intervention, it is possible to build  32-bit ATLAS libraries
+under cygwin64 using the 32-bit MinGW compilers, however.  To do this, do your
+configure as normal, but before starting the build, hand-edit the created
+{\tt Make.inc}.  Look for the make definition for XCCFLAGS, and you should
+see that it includes a \texttt{-m32}.  Change this to \texttt{-m64}.  You
+should now be able to invoke make as normal.
 
-Therefore, on some platform where hand-tuned assembly is
-critical, the 32-bit libraries can be faster than the 64-bit, since Windows
-utilized the standard 32-bit ABI.  On systems where good performing 
-ANSI~C routines are available, the extra registers will likely make 64-bit
-perform better.  Therefore, if you can use either 32- or 64-bit libraries,
-it may make sense to install both versions, and compare their performance.
+\subsection{Special Instructions for ARM}
 
-Without architectural defaults ATLAS installs
-typically take most of a day.  To avoid this, consult the errata file:
-the plan is to try to get Windows users to submit their architectural
-defaults, so that Windows users can help each other.  The errata file
-should contain a link to the 64-bit Windows architectural defaults tarfile
-(remember that Windows users wishing to build 32-bit libraries can
-use the standard architectural defaults).
-
-During cygwin setup, be sure
-to select the gcc and gfortran packages that start with ``ming64''.
-Once you finish the install and open up a cygwin window, you should
-find the 64-bit compilers in \texttt{/usr/bin/}.  I used the gcc 4.x
-series one.  In my install the full path was:
+\subsubsection{Enabling NEON on 32-bit ARM}
+By default, ATLAS will not use ARM32's SIMD vectorization (NEON), since
+it is not IEEE-compliant.  However, you can force its use by adding
+the following flags to your configure command:
 \begin{verbatim}
-   /usr/bin/x86_64-w64-ming32-gcc-4.5.3.exe
-   /usr/bin/x86_64-w64-ming32-gfortran.exe
+   -Fa al -mfpu=neon -Si ieee 0
+\end{verbatim}
+Note that NEON only supports single precision, so this will not change
+accuracy or speed for double precision.  
+%Also, the install will take a
+%very long time: ATLAS only provides architectural defaults for IEEE-compliant
+%setups.
+
+\subsubsection{Special instructions for ARM big/little systems}
+The stable version of ATLAS is not well-suited to use big/little systems
+efficiently.   The problem is that it can use only one block size and
+kernel, and one optimized for the little systems will not be optimized
+for the big, and vice versa.  If you are only using the serial interface,
+the best idea is probably to install two versions, one optimized 
+for the big and one optimized for the little CPUs.
+
+In order to install ATLAS to run only a subsection of cores, you can use
+the {\tt --force-tids} flag (see \S\ref{sec-tids} for details).  Unless
+you use something like {\tt tasksel} to invoke {\tt configure}, configure
+may detect the big core as the architecture, when you want the little, and
+vice versa.  Therefore, the easist way to build a library to use only
+the little or only the big cores is to
+explicitly tell configure which architecture you want to support by using
+the {\tt -A} flag to configure, as described in \S\ref{sec-arch-override}.
+ATLAS 3.10.3 currently has configure support for the following {\tt -A} 
+ARM32 strings: \texttt{ARMa7}, \texttt{ARMa9}, \texttt{ARMa15},
+and the following ARM64 strings:
+\texttt{ARM64a53}, \texttt{ARM64a57}, \texttt{ARM64xgene1}.
+For instance, to use only the little cores on my 8-core odroid, I would
+enter:
+\begin{verbatim}
+   ../configure -b 32 -A ARMa7 --force-tids="4 0 1 2 3"
 \end{verbatim}
 
-If you don't have files like this (though maybe different version numbers
-on gcc, obviously), run cygwin setup again and select the right packages.
-
-\Wskip{
-Once these packages exist in \texttt{/usr/bin} (any version number is
-OK on the gcc executable, as is no number at all), then the next step
-is to change your path so that cygwin can find the 64-bit MinGW dlls,
-which you can do with:
+Whereas to use the big cores exclusively, I would enter:
 \begin{verbatim}
-   export PATH=/usr/i686-w64-mingw32/sys-root/mingw/bin:$PATH
-\end{verbatim}
-}
-
-In order to configure for a 64-bit Windows build, add these flags to your
-normal configure options:
-\begin{verbatim}
-   -b 64 -Si archdef 0
-\end{verbatim}
-Since we can't use the architectural defaults, the install will take
-a looong time.  If you are using the community-built architectural defaults
-from the errata file, you would instead use the additional flags:
-\begin{verbatim}
-   -b 64 -Ss ADdir <path to unpacked Win64 archdef directory>
+   ../configure -b 32 -A ARMa9 --force-tids="4 4 5 6 7"
 \end{verbatim}
 
-\Wskip{
-\subsubsection{Special Instructions for 32-bit Windows users}
-\label{sec-windows32}
+In order to find out which were the big and little cores, I had to examine
+\verb+/proc/cpuinfo+.
 
-\centerline{\Large\bf IMPORTANT NOTE}
-\framebox{
-\begin{minipage}{6in}
-{\bf
-I have no idea if this still works.  Instructions from ATLASv3.8.
-Will fix later.
-}
-\end{minipage}
-}
+The more common case is that you want to use all the parallel cores at once
+to do parallel BLAS calls.
+Given 3.10's limitations, I would recommend tuning for the small cores.  
+The reason is that 3.10 uses a lot of statically scheduled parallel algorithms,
+which means the BLAS will run at the speed of the slowest processor.
+Therefore, it makes sense to get the slow cores to run at peak speed,
+while the big cores take a performance hit by using the kernel and block
+factor optimized for the little cores.  
 
-Once cygwin is installed, you are ready to install ATLAS.  If you want
-to call ATLAS from code using {\tt gcc} and {\tt gfortran}, then you
-can just install as usual.  
-
-If you want to call ATLAS from code compiled by native compilers such
-as the Intel or Microsoft compilers, you must set up some environment
-variables so that these compilers can be called from cygwin's shell.
-Details on how do do this are available in the ATLAS errata file:
-\vspace*{-0.1in}
+So, as an example, my odroid system has 4 a7 (little) cores and 4 a9
+(bit) cores.  Assuming I want to use all 8 cores, but use the a7 architectural
+defaults, the configure line is simply:
 \begin{verbatim}
-   http://math-atlas.sourceforge.net/errata.html#WinComp
+   ../configure -b 32 -A ARMa7
 \end{verbatim}
 
-If you want multithreaded (eg., shared-memory parallel) ATLAS libraries,
-you must use {\tt gcc} to compile the main library, and if you use a native
-compiler for interface compilation, manually link to the cygwin library.
-This is because
-ATLAS uses the POSIX threading standard, which of course Microsoft
-does not support, and so you need the cygwin emulation layer to use
-a decade-old standard.
-}
+%\begin{itemize}
+%\item Find small cores by examining /proc/cpuinfo
+%\item Tune for small cores using --force-tids
+%\item Create archdefs
+%\item Now build lib using all cores, forcing small arch detection
+%\end{itemize}
 
-\subsection{Special instructions for ARM with HARDFP ABIs}
-ATLAS assumes that the ARM ABI used is so-called SOFTFP, where
-floating-point values are passed in the integer registers.  If you
-are using a OS that has switched to the HARDFP ABI, please scope
-the errata file for additional installation instructions.
+\subsubsection{ARM with inactive CPUs}
+Sometimes, ARM systems default to having several of the CPUs turned off to save
+power.  If this happens, you need to turn them back on before doing the ATLAS
+install, as seen here:
+\begin{verbatim}
+   http://elinux.org/Jetson/Performance
+\end{verbatim}
+In case this page goes away, for my 4-core system I had to (as root):
+\begin{verbatim}
+   echo 0 > /sys/module/cpu_tegra/parameters/auto_hotplug
+   echo 0 > /sys/devices/system/cpu/cpuquiet/tegra_cpuquiet/enable
+   echo 1 > /sys/devices/system/cpu/cpu0/online
+   echo 1 > /sys/devices/system/cpu/cpu1/online
+   echo 1 > /sys/devices/system/cpu/cpu2/online
+   echo 1 > /sys/devices/system/cpu/cpu3/online
+\end{verbatim}
+
+On another system I had, the echo would not work, but copying \texttt{cpu0}'s 
+\texttt{online} file over all others did.
+
 
 \subsection{Special instructions for OS~X}
+\label{sec-OSX}
 Newer versions of OS~X ship broken versions of the gnu binutils.  They
-are deprecated in favor of \textbf{clang}, which presently produces
-poor performance and wrong results for ATLAS.  Therefore, you will want
-to install a modern gcc using a system like fink, macports or homebrew.
-Note that even in this case, Apple's decisition to break gnu portability
-will still limit your performance.  The crippled assembler they provide
-does not understand AVX instructions, which reduces your peak performance
-by half, and for some reason GNU gcc is pretty much impossible to configure
-to ignore the native assembler in favor of its own binutils.
+are deprecated in favor of \textbf{clang}, which as of 3.10.3 can be used
+to get a fairly performant and correct ATLAS install.  Add the flag
+``\verb+--force-clang=/path/to/clang+'' to your configure line so that 
+ATLAS knows clang is your native
+compiler.  If you have a fortran compiler using the name {\tt gfortran},
+then this is all that is necessary.   If it is installed in a different
+name (even a close one like {\tt gfortran-5}), then you should also
+add: ``\verb+-C if /path/to/f77comp+''.
+If you have no fortran compiler, see Section~\ref{sec-nof77}.
+
+%which presently produces
+%poor performance and wrong results for ATLAS.  Therefore, you will want
+%to install a modern gcc using a system like fink, macports or homebrew.
+%Note that even in this case, Apple's decisition to break gnu portability
+%will still limit your performance.  The crippled assembler they provide
+%does not understand AVX instructions, which reduces your peak performance
+%by half, and for some reason GNU gcc is pretty much impossible to configure
+%to ignore the native assembler in favor of its own binutils.
 
 Note that more recent GNU {\bf tar} releases have become incompatible with 
 OS~X's native tar.  If you have difficulty untarring the tarfiles, you
@@ -2659,23 +2804,13 @@ Here's the tools I have written so far:
 \begin{description}
 \item [{\tt xatl2tvec}]: Reads in the output of a timer file, and produces
    a standard timing vectors file that can be read by routines provided
-   in {\tt atlas\_tvec.h} and all downstream tools.
-\item [{\tt xatlcat2tvec}]: Reads in the output of multiple concatonated ATLAS
-      timer result files, assuming each individual run output is terminated with
-      a line that looks like:
+   in {\tt atlas\_tvec.h} and all downstream tools.  Example usage:
 \begin{verbatim}
-*** END LABEL=<lab> NREP=<#>
+   c2d>./xatl2tvec -# 3
 \end{verbatim}
-      where \verb+<lab>+ is a label to be suffixed to all vector names
-      for that run (to make them unique from other runs), and \verb+<#>+
-      is the number of timing repetitions used in the preceeding timing run.
-      It then produces one timing vector file with all vectors from
-      all runs.
 \item [{\tt xreducetvec}]: take tvec file with repetition timings and
       reduce them to single timings while adding simple statistics
       like min, max, and average.
-\item [{\tt xrenametvecs}]: rename an optional list of vectors, and if
-      required suffix all input vectors with a string.
 \item [{\tt xcattvecs}]: take multiple vector files and combine them into
       one file for later comparison.  Renames vectors as necessary by
       adding \verb+_#+ to repeated names coming from later files.  Can

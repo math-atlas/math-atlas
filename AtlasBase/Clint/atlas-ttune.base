@@ -306,7 +306,7 @@ DONE:
  *       Weakly ordered systems w/o reliable mem barrier must use mutex to
  *       ensure result is available
  */
-   #ifndef ATL_USE_CBC
+   #if ATL_CBC_WEAK
       ATL_mutex_lock(cmbMX);
       ATL_mutex_unlock(cmbMX);
    #endif
@@ -523,6 +523,255 @@ int main(int nargs, char **args)
              tpt/tlin, tlin/tpt);
    return(0);
 }
+@ROUT tune_tbv
+#include "atlas_threads.h"
+#include "assert.h"
+#include "atlas_tbitvec.h"
+
+size_t GNREP=0;
+ATL_BV_t *GBV=NULL;
+double timearr[ATL_NTHREADS];
+void *GMUT=NULL;
+
+void PrintUsage(char *exe)
+{
+   fprintf(stderr, "USAGE: %s [-r <reps>] [-n <nbits]\n", exe);
+   exit(-1);
+}
+
+double GetMax(int P)
+{
+   double max=timearr[0];
+   int i;
+   for (i=1; i < P; i++)
+      if (timearr[i] > max)
+         max = timearr[i];
+
+   return(max);
+}
+size_t GetFlags(int nargs, char **args, size_t *NREP)
+{
+   size_t nbits = 1000, nrep = 5555;
+   int i;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'n':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         nbits = atoll(args[i]);
+         break;
+      case 'r':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         nrep = atoll(args[i]);
+         break;
+      #if 0
+      case 'o':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         *outfile = args[i];
+         break;
+      #endif
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   *NREP = nrep;
+   return(nbits);
+}
+
+#ifdef SET_ATOM
+int setFirst(void *vp, unsigned int skp)
+{
+   int was;
+   int ATL_SetBitAtomic(void *bv, unsigned char pos);
+   do
+   {
+      ATL_BV_t *bv=vp;
+      skp = ATL_FindFirstUnsetBitBV(bv, skp);
+      if (skp == -1)
+         return(-1);
+      bv += (skp>>shBV) + 1;
+      was = ATL_SetBitAtomic(bv, skp&modmskBV);
+   }
+   while(was == 1);
+   return(0);
+}
+
+int unsetFirst(void *vp, unsigned int skp)
+{
+   int was;
+   int ATL_UnsetBitAtomic(void *bv, unsigned char pos);
+   do
+   {
+      ATL_BV_t *bv=vp;
+      skp = ATL_FindFirstSetBitBV(bv, skp);
+      if (skp == -1)
+         return(-1);
+      bv += (skp>>shBV) + 1;
+      was = ATL_UnsetBitAtomic(bv, skp&modmskBV);
+   }
+   while(was == 0);
+   return(0);
+}
+#endif
+@whiledef nm ser thr mut ast
+   @addkeys name=@(nm)
+void DoWork_@(nm)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   double t0;
+   const size_t nrep=GNREP;
+   ATL_BV_t *bv=GBV;
+   size_t i, nbits, nbitsP=1, ibeg=0;
+   unsigned int P;
+@NAME ser mut
+   int (*changeBit)(ATL_BV_t *, unsigned int);
+   int (*findBit)(ATL_BV_t *, unsigned int);
+@NAME thr ast
+   int (*fndChgBit)(void *, unsigned int);
+@NAME !
+
+   nbits = ATL_GetTotBitsBV(bv);
+   P = (pp) ? pp->nworkers : 1;
+   nbitsP = nbits / P;
+   ibeg = nbitsP*rank;
+   t0 = ATL_walltime();
+   for (i=0; i < nrep; i++)
+   {
+      int b=ibeg;
+      if (i&1)
+      {
+@NAME ser mut
+         changeBit = ATL_UnsetBitBV;
+         findBit = ATL_FindFirstSetBitBV;
+@NAME ast
+         fndChgBit = setFirst;
+@NAME thr
+         fndChgBit = ATL_tSetFirstUnsetBV;
+@NAME !
+      }
+      else
+      {
+@NAME ser mut
+         changeBit = ATL_SetBitBV;
+         findBit = ATL_FindFirstUnsetBitBV;
+@NAME ast
+         fndChgBit = unsetFirst;
+@NAME thr
+         fndChgBit = ATL_tUnsetFirstSetBV;
+@NAME !
+      }
+      do
+      {
+@NAME ser
+         b = findBit(bv, b);
+         if (b == -1)
+            b=findBit(bv, 0);
+         if (b != -1)
+            changeBit(bv, b);
+@NAME mut
+         b = findBit(bv, b);
+         if (b == -1)
+            b=findBit(bv, 0);
+         if (b != -1)
+         {
+            ATL_mutex_lock(GMUT);
+            b = findBit(bv, b);
+            if (b == -1)
+               b=findBit(bv, 0);
+            if (b != -1)
+               changeBit(bv, b);
+            ATL_mutex_unlock(GMUT);
+         }
+@NAME ast
+         b = fndChgBit(bv, b);
+         if (b == -1)
+            b = fndChgBit(bv, 0);
+@NAME thr
+         b = fndChgBit(bv, b);
+         if (b == -1)
+            b = fndChgBit(bv, 0);
+@NAME !
+      }
+      while (b != -1);
+   }
+   timearr[rank] = ATL_walltime() - t0;
+}
+
+@endwhile
+int main(int nargs, char **args)
+{
+   size_t nbit;
+   double tser_s, tthr_s, tmut_s, tast_s;
+   double tser, tthr, tmut, tast;
+   nbit = GetFlags(nargs, args, &GNREP);
+   GBV = ATL_NewBV(nbit);
+   assert(ATL_FindFirstSetBitBV(GBV, 0) == -1); /* bring into cache */
+   GMUT = ATL_mutex_init();
+
+   DoWork_ser(NULL, 0, 0);
+   tser_s = timearr[0];
+   printf("   serial  BV time = %e\n", tser_s);
+   ATL_UnsetAllBitsBV(GBV);
+
+   DoWork_thr(NULL, 0, 0);
+   tthr_s = timearr[0];
+   printf("   serial tBV time = %e\n", tthr_s);
+   ATL_UnsetAllBitsBV(GBV);
+
+   DoWork_mut(NULL, 0, 0);
+   tmut_s = timearr[0];
+   printf("   serial mut time = %e\n", tmut_s);
+   ATL_UnsetAllBitsBV(GBV);
+
+#ifndef SET_ATOM
+   printf("SPEEDUP OVER MUTEX: tBV=%.2f, unsafeBV=%.2f\n\n", 
+          tmut_s/tthr_s, tmut_s/tser_s);
+#else
+   DoWork_ast(NULL, 0, 0);
+   tast_s = timearr[0];
+   printf("   serial ast time = %e\n", tast_s);
+   printf("SPEEDUP OVER MUTEX: tBV=%.2f, ast=%.2f, unsafeBV=%.2f\n\n", 
+          tmut_s/tthr_s, tmut_s/tast_s, tmut_s/tser_s);
+   ATL_UnsetAllBitsBV(GBV);
+#endif
+
+
+   ATL_goParallel(ATL_NTHREADS, DoWork_ser, NULL, NULL, NULL);
+   tser = GetMax(ATL_NTHREADS);
+   printf("   P=%4d  BV time = %e\n", ATL_NTHREADS, tser);
+   ATL_UnsetAllBitsBV(GBV);
+
+   ATL_goParallel(ATL_NTHREADS, DoWork_thr, NULL, NULL, NULL);
+   tthr = GetMax(ATL_NTHREADS);
+   printf("   P=%4d tBV time = %e\n", ATL_NTHREADS, tthr);
+   ATL_UnsetAllBitsBV(GBV);
+
+   ATL_goParallel(ATL_NTHREADS, DoWork_mut, NULL, NULL, NULL);
+   tmut = GetMax(ATL_NTHREADS);
+   printf("   P=%4d mut time = %e\n", ATL_NTHREADS, tmut);
+#ifdef SET_ATOM
+   ATL_UnsetAllBitsBV(GBV);
+   ATL_goParallel(ATL_NTHREADS, DoWork_ast, NULL, NULL, NULL);
+   tast = GetMax(ATL_NTHREADS);
+   printf("   P=%4d ast time = %e\n", ATL_NTHREADS, tast);
+   printf("SERIAL SPEEDUP: unsf=%.2f, iBV=%.2f, ast=%.2f, mut=%.2f\n",
+          tser/tser_s, tthr/tthr_s, tast/tast_s, tmut/tmut_s);
+   printf("SPEEDUP OVER MUTEX: tBV=%.2f, ast=%.2f, unsafeBV=%.2f\n\n", 
+          tmut/tthr, tmut/tast, tmut/tser);
+#else
+   printf("SERIAL SPEEDUP: unsf=%.2f, iBV=%.2f, mut=%.2f\n",
+          tser/tser_s, tthr/tthr_s, tmut/tmut_s);
+   printf("SPEEDUP OVER MUTEX: tBV=%.2f, unsafeBV=%.2f\n\n", 
+          tmut/tthr, tmut/tser);
+#endif
+   return(0);
+}
 @ROUT test_count
 #include "atlas_threads.h"
 #include "atlas_misc.h"
@@ -564,13 +813,13 @@ int GetFlags(int nargs, char **args, int *nreps)
    return(cnt);
 }
 
-void TestDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+void TestDoWork(void *vpp, int rank, int vrank)
 {
    int i;
-   ATL_thread_t *tp = vp;
-   void *acnt = lp->opstruct;
+   ATL_tpool_t *pp=vpp;
+   void *acnt = pp->PD;
    #ifdef ATL_GLOBAL
-      const int iam = tp->rank;
+      const int iam = vrank;
    #endif
    do
    {
@@ -604,7 +853,7 @@ int main(int nargs, char **args)
       #endif
       for (k=0; k < cnt; k++)
          checkin[k] = 0;
-      ATL_goparallel(ATL_NTHREADS, TestDoWork, vp, NULL);
+      ATL_goParallel(ATL_NTHREADS, TestDoWork, NULL, vp, NULL);
 @skip      ATL_thread_launch(vp, 0, NULL, TestDoWork, NULL);
       for (k=0; k < cnt; k++)
          assert(checkin[k] == 1);
@@ -619,12 +868,13 @@ int main(int nargs, char **args)
 }
 @ROUT probe_nthr
 #include "atlas_taffinity.h"
-#include "atlas_misc.h"
+@skip #include "atlas_misc.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include "assert.h"
 
 #if defined(__MINGW32__) || defined(__MINGW64__)
 @extract -b @(topd)/Clint/atlconf.base rout=MinGWPATH
-
 #endif
 
 
@@ -747,10 +997,13 @@ int main(int nargs, char **args)
 @ROUT tune_count
 #include "atlas_threads.h"
 #include "atlas_misc.h"
+#include "atlas_gatmctr.h"
 void *ATL_SetAtomicCount_mut(long long);
+int   ATL_DecAtomicCount_mut(void *);
+void  ATL_FreeAtomicCount_mut(void *);
 
 static volatile int count=0;
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+@skip static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static void *acnt;
 static void **acnts;
 static double *timearr=NULL;
@@ -846,6 +1099,18 @@ void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    timearr[iam] = t1 - t0;
 }
 
+void TuneDoWork_gac(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   double t0, t1;
+   ATL_thread_t *tp = vp;
+   ATL_CINT iam = tp->rank;
+
+   t0 = ATL_walltime();
+   while (ATL_gDecAtmCtr(acnt, iam));
+   t1 = ATL_walltime();
+   timearr[iam] = t1 - t0;
+}
+
 void TuneDoWork_gc(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    double t0, t1;
@@ -900,9 +1165,30 @@ size_t GetFlags(int nargs, char **args, char **outfile)
    return(reps);
 }
 
+double CompTimes(int P, double *times, double *MIN, double *AVG)
+{
+   int i;
+   if (P > 0)
+   {
+      double min, max, avg;
+      avg = max = min = *times;
+      for (i=1; i < P; i++)
+      {
+         double t0=times[i];
+         avg += t0;
+         max = Mmax(max, t0);
+         min = Mmin(min, t0);
+      }
+      *MIN = min;
+      *AVG = avg / (double)P;
+      return(max);
+   }
+   return(0.0);
+}
 int main(int nargs, char **args)
 {
-   double t0, tmut_s, tdec_s, tser_s, tmut, tdec, tser, tldec;
+   double t0, tmut_s, tdec_s, tser_s, tmut, tdec, tser, tldec, tpoll, tnopoll;
+   double avg, min;
    size_t nreps, i, lcnt;
    ATL_thread_t ts;
    char *outfile;
@@ -948,6 +1234,10 @@ int main(int nargs, char **args)
 
    printf("FINDING SPEED OF PARALLEL COUNTER CHANGING USING %ld REPS %d PROC\n",
           (long int) nreps, ATL_NTHREADS);
+   printf(
+   "            WHAT      MAX TIME      MIN TIME      AVG TIME  Par/Ser\n");
+   printf(
+   "   =============  ============  ============  ============  =======\n");
 
 @beginskip
    for (i=0; i < ATL_NTHREADS-1; i++)
@@ -969,47 +1259,62 @@ int main(int nargs, char **args)
 
    acnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, nreps, 0);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork_gc, NULL, NULL);
-   for (tldec=0.0,i=0; i < ATL_NTHREADS; i++)
-      tldec = Mmax(tldec,timearr[i]);
+   tldec = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
    ATL_FreeGlobalAtomicCount(acnt);
-   printf("   parallel GblDec time = %e (par/ser = %.2f)\n", 
-          tldec, tldec/tdec_s);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par GlblDec", 
+          tldec, min, avg, tldec/tdec_s);
+
+   acnt = ATL_gNewAtmCtr(ATL_NTHREADS, nreps, ATL_GAC_DEF_NOPOLL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_gac, NULL, NULL);
+   tnopoll = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
+   ATL_gFreeAtmCtr(acnt);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par gDec_nopoll", 
+          tnopoll, min, avg, tnopoll/tdec_s);
+
+   acnt = ATL_gNewAtmCtr(ATL_NTHREADS, nreps, ATL_GAC_DEF_POLL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_gac, NULL, NULL);
+   tpoll = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
+   ATL_gFreeAtmCtr(acnt);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par gDec_poll", 
+          tpoll, min, avg, tpoll/tdec_s);
 
    acnt = ATL_SetAtomicCount_mut(nreps);
    acnt = ATL_SetAtomicCount(nreps);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork, NULL, NULL);
-   for (tdec=0.0,i=0; i < ATL_NTHREADS; i++)
-      tdec = Mmax(tdec,timearr[i]);
+   tdec = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
    ATL_FreeAtomicCount(acnt);
-   printf("   parallel AtoDec time = %e (par/ser = %.2f)\n", tdec, tdec/tdec_s);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par AtmDec", 
+          tdec, min, avg, tdec/tdec_s);
 
    acnt = ATL_SetAtomicCount_mut(nreps);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork_mut, NULL, NULL);
-   for (tmut=0.0,i=0; i < ATL_NTHREADS; i++)
-      tmut = Mmax(tmut,timearr[i]);
+   tmut = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
    ATL_FreeAtomicCount_mut(acnt);
-   printf("   parallel mutex  time = %e (par/ser = %.2f)\n", tmut, tmut/tmut_s);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par mutex", 
+          tmut, min, avg, tmut/tmut_s);
 
    count = nreps;
    acnt = ATL_SetAtomicCount_mut(nreps);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork_ser, NULL, NULL);
-   for (tser=0.0,i=0; i < ATL_NTHREADS; i++)
-      tser = Mmax(tser,timearr[i]);
+   tser = CompTimes(ATL_NTHREADS, timearr, &min, &avg);
    ATL_FreeAtomicCount_mut(acnt);
-   printf("   parallel unsafe time = %e (par/ser = %.2f)\n", tser, tser/tser_s);
+   printf("   %13.13s  %e  %e  %e %8.2f\n", "par unsafe", 
+          tser, min, avg, tser/tser_s);
 
    #ifdef PentiumCPS
       t0 = 1000000.0*PentiumCPS;
-      printf("   CYCLES PER CALL: SER=%.1f, DEC=%.1f, GBLDEC=%.1f, MUT=%.1f\n", 
+      printf(
+      "   CYCLES/CALL: SER=%.1f, DEC=%.1f, GBLDEC=%.1f, gDec=%.1f, MUT=%.1f\n", 
              t0*(tser/nreps), t0*(tdec/nreps), t0*(tldec/nreps), 
-             t0*(tmut/nreps));
+             t0*(tnopoll/nreps), t0*(tmut/nreps));
    #endif
    t0 = 1000000.0 / nreps;
    printf(
-   "   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, GBLDEC=%.2f, MUT=%.2f\n", 
-          tser*t0, tdec*t0, tldec*t0, tmut*t0);
-   printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tdec);
-   printf("GBLDEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tldec);
+   "   MICROSEC/CALL: SER=%.2f DEC=%.2f, GBLDEC=%.2f, gDec=%.2f, MUT=%.2f\n", 
+          tser*t0, tdec*t0, tldec*t0, tnopoll*t0, tmut*t0);
+   printf("DEC    SPEEDUP OVER MUTEX = %.2f\n", tmut / tdec);
+   printf("GBLDEC SPEEDUP OVER MUTEX = %.2f\n", tmut / tldec);
+   printf("gDec   SPEEDUP OVER MUTEX = %.2f\n", tmut / tnopoll);
 /*
  * Change nothing unless outfile is non-NULL
  */
@@ -2067,4 +2372,607 @@ int main(int nargs, char **args)
    ammjob_t *aj;
    aj = GetFlags(nargs, args);
    TimeOnCores(aj);
+}
+@ROUT test_lock
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#define ATL_DEF_RUNTHR
+#include "atlas_tprim.h"
+
+ATL_lock_t *GLCK=NULL;
+unsigned long long GCNT=0;
+unsigned long GN=80000;
+
+void *TestLock(void *vp)
+{
+   ATL_thread_t *tp=vp;
+   unsigned long i;
+
+   for (i=0; i < GN; i++)
+   {
+      int k;
+      k = ATL_lock(GLCK);
+      if (k)
+         printf("k=%d\n", k);
+      assert(!k);
+      GCNT++;
+      assert(!ATL_unlock(GLCK));
+   }
+   return(NULL);
+}
+
+int main(int nargs, char **args)
+{
+   unsigned int P = ATL_NTHREADS;
+   unsigned long long ans;
+   if (nargs == 3 || nargs == 2)
+   {
+     GN = atol(args[1]);
+     if (nargs == 3)
+       P = atol(args[2]);
+   }
+   else if (nargs != 1)
+   {
+      printf("USAGE: %s [ntests] [nthreads]\n", args[0]);
+      return(-1);
+   }
+   GLCK = malloc(sizeof(ATL_lock_t));
+   printf("TESTING LOCK/UNLOCK WITH %lu TESTS AND %u THREADS.\n", GN, P);
+   ATL_runThreads(ATL_NTHREADS, TestLock, NULL);
+   ans = GN * P;
+   if (ans == GCNT)
+      printf("PASS.\n");
+   else
+      printf("FAIL: expected=%lu, got=%lu!\n", (unsigned long)ans, 
+             (unsigned long)GCNT);
+   free(GLCK);
+   return(GCNT != ans);
+}
+@ROUT gensumh
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+#if defined(__MINGW32__) || defined(__MINGW64__)
+@extract -b @(topd)/Clint/atlconf.base rout=MinGWPATH
+#endif
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "\nUSAGE: %s [-o <outfile>]\n", nam);
+   exit(-1);
+}
+
+FILE *GetFlags(int nargs, char **args)
+{
+   int i;
+   FILE *fpout=stdout;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'o':
+         #if defined(__MINGW32__) || defined(__MINGW64__)
+         {
+            char *wp;
+            wp = malloc(sizeof(char)*(strlen(args[++i])+1));;
+            strcpy(wp, args[i]);
+            slashsub(wp);
+            cygdrivesub(wp);
+            fpout = fopen(wp, "w");
+            free(wp);
+         }
+         #else
+            fpout = fopen(args[++i], "w");
+         #endif
+         assert(fpout);
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   return(fpout);
+}
+int main(int nargs, char **args)
+{
+   FILE *fpout;
+   fpout = GetFlags(nargs, args);
+
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
+   return(0);
+}
+@ROUT tune_startup
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <assert.h>
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+#include "atlas_tst.h"
+#include "atlas_level1.h"
+#include "atlas_gentesttime.h"
+#define ATL_GETFLAGS 1
+#include "atlas_genparse.h"
+
+static double wbeg[ATL_NTHREADS];
+
+static void DoWork(void *vpp, int rank, int vrank)
+{
+   wbeg[vrank] = ATL_walltime();
+}
+
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n",
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -# <nreps>\n");
+   fprintf(stderr, "   -P <nthreads> (max=%d)\n", ATL_NTHREADS);
+   fprintf(stderr, "   -v <verb> [1] do/don't print indiv reps\n");
+   exit (ierr ? ierr : -1);
+}
+
+@declare "FILE *GetFlags(" y n ")"
+int@^nargs char@^**args unsigned@^long@^*REPS
+   @whiledef vn verb P
+      int@^*@up@(vn)
+   @endwhile
+@enddeclare
+{
+   int p=ATL_NTHREADS, i, verb=0;
+   unsigned long reps=40000;
+   FILE *fpout=stdout;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case '#':   /* -# <reps> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         reps = atol(args[i]);
+         break;
+   @multidef vn verb p
+   @whiledef fl v    P
+      case '@(fl)':   /* -@(fl) <@(vn)> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         @(vn) = atoi(args[i]);
+         break;
+      @undef vn
+   @endwhile
+      case 'o':  /* -o <outfile> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (!strcmp(args[i], "stdout"))
+            fpout = stdout;
+         else if (!strcmp(args[i], "stderr"))
+            fpout = stderr;
+         else
+         {
+            fpout = fopen(args[i], "w");
+            assert(fpout);
+         }
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   @whiledef vn reps verb p
+   *@up@(vn) = @(vn);
+   @endwhile
+   return(fpout);
+}
+
+void DoLine(FILE *fpout, int P, double t0)
+{
+   int i;
+   fprintf(fpout, "%e", 1e6*(wbeg[0]-t0));
+   t0 = wbeg[0];
+   for (i=1; i < P; i++)
+      fprintf(fpout, " %.2e", (wbeg[i]-wbeg[i-1])*1e6);
+   fprintf(fpout, "\n");
+   fflush(fpout);
+}
+void DoLine_file(FILE *fpout, int P, double t0)
+{
+   int i;
+   fprintf(fpout, "%le", 1e6*(wbeg[0]-t0));
+   t0 = wbeg[0];
+   for (i=1; i < P; i++)
+      fprintf(fpout, " %le", (wbeg[i]-wbeg[i-1])*1e6);
+   fprintf(fpout, "\n");
+   fflush(fpout);
+}
+
+int main(int nargs, char **args)
+{
+   FILE *fpout;
+   unsigned long reps, r;
+   double t0, maxInit=0.0, minInit=1e10, avgInit=0.0;
+   double maxGap=0.0, minGap=1e10, avgGap=0.0;
+   @declare "   int " y n ";"
+      @whiledef vn verb P
+         @(vn)
+      @endwhile
+   @enddeclare
+
+   @declare "   fpout = GetFlags(" y n ");"
+      nargs args &reps
+      @whiledef vn verb P
+         &@(vn)
+      @endwhile
+   @enddeclare
+   void (*DoLn)(FILE *fpout, int P, double t0);
+
+   DoLn = (fpout == stdout || fpout== stderr) ? DoLine : DoLine_file;
+   ATL_goParallel(P, DoWork, NULL, NULL, NULL); /* start thread pool */
+   fprintf(fpout, "TIMING IN MICROSECONDS FOR P=%d, R=%lu:\n", P, reps);
+   for (r=0; r < reps; r++)
+   {
+      double d;
+      int p;
+      t0 = ATL_walltime();
+      ATL_goParallel(P, DoWork, NULL, NULL, NULL);
+      if (r == 0)
+         continue;
+      SortDoubles(ATL_NTHREADS, wbeg);
+      d = wbeg[0] - t0;
+      minInit = Mmin(minInit, d);
+      maxInit = Mmax(maxInit, d);
+      avgInit += d;
+      for (p=1; p < P; p++)
+      {
+         d = wbeg[p] - wbeg[p-1];
+         minGap = Mmin(minGap, d);
+         maxGap = Mmax(maxGap, d);
+         avgGap += d;
+      }
+      if (verb)
+         DoLn(fpout, P, t0);
+   }
+   fprintf(fpout, "DONE\n");
+   avgInit /= reps;
+   avgGap /= reps;
+   if (reps > 999)
+   {
+      FILE *fpres;
+      unsigned long orep=0;
+      fpres = fopen("res/thrbeg.sum", "r");
+      if (fpres)
+      {
+         if (fscanf(fpres, "%lu", &orep) != 1)
+            orep = 0;
+         fclose(fpres);
+      }
+      if (orep < reps)
+      {
+         fpres = fopen("res/thrbeg.sum", "w");
+         if (fpres)
+         {
+            fprintf(fpres, "%lu\n%le\n%le\n", reps, avgInit, avgGap);
+            fclose(fpres);
+         }
+         fpres = fopen("res/thrbeg.h", "w");
+         if (fpres)
+         {
+            fprintf(fpres, "   #define ATL_tstart_sec %le\n", avgInit);
+            fprintf(fpres, "   #define ATL_tstartgap_sec %le\n", avgGap);
+            fclose(fpres);
+         }
+      }
+   }
+   @whiledef pr avg max min
+   @(pr)Init *= 1.0e6;
+   @(pr)Gap *= 1.0e6;
+   @endwhile
+   fprintf(fpout, "\nInit summary: max=%e, min=%e, avg=%e\n", 
+           maxInit, minInit, avgInit);
+   fprintf(fpout, "Gap  summary: max=%e, min=%e, avg=%e\n", 
+           maxGap, minGap, avgGap);
+   if (fpout != stderr && fpout != stdout)
+      fclose(fpout);
+   return(0);
+}
+@ROUT tune_cntdly
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+#include "atlas_atmctr.h"
+#include "atlas_gatmctr.h"
+#define ATL_GETFLAGS 1
+#include "atlas_genparse.h"
+#ifdef ATL_USE_PERF_H
+   #define NOPERF    1
+   #define NOK1RATIO 1
+   #include Mstr(Mjoin(ATLAS_PRE,geamm_perf.h))
+#endif
+
+void *ATL_atmctr_new_mut(long N);
+void ATL_atmctr_free_mut(void *ac);
+long ATL_atmctr_dec_mut(void *ac);
+
+
+static double DELAY, timearr[ATL_NTHREADS];
+static unsigned long cntPerRank[ATL_NTHREADS];
+static void *ACNT;
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n",
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -P <nthreads> (max=%d)\n", ATL_NTHREADS);
+   fprintf(stderr, 
+   "   -m <base> <multiplier> <max> (base in microsec, max in sec)\n");
+   fprintf(stderr, "   -t <sec>: aim to spend sec seconds per delay line\n");
+@beginskip
+   fprintf(stderr, "   -D D0 DN DINC : delay range (microseconds)\n");
+   fprintf(stderr, "   -d # D1 ... DN : delay list (microseconds)\n");
+   fprintf(stderr, "   -r d0: recursive doubling starting at d0\n");
+   fprintf(stderr, "   -v <verb> [1] do/don't print indiv reps\n");
+@endskip
+   exit (ierr ? ierr : -1);
+}
+
+FILE *GetFlags(int nargs, char **args, double *TPL, int *P, double *mula)
+{
+   int p=ATL_NTHREADS, i, verb=0;
+   FILE *fpout=stdout;
+   double tpl=8.0;
+
+   mula[0] = 1e-6; mula[1] = 2.0; mula[2] = .01;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'm' : /* -m <base> <mul> <max> */
+         if (i+3 >= nargs)
+            PrintUsage(args[0], i, NULL);
+         mula[0] = atof(args[i+1]) * 1e-6;
+         mula[1] = atof(args[i+2]);
+         mula[2] = atof(args[i+3]);
+         assert(mula[0] > 0.0 && mula[2] >= mula[0] && mula[1] >= 0.0);
+         i += 3;
+         break;
+@beginskip
+      case 'C':   /* -C <count> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         cnt = atol(args[i]);
+         break;
+@endskip
+   @multidef vn tpl
+   @whiledef fl t
+      case '@(fl)':   /* -@(fl) <@(vn)> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         @(vn) = atof(args[i]);
+         break;
+      @undef vn
+   @endwhile
+   @multidef vn p
+   @whiledef fl P
+      case '@(fl)':   /* -@(fl) <@(vn)> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         @(vn) = atoi(args[i]);
+         break;
+      @undef vn
+   @endwhile
+      case 'o':  /* -o <outfile> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (!strcmp(args[i], "stdout"))
+            fpout = stdout;
+         else if (!strcmp(args[i], "stderr"))
+            fpout = stderr;
+         else
+         {
+            fpout = fopen(args[i], "w");
+            assert(fpout);
+         }
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   @whiledef vn p tpl
+   *@up@(vn) = @(vn);
+   @endwhile
+   return(fpout);
+}
+
+@define a2 @@
+@define a2 @@
+@define a2 @,vrank@
+@multidef rt ATL_atmctr_dec_mut ATL_atmctr_dec ATL_gatmctr_dec 
+@whiledef sf mut loc glb
+static void DoWork_@(sf)(void *vpp, int rank, int vrank)
+{
+@skip   ATL_tpool_t *pp=vpp;
+   double t0, t1, t2;
+   unsigned long cnt=0;
+/*
+ * We don't trust walltime() to have enough accuracy to time one call to
+ * DecAtom, so add all them together, and then subtract out cnt*DELAY;
+ * This isn't perfect either, but should be better wt low-res clocks
+ */
+   t0 = ATL_walltime();
+   while (@(rt)(ACNT@(a2)))
+   {
+      t1 = ATL_walltime();
+      cnt++;
+      do
+         t2 = ATL_walltime();
+      while (t2-t1 < DELAY);
+      t0 += t2-t1 - DELAY;    /* correct any extra delay */
+   }
+   t1 = ATL_walltime();
+   cntPerRank[rank] = cnt;
+   timearr[rank] = t1 - t0 - DELAY*cnt;
+}
+   @undef rt
+   @undef a2
+@endwhile
+
+double PerCallSec(int P)
+{
+   double cost=0.0;
+   if (P)
+   {
+      unsigned long cnt=0;
+      int i;
+      for (i=0; i < P; i++)
+      {
+         cnt += cntPerRank[i];
+         cost += timearr[i];
+      }
+      cost /= cnt;
+   }
+   return(cost);
+}
+
+#define PRVDEF ATL_GAC_PRV
+#define PUBDEF ATL_GAC_PUB
+#define STLDEF ATL_GAC_MIX
+int main(int nargs, char **args)
+{
+   FILE *fpout;
+   int P;
+   unsigned long cnt;
+   double ma[3], del, max, mul, tpl;
+   #ifdef ATL_USE_PERF_H
+      #define NFILE 5
+      char fnam[13]={'r','e','s','/',0, 0,0,0,'.','t','i','m'};
+      char *NMs[NFILE]={"mut", "lac", "pub", "mix", "prv"};
+      FILE *FPs[NFILE];
+      int I;
+   #endif
+
+   fpout=GetFlags(nargs, args, &tpl, &P, ma);
+   #ifdef ATL_USE_PERF_H
+      for (I=0; I < NFILE; I++)
+      {
+         #ifdef DCPLX
+            fnam[4] = 'z'
+         #elif defined(SCPLX)
+            fnam[4] = 'c';
+         #elif defined(SREAL)
+            fnam[4] = 's';
+         #else
+            fnam[4] = 'd';
+         #endif
+         fnam[5] = NMs[I][0];
+         fnam[6] = NMs[I][1];
+         fnam[7] = NMs[I][2];
+         FPs[I] = fopen(fnam, "w");
+         assert(FPs[I]);
+         if (!I)
+            fprintf(FPs[0], "#define ATL_AMM_NSCHED %d\n", ATL_geAMM_NCASES);
+         fprintf(FPs[I], "#if !defined(NoARRS) && !defined(NOSCHED%s)\n",
+                 NMs[I]);
+         fprintf(FPs[I], "static const float ATL_AMM_SCHED%s[%d] =\n{\n", 
+                 NMs[I], ATL_geAMM_NCASES);
+      }
+   #endif
+   fprintf(fpout,
+"   DELAY      COUNT    ATMCTR_mut   ATMCTR    g_PUB    g_STL    g_PRV\n");
+   fprintf(fpout,
+"========  =========  ============  =======  =======  =======  =======\n");
+   del = 0.0; mul = ma[1]; max = ma[2];
+   #ifdef ATL_USE_PERF_H
+   for (I=0; I < ATL_geAMM_NCASES; I++)
+   #else
+   while (del <= max)
+   #endif
+   {
+      double tmut, tloc=0, tprv, tpub, tstl;
+      unsigned long cnt;
+
+      #ifdef ATL_USE_PERF_H
+         del = ATL_geAMM_TIME[I];
+      #endif
+      DELAY = del;
+      if (del <= 0.0)
+         cnt = tpl / (5.0e-6);
+      else
+         cnt = tpl / (5.0*del);
+      cnt = Mmax(1000, cnt);
+
+      @whiledef rt prv pub stl
+      ACNT = ATL_gatmctr_new(P, cnt, @up@(rt)DEF);
+      ATL_goParallel(P, DoWork_glb, NULL, NULL, NULL);
+      ATL_gatmctr_free(ACNT);
+      t@(rt) = PerCallSec(P);
+
+      @endwhile
+      @BEGINSKIP
+      ACNT = ATL_SetGlobalAtomicCount(P, cnt, 0);
+      ATL_goParallel(P, DoWork_pub2, NULL, NULL, NULL);
+      ATL_FreeGlobalAtomicCount(ACNT);
+      tpub2 = PerCallSec(P);
+
+      @ENDSKIP
+      ACNT = ATL_atmctr_new(cnt);
+      ATL_goParallel(P, DoWork_loc, NULL, NULL, NULL);
+      ATL_atmctr_free(ACNT);
+      tloc = PerCallSec(P);
+
+      ACNT = ATL_atmctr_new_mut(cnt);
+      ATL_goParallel(P, DoWork_mut, NULL, NULL, NULL);
+      ATL_atmctr_free_mut(ACNT);
+      tmut = PerCallSec(P);
+
+      fprintf(fpout, "%.2e %10d  %12e %8.2f %8.2f %8.2f %8.2f\n", del,cnt,tmut,
+              tmut/tloc, tmut/tpub, tmut/tstl, tmut/tprv);
+      #ifdef ATL_USE_PERF_H
+      @multidef in   4   3   2   1  0
+      @whiledef nm prv stl pub loc mut
+         fprintf(FPs[@(in)], "   %e,  /* CNT=%u */\n", t@(nm), I);
+         @undef in
+      @endwhile
+      #endif
+      #ifndef ATL_USE_PERF_H
+         if (del == 0.0)
+            del = ma[0];
+         else 
+            del *= mul;
+      #endif
+   }
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
+   #ifdef ATL_USE_PERF_H
+      for (I=0; I < NFILE; I++)
+      {
+         fprintf(FPs[I], "};\n#endif\n");
+         fclose(FPs[I]);
+      }
+      fnam[5] = 'd'; fnam[6] = 'l'; fnam[7] = 'y';
+      fpout = fopen(fnam, "w");
+      assert(fpout);
+      fprintf(fpout, "#define ATL_AMM_NSCHED %d\n", ATL_geAMM_NCASES);
+      fprintf(fpout, "#if !defined(NOARRS) && !defined(NOTIMEdly)\n");
+      fprintf(fpout, "static const float ATL_AMM_SCHEDdly[%d] =\n{\n", 
+              ATL_geAMM_NCASES);
+      for (I=0; I < ATL_geAMM_NCASES; I++)
+         fprintf(fpout, "   %e,  /* CNT=%u */\n", ATL_geAMM_TIME[I], I);
+      fprintf(fpout, "};\n#endif\n");
+      fclose(fpout);
+   #endif
+   return(0);
 }

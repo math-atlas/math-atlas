@@ -72,9 +72,17 @@ During tuning, think about several regions for prefetch:
 4. pref only one of nA/B to L2
 5. No prefetch of next blocks (maybe internal prefetch)
 @endskip
+@SKIP KVEC & UNVEC can't use splat, so define bcast!
+@VEC KDIM NO
+@ifdef bc
+   @undef bc
+@endifdef
+@iexp bc 0 1 +
+@VEC MDIM
 @ifdef ! bc
    @iexp bc 0 1 +
 @endifdef
+@VEC !
 @ifdef ! pf
    @define pf @1@
 @endifdef
@@ -254,7 +262,7 @@ During tuning, think about several regions for prefetch:
    @iexp kb @(vl) @(kb) @(vl) -1 + + / @(vl) *
    @undef KB
    @define KB @@(kb)@
-   @iif @(vku) @(kb) %
+   @iif @iexp @(vku) @(kb) %
       @abort "VKU=@(vku) must be multiple of @(kb)!"
    @endiif
 @endiif
@@ -359,6 +367,46 @@ During tuning, think about several regions for prefetch:
       @endindent
       @ENDPROC
    @endiif
+@VEC KDIM
+@BEGINSKIP
+ARGS:
+   nv : vvrsum # to use
+   nr : actual number of registers remaining to be summed
+   ir : base register number (0 <= ir < mu*nu)
+ASSUMES: mu, nu, exreg
+@ENDSKIP
+   @BEGINPROC vvrsum nv nr ir
+      @define k @0@
+      @define kl @0@
+      @define i @0@
+      @define j @0@
+      @declare "   ATL_vvrsum@(nv)(" y n ");"
+         @iexp kl @(ir) @(nr) +
+         @iexp k @(ir)
+         @iwhile k < kl
+            @iexp j @(mu) @(k) /
+            @iexp i @(mu) @(k) %
+               rC@(i)_@(j)
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iif nr < nv
+            @iexp kl @(ir) @(nv) +
+            @iwhile k < kl
+               @(exreg)
+            @iexp k @(k) 1 +
+         @endiwhile
+         @endiif
+      @enddeclare
+      @iexp j @(mu) @(ir) /
+      @iexp i @(mu) @(ir) %
+      @iexp kl @(j) @(mu) *
+      @iexp kl @(kl) @(i) +
+   ATL_vbeta(pC+@(kl), rC@(i)_@(j));
+      @undef i
+      @undef j
+      @undef k
+      @undef kl
+   @ENDPROC
 @VEC KDIM NO
    @BEGINPROC ldB spc d i_
    @beginindent 1 @(spc)
@@ -381,6 +429,9 @@ During tuning, think about several regions for prefetch:
    @iexp bmul 1 0 +
 @VEC NO
    @BEGINPROC storeC spc
+   @define kk @dum@
+   @define i @dum@
+   @define j @dum@
    @beginindent 1 @(spc)
       @iexp kk 0 0 +
       @iexp j 0 0 +
@@ -400,9 +451,15 @@ During tuning, think about several regions for prefetch:
          @iexp j @(j) 1 +
       @endiwhile
    @endindent
+   @undef kk
+   @undef j
+   @undef k
    @ENDPROC
 @VEC MDIM
    @BEGINPROC storeC spc
+   @define kk @dum@
+   @define i @dum@
+   @define j @dum@
    @beginindent 1 @(spc)
       @iexp kk 0 0 +
       @iexp j 0 0 +
@@ -416,53 +473,51 @@ During tuning, think about several regions for prefetch:
          @iexp j @(j) 1 +
       @endiwhile
    @endindent
+   @undef kk
+   @undef j
    @ENDPROC
 @VEC KDIM
    @BEGINPROC storeC spc
-      @define k @dum@
-      @define i @dum@
-      @define j @dum@
-      @define ii @dum@
-      @define jj @dum@
-      @define kk @dum@
-      @define nn @dum@
+      @define nr @dum@
       @define nf @dum@
-   @beginindent 1 @(spc)
-      @iexp kN @(mu) @(nu) *
-      @iexp k 0
-      @iwhile k < kN
-         @iexp j @(mu) @(k) /
-         @iexp i @(mu) @(k) %
-         @iexp nn @(k) @(vl) +
-         @iexp nf @(nn)
-         @iif nf > kN
-            @iexp nf @(kN)
+      @define k @dum@
+      @define ll @dum@
+      @define vl2 @dum@
+
+      @beginindent 1 @(spc)
+         @iexp nf @(vl) @(mu) @(nu) * / @(vl) *
+         @iexp nr @(nf) @(mu) @(nu) * -
+         @iexp k 0
+         @iwhile k < nf
+            @callproc vvrsum @(vl) @(vl) @(k)
+            @iexp k @(k) @(vl) +
+         @endiwhile
+         @iif nr = 1
+            @callproc vvrsum 1 1 @(k)
          @endiif
-         @declare "   ATL_vvrsum@(vl)(" y n ");"
-            @iwhile k < @(nf)
-               @iexp jj @(mu) @(k) /
-               @iexp ii @(mu) @(k) %
-               rC@(ii)_@(jj)
-               @iexp k @(k) 1 +
+         @iif nr > 1
+            @iexp ll @(vl)
+            @iwhile nr > 0
+               @iexp vl2 2 @(ll) /
+            @print nr=@(nr) ll=@(ll) vl2=@(vl2)
+               @iif nr > vl2
+                  @callproc vvrsum @(ll) @(nr) @(k)
+                  @iexp nr 0
+               @endiif
+               @iif nr } vl2
+                  @callproc vvrsum @(vl2) @(vl2) @(k)
+                  @iexp nr @(vl2) @(nr) -
+                  @iexp k @(k) @(vl2) +
+               @endiif
+               @iexp ll @(vl2)
             @endiwhile
-            @iwhile k < @(nn)
-               @(exreg)
-               @iexp k @(k) 1 +
-            @endiwhile
-         @enddeclare
-         @iexp kk @(j) @(mu) *
-         @iexp kk @(kk) @(i) +
-   ATL_vbeta(pC+@(kk), rC@(i)_@(j));
-      @endiwhile
-   @endindent
+         @endiif
+      @endindent
       @undef k
-      @undef i
-      @undef j
-      @undef ii
-      @undef jj
-      @undef kk
-      @undef nn
       @undef nf
+      @undef nr
+      @undef ll
+      @undef vl2
    @ENDPROC
 @VEC KDIM
    @iexp incAk @(mu) @(ku) *
@@ -1125,6 +1180,7 @@ void ATL_USERMM
    @iexp jpf 0 -1 +
    for (i=0; i < nmus; i++)
    {
+@print NOK=@(NOKLOOP) ib=@(ib) ia=@(ia)
    @iif bc = 0
       @iexp j 0 0 +
       @iwhile j < @(vnu)
@@ -1144,9 +1200,15 @@ void ATL_USERMM
       @iwhile j < @(jl)
          @callproc ldB 3 rB@(j) @(j)
          @ifdef lb
-      ATL_vld(vB@(lb), pB+@(ib));
-             @undef lb
-             @iexp ib @(ib) @(vl) +
+            @iif ib < 0
+               @iexp kk @(vl) @(lb) *
+      ATL_vld(vB@(lb), pB+@(kk)); // h0
+            @endiif
+            @iif ib > -1 
+      ATL_vld(vB@(lb), pB+@(ib));  // h1
+               @iexp ib @(ib) @(vl) +
+            @endiif
+            @undef lb
          @endifdef
          @iexp j @(j) 1 +
       @endiwhile
@@ -1245,70 +1307,84 @@ KDONE:
    @define i @dum@
    @define j @dum@
    @define k @dum@
+   @define c @dum@
+   @define r @dum@
    @iexp j 0
    @iwhile j < @(n_)
       @iexp i 0
       @iwhile i < @(n_)
          @iexp k @(j) @(mu) * @(i) +
+@ROUT blk2C
+         @iexp r @(i)
+         @iexp c @(j)
+         @iif j { i
+@ROUT C2blk
          @iif j > i
-@ROUT C2blk `            p[@(k)] = C@(i)[@(j)];`
+            @iexp r @(j)
+            @iexp c @(i)
          @endiif
          @iif j { i
-            @iif alpha = 1
-               @iif beta = 0
-@ROUT blk2C `            C@(j)[@(i)] = p[@(k)];`
-@ROUT C2blk `            p[@(k)] = C@(j)[@(i)];`
-               @endiif
-               @iif beta = 1
-@ROUT blk2C `            C@(j)[@(i)] += p[@(k)];`
-@ROUT C2blk `            p[@(k)] += C@(j)[@(i)];`
-               @endiif
-               @iif beta = -1
-@ROUT blk2C `            C@(j)[@(i)] = p[@(k)] - C@(j)[@(i)];`
-@ROUT C2blk `            p[@(k)] = C@(j)[@(i)] - p[@(k)];`
-               @endiif
-               @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
-@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] + p[@(k)];`
-@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + C@(j)[@(i)];`
-               @endiif
+            @iexp r @(i)
+            @iexp c @(j)
+         @endiif
+@ROUT blk2C C2blk
+         @iif alpha = 1
+            @iif beta = 0
+@ROUT blk2C `            C@(c)[@(r)] = p[@(k)];`
+@ROUT C2blk `            p[@(k)] = C@(c)[@(r)];`
             @endiif
-            @iif alpha = -1
-               @iif beta = 0
-@ROUT blk2C `            C@(j)[@(i)] = -p[@(k)];`
-@ROUT C2blk `            p[@(k)] = -C@(j)[@(i)];`
-               @endiif
-               @iif beta = 1
-@ROUT blk2C `            C@(j)[@(i)] -= p[@(k)];`
-@ROUT C2blk `            p[@(k)] -= C@(j)[@(i)];`
-               @endiif
-               @iif beta = -1
-@ROUT blk2C `            C@(j)[@(i)] = -C@(j)[@(i)] - p[@(k)];`
-@ROUT C2blk `            p[@(k)] = -C@(j)[@(i)] - p[@(k)];`
-               @endiif
-               @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
-@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] - p[@(k)];`
-@ROUT C2blk `            p[@(k)] = beta*p[@(k)] - C@(j)[@(i)]`
-               @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(c)[@(r)] += p[@(k)];`
+@ROUT C2blk `            p[@(k)] += C@(c)[@(r)];`
             @endiif
-            @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
-               @iif beta = 0
-@ROUT blk2C `            C@(j)[@(i)] = alpha*p[@(k)];`
-@ROUT C2blk `            p[@(k)] = alpha*C@(j)[@(i)];`
-               @endiif
-               @iif beta = 1
-@ROUT blk2C `            C@(j)[@(i)] += alpha*p[@(k)];`
-@ROUT C2blk `            p[@(k)] += alpha*C@(j)[@(i)];`
-               @endiif
-               @iif beta = -1
-@ROUT blk2C `            C@(j)[@(i)] = alpha*p[@(k)] - C@(j)[@(i)];`
-@ROUT C2blk `            p[@(k)] = alpha*C@(j)[@(i)] - p[@(k)];`
-               @endiif
-               @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
-@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] + alpha*p[@(k)];`
-@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + alpha*C@(j)[@(i)];`
-               @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(c)[@(r)] = p[@(k)] - C@(c)[@(r)];`
+@ROUT C2blk `            p[@(k)] = C@(c)[@(r)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(c)[@(r)] = beta*C@(c)[@(r)] + p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + C@(c)[@(r)];`
             @endiif
          @endiif
+         @iif alpha = -1
+            @iif beta = 0
+@ROUT blk2C `            C@(c)[@(r)] = -p[@(k)];`
+@ROUT C2blk `            p[@(k)] = -C@(c)[@(r)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(c)[@(r)] -= p[@(k)];`
+@ROUT C2blk `            p[@(k)] -= C@(c)[@(r)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(c)[@(r)] = -C@(c)[@(r)] - p[@(k)];`
+@ROUT C2blk `            p[@(k)] = -C@(c)[@(r)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(c)[@(r)] = beta*C@(c)[@(r)] - p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] - C@(c)[@(r)];`
+            @endiif
+         @endiif
+         @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+            @iif beta = 0
+@ROUT blk2C `            C@(c)[@(r)] = alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] = alpha*C@(c)[@(r)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(c)[@(r)] += alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] += alpha*C@(c)[@(r)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(c)[@(r)] = alpha*p[@(k)] - C@(c)[@(r)];`
+@ROUT C2blk `            p[@(k)] = alpha*C@(c)[@(r)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(c)[@(r)] = beta*C@(c)[@(r)] + alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + alpha*C@(c)[@(r)];`
+            @endiif
+         @endiif
+@ROUT blk2C 
+         @endiif
+@ROUT blk2C C2blk
          @iexp i @(i) 1 +
       @endiwhile
       @iif n_ = mu
@@ -1319,6 +1395,8 @@ KDONE:
    @undef k
    @undef i
    @undef j
+   @undef c
+   @undef r
 @ENDPROC
 @BEGINPROC doBlock m_ n_
    @define i @dum@
@@ -1362,7 +1440,7 @@ KDONE:
             @endiif
             @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
 @ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] - p[@(k)];`
-@ROUT C2blk `            p[@(k)] = beta*p[@(k)] - C@(j)[@(i)]`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] - C@(j)[@(i)];`
             @endiif
          @endiif
          @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
@@ -1544,19 +1622,21 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
             @define h @@(i)@
          @endiif
          @iif j { i
-            @define h @@(j)@
             @iexp ir @(i) @(i) +
+            @define h @@(j)@
          @endiif
-@ROUT blk2C 
-         @iexp ir @(j) @(j) +
-         @iif j { i
-@ROUT blk2C C2blk
          @iexp ii @(ir) 1 +
          @iexp k @(j) @(mu) * @(i) +
+@ROUT blk2C 
+         @iexp ir @(i) @(i) +
+         @iexp ii @(ir) 1 +
+         @iexp k @(j) @(mu) * @(i) +
+         @iif j { i
+@ROUT blk2C C2blk
          @iif alpha = 1
             @iif beta = 0
 @ROUT blk2C 
-            C@(j)[@(ir)] = pr[@(k)];
+            C@(j)[@(ir)] = pr[@(k)];  // i=@(i), j=@(j), ir=@(ir), k=@(k);
             C@(j)[@(ii)] = pi[@(k)];
 @ROUT C2blk 
             pr[@(k)] = C@(h)[@(ir)];
@@ -1701,7 +1781,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
 @ROUT C2blk 
             { 
                const register @(typ) rc=C@(h)[@(ir)], ic=C@(h)[@(ii)];
-               const register @(typ) rr=pr[@(k)], ir=pi[@(k)];
+               register @(typ) rr=pr[@(k)], ir=pi[@(k)];
                rr += rc * ra;
                ir += ic * ra;
                rr -= ic * ia;
@@ -1948,7 +2028,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
 @ROUT C2blk 
             { 
                const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
-               const register @(typ) rr=pr[@(k)], ir=pi[@(k)];
+               register @(typ) rr=pr[@(k)], ir=pi[@(k)];
                rr += rc * ra;
                ir += ic * ra;
                rr -= ic * ia;
@@ -1973,7 +2053,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
 @ROUT C2blk 
             { 
                const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
-               const register @(typ) rr = -pr[@(k)], ir = -pi[@(k)];
+               register @(typ) rr = -pr[@(k)], ir = -pi[@(k)];
                rr += rc * ra;
                ir += ic * ra;
                rr -= ic * ia;
@@ -2046,9 +2126,9 @@ void @(rtnm)
    @ROUT C2blk
    const @(typ) *C,     /* matrix to be copied to access-major format */
    const size_t ldc,    /* stride between row elements */
-   const @(typ) beta,   /* scalar for C */
+   const @(typ) *beta,  /* scalar for C */
    @(typ) *rC,          /* real block stored in @(mu)x@(nu)-major order */
-   @(typ) *iC,          /* imag block stored in @(mu)x@(nu)-major order */
+   @(typ) *iC           /* imag block stored in @(mu)x@(nu)-major order */
    @ROUT C2blk blk2C
 )
 @endiif
@@ -2061,12 +2141,13 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
 @iif TRI = 1
-   unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+   unsigned int pansz = @(bs);
+   const size_t ldc2 = ldc+ldc, incC0 = (ldc2+2)*@(nu);
 @endiif
 @iif TRI = 0
    const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
-@endiif
    const size_t incC = (ldc*@(nu) - m)<<1, ldc2 = ldc+ldc;
+@endiif
    unsigned int i, j;
    @iif alpX ! 0
    const register @(typ) ra=(*alpha), ia=alpha[1];
@@ -2084,21 +2165,20 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
+@iif TRI = 1
+   for (j=0; j < nf; j++)
+@endiif
+@iif TRI = 0
    for (j=nf; j; j--, rC += @(bs), iC += @(bs))
+@endiif
    {
 @ROUT blk2C `      const @(typ) *pr = rC, *pi = iC;`
 @ROUT C2blk `      @(typ) *pr = rC, *pi = iC;`
 @iif TRI = 1
-      if (j != nf)
-      {
-         const unsigned int incCj=(nf-j)*@(mu);
-   @iexp j 0
-   @iwhile j < @(nu)
-         C@(j) += incCj;
-         @iexp j @(j) 1 +
-   @endiwhile
-      }
-      for (i=j; i; i--, pr += pansz, pi += pansz)
+      unsigned int psz = pansz+@(bs), incC = incC0 - (mf-j)*(@(mu)+@(mu));
+      @callproc doDiBlock @(nu)
+      pr += pansz; pi += pansz;
+      for (i=j+1; i < mf; i++, pr += psz, pi += psz, psz += @(bs))
 @endiif
 @iif TRI = 0
       for (i=mf; i; i--, pr += pansz, pi += pansz)
@@ -2117,14 +2197,16 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @endiwhile
       default:;
       }
-@iif TRI = 1
-      pansz -=  @(bs);
-@endiif
    @iexp j 0
    @iwhile j < @(nu)
       C@(j) += incC;
       @iexp j @(j) 1 +
    @endiwhile
+@iif TRI = 1
+      pansz += @(bs);
+      rC += pansz;
+      iC += pansz;
+@endiif
    }
 @iif nu > 1
    switch(nr)
@@ -2135,6 +2217,11 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @iwhile n < @(nu)
    case @(n):
       pr = rC; pi = iC;
+@iif TRI = 1
+      @callproc doDiBlock @(n)
+      break;
+@endiif
+@iif TRI = 0
       for (i=0; i < mf; i++, pr += pansz, pi += pansz)
       {
          @callproc doBlock @(mu) @(n)
@@ -2151,6 +2238,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       default:;
       }
       break;
+@endiif
       @iexp n @(n) 1 +
    @endiwhile
    default:;

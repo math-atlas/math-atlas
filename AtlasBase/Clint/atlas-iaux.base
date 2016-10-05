@@ -2142,11 +2142,7 @@ void Mjoin(PATL,trsetL)
 {
    
    ATL_INT j;
-   #ifdef TCPLX
-      ATL_CINT ldap1 = lda+1;
-   #else
-      ATL_CINT ldap1 = lda+lda+2;
-   #endif
+   ATL_CINT ldap1 = (lda+1)SHIFT;
 
    for (j=0; j < N; j++, A += ldap1)
    {
@@ -2350,7 +2346,7 @@ void Mjoin(PATL,trcpypad4L)
       c[j] = ATL_rone;
    }
 }
-@ROUT atlas_bitvec.h
+@ROUT atlas_bitvec.h00
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2014
 #ifndef ATLAS_BITVEC_H
    #define ATLAS_BITVEC_H
@@ -2393,6 +2389,44 @@ int ATL_IsBitRangeSetBV(int *bv, int b0, int bN);
  * #define BV_DEBUG 1                                                     *
  **************************************************************************
  */
+
+@beginskip
+/*
+ * helper function finds first set bit in bv, assuming one IS set
+ */
+static INLINE int FirstSetBit(size_t bv)
+{
+   int pos=0;
+#ifdef ATL_PTR64
+   if (bv & 0xFFFFFFFF)
+      goto IN_LOW32;
+   bv >>= 32;
+   pos += 32;
+IN_LOW32:
+#endif
+   if (bv & 0xFFFF)
+      goto IN_LOW16;
+   bv >>= 16;
+   pos += 16;
+IN_LOW16: 
+   if (bv & 0xFF)
+      goto IN_LOW8;
+   bv >>= 8;
+   pos += 8;
+IN_LOW8: 
+   if (bv & 0xF)
+      goto IN_LOW4;
+   bv >>= 4;
+   pos += 4;
+IN_LOW4: 
+   if (bv & 0x3)
+      goto IN_LOW2;
+   bv >>= 2;
+   pos += 2;
+IN_LOW2: 
+   return((bv&1) ? pos : pos+1);
+}
+@endskip
 /*
  * A bitvector consists of an integer array.  The first element of the
  * array indicates the number of full BVs required, and the 2nd elt stores
@@ -2674,18 +2708,18 @@ int ATL_FindFirstSetBitBV
 )
 {
    int iv = bs>>5, is=bs-(iv<<5);
-   const int nbv = bv[0];
+   const int nbv = bv[0], nrem=bv[1];
 /*
  * No match if start is beyond end of bits
  */
-   if (bs >= (bv[0]<<5) + bv[1])
+   if (bs >= (bv[0]<<5) + nrem)
       return(-1);
 /*
  * If first vector to check is partial
  */
    if (is)
    {
-      const unsigned int v = bv[iv+2], nchk=(iv==nbv) ? bv[1] : 32;
+      const unsigned int v = bv[iv+2], nchk=(iv==nbv) ? nrem : 32;
       if (v & ((0xFFFFFFFF)<<is))
       {
          int i;
@@ -2693,7 +2727,8 @@ int ATL_FindFirstSetBitBV
             if (v & (1<<i))
                return(((iv)<<5)+i);
       }
-      iv++;  /* no set bits in initial bv checked */
+      if (++iv > nbv)  /* no set bits in initial bv checked */
+         return(-1);
    }
    for (; iv < nbv; iv++)
    {
@@ -2729,7 +2764,7 @@ int ATL_FindFirstSetBitBV
  * If we have a partial bitvector at end, check it after masking off
  * unneeded bits
  */
-   if (bv[1])
+   if (nrem)
    {
       const unsigned int v = bv[iv+2]&(0x7FFFFFFF>>(31-bv[1])), base=iv<<5;
       int kbeg;

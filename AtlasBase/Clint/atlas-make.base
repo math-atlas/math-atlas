@@ -274,6 +274,7 @@ startup : lib include results EXtest
 	cd tune/blas/ger ; ln -s $(SRCdir)/tune/blas/ger/R1CASES R1CASES
 	cd tune/blas/ger ; ln -s $(SRCdir)/tune/blas/ger/R2CASES R2CASES
 	cd tune/blas/gemm ; ln -s $(SRCdir)/tune/blas/gemm/AMMCASES AMMCASES
+	cd tune/blas/gemm ; ln -s $(SRCdir)/tune/blas/gemm/CPYCASES CPYCASES
 @whiledef rt gemm gemv
 	cd tune/blas/@(rt) ; ln -s $(SRCdir)/tune/blas/@(rt)/CASES CASES
 @endwhile
@@ -367,6 +368,12 @@ killgrd :
 lib :
 	mkdir lib
 
+include/atlas_tperf.h :
+	echo "#ifndef ATLAS_TPERF_H" > $@
+	echo "   #define ATLAS_TPERF_H" >> $@
+	echo "   #define ATL_tstart_sec 1e-5" >> $@
+	echo "   #define ATL_tstartgap_sec 1e-6" >> $@
+	echo "#endif" >> $@
 include:
 	mkdir include
 @whiledef pre z c d s
@@ -379,6 +386,10 @@ include:
 @endwhile
 	touch include/atlas_tsumm.h
 	touch include/atlas_taffinity.h
+	touch include/atlas_tsched_time.h
+	touch include/atlas_tsched_dly.h
+	$(MAKE) -f Make.top include/atlas_tperf.h
+	touch include/atlas_tperf.h
 	touch include/atlas_ssyrNX.h
 	touch include/atlas_ssyrNX.h
 	touch include/atlas_ssyrNX.h
@@ -871,18 +882,24 @@ THRdir = $(BLDdir)/src/threads
 args=
 CC=$(DKC)
 CCFLAGS=$(CDEFS) $(DKCFLAGS)
+mut_cnt=$(THRdir)/ATL_atmctr_new_mut_mut.o $(THRdir)/ATL_atmctr_dec_mut_mut.o \
+        $(THRdir)/ATL_atmctr_free_mut_mut.o
+mut_cnt0 = ATL_atmctr_new_mut_mut.o ATL_atmctr_free_mut_mut.o \
+           ATL_atmctr_dec_mut_mut.o
+@beginskip
 acnt_arch = ATL_SetAtomicCount_arch.o ATL_ResetAtomicCount_arch.o \
             ATL_DecAtomicCount_arch.o ATL_FreeAtomicCount_arch.o
-acnt_mut0 = ATL_SetAtomicCount_mut_mut.o ATL_ResetAtomicCount_mut_mut.o \
-            ATL_DecAtomicCount_mut_mut.o ATL_FreeAtomicCount_mut_mut.o
 acnt_mut = $(THRdir)/ATL_SetAtomicCount_mut_mut.o \
            $(THRdir)/ATL_ResetAtomicCount_mut_mut.o \
            $(THRdir)/ATL_DecAtomicCount_mut_mut.o \
            $(THRdir)/ATL_FreeAtomicCount_mut_mut.o
+@endskip
 
 IThreadTune :
-	- $(MAKE) ITune_aff
-	$(MAKE) iTune_atomic
+@skip	- $(MAKE) ITune_aff
+@skip	$(MAKE) IRun_nthr
+@skip	$(MAKE) iTune_atomic
+@skip	$(MAKE) iTune_startup
 	$(MAKE) MakeThreadSum
 force_build :
 
@@ -902,15 +919,49 @@ MakeThreadSum :
            echo "#define ATL_ATOMIC_COUNT_MUT 0" >> $(sumf) ; \
         fi
 	echo "#endif" >> $(sumf)
+perff = $(INCAdir)/atlas_tperf.h
+res/thrbeg.h : 
+	$(MAKE) iTune_startup
+res/sdly.tim: xstune_sched
+	$(ATLRUN) $(myBLDdir) xstune_sched
+MakeSched : 
+	$(MAKE) $(INCAdir)/atlas_tsched_time.h
+$(INCAdir)/atlas_tsched_time.h: res/sdly.tim
+	rm -f $(INCAdir)/atlas_tsched_dly.h $(INCAdir)/atlas_tsched_time.h
+	echo "/* created make MakeSched in thread/tune */" > \
+              $(INCAdir)/atlas_tsched_dly.h
+	echo "#ifndef ATLAS_TSCHED_DLY_H" >> $(INCAdir)/atlas_tsched_dly.h
+	echo "   #define ATLAS_TSCHED_DLY_H " >> $(INCAdir)/atlas_tsched_dly.h
+	cat res/sdly.tim >> $(INCAdir)/atlas_tsched_dly.h
+	echo "#endif" >> $(INCAdir)/atlas_tsched_dly.h
+	echo "/* created make MakeSched in thread/tune */" > \
+              $(INCAdir)/atlas_tsched_time.h
+	echo "#ifndef ATLAS_TSCHED_TIME_H" >> $(INCAdir)/atlas_tsched_time.h
+	echo "   #define ATLAS_TSCHED_TIME_H " >> $(INCAdir)/atlas_tsched_time.h
+	cat res/smut.tim >> $(INCAdir)/atlas_tsched_time.h
+	cat res/slac.tim >> $(INCAdir)/atlas_tsched_time.h
+	cat res/spub.tim >> $(INCAdir)/atlas_tsched_time.h
+	cat res/smix.tim >> $(INCAdir)/atlas_tsched_time.h
+	cat res/sprv.tim >> $(INCAdir)/atlas_tsched_time.h
+	echo "#endif" >> $(INCAdir)/atlas_tsched_time.h
+MakeThreadPerf: res/thrbeg.h
+	- rm -f $(perff)
+	echo "/* created make MakeThreadPerf in thread/tune */" > $(perff)
+	echo "#ifndef ATLAS_TPERF_H" >> $(perff)
+	echo "   #define ATLAS_TPERF_H" >> $(perff)
+	cat res/thrbeg.h >> $(perff) 
+	echo "#endif" >> $(perff)
+
 IRun_aff : xprobe_aff force_build
 	- rm res/probe.out
 	./xprobe_aff -v 1 -o $(INCAdir)/atlas_taffinity.h $(TIDLIST)
-
 IRun_nthr : IRun_aff xprobe_nthr
 	rm -f $(INCAdir)/atlas_pthreads.h
 	./xprobe_nthr -o $(INCAdir)/atlas_pthreads.h
 ITune_aff : IRun_nthr xtune_aff
 	$(ATLRUN) $(myBLDdir) xtune_aff -o $(INCAdir)/atlas_taffinity.h
+iTune_startup : xtune_startup
+	$(ATLRUN) $(myBLDdir) xtune_startup
 tlib : 
 	cd $(BLDdir)/src/threads ; $(MAKE)
 
@@ -974,17 +1025,32 @@ iFind_atomic_arch :
               ATL_ResetAtomicCount_arch.S ; \
            cp $(myTHRdir)/ATL_DecAtomicCount_amd64.S \
               ATL_DecAtomicCount_arch.S ; \
+           cp $(myTHRdir)/ATL_AndAtomicMask_amd64.S \
+              ATL_AndAtomicMask_arch.S ; \
+           cp $(myTHRdir)/ATL_OrAtomicMask_amd64.S \
+              ATL_OrAtomicMask_arch.S ; \
            rm $(BLDdir)/src/threads/atomic.inc ; \
-           echo "aobj = ATL_SetAtomicCount_arch.o ATL_ResetAtomicCount_amd64.o ATL_DecAtomicCount_amd64.o ATL_FreeAtomicCount_arch.o" > $(BLDdir)/src/threads/atomic.inc ; \
+           echo "aobj = ATL_SetAtomicCount_arch.o ATL_ResetAtomicCount_amd64.o ATL_DecAtomicCount_amd64.o ATL_OrAtomicMask_amd64.o ATL_AndAtomicMask_amd64.o ATL_FreeAtomicCount_arch.o" > $(BLDdir)/src/threads/atomic.inc ; \
 @whiledef arch mips sparc ia32 win64 arm64
+   @addkeys arch=@(arch)
 	elif $(MAKE) xprobe_atomic_@(arch) ; then \
            cp $(myTHRdir)/ATL_*AtomicCount_arch.c . ; \
            cp $(myTHRdir)/ATL_ResetAtomicCount_@(arch).S \
               ATL_ResetAtomicCount_arch.S ; \
            cp $(myTHRdir)/ATL_DecAtomicCount_@(arch).S \
               ATL_DecAtomicCount_arch.S ; \
+  @arch ia32 arm64
+           cp $(myTHRdir)/ATL_AndAtomicMask_@(arch).S \
+              ATL_AndAtomicMask_arch.S ; \
+           cp $(myTHRdir)/ATL_OrAtomicMask_@(arch).S \
+              ATL_OrAtomicMask_arch.S ; \
+           rm $(BLDdir)/src/threads/atomic.inc ; \
+           echo "aobj = ATL_SetAtomicCount_arch.o ATL_ResetAtomicCount_@(arch).o ATL_DecAtomicCount_@(arch).o ATL_AndAtomicMask_@(arch).o ATL_OrAtomicMask_@(arch).o ATL_FreeAtomicCount_arch.o" > $(BLDdir)/src/threads/atomic.inc ; \
+  @arch ! ia32 arm64
            rm $(BLDdir)/src/threads/atomic.inc ; \
            echo "aobj = ATL_SetAtomicCount_arch.o ATL_ResetAtomicCount_@(arch).o ATL_DecAtomicCount_@(arch).o ATL_FreeAtomicCount_arch.o" > $(BLDdir)/src/threads/atomic.inc ; \
+  @arch !
+  @killkeys arch
 @endwhile
         else \
            $(MAKE) iForceUseMutex ; \
@@ -999,18 +1065,49 @@ iForceUseMutex:
 @skip	$(MAKE) tlib
 @whiledef rt probe_nthr
 x@(rt) : @(rt).o
-	$(XCC) $(XCCFLAGS) -o x@(rt) @(rt).o $(ATLASlib) $(LIBS)
+	$(XCC) $(XCCFLAGS) -o x@(rt) @(rt).o $(LIBS)
 @(rt).o : $(mySRCdir)/@(rt).c
 	$(XCC) $(XCCFLAGS) -o @(rt).o -c $(mySRCdir)/@(rt).c
 @endwhile
 mutcnt :
-	cd $(THRdir) ; $(MAKE) $(acnt_mut0)
+	cd $(THRdir) ; $(MAKE) $(mut_cnt0)
 xtune_barrier : tune_barrier.o
 	$(CC) $(CCFLAGS) -o $@ tune_barrier.o $(ATLASlib) $(LIBS)
-xtune_count : tune_count.o tlib mutcnt iFind_atomic_arch
-	$(MAKE) $(acnt_arch)
-	$(CC) $(CCFLAGS) -o $@ tune_count.o $(acnt_arch) $(acnt_mut) \
-              $(ATLASlib) $(LIBS)
+xtune_tbv : tlib tune_tbv.o
+	$(CC) $(CCFLAGS) -o $@ tune_tbv.o $(ATLASlib) $(LIBS)
+xtune_tbvB : tlib $(mySRCdir)/tune_tbv.c
+	$(CC) $(CCFLAGS) -o $@ -DSET_ATOM=1 $(mySRCdir)/tune_tbv.c \
+           $(mySRCdir)/ATL_SetBitAtomic_amd64.S $(ATLASlib) $(LIBS)
+@whiledef rt tune_startup
+x@(rt) : @(rt).o tlib
+	$(CC) $(CCFLAGS) -o $@ @(rt).o $(ATLASlib) $(LIBS)
+@(rt).o : $(mySRCdir)/@(rt).c
+	$(CC) $(CCFLAGS) -c $(mySRCdir)/@(rt).c
+@endwhile
+@whiledef rt count cntdly
+xtune_@(rt) : tune_@(rt).o tlib mutcnt
+	$(CC) $(CCFLAGS) -o $@ tune_@(rt).o $(mut_cnt) $(ATLASlib) $(LIBS)
+@endwhile
+@multidef typ SREAL DREAL SCPLX DCPLX
+@whiledef pre s d c z
+x@(pre)tune_sched: $(mySRCdir)/tune_cntdly.c
+	$(MAKE) mutcnt
+	$(CC) $(CCFLAGS) -o $@ -DATL_USE_PERF_H -D@(typ) \
+              $(mySRCdir)/tune_cntdly.c $(mut_cnt) $(ATLASlib) $(LIBS)
+   @undef typ
+@endwhile
+xtest_lock_mut : $(mySRCdir)/test_lock.c $(INCSdir)/atlas_tprim.h \
+        $(myTHRdir)/ATL_lock_mut.c $(myTHRdir)/ATL_unlock_mut.c
+	$(CC) $(CCFLAGS) -DATL_lock_t="unsigned char"  -o $@ \
+        $(mySRCdir)/test_lock.c $(myTHRdir)/ATL_lock_mut.c \
+        $(myTHRdir)/ATL_unlock_mut.c $(ATLASlib) $(LIBS)
+@whiledef ar amd64 arm64 ia32
+xtest_lock_@(ar) : $(mySRCdir)/test_lock.c $(INCSdir)/atlas_tprim.h \
+        $(myTHRdir)/ATL_lock_@(ar).S $(myTHRdir)/ATL_unlock_@(ar).S
+	$(CC) $(CCFLAGS) -DATL_lock_t="unsigned char"  -o $@ \
+        $(mySRCdir)/test_lock.c $(myTHRdir)/ATL_lock_@(ar).S \
+        $(myTHRdir)/ATL_unlock_@(ar).S $(ATLASlib) $(LIBS)
+@endwhile
 @whiledef rt test_count test_count_glb
 x@(rt) : @(rt).o tlib  # mutcnt arccnt
 	$(CC) $(CCFLAGS) -o x@(rt) @(rt).o $(ATLASlib) $(LIBS)
@@ -1073,8 +1170,8 @@ ATL_@(rt)AtomicCount_arch.o : ATL_@(rt)AtomicCount_arch.c
 	$(CC) $(CCFLAGS) -o $@ -c ATL_@(rt)AtomicCount_arch.c
 @endwhile
 
-@multidef rt tune_barrier
-@whiledef rt tune_spawn_fp tune_spawn tune_count test_count tune_aff
+@multidef rt tune_barrier tune_tbv tune_cntdly
+@whiledef rt tune_spawn_fp tune_spawn tune_count test_count tune_aff test_lock
 @(rt).o : $(mySRCdir)/@(rt).c
 	$(CC) $(CCFLAGS) -o @(rt).o -c $(mySRCdir)/@(rt).c
 @endwhile
@@ -2264,22 +2361,16 @@ KB=0
 M = $(mb)
 N = $(nb)
 K = $(kb)
-lda = $(kb)
-ldb = $(kb)
-ldc = 0
-lda2 = $(lda)
-ldb2 = $(ldb)
-ldc2 = $(ldc)
 csA = 1
 csB = 1
 csC = 1
 alpha = 1
 beta = 1
 betan=$(beta)
+alphan=$(alpha)
 loopO = JIK
 F0 = 16
 FN = 0
-moves = -DMoveA -DMoveB             # serial timer takes this form
 kmoves = -DATL_MOVEA -DATL_MOVEB    # ammm kernels take this form
 cleanup = 0
 casnam =
@@ -2290,43 +2381,36 @@ pf=0      # bitpattern controlling prefetch, see atlas-mmkg.base for details
 pfLS=64   # prefetch line size in bytes 
 pfA = 0
 dupB=1
-flagfile=ignore
-srchflags=
 nreg=0
 kmaj=0
 mvA=1
 mvB=1
 mvC=0
+CFLUSH="-1"
 outF=
 bcast=1
 vlen=1
 cpvlen=1
+knam=ATL_USERCPMM
 @whiledef iv szExtra
 @(iv)=0
 @endwhile
 FMF=750.0
+FMFS=-R $(FMF)
 NRF=-1  # change to -2 to get unconstrained MB
-casarg = pre=$(pre) ta=$(ta) tb=$(tb) muladd=$(muladd) lat=$(lat) \
-         loopO=$(loopO) M=$(M) N=$(N) K=$(K) mb=$(mb) nb=$(nb) kb=$(kb) \
-         mu=$(mu) nu=$(nu) ku=$(ku) lda=$(lda) ldb=$(ldb) ldc=$(ldc) \
-         lda2=$(lda2) ldb2=$(ldb2) ldc2=$(ldc2) pfA=$(pfA) dupB=$(dupB) \
-         csA=$(csA) csB=$(csB) csC=$(csC) alpha=$(alpha) beta=$(beta) \
-         kmaj=$(kmaj) moves="$(moves)" cleanup=$(cleanup) mmrout="$(mmrout)" \
-         SMC="$(SMC)" SMCFLAGS="$(SMCFLAGS)" DMC="$(DMC)" DMCFLAGS="$(DMCFLAGS)"
-EXTSEARCHES = -e res/$(pre)MMKSSE.sum
-
+blk2C=def
+C2blk=def
+CM2blk=def
+RM2blk=def
+@BEGINSKIP
 RunMMDef : xmmsearch
 	./xmmsearch -p $(pre) -r $(nreg)
 RunUMMSearch : xummsearch
 	./xummsearch -p $(pre) -n $(nb) $(EXTSEARCHES)
 RunUMMClean : xummsearch
 	./xummsearch -p $(pre) -n $(nb) -C $(which)
-$(BINdir)/xextract :
-	cd $(BINdir) ; $(MAKE) xextract
 $(BINdir)/xsubstr:
 	cd $(BINdir) ; $(MAKE) xsubstr
-res/goodgcc.txt :
-	echo "'$(GOODGCC)'" > res/goodgcc.txt
 $(flagfile) : xuserflag $(BINdir)/xsubstr $(mySRCdir)/CASES/$(flagfile)
 	- rm -f ATL_tMpFiLe
 	$(BINdir)/xsubstr -o ATL_tMpFiLe -i $(mySRCdir)/CASES/$(flagfile) \
@@ -2348,7 +2432,23 @@ x@(rout) : $(INCAdir)/atlas_type.h @(rout).o @(dep) $(parsedeps)
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/@(rout).c
   @undef dep
 @endwhile
+@ENDSKIP
 
+help :
+	@@echo "SEE ALSO: make cpyhelp"
+	@@echo "flags for amm kerns preMCFLAGS='', else preKCFLAGS=''\n"
+	@@echo "make PREcpytime kfnam=FILENAME mu=X nu=X knam=ROUTINE_NAME ta=[N,T] betan=[X,1,n]"
+	@@echo "-->can take MTXD '-D M lda N COLWISE'\n"
+	@@echo "make xPREammtime_pt mmrout=FILENAME mu=X nu=X ku=X mb=X nb=X kb=X M=X N=X K=X\n"
+	@@echo "make PREammmtst mu=X nu=X M=X N=X K=X mmrout=<FILE>\n"
+	@@echo "make gen_amm_[sse,avx,gvec,scalar] mu=X nu=X vlen=VL kmaj=VL rt=FILE\n"
+
+cpyhelp :
+	@@echo "make gen_[sy,]blk2C rt= pre= vlen= mu= nu= cpvlen= beta= alpha="
+	@@echo "make gen_[sy,]C2blk rt= pre= vlen= mu= nu= cpvlen= beta= alpha="
+	@@echo "make gen_A[T,N]2blk rt= kmaj= UR= alpha="
+	@@echo "make gen_A[T,N]2blk rt= kmaj= UR= alpha="
+        @@echo "make gen_cA[T,N]2blk rt= kmaj= UR= alpha= rout=FUNCNM"
 DoSzBlk :
 	rm -f szblk.c xszblk
 	echo "int getsz(int M, int N, int mu, int nu, int vlen)" > szblk.c
@@ -2357,6 +2457,20 @@ DoSzBlk :
 	$(XCC) $(XCCFLAGS) -o xszblk szblk.c
 	./xszblk $(mb) $(nb) $(mu) $(nu) $(vlen)
 
+res/L1CacheSize :
+	$(MAKE) RunL1
+
+res/$(pre)MULADD : $(SYSdir)/res/$(pre)MULADD 
+RunFindCE :
+	$(MAKE) dRunFindCE
+
+res/atlas_cacheedge.h :
+	$(MAKE) $(pre)RunFindCE
+
+res/goodgcc.txt :
+	echo "'$(GOODGCC)'" > res/goodgcc.txt
+$(BINdir)/xextract :
+	cd $(BINdir) ; $(MAKE) xextract
 @whiledef pre z c
    @whiledef rt am2cm am2rm cm2am rm2am
 ATL_@(pre)@(rt)_a$(al)_$(UR).c : $(basf) force_build
@@ -2373,7 +2487,8 @@ ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c : $(basf) force_build
                 -def beta "${beta}" rout=ATL_ccmat2ablk \
                 -o ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c
 @endwhile
-@whiledef rt blk2C C2blk
+@multidef rt2 blk2C C2blk syblk2C
+@whiledef rt  blk2C C2blk syblk2C
 genall_@(rt): $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
 	- rm -f ATL_tmp.c $(rt)
 	touch $(rt)
@@ -2382,19 +2497,29 @@ genall_@(rt): $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
       @multidef ia 1 -1 2
       @whiledef al 1 N1 X
 	echo "#if defined(BETA@(be)) && defined(ALPHA@(al))" >> $(rt)
-	make gen_@(rt) rt=ATL_tmp.c pre=$(pre) vl=$(vl) mu=$(mu) nu=$(nu) \
-             cpvlen=$(cpvlen) beta=@(ib) alpha=@(ia)
+	make gen_@(rt2) rt=ATL_tmp.c pre=$(pre) vlen=$(vlen) mu=$(mu) \
+             nu=$(nu) cpvlen=$(cpvlen) beta=@(ib) alpha=@(ia)
 	cat ATL_tmp.c >> $(rt)
 	echo "#endif" >> $(rt)
          @undef ia
       @endwhile
       @undef ib
    @endwhile
+   @undef rt2
 	- rm -f ATL_tmp.c
+@endwhile
+@whiledef rt blk2C C2blk
 gen_@(rt) : $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
 	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o $(rt) pre=$(pre) vec=NA \
                 rout=@(rt) -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
                 -def cpvl $(cpvlen) -def beta $(beta) -def alpha $(alpha)
+@endwhile
+@whiledef rt blk2C C2blk
+gen_sy@(rt) : $(BINdir)/xextract $(mySRCdir)/atlas-mmkg.base
+	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o $(rt) pre=$(pre) vec=NA \
+                rout=@(rt) -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+                -def cpvl $(cpvlen) -def beta $(beta) -def alpha $(alpha) \
+                -def TRI 1
 @endwhile
 @define pr @@
 @whiledef pr c
@@ -2458,11 +2583,13 @@ xprefparse : $(mySRCdir)/prefparse.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/prefparse.c
 xammgen :  $(mySRCdir)/ammgen.c $(parsedeps) $(INCSdir)/atlas_mmgen.h
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/ammgen.c -lm
+xuammgen :  $(mySRCdir)/uammgen.c $(parsedeps) $(INCSdir)/atlas_mmgen.h
+	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/uammgen.c -lm
 xemit_amm : $(mySRCdir)/emit_amm.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/emit_amm.c -lm
 xemit_uamm : $(mySRCdir)/emit_uamm.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/emit_uamm.c -lm
-@whiledef rt ammsearch uammsearch gmmsearch
+@whiledef rt ammsearch uammsearch gmmsearch uammsrch cpysearch
 x@(rt) : $(mySRCdir)/@(rt).c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/@(rt).c -lm
 @endwhile
@@ -2500,6 +2627,7 @@ gen_amm_gvec: $(BINdir)/xextract force_build
 gen_amm_scalar : $(BINdir)/xextract force_build
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def kb "${kb}" -o $(rt) \
                 -def kmaj "${kmaj}" rout=ATL_mm${kmaj}_${mu}x${nu}_1 
+@beginskip
 SSEGENOUTDIR :
 	mkdir SSEGENOUTDIR
 xmmgen_sse : $(mySRCdir)/mmgen_sse.c
@@ -2511,7 +2639,6 @@ xmmksearch_sse : xmmgen_sse @(rout).o SSEGENOUTDIR
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/@(rout).c
 @skip $(pre)vMMRES : xvnbmmsearch $(pre)cases.vnb
 @skip 	./xvnbmmsearch -p $(pre)
-@beginskip
 $(GMMdir)/../kbmm/KBMMS :
 	mkdir $(GMMdir)/../kbmm/KBMMS
 vinstall : xemit_vkb $(GMMdir)/../kbmm/KBMMS
@@ -2529,16 +2656,10 @@ xvnbmmsearch : $(INCAdir)/atlas_type.h vnbmmsearch.o
 	$(XCC) $(XCCFLAGS) -o $@ vnbmmsearch.o
 vnbmmsearch.o : $(mySRCdir)/vnbmmsearch.c $(INCSdir)/atlas_vnbcase.h
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/vnbmmsearch.c
-@endskip
 xmmsearch_sse : $(INCAdir)/atlas_type.h $(INCSdir)/atlas_mmtesttime.h \
                 $(INCSdir)/atlas_mmparse.h $(INCSdir)/atlas_genpars.h \
                 mmsearch_sse.c
 	$(XCC) $(XCCFLAGS) -o $@ mmsearch_sse.c
-
-res/L1CacheSize :
-	$(MAKE) RunL1
-
-res/$(pre)MULADD : $(SYSdir)/res/$(pre)MULADD 
 
 @whiledef TT NN NT TN TT
 res/$(pre)best@(TT)_$(bnb)x$(bnb)x$(bnb) : xmmsearch xemit_mm 
@@ -2562,45 +2683,20 @@ res/$(pre)NCNB  : xmmsearch xemit_mm
 res/$(pre)Xover.h :
 	$(MAKE) $(pre)Run_tfc pre=$(pre)
 
-RunFindCE :
-	$(MAKE) dRunFindCE
-
-res/atlas_cacheedge.h :
-	$(MAKE) $(pre)RunFindCE
-
-@beginskip
 RunTXover : x$(pre)txover
 	$(ATLRUN) $(MMTdir) x$(pre)txover -o res/atlas_$(pre)tXover_$(NPROC)p.h
 	cp -f res/atlas_$(pre)tXover_$(NPROC)p.h $(INCAdir)/.
 res/atlas_$(pre)tXover_$(NPROC)p.h : 
 	$(MAKE) RunTXover pre=$(pre)
-@endskip
-	
-res/atlas_zdNKB.h :
-	$(MAKE) zdRunFindCE
-res/atlas_csNKB.h :
-	$(MAKE) csRunFindCE
-
 xemit_vkb  : emit_vKB.o
 	$(XCC) $(XCCFLAGS) -o xemit_vkb emit_vKB.o
 
 xemit_mm  : emit_mm.o
 	$(XCC) $(XCCFLAGS) -o xemit_mm emit_mm.o
-
-xemit_reg : emit_reg.o
-	$(XCC) $(XCCFLAGS) -o xemit_reg emit_reg.o
-
-xemit_cmm : emit_cmm.o
-	$(XCC) $(XCCFLAGS) -o xemit_cmm emit_cmm.o
-
 xemit_fmm : emit_fmm.o
 	$(XCC) $(XCCFLAGS) -o xemit_fmm emit_fmm.o
 xhcsearch : hcsearch.o
 	$(XCC) $(XCCFLAGS) -o xhcsearch hcsearch.o
-
-$(BLDdir)/src/threads/lapack/amm/sumd :
-	mkdir $(BLDdir)/src/threads/lapack/amm/sumd
-
 RunHCtest : xhcsearch
 	rm -f $(INCAdir)/$(pre)mmcase.h
 	touch $(INCAdir)/$(pre)mmcase.h
@@ -2613,6 +2709,24 @@ $(pre)killNC :
 	rm -f res/$(pre)best*
 $(pre)killMM : $(pre)killclean $(pre)killNC
 	rm -f res/$(pre)MMRES res/$(pre)*MMRES.sum res/$(pre)*NB
+@ENDSKIP
+	
+res/atlas_zdNKB.h :
+	$(MAKE) zdRunFindCE
+res/atlas_csNKB.h :
+	$(MAKE) csRunFindCE
+
+
+xemit_reg : emit_reg.o
+	$(XCC) $(XCCFLAGS) -o xemit_reg emit_reg.o
+
+xemit_cmm : emit_cmm.o
+	$(XCC) $(XCCFLAGS) -o xemit_cmm emit_cmm.o
+
+
+$(BLDdir)/src/threads/lapack/amm/sumd :
+	mkdir $(BLDdir)/src/threads/lapack/amm/sumd
+
 xvmmf_gccsub : $(mySRCdir)/vmmf_gccsub.c
 	$(XCC) $(XCCFLAGS) -o xvmmf_gccsub $(mySRCdir)/vmmf_gccsub.c
 
@@ -2620,21 +2734,14 @@ xvmmf_gccsub : $(mySRCdir)/vmmf_gccsub.c
 @multidef typ DCPLX SCPLX DREAL SREAL
 @whiledef pre z c d s
    @addkeys ptyp=@(pre)
-res/@(pre)MMKSSE.sum : xmmksearch_sse force_build
-	./xmmksearch_sse -p @(pre)
-res/@(pre)vMMRES : res/@(pre)vgMMRES xvnbmmsearch @(pre)cases.vnb
-	./xvnbmmsearch -p @(pre)
-res/@(pre)vgMMRES : res/@(pre)gMMRES
-	$(MAKE) xmm_old2new
-	./xmm_old2new -i res/@(pre)gMMRES -o res/@(pre)vgMMRES
-
-@(pre)cases.vnb : $(mySRCdir)/CASES/@(pre)cases.vnb xvmmf_gccsub
-	cp $(mySRCdir)/CASES/@(pre)cases.vnb @(pre)cases.vnb
-	./xvmmf_gccsub 'gcc' '$(GOODGCC)' @(pre)cases.vnb
+@BEGINSKIP
 @(pre)cases.dsc: xuserindex $(mySRCdir)/CASES/@(pre)cases.0 $(mySRCdir)/CASES/@(pre)cases.SSE \
                  $(mySRCdir)/CASES/@(pre)cases.3DN $(mySRCdir)/CASES/@(pre)cases.flg 
 	./xuserindex -p @(pre)
-res/@(pre)nreg : xgmmsearch
+@ENDSKIP
+@(pre)mflops.frc : xgmmsearch
+	./xgmmsearch -p @(pre) -f 16
+res/@(pre)nreg : xgmmsearch @(pre)mflops.frc
 	./xgmmsearch -p @(pre) -f 4
 @(pre)Run_tfc : @(pre)tfc
 	$(ATLRUN) $(MMTdir) x@(pre)tfc
@@ -2643,10 +2750,13 @@ res/@(pre)nreg : xgmmsearch
 @(pre)tfc :
 	$(MAKE) x@(pre)tfc pre=@(pre) typ=@(typ)
 
-
 @whiledef rt geAMMRES.sum sqAMMRES.sum rkAMMRES.sum geAMMKCLEAN.sum sqAMMKCLEAN.sum
 res/@(pre)@(rt) : xammsearch
 	./xammsearch -p @(pre)
+@endwhile
+@whiledef rt gAMSYRK.sum
+res/@(pre)@(rt) : res/@(pre)sqAMMRES.sum xgmmsearch 
+	./xgmmsearch -p @(pre)
 @endwhile
 @whiledef rt gAMMRES.sum gkvAMMUR.sum gmvAMMUR.sum
 res/@(pre)@(rt) : xgmmsearch
@@ -2665,6 +2775,7 @@ res/@(pre)@(rt) : xgmmsearch
 	make @(pre)install_uamm_noclean ID=0
 	cp res/@(pre)uAMMFRC.sum $(BLDdir)/src/threads/lapack/amm/sumd/.
 
+@beginskip
 @(pre)install_uamm: res/@(pre)uAMMFRC.sum res/@(pre)UMMKCLEAN.sum \
               res/@(pre)UMMKCLEANBYNB.sum xemit_uamm
 @skip	- cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
@@ -2678,6 +2789,45 @@ res/@(pre)@(rt) : xgmmsearch
             -i res/@(pre)uAMMFRC.sum 
 	mv $(AMMdir)/UKERNEL/*.h $(INCAdir)/.
 	cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm
+@endskip
+@multidef pt c r
+   @ptyp s
+      @multidef pp c s
+   @ptyp d
+      @multidef pp z d
+   @ptyp s d
+@declare "@(pre)install_uamm_noclean: " y n 
+   xuammgen
+   @whiledef pp
+         res/@(pp)uAMMRES.sum
+   @endwhile
+@enddeclare
+	- cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
+	./xuammgen -p @(pre) -d $(AMMdir)/UKERNEL -I $(ID)
+	mv $(AMMdir)/UKERNEL/*.h $(INCAdir)/.
+	cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm
+   @ptyp s
+      @multidef pp c s
+   @ptyp d
+      @multidef pp z d
+@declare "@(pre)install_uamm: " y n 
+   xuammgen
+   @whiledef pp
+      @whiledef rt uAMMRES uAMMKCLEAN
+         res/@(pp)@(rt).sum
+      @endwhile
+   @endwhile
+@enddeclare
+	- cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
+	./xuammgen -p @(pre) -d $(AMMdir)/UKERNEL -I $(ID)
+	mv $(AMMdir)/UKERNEL/*.h $(INCAdir)/.
+	cd $(AMMdir)/UKERNEL ; $(PMAKE) -f @(pre)Make_amm
+   @ptyp z c
+@(pre)install_uamm_noclean: 
+	$(MAKE) @(upr)install_uamm_noclean
+@(pre)install_uamm: 
+	$(MAKE) @(upr)install_uamm
+   @ptyp !
 @(pre)install_ammm: @(pre)install_amm
    @ptyp s
       @multidef pp c s
@@ -2688,7 +2838,7 @@ res/@(pre)@(rt) : xgmmsearch
    xammgen
 @skip   xemit_amm
    @whiledef pp
-      @whiledef rt geAMMRES sqAMMRES rkAMMRES geAMMKCLEAN sqAMMKCLEAN
+      @whiledef rt geAMMRES sqAMMRES rkAMMRES geAMMKCLEAN sqAMMKCLEAN gAMSYRK
          res/@(pp)@(rt).sum
       @endwhile
    @endwhile
@@ -2717,60 +2867,10 @@ res/atlas_@(pre)amm_sum.h :
 	$(MAKE) @(upr)install_amm
    @ptyp !
    @killkeys ptyp
-@beginskip
-@(pre)install : xemit_mm res/@(pre)MMRES.sum $(BINdir)/xccobj \
-                res/@(pre)CleanM res/@(pre)CleanN res/@(pre)CleanK \
-                res/@(pre)uCleanMF res/@(pre)uCleanNF res/@(pre)uCleanKF 
-	./xemit_mm  -p @(pre) -R -2
-	mv -f @(pre)mm.h $(INCAdir)/.
-	mv -f atlas_@(pre)NCmm.h $(INCAdir)/.
-	cd $(GMMdir)/KERNEL ; rm -f ATL_@(pre)*.o
-	cd $(GMMdir)/KERNEL ; rm -f ATL_@(pre)*
-	cd $(GMMdir)/KERNEL ; rm -f @(pre)Makefile xccobj
-	cd KERNEL ; mv -f ATL_@(pre)*.c $(GMMdir)/KERNEL/.
-	mv -f KERNEL/@(pre)Makefile $(GMMdir)/KERNEL/.
-	if [ -s "xccobj.exe" ] ; then \
-	   cp -f xccobj.exe $(GMMdir)/. ; \
-	elif [ -s "xccobj" ]; then \
-           cp -f xccobj $(GMMdir)/. ; \
-        fi
-@skip	$(MAKE) res/atlas_cacheedge.h
-@skip	$(MAKE) res/@(pre)Xover.h pre=@(pre)
-	$(MAKE) @(pre)mmlib
-	touch @(pre)install
-
-res/@(pre)MMRES.sum :
-	$(MAKE) xmmsearch
-	./xmmsearch -p @(pre)
-@whiledef rout CleanM CleanN CleanK uCleanMF uCleanNF uCleanKF
-res/@(pre)@(rout) :
-	$(MAKE) xmmcuncpsearch
-	./xmmcuncpsearch -p @(pre) -R -3
-@endwhile
-@endskip
-
 @(pre)RunFindCE : x@(pre)findCE
 	$(ATLRUN) $(MMTdir) x@(pre)findCE -f res/atlas_cacheedge.h
 	cp -f res/atlas_cacheedge.h $(INCAdir)/atlas_cacheedge.h
-@(pre)ssegenf = CASES/@(pre)genmm_sse.c
-@(pre)gensseK : xmmgen_sse
-	rm -f ssegen_b0.c ssegen_b1.c ssegen_bX.c $(@(pre)ssegenf)
-	./xmmgen_sse -p @(pre) -m $(mu) -n $(nu) -k $(ku) -M $(MB) -N $(NB) \
-                      -K $(KB) -lda $(lda) -ldb $(ldb) -ldc $(ldc) \
-                      $(ssegenflags) -beta 0 -f ssegen_b0.c
-	./xmmgen_sse -p @(pre) -m $(mu) -n $(nu) -k $(ku) -M $(MB) -N $(NB) \
-                   -K $(KB) -lda $(lda) -ldb $(ldb) -ldc $(ldc) \
-                   $(ssegenflags) -beta 1 -f ssegen_b1.c
-	./xmmgen_sse -p @(pre) -m $(mu) -n $(nu) -k $(ku) -M $(MB) -N $(NB) \
-                   -K $(KB) -lda $(lda) -ldb $(ldb) -ldc $(ldc) \
-                   $(ssegenflags) -beta 8 -f ssegen_bX.c
-	echo "#ifdef BETA0" > $(@(pre)ssegenf)
-	cat ssegen_b0.c >> $(@(pre)ssegenf)
-	echo "#elif defined(BETAX)" >> $(@(pre)ssegenf)
-	cat ssegen_bX.c >> $(@(pre)ssegenf)
-	echo "#else" >> $(@(pre)ssegenf)
-	cat ssegen_b1.c >> $(@(pre)ssegenf)
-	echo "#endif" >> $(@(pre)ssegenf)
+
    @undef typ
    @undef upr
 @endwhile
@@ -2822,16 +2922,6 @@ peaktim.o : $(mySRCdir)/peaktim.c
 @(pre)mmlib:
 	cd $(AMMdir) ; $(MAKE) @(pre)lib
 
-@skip $(MMTdir)/res/@(pre)vMMRES :
-@(pre)standard : force_build
-	$(MAKE) @(pre)ready $(@(pre)ATLres)
-	$(MAKE) @(pre)install
-
-res/@(pre)gMMRES.sum : xgmmsearch
-	./xgmmsearch -p @(pre) $(srchflags)
-res/@(pre)guMMRES.sum : xgmmsearch
-	./xgmmsearch -p @(pre) -b $(nb) -o res/@(pre)guMMRES.sum
-
 @(pre)findCE.o : $(mySRCdir)/findCE.c
 	$(KC) $(KCFLAGS) -c -D@(typ) -o $@ $(mySRCdir)/findCE.c
 @(pre)tfindCE.o : $(mySRCdir)/findCE.c
@@ -2861,13 +2951,13 @@ x@(pre)findCE : $(INCAdir)/atlas_type.h $(L3INCdep) @(pre)mmlib \
 	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)findCE.o \
                    $(GMMdir)/ATL_@(pre)FindCE_mm.o $(ATLASlib) $(LIBS)
 
-@beginskip
+@BEGINSKIP
 x@(pre)txover : force_build @(pre)txover.o
 	cd $(BLDdir)/src/threads/blas/level3 ; $(MAKE) ATL_@(pre)tgemm_p.o @(pre)lib
 	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)txover.o \
               $(BLDdir)/src/threads/blas/level3/ATL_@(pre)tgemm_p.o \
               $(TESTlib) $(ATLASlib) $(LIBS)
-@endskip
+@ENDSKIP
 x@(pre)tfc : $(INCAdir)/atlas_type.h $(L3INCdep) \
              $(pre)tfc.o @(pre)mmlib
 	cd $(GMMdir) ; $(MAKE) ATL_@(pre)big_mm.o ATL_@(pre)small_mm.o \
@@ -2909,6 +2999,14 @@ x@(pre)nbtune : @(pre)nbtune.o @(pre)ammlib
 @(pre)trstime_pt.o : $(mySRCdir)/mmtime_pt.c
 	$(KC) $(KCFLAGS) -c -DTIME_TRMVK=1 -D@(typ)=1 \
               -o @(pre)trstime_pt.o $(mySRCdir)/mmtime_pt.c
+@(pre)trsmKtime : x@(pre)trstime_pt
+	$(ATLRUN) $(MMTdir) x@(pre)trstime_pt -p $(NPROC) $(TIDLIST) \
+           -m $(mb) -n $(nb) -k $(mb) -um 1 -un 1 -uk 1 $(FMFS) \
+           -Ma 0 -Mb 0 -Mc 1 $(outF)
+
+@(pre)trstime_pt3f.o : $(mySRCdir)/mmtime_pt3f.c
+	$(KC) $(KCFLAGS) -c -DTIME_TRMVK=1 -D@(typ)=1 $(TDEFS) \
+              -o @(pre)trstime_pt3f.o $(mySRCdir)/mmtime_pt3f.c
 @ptyp z c
    @define trsm @ATL_@(pre)ctrsmKL_rk2.o@
 @ptyp d s
@@ -2917,23 +3015,65 @@ x@(pre)nbtune : @(pre)nbtune.o @(pre)ammlib
 $(L3Bdir)/kernel/@(trsm) :
 	cd $(L3Bdir)/kernel ; make @(trsm)
 @ptyp !
+@(pre)cpytimeC : 
+	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_COPY -DCOPY_C \
+           -DCOPYK=$(knam) -o @(pre)cpytimeC_pt${bn}.o $(mySRCdir)/mmtime_pt.c
+	$(@up@(pre)KC) $(@up@(pre)KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
+           -DALPHA${alphan}=1 -DATL_MU=$(mu) -DATL_NU=$(nu) \
+           -o @(pre)cpykern.o -c $(kfnam)
+	$(CLINKER) $(CLINKFLAGS) -o x@(pre)cpytimeC_pt @(pre)cpytimeC_pt${bn}.o \
+           @(pre)cpykern.o $(SYSdir)/time.o $(LIBS)
+	$(ATLRUN) $(MMTdir) x@(pre)cpytimeC_pt -p $(NPROC) $(TIDLIST) \
+           -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) $(FMFS) \
+           -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) $(MTXD)
+
+@(pre)cpytime : 
+	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_COPY \
+           -DCOPYK=$(knam) -o @(pre)cpytime_pt${bn}.o $(mySRCdir)/mmtime_pt.c
+	$(@up@(pre)KC) $(@up@(pre)KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
+           -DTRANS$(ta)_=1 -DALPHA${betan}=1 -DATL_MU=$(mu) -DATL_NU=$(nu) \
+           -o @(pre)cpykern.o -c $(kfnam)
+	$(CLINKER) $(CLINKFLAGS) -o x@(pre)cpytime_pt @(pre)cpytime_pt${bn}.o \
+           @(pre)cpykern.o $(SYSdir)/time.o $(LIBS)
+	$(ATLRUN) $(MMTdir) x@(pre)cpytime_pt -p $(NPROC) $(TIDLIST) \
+           -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) $(FMFS) \
+           -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) $(MTXD)
+
 x@(pre)trstime_pt : @(pre)trstime_pt.o $(L3Bdir)/kernel/@(trsm)
-	$(CLINKER) $(CLINKFLAGS) -o x@(pre)trstime_pt @(pre)trstime_pt.o \
-           $(SYSdir)/time.o $(L3Bdir)/kernel/@(trsm) $(ATLASlib) $(LIBS)
-@(pre)trsmKtime : x@(pre)trstime_pt
-	$(ATLRUN) $(MMTdir) x@(pre)trstime_pt -p $(NPROC) $(TIDLIST) \
-           -m $(mb) -n $(nb) -k $(mb) -um 1 -un 1 -uk 1 -R $(FMF) \
-           -Ma 0 -Mb 0 -Mc 1 $(outF)
+	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)trstime_pt.o \
+         $(SYSdir)/time.o $(L3Bdir)/kernel/@(trsm) $(ATLASlib) $(LIBS)
+x@(pre)trstime_pt3f : @(pre)trstime_pt3f.o $(L3Bdir)/kernel/@(trsm)
+	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)trstime_pt3f.o \
+         $(SYSdir)/time.o $(L3Bdir)/kernel/@(trsm) $(ATLASlib) $(LIBS)
+
+@ptyp d s
+bn = _b${betan}
+@(pre)ammtime_pt3f${bn}.o : $(mySRCdir)/mmtime_pt3f.c
+	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_GEMMK=1 \
+              -o @(pre)ammtime_pt3f${bn}.o $(mySRCdir)/mmtime_pt3f.c
+x@(pre)ammtime_pt3f : $(SYSdir)/time.o force_build
+	rm -f @(pre)mm.c
+	$(MAKE) @(pre)ammtime_pt3f${bn}.o
+	@(MCC) @(MMFLAGS) -DBETA$(betan)=1 -DMB=$(mb) -DNB=$(nb) \
+	    -DKB=$(kb) -D@(typ)=1 $(kmoves) -o @(pre)ammmKT.o -c $(mmrout)
+	$(CLINKER) $(CLINKFLAGS) -o x@(pre)ammtime_pt3f \
+	    @(pre)ammtime_pt3f${bn}.o @(pre)ammmKT.o $(SYSdir)/time.o $(LIBS)
+	$(ATLRUN) $(MMTdir) x@(pre)ammtime_pt3f -p $(NPROC) $(TIDLIST) \
+           -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) $(FMFS) \
+           -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) -F $(CFLUSH) $(outF)
+@ptyp !
 
 @skip @(pre)txover.o : $(mySRCdir)/txover.c
 @skip 	$(KC) $(KCFLAGS) -c -D@(typ) -o @(pre)txover.o $(mySRCdir)/txover.c
 bn = _b${betan}
-@(pre)ammtime_pt${bn}.o : $(mySRCdir)/mmtime_pt.c
-	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 \
-              -o @(pre)ammtime_pt${bn}.o $(mySRCdir)/mmtime_pt.c
-x@(pre)ammtime_pt : $(SYSdir)/time.o force_build
+@multidef kr GEMM SYRK
+@whiledef kn  amm  syk
+@(pre)@(kn)time_pt${bn}.o : $(mySRCdir)/mmtime_pt.c
+	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_@(kr)K=1 \
+              -o @(pre)@(kn)time_pt${bn}.o $(mySRCdir)/mmtime_pt.c
+x@(pre)@(kn)time_pt : $(SYSdir)/time.o force_build
 	rm -f @(pre)mm.c
-	$(MAKE) @(pre)ammtime_pt${bn}.o
+	$(MAKE) @(pre)@(kn)time_pt${bn}.o
 @ptyp z c
 	@(MCC) @(MMFLAGS) -DBETA0=1 -DATL_USERMM=CAMM_b0 \
                -DMB=$(mb) -DNB=$(nb) -DKB=$(kb) \
@@ -2944,18 +3084,21 @@ x@(pre)ammtime_pt : $(SYSdir)/time.o force_build
 	@(MCC) @(MMFLAGS) -DBETAN1=1 -DATL_USERMM=CAMM_bn \
                -DMB=$(mb) -DNB=$(nb) -DKB=$(kb) \
                -D@(utp)=1 $(kmoves) -o @(pre)CAMM_bn.o -c $(mmrout)
-	$(CLINKER) $(CLINKFLAGS) -o x@(pre)ammtime_pt @(pre)ammtime_pt${bn}.o \
+	$(CLINKER) $(CLINKFLAGS) -o x@(pre)@(kn)time_pt @(pre)@(kn)time_pt${bn}.o \
            @(pre)CAMM_b0.o @(pre)CAMM_b1.o @(pre)CAMM_bn.o \
            $(SYSdir)/time.o $(LIBS)
 @ptyp d s
 	@(MCC) @(MMFLAGS) -DBETA$(betan)=1 -DMB=$(mb) -DNB=$(nb) -DKB=$(kb) \
                -D@(typ)=1 $(kmoves) -o @(pre)ammmKT.o -c $(mmrout)
-	$(CLINKER) $(CLINKFLAGS) -o x@(pre)ammtime_pt @(pre)ammtime_pt${bn}.o \
+	$(CLINKER) $(CLINKFLAGS) -o x@(pre)@(kn)time_pt @(pre)@(kn)time_pt${bn}.o \
            @(pre)ammmKT.o $(SYSdir)/time.o $(LIBS)
 @ptyp !
-	$(ATLRUN) $(MMTdir) x@(pre)ammtime_pt -p $(NPROC) $(TIDLIST) \
-           -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) -R $(FMF) \
-           -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF)
+	$(ATLRUN) $(MMTdir) x@(pre)@(kn)time_pt -p $(NPROC) $(TIDLIST) \
+           -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) $(FMFS) \
+           -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF)
+   @undef kr
+@endwhile
+@BEGINSKIP
 @(pre)mmtime_pt.o : $(mySRCdir)/mmtime_pt.c
 	$(KC) $(KCFLAGS) -c -D@(typ) -o @(pre)mmtime_pt.o \
                $(mySRCdir)/mmtime_pt.c
@@ -2971,102 +3114,11 @@ x@(pre)mmtime_pt : force_build
 	@(MCC) @(MMFLAGS) -DATL_BETA=$(beta) -c @(pre)mm.c 
 	$(CLINKER) $(CLINKFLAGS) -o x@(pre)mmtime_pt @(pre)mmtime_pt.o \
            @(pre)mm.o $(SYSdir)/time.o $(ATLASlib) $(LIBS)
-
-	
-@multidef sdef @^ -DATL_NEWTIME=1
-@whiledef ss 0 N0
-@(pre)mmcase@(ss): $(SYSdir)/time.o $(INCAdir)/atlas_type.h xccobj \
-       $(INCAdir)/atlas_@(pre)sysinfo.h
-	rm -f @(pre)fc.o @(pre)mm.o
-	$(KC) $(KCFLAGS) -D@(pre)REAL -DtranA$(ta) -DtranB$(tb) \
-              -DMULADD=$(muladd) -DLAT=$(lat) -D$(loopO) \
-              -DMB=$(M) -DNB=$(N) -DKB=$(K) \
-              -DMB0=$(mb) -DNB0=$(nb) -DKB0=$(kb) \
-              -DKU=$(ku) -DNU=$(nu) -DMU=$(mu) \
-              -DLDA=$(lda) -DLDB=$(ldb) -DLDC=$(ldc) \
-              -DLDA2=$(lda2) -DLDB2=$(ldb2) -DLDC2=$(ldc2) \
-              -DcsA=$(csA) -DcsB=$(csB) -DcsC=$(csC) \
-              -DALPHA=$(alpha) -DBETA=$(beta) $(moves) \
-              -DPREFA=$(pfA) -DCLEANUP=$(cleanup) -DDUPB=$(dupB) @(sdef) \
-              -o @(pre)fc.o -c $(mySRCdir)/fc.c
-	@(MCC) @(MMFLAGS) -DATL_BETA=$(beta) -c @(pre)mm.c 
-@skip           -DATL_USERMM=ATL_@(pre)JIK$(nb)x$(nb)x$(nb)TN$(nb)x$(nb)x0_a1_b1
-	$(CLINKER) $(CLINKFLAGS) -o x@(pre)fc @(pre)fc.o @(pre)mm.o \
-                                    $(SYSdir)/time.o $(mmlib)
-	$(ATLRUN) $(MMTdir) x@(pre)fc $(casnam)
-   @undef sdef
-@endwhile
-
-   @undef MCC
-   @undef MMFLAGS
-   @undef upr
-   @undef typ
+@ENDSKIP
    @undef utp
-   @killkeys ptyp
-@endwhile
-
-
-mmcugen  : xemit_mm
-	rm -f KERNEL/$(pre)Makefile KERNEL/ATL_$(pre)pKB*.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku0) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -b $(beta) -a $(alpha) -Z 1 -C $(cleanup) -R -3
-
-@define ss @@
-@whiledef ss N
-mmucase@(ss) : xemit_mm auxlib xccobj
-	rm -f $(pre)mm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b $(beta) -a $(alpha) -Z 1 -C $(cleanup)\
-        -R -3            > $(pre)mm.c
-	cat $(mmrout) >> $(pre)mm.c
-	$(MAKE) $(pre)mmcase@(ss)0 $(casarg) casnam=$(casnam) mmlib="$(ATLASlib) \
-                $(LIBS)"
-@endwhile
-
-@multidef upr d s
-@whiledef pre z c
-   @define MCC @$(@up@(upr)MC)@
-   @define MMFLAGS @$(CDEFS) $(@up@(upr)MCFLAGS)@
-@(pre)BuildCobjs: xemit_mm
-	rm -f @(pre)mm_b[1,0,X].[o,c]
-	./xemit_mm -p @(pre) -b 0 -M $(mb) -N $(nb) -K $(kb) -R -3 \
-                   -lda $(lda) -ldb $(ldb) -ldc $(ldc) > @(pre)mm_b0.c
-	cat $(mmrout) >> @(pre)mm_b0.c
-	./xemit_mm -p @(pre) -b 1 -M $(mb) -N $(nb) -K $(kb) -R -3 \
-                   -lda $(lda) -ldb $(ldb) -ldc $(ldc) > @(pre)mm_b1.c
-	cat $(mmrout) >> @(pre)mm_b1.c
-	./xemit_mm -p @(pre) -b 8 -M $(mb) -N $(nb) -K $(kb) -R -3 \
-                   -lda $(lda) -ldb $(ldb) -ldc $(ldc) > @(pre)mm_bX.c
-	cat $(mmrout) >> @(pre)mm_bX.c
-	@(MCC) @(MMFLAGS) -DATL_BETA=1 -c @(pre)mm_b1.c 
-	@(MCC) @(MMFLAGS) -DATL_BETA=0 -c @(pre)mm_b0.c 
-	@(MCC) @(MMFLAGS) -DATL_BETA=8 -c @(pre)mm_bX.c 
-@(upr)mmutstcase1: auxlib xccobj
-	rm -f @(upr)mm.[o,c]
-	./xemit_mm -p @(upr) -b $(beta) -M $(mb) -N $(nb) -K $(kb) -R -3 \
-                   -lda $(lda) -ldb $(ldb) -ldc $(ldc) > @(upr)mm.c
-	cat $(mmrout) >> @(upr)mm.c
-	@(MCC) @(MMFLAGS) -DATL_BETA=$(beta) -c @(upr)mm.c
-	$(MAKE) mmtstcase0 $(casarg) mmobjs=@(upr)mm.o \
-                mmlib="$(ATLASlib) $(LIBS)"
-@(upr)mmtstcase : xemit_mm $(INCAdir)/atlas_type.h xccobj
-	rm -f @(upr)mm.c
-	./xemit_mm -p @(upr) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b $(beta) -a $(alpha) -Z 1 \
-        -C $(cleanup) -pfA $(pfA) > @(upr)mm.c
-	@(MCC) -DATL_BETA=$(beta) @(MMFLAGS) -c @(upr)mm.c
-	$(MAKE) mmtstcase0 $(casarg) mmobjs=@(upr)mm.o
+   @undef typ
    @undef upr
-   @undef MCC
-   @undef MMFLAGS
 @endwhile
-BuildCobjs : $(pre)BuildCobjs
 
 cwrk3=0
 @multidef typ DCPLX SCPLX
@@ -3075,6 +3127,37 @@ cwrk3=0
 @(pre)ammtst: @(pre)ammmtst
    @multidef tri   0    1
    @whiledef rt ammm syrk
+@(pre)@(rt)cpytst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
+	- rm -f c@(rt)tst.c
+	if test "$(blk2C)" = "def" ; then \
+           $(extC) -b $(mySRCdir)/atlas-mmkg.base -o c@(rt)tst.c pre=@(pre) \
+           vec=NA -def rtnm ATL_blk2C rout=blk2C -def vl $(vlen) \
+           -def TRI @(tri) -def mu $(mu) -def nu $(nu) \
+           -def cpvl $(cpvlen) -def beta 0 -def alpha 1 ; \
+        else \
+           cat $(blk2C) > c@(rt)tst.c ; \
+        fi
+        @whiledef op RM CM
+	if test "$(@(op)2blk)" != "def" ; then \
+           echo "#define ATL_USERCPMM ATL_@low@(op)2am" >> c@(rt)tst.c ; \
+           cat $(@(op)2blk) >> c@(rt)tst.c ; \
+           echo "#undef  ATL_USERCPMM" >> c@(rt)tst.c ; \
+           echo "#define NO_@(op)2AM" >> c@(rt)tst.c ; \
+        fi
+        @endwhile
+	$(extC) -def mu "${mu}" -def nu "${nu}" -def be "${beta}" \
+                -def M "${M}" -def N "${N}" -def K "${K}" -def kmaj "$(kmaj)" \
+                -def TRI @(tri) rout=cammmtst >> c@(rt)tst.c
+	- rm -f @(pre)ammm_b1.o @(pre)ammm_b0.o @(pre)ammm_bn.o
+	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA1 \
+           -DKB=${kb} -DATL_USERMM=cmm_b1 -o @(pre)ammm_b1.o -c $(mmrout) 
+	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA0 \
+           -DKB=${kb} -DATL_USERMM=cmm_b0 -o @(pre)ammm_b0.o -c $(mmrout)
+	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETAN1 \
+           -DKB=${kb} -DATL_USERMM=cmm_bn -o @(pre)ammm_bn.o -c $(mmrout)
+	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst -DATL_CWRK3=$(cwrk3) \
+              c@(rt)tst.c @(pre)ammm_b1.o @(pre)ammm_b0.o @(pre)ammm_bn.o
+	$(ATLRUN) $(MMTdir) x@(pre)@(rt)tst 
 @(pre)@(rt)tst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
 	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o c@(rt)tst.c pre=@(pre) \
            vec=NA -def rtnm ATL_blk2C rout=blk2C -def vl $(vlen) \
@@ -3101,9 +3184,49 @@ cwrk3=0
 @multidef typ DREAL SREAL
 @multidef upr d s
 @whiledef pre d s
-@(pre)ammtst: @(pre)ammmtst
    @multidef tri   0    1
    @whiledef rt ammm syrk
+@(pre)@(rt)cpytst: 
+	rm -f @(rt)tst.c
+	if test "$(blk2C)" = "def" ; then \
+           $(extC) -b $(mySRCdir)/atlas-mmkg.base -o @(rt)tst.c pre=@(pre) \
+           vec=NA rout=blk2C -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+           -def cpvl $(cpvlen) -def beta 0 -def alpha 1 -def rtnm ATL_blk2C \
+           -def TRI @(tri) ; \
+        else \
+@skip           echo "void ATL_blk2C(const size_t,const size_t,const SCALAR, const TYPE*, const SCALAR, TYPE*, const size_t);" > @(rt)tst.c ; \
+           cat $(blk2C) > @(rt)tst.c ; \
+        fi
+	if test "$(C2blk)" = "def" ; then \
+           $(extC) -b $(mySRCdir)/atlas-mmkg.base pre=@(pre) vec=NA \
+                rout=C2blk -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
+                -def rtnm ATL_C2blk -def TRI @(tri) \
+                -def cpvl $(cpvlen) -def beta 0 -def alpha 1 >> @(rt)tst.c ; \
+        else \
+           cat $(C2blk) >> @(rt)tst.c ; \
+@skip           echo "void ATL_C2blk(const size_t,const size_t,const SCALAR, const TYPE*, const size_t, const SCALAR, TYPE*);" >> @(rt)tst.c ; \
+        fi
+	if test "$(CM2blk)" != "def" ; then \
+           echo "#define ATL_USERCPMM ATL_cm2am" >> @(rt)tst.c ; \
+           cat $(CM2blk) >> @(rt)tst.c ; \
+           echo "#undef  ATL_USERCPMM" >> @(rt)tst.c ; \
+           echo "#define NO_CM2AM" >> @(rt)tst.c ; \
+        fi
+	if test "$(RM2blk)" != "def" ; then \
+           echo "#define ATL_USERCPMM ATL_rm2am" >> @(rt)tst.c ; \
+           cat $(RM2blk) >> @(rt)tst.c ; \
+           echo "#undef  ATL_USERCPMM" >> @(rt)tst.c ; \
+           echo "#define NO_RM2AM" >> @(rt)tst.c ; \
+        fi
+	$(extC) -def mu "${mu}" -def nu "${nu}" -def be "${beta}" \
+                -def M "${M}" -def N "${N}" -def K "${K}" -def dupB "${dupB}" \
+                -def kmaj "${kmaj}" -def TRI @(tri) rout=ammmtst >> @(rt)tst.c
+	- rm -f @(pre)ammm.o
+	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA${betan} \
+           -DKB=${kb} -o @(pre)ammm.o -c $(mmrout)
+	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst @(rt)tst.c @(pre)ammm.o
+	$(ATLRUN) $(MMTdir) x@(pre)@(rt)tst 
+@(pre)ammtst: @(pre)ammmtst
 @(pre)@(rt)tst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
 	$(extC) -b $(mySRCdir)/atlas-mmkg.base -o @(rt)tst.c pre=@(pre) vec=NA \
                 rout=blk2C -def vl $(vlen) -def mu $(mu) -def nu $(nu) \
@@ -3136,33 +3259,9 @@ cwrk3=0
    @undef upr
    @undef typ
 @endwhile
-cmmucase : xemit_mm $(SYSdir)/time.o $(INCAdir)/atlas_type.h \
-           $(INCAdir)/atlas_$(pre)sysinfo.h auxlib xccobj
-	rm -f $(pre)fc.o 
-	$(MAKE) $(pre)BuildCobjs pre=$(pre) mb=$(mb) nb=$(nb) kb=$(kb) \
-                lda=$(lda) ldb=$(ldb) ldc=$(ldc) $(casarg)
-	$(KC) $(KCFLAGS) -D$(pre)REAL -DtranA$(ta) -DtranB$(tb) \
-              -DMULADD=$(muladd) -DLAT=$(lat) -D$(loopO) \
-              -DMB=$(M) -DNB=$(N) -DKB=$(K) \
-              -DMB0=$(mb) -DNB0=$(nb) -DKB0=$(kb) \
-              -DKU=$(ku) -DNU=$(nu) -DMU=$(mu) \
-              -DLDA=$(lda) -DLDB=$(ldb) -DLDC=$(ldc) \
-              -DcsA=$(csA) -DcsB=$(csB) -DcsC=$(csC) \
-              -DALPHA=$(alpha) -DBETA=$(beta) $(moves) \
-              -DPREFA=$(pfA) -DCLEANUP=$(cleanup) \
-              -o $(pre)fc.o -c $(mySRCdir)/fc.c
-	$(CLINKER) $(CLINKFLAGS) -o x$(pre)fc $(pre)fc.o $(pre)mm_b0.o \
-                   $(pre)mm_b1.o $(pre)mm_bX.o $(SYSdir)/time.o \
-                   $(ATLASlib) $(LIBS)
-	$(ATLRUN) $(MMTdir) x$(pre)fc $(casnam)
 
-ummcaseN: xccobj
-	$(MAKE) mmucaseN $(casarg) casnam=res/ignore
-ummcase: xccobj
-	$(MAKE) mmucase $(casarg) casnam=res/ignore
-
+@BEGINSKIP
 mmutstcase : $(pre)mmutstcase1
-
 cmmutstcase: auxlib xccobj
 	rm -f $(pre)mm.c
 	$(MAKE) BuildCobjs pre=$(pre) mb=$(mb) nb=$(nb) kb=$(kb) \
@@ -3172,40 +3271,6 @@ cmmutstcase: auxlib xccobj
 	$(MAKE) mmtstcase0 $(casarg) csC=2 \
                 mmobjs="$(pre)mm_b0.o $(pre)mm_b1.o $(pre)mm_bX.o" \
                 mmlib="$(ATLASlib) $(LIBS)"
-
-#
-# This target allows the code generator to fake being a user-contributed kernel
-# by packing all BETA cases in one file
-#
-mmgencase : xemit_mm xccobj
-	rm -f $(pre)gmm.c
-	echo "#ifdef BETA0" >> $(pre)gmm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b 0 -a $(alpha) -Z 0 \
-        -C $(cleanup) -pfA $(pfA) >> $(pre)gmm.c
-	echo "#elif defined(BETAX)" >> $(pre)gmm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b 8 -a $(alpha) -Z 0 \
-        -C $(cleanup) -pfA $(pfA) >> $(pre)gmm.c
-	echo "#else" >> $(pre)gmm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b 1 -a $(alpha) -Z 0 \
-        -C $(cleanup) -pfA $(pfA) >> $(pre)gmm.c
-	echo "#endif" >> $(pre)gmm.c
-mmcase : xemit_mm xccobj
-	rm -f $(pre)mm.c
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -FF $(ff) -b $(beta) -a $(alpha) -Z 1 \
-        -C $(cleanup) -pfA $(pfA) > $(pre)mm.c
-	$(MAKE) $(pre)mmcase0 $(casarg) casnam=$(casnam)
 
 mmtstcase : $(pre)mmtstcase
 
@@ -3225,18 +3290,6 @@ mmtstcase0: $(SYSdir)/time.o $(INCAdir)/atlas_type.h auxlib xccobj
                    $(mmlib)
 	$(ATLRUN) $(MMTdir) x$(pre)mmtst
 
-NCemit : xemit_mm
-	rm -f $(mmnam)
-	./xemit_mm -p $(pre) -ta $(ta) -tb $(tb) -muladd $(muladd) -l $(lat) \
-        -L $(loopO) -M $(mb) -N $(nb) -K $(kb) -m $(mu) -n $(nu) -k $(ku) \
-        -lda $(lda) -ldb $(ldb) -ldc $(ldc) -csA $(csA) -csB $(csB) -csC $(csC)\
-        -F0 $(if) -FN $(nf) -b $(beta) -a $(alpha) -Z 0 -C $(cleanup) \
-                    > $(mmnam)
-NCready :  xemit_mm $(INCAdir)/atlas_type.h
-@skip	rm -f ATL_$(pre)NCmm[T,N][T,N]_a[1,X]_b[0,1,X].c \
-@skip              ATL_$(pre)NCCUmm[T,N][T,N].c ATL_$(pre)NCCUmm[T,N][T,N]_K.c
-	rm -f atlas_$(pre)NCmm.h
-	./xemit_mm -p $(pre) -N $(nb) -R -2 > atlas_$(pre)NCmm.h
 @whiledef ta T N
    @whiledef tb T N
       @multidef bnam bX b1 b0
@@ -3266,6 +3319,7 @@ NCready :  xemit_mm $(INCAdir)/atlas_type.h
 @skip                   -a 1 12 -b 1 12 > ATL_$(pre)NCCUmm@(ta)@(tb).c
    @endwhile
 @endwhile
+@ENDSKIP
 
 $(BINdir)/xccobj :
 	cd $(BINdir) ; $(MAKE) xccobj
@@ -3278,9 +3332,9 @@ auxlib :
 	touch auxlib
 force_build :
 
+@beginskip
 install :
 	$(MAKE) $(pre)install
-@beginskip
 dNCinstall :
 	$(MAKE) NCinstall pre=d
 sNCinstall :
@@ -3293,10 +3347,6 @@ NCinstall:
 	mv -f ATL_$(pre)NCmm[T,N][T,N]_a[1,X]_b[0,1,X].c \
               ATL_$(pre)NCCUmm[T,N][T,N].c ATL_$(pre)NCCUmm[T,N][T,N]_K.c \
               $(GMMdir)/.
-@endskip
-
-GetSysSum.o : $(mySRCdir)/GetSysSum.c
-	$(KC) -c $(KCFLAGS) $(mySRCdir)/GetSysSum.c
 
 emit_vKB.o : $(mySRCdir)/emit_vKB.c $(INCSdir)/atlas_vnbcase.h
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/emit_vKB.c
@@ -3313,9 +3363,12 @@ emit_cmm.o : $(mySRCdir)/emit_cmm.c
 emit_fmm.o : $(mySRCdir)/emit_fmm.c
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/emit_fmm.c
 
-
 hcsearch.o : $(L3INCdep) $(mySRCdir)/hcsearch.c
 	$(XCC) -c $(XCCFLAGS) $(mySRCdir)/hcsearch.c
+@endskip
+
+GetSysSum.o : $(mySRCdir)/GetSysSum.c
+	$(KC) -c $(KCFLAGS) $(mySRCdir)/GetSysSum.c
 
 gemmtst.o : $(mySRCdir)/gemmtst.c $(INCSdir)/atlas_misc.h \
             $(INCSdir)/atlas_lvl3.h $(INCSdir)/atlas_tst.h $(INCSdir)/cblas.h
@@ -3460,6 +3513,7 @@ mySRCdir = $(SRCdir)/bin
 
 scalf = $(mflop_l1)
 
+LOCK=mut
 ammidx=0
 pre=j
 nb = 88
@@ -3505,7 +3559,6 @@ xatlas_build : xatlas_tee atlas_install.o
 	$(XCC) $(XCCFLAGS) -o $@ atlas_install.o
 atlas_install.o : $(mySRCdir)/atlas_install.c
 	$(XCC) $(XCCFLAGS) -c $(mySRCdir)/atlas_install.c
-
 xatlas_tee     : atlas_tee.o 
 	$(XCC) $(XCCFLAGS) -o $@ atlas_tee.o
 atlas_tee.o : $(mySRCdir)/atlas_tee.c
@@ -3558,12 +3611,24 @@ IBuildPtlibs0:
 	- cd $(BLDdir)/interfaces/blas/F77/src/ ; $(MAKE) ptlib
 	cd $(BLDdir)/src/lapack ; $(MAKE) ptlib
 
+Tprim_mut :
+	cp $(SRCdir)/makes/Make.tprim $(BLDdir)/src/threads/Make.tprim
+@whiledef ar ia32 amd64 arm64
+Tprim_@(ar) : 
+	- rm -f $(BLDdir)/src/threads/Make.tprim
+	cat $(SRCdir)/makes/Make.tprim | sed -e "s/LNG=c/LNG=S/" \
+        -e "s/ARC=mut/ARC=@(ar)/" > $(BLDdir)/src/threads/Make.tprim
+@endwhile
+	
+ITprim: Tprim_$(LOCK)
+	cd $(BLDdir)/tune/threads ; $(MAKE) IRun_nthr
+	cd $(BLDdir/src/threads ; $(MAKE) -f Make.tprim lib
 IPTtune:
 	cd $(BLDdir)/tune/threads ; $(MAKE) IThreadTune
-	cd $(BLDdir)/src/auxil/ ; $(MAKE) ptlib
+	cd $(BLDdir)/src/threads/ ; $(MAKE) lib
+	cd $(BLDdir)/tune/threads ; $(MAKE) MakeThreadPerf
 	$(MAKE) INSTALL_LOG/atlas_tcacheedge.h
 	cd $(BLDdir)/src/blas/ammm ; $(MAKE) lib
-	cd $(BLDdir)/src/threads/ ; $(MAKE) lib
 @beginskip
 	$(MAKE) INSTALL_LOG/atlas_stXover_$(NPROC)p.h pre=s
 	$(MAKE) INSTALL_LOG/atlas_dtXover_$(NPROC)p.h pre=d
@@ -3701,6 +3766,7 @@ ISet$(pre)KernDef.grd:
 @endskip
 
 IStage1:
+	$(MAKE) ITprim
 	- cd $(AUXdir) ; $(MAKE) -s ATL_buildinfo.o
 	cd $(AUXdir) ; $(MAKE) lib
 	cd $(TSTdir) ; $(MAKE) lib
@@ -3939,6 +4005,18 @@ killshared:
 	rm -f $(LIBdir)/libatlas.so $(LIBdir)/libcatlas.so \
               shared.grd ptshared.grd
 
+xtestGAC: ptauxlib $(INCSdir)/atlas_gatmctr.h $(mySRCdir)/testAC.c
+	$(KC) $(KCFLAGS) -DTEST_GLOBAL -o $@ $(mySRCdir)/testAC.c \
+              $(ATLASlib) $(LIBS)
+xtestAC: ptauxlib $(INCSdir)/atlas_gatmctr.h $(mySRCdir)/testAC.c
+	$(KC) $(KCFLAGS) -o $@ $(mySRCdir)/testAC.c $(ATLASlib) $(LIBS)
+xtestBV : auxlib $(INCSdir)/atlas_bitvec.h $(mySRCdir)/testBV.c
+	$(KC) $(KCFLAGS) -o $@ $(mySRCdir)/testBV.c $(ATLASlib) $(LIBS)
+ptauxlib: auxlib
+	cd $(BLDdir)/src/auxil ; $(MAKE) ptlib
+	cd $(BLDdir)/src/threads ; $(MAKE) lib
+xttestBV : ptauxlib $(INCSdir)/atlas_bitvec.h $(mySRCdir)/testtBV.c
+	$(KC) $(KCFLAGS) -o $@ $(mySRCdir)/testtBV.c $(ATLASlib) $(LIBS)
 @whiledef pre d s
 x@(pre)lamchtest : $(mySRCdir)/@(pre)lamchtest.f $(FLAPACKlib) $(ATLASlib)
 	$(F77) $(F77FLAGS) $(F77NOOPT) -o $@ $(mySRCdir)/@(pre)lamchtest.f \
@@ -4041,6 +4119,12 @@ x@(pre)l3blastst_mike : $(INCAdir)/atlas_type.h @(pre)l3blastst@(suf).o \
 @(pre)scblas : @(pre)cblas
 @(pre)tcblas : @(pre)cblas_pt
 
+x@(pre)sl1time_ab : @(pre)l1time.o @(pre)ststlib @(pre)sl1lib @(pre)sfblas
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)l1time.o \
+                   $(TESTlib) $(F77BLASlib) $(ATLASlib) $(LIBS)
+x@(pre)tl1time_ab : @(pre)tl1time.o @(pre)ttstlib @(pre)tl1lib @(pre)tfblas
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)tl1time.o \
+                   $(TESTlib) $(PTF77BLASlib) $(ATLASlib) $(LIBS)
 x@(pre)sl3time_ab : @(pre)l3time.o @(pre)ststlib \
       @(pre)sl3lib @(pre)sl2lib @(pre)sl1lib @(pre)sfblas
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)l3time.o \
@@ -4050,6 +4134,12 @@ x@(pre)tl3time_ab : @(pre)tl3time.o @(pre)ttstlib \
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)tl3time.o \
                    $(TESTlib) $(PTF77BLASlib) $(ATLASlib) $(LIBS)
 
+x@(pre)sl1time_sb : @(pre)l1time.o @(pre)ststlib @(pre)sl1lib @(pre)sfblas
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)l1time.o \
+                   $(TESTlib) $(SBLASlib) $(ATLASlib) $(LIBS)
+x@(pre)tl1time_sb : @(pre)tl1time.o @(pre)ttstlib @(pre)tl1lib @(pre)tfblas
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)tl1time.o \
+                   $(TESTlib) $(BLASlib) $(ATLASlib) $(LIBS)
 x@(pre)sl3time_sb : @(pre)l3time.o @(pre)ststlib \
       @(pre)sl3lib @(pre)sl2lib @(pre)sl1lib @(pre)sfblas
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)l3time.o \
@@ -4152,6 +4242,13 @@ x@(pre)tlatime_fl_sb : @(pre)tlatimeF.o @(pre)tlapack @(pre)ttstlib \
                    $(TESTlib) $(FLAPACKlib) $(BLASlib) $(CBLASlib) \
                    $(ATLASlib) $(LIBS)
 
+@(pre)l1time.o : $(mySRCdir)/l1time.c $(INCSdir)/atlas_misc.h \
+                  $(INCSdir)/atlas_level1.h 
+	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) $(mySRCdir)/l1time.c
+@(pre)tl1time.o : $(mySRCdir)/l3time.c $(INCSdir)/atlas_misc.h \
+                  $(INCSdir)/atlas_level1.h 
+	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) -DATL_USEPTHREADS=1 \
+                 $(mySRCdir)/l1time.c
 @(pre)l3time.o : $(mySRCdir)/l3time.c $(INCSdir)/atlas_misc.h \
                   $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -D@(typ) $(mySRCdir)/l3time.c
@@ -6188,7 +6285,7 @@ mySRCdir = $(SRCdir)/src/blas/level3/kernel
       @PTYP D S
 @skip         ATL_@(pre)trsmK_LLNU_a1.o
          ATL_@(pre)trsmKL_rk4.o ATL_@(pre)trsmKR_rk4.o ATL_@(pre)trsmKL_amm.o
-         ATL_@(pre)trsmK_L2blk.o
+         ATL_@(pre)trsmK_L2blk.o ATL_@(pre)trsmKLU_rk4.o
          @whiledef a X 1
             ATL_@(pre)sycopyU_a@(a).o ATL_@(pre)sycopyL_a@(a).o
             ATL_@(pre)trcopyL2U_N_a@(a).o ATL_@(pre)trcopyL2L_N_a@(a).o
@@ -6347,6 +6444,8 @@ ATL_@(pre)trsmKL_amm.o : $(mySRCdir)/ATL_trsmKL_amm.c
 	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -D@(typ) -DLeft_ $(mySRCdir)/ATL_trsmKL_amm.c
 ATL_@(pre)trsmKL_rk4.o : $(mySRCdir)/ATL_trsmKL_rk4.c
 	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -D@(typ) -DLeft_ $(mySRCdir)/ATL_trsmKL_rk4.c
+ATL_@(pre)trsmKLU_rk4.o : $(mySRCdir)/ATL_trsmKL_rk4.c
+	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -D@(typ) -DLeft_ -DATL_KERN_L4U $(mySRCdir)/ATL_trsmKL_rk4.c
       @whiledef al 1 X
          @whiledef rout sycopyL sycopyU
 ATL_@(pre)@(rout)_a@(al).o : $(mySRCdir)/ATL_@(rout).c $(dep)
@@ -7449,6 +7548,43 @@ auxlib : force_build
 @endwhile
 clean :
 	rm -rf *.o *.grd
+@ROUT Make.tprim
+include Make.inc
+mySRCdir = $(SRCdir)/src/threads
+INCS = $(INCSdir)/atlas_tprim.h \
+       $(INCAdir)/atlas_taffinity.h $(INCAdir)/atlas_pthreads.h
+LNG=c
+ARC=mut
+@multidef rt 
+   thread_start thread_join lock_init lock_destroy lock trylock unlock 
+@endmultidef
+@declare "obj = " y n
+   @whiledef rt
+      ATL_@(rt).o
+   @endwhile
+@enddeclare
+
+lib : tprim.grd
+tprim.grd : $(obj)
+	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)
+	$(RANLIB) $(ATLASlib)
+	touch lib.grd
+
+@whiledef rt thread_start thread_join 
+ATL_@(rt).o : $(INCS) $(mySRCdir)/ATL_@(rt).c
+	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_@(rt).c
+@endwhile
+
+@whiledef rt lock_init lock_destroy
+ATL_@(rt).o : $(INCS) $(mySRCdir)/ATL_@(rt).c
+	$(KC) $(KCFLAGS) -DATL_USE_$(ARC)=1 -o $@ -c $(mySRCdir)/ATL_@(rt).c
+@endwhile
+
+@whiledef rt lock trylock unlock 
+ATL_@(rt).o : $(INCS) $(mySRCdir)/ATL_@(rt)_$(ARC).$(LNG)
+	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_@(rt)_$(ARC).$(LNG)
+@endwhile
+
 @ROUT Make.thr
 include Make.inc
 
@@ -7456,25 +7592,39 @@ aobj=              # later this empty def will be overridden by
 include atomic.inc # this include, which is generated by probing system
 mySRCdir = $(SRCdir)/src/threads
 dep = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_pthreads.h \
-      $(INCSdir)/atlas_threads.h
+      $(INCSdir)/atlas_threads.h $(INCSdir)/atlas_tprim.h 
 
 @multidef rt 
-   thread_join thread_exit thread_start goparallel
+   thread_exit goparallel
    cond_bcast cond_init cond_wait cond_free cond_signal
+@skip thread_join thread_start
+@skip   lock trylock unlock lock_init lock_destroy
    mutex_init mutex_lock mutex_unlock mutex_trylock mutex_free thread_yield
    IsFirstThreadedCall threadpool threadpool_misc
    SetGlobalAtomicCount ResetGlobalAtomicCount DecGlobalAtomicCount
    GetGlobalAtomicCount FreeGlobalAtomicCount
    SetGlobalAtomicCountDown DecGlobalAtomicCountDown FreeGlobalAtomicCountDown
    setmyaffinity
+   tReverseAllBitsBV tInfoBV tGlb2locBV tSetRangeBV tFindUnsetBitBV tPrintBV
+   tFreeBV tGetLocalBoundsBV tNewBV tGetTotBitsBV tScopeBitBV tSetUnsetBitBV
+   @skip tSetUnsetBitBV tUnsetSetBitBV
+   gatmctr_new gatmctr_dec gatmctr_free gatmctr_print
 @endmultidef
 @declare "obj = " y n
 @skip   $(tstackfix)
 @skip   ATL_lin0tlaunch.o ATL_log2tlaunch.o ATL_dyntlaunch.o
-   $(aobj) ATL_GetAtomicCount.o
+@skip   $(aobj) ATL_GetAtomicCount.o
    @whiledef rt
       ATL_@(rt).o
       @define rt2 @@(rt)@
+   @endwhile
+   ATL_atmctr_new.o ATL_atmctr_free.o
+   ATL_atmctr_set_asm.o ATL_atmctr_set_mut.o
+   ATL_atmctr_dec_asm.o ATL_atmctr_dec_mut.o
+   ATL_atmctr_add_asm.o ATL_atmctr_add_mut.o
+   ATL_GetSchedDelayIdx.o
+   @whiledef sy mut lac pub mix prv
+      ATL_GetSchedTime_@(sy).o
    @endwhile
 @enddeclare
 
@@ -7492,43 +7642,85 @@ cbclib :
 @skip @(pre)omp:
 @skip	cd blas/level3/omp ; $(MAKE) @(pre)lib
 @endwhile
+@beginskip
 killaobj:
 	- rm -f $(aobj)
 	- ar d $(ATLASlib) $(aobj)
+@endskip
 
-lib.grd : $(obj)
+tprim.grd : 
+	$(MAKE) -f Make.tprim tprim.grd
+lib.grd : $(obj) tprim.grd
 	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)
 	$(RANLIB) $(ATLASlib)
 	touch lib.grd
 l2thr: dlib2 zlib2 clib2 slib2
 l3thr: dlib3 zlib3 clib3 slib3
 
+@beginskip
 @whiledef asm amd64 win64 ia32 sparc ppc mips arm64
-   @whiledef af DecAtomicCount ResetAtomicCount
+   @whiledef af DecAtomicCount ResetAtomicCount AndAtomicMask OrAtomicMask
 ATL_@(af)_@(asm).o : $(mySRCdir)/ATL_@(af)_@(asm).S
 	$(GOODGCC) $(CDEFS) -o $@ -c $(mySRCdir)/ATL_@(af)_@(asm).S
    @endwhile
 @endwhile
+@endskip
 
 @whiledef rt lin0tlaunch log2tlaunch dyntlaunch
 ATL_@(rt).o : $(dep) $(INCAdir)/atlas_taffinity.h $(mySRCdir)/ATL_@(rt).c
 	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_@(rt).c
 @endwhile
+@beginskip
 @multidef rt2 
    SetAtomicCount_mut DecAtomicCount_mut ResetAtomicCount_mut 
    FreeAtomicCount_mut
    SetAtomicCount_arch FreeAtomicCount_arch GetAtomicCount
 @endmultidef
+@endskip
 @whiledef rt2
 ATL_@(rt2).o : $(dep) $(mySRCdir)/ATL_@(rt2).c
 	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_@(rt2).c
 @endwhile
+@beginskip
 @whiledef rt SetAtomicCount DecAtomicCount ResetAtomicCount FreeAtomicCount
 ATL_@(rt)_mut_mut.o : $(dep) $(mySRCdir)/ATL_@(rt)_mut.c
 	$(KC) $(KCFLAGS) -o $@ -DATL_@(rt)=ATL_@(rt)_mut \
                -c $(mySRCdir)/ATL_@(rt)_mut.c
 @endwhile
+@endskip
+@whiledef rt set_asm dec_asm add_asm
+ATL_atmctr_@(rt).o : $(dep) $(INCSdir)/atlas_atmctr.h \
+                   $(mySRCdir)/ATL_atmctr_@(rt).S
+	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_atmctr_@(rt).S
+@endwhile
+@whiledef rt new free set_mut dec_mut add_mut
+ATL_atmctr_@(rt).o : $(dep) $(INCSdir)/atlas_atmctr.h \
+                   $(mySRCdir)/ATL_atmctr_@(rt).c
+	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_atmctr_@(rt).c
+@endwhile
+@whiledef rt new free 
+ATL_atmctr_@(rt)_mut_mut.o : $(dep) $(INCSdir)/atlas_atmctr.h \
+                   $(mySRCdir)/ATL_atmctr_@(rt).c
+	$(KC) $(KCFLAGS) -o $@ -DATL_ATM_ASM=0 \
+              -DATL_atmctr_init=ATL_atmctr_init_mut \
+              -DATL_atmctr_@(rt)=ATL_atmctr_@(rt)_mut \
+              -c $(mySRCdir)/ATL_atmctr_@(rt).c
+@endwhile
+@whiledef rt set dec add
+ATL_atmctr_@(rt)_mut_mut.o : $(dep) $(INCSdir)/atlas_atmctr.h \
+                   $(mySRCdir)/ATL_atmctr_@(rt)_mut.c
+	$(KC) $(KCFLAGS) -o $@ -DATL_ATM_ASM=0 \
+              -DATL_atmctr_@(rt)=ATL_atmctr_@(rt)_mut \
+              -c $(mySRCdir)/ATL_atmctr_@(rt)_mut.c
+@endwhile
+ATL_GetSchedDelayIdx.o : $(dep) $(INCAdir)/atlas_tsched_dly.h
+	$(KC) $(KCFLAGS) -o $@ -c $(mySRCdir)/ATL_GetSchedDelayIdx.c
 
+@whiledef sy mut lac pub mix prv
+ATL_GetSchedTime_@(sy).o : $(dep) $(INCAdir)/atlas_tsched_time.h \
+                           $(mySRCdir)/ATL_GetSchedTime.c
+	$(KC) $(KCFLAGS) -o $@ -DATL_@up@(sy) -c $(mySRCdir)/ATL_GetSchedTime.c
+@endwhile
 @skip ATL_gccstackfix.o : $(mySRCdir)/ATL_gccstackfix.S
 @skip 	$(GOODGCC) $(CDEFS) -m32 -o $@ -c $(mySRCdir)/ATL_gccstackfix.S
 @ROUT Make.l2thr
@@ -7747,7 +7939,7 @@ clean : iclean dclean sclean cclean zclean
 deps = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h \
        $(INCSdir)/atlas_lvl3.h $(INCSdir)/atlas_tlvl3.h \
        $(INCAdir)/atlas_pthreads.h $(INCSdir)/atlas_threads.h \
-       $(INCAdir)/atlas_tsumm.h
+       $(INCAdir)/atlas_tsumm.h $(INCAdir)/atlas_tperf.h
 
 @multidef crt her2k hemm herk
 @multidef rtt trsm trmm symm NumGemmThreads 
@@ -7789,14 +7981,21 @@ ATL_Xt@(rt2).o : $(deps) $(mySRCdir)/ATL_Xt@(rt2).c
       ATL_@(pre)t@(rt).o
       @define rt2 @@(rt)@
    @endwhile
+      ATL_@(pre)tammm_tNK.o
+      ATL_@(pre)tammm_tK.o
+      ATL_@(pre)tammm_sMK.o
+      ATL_@(pre)tammm_sNK.o
+      ATL_@(pre)tammm_tMN.o
+      ATL_@(pre)tammm_gMNK.o
+      ATL_@(pre)tgemm_amm.o
+      ATL_@(pre)tammm_G.o
+      ATL_@(pre)tsyrk_tN.o
+      ATL_@(pre)tsyrk_amm.o
    @ptyp d s 
       ATL_@(pre)ttrsm_amm.o
-      ATL_@(pre)tsyrk_amm.o
-      ATL_@(pre)tgemm_amm.o
-      ATL_@(pre)tammm_tNK.o
-      ATL_@(pre)tammm_tMN.o
-      ATL_@(pre)tammm_G.o
    @ptyp c z 
+      ATL_@(pre)therk_amm.o
+      ATL_@(pre)therk_tN.o
       @whiledef crt
          ATL_@(pre)t@(crt).o
          @define cr2 @@(crt)@
@@ -7817,12 +8016,23 @@ ATL_Xt@(rt2).o : $(deps) $(mySRCdir)/ATL_Xt@(rt2).c
 @(pre)clean:
 	rm -f $(@(pre)obj) @(pre)lib.grd
 
+@multidef ar 
+   ammm_gMNK ammm_sNK ammm_sMK ammm_tMN gemm_amm ammm_G syrk_tN syrk_amm
+@endmultidef
 @PTYP D S
-@whiledef ar trsm_amm syrk_amm gemm_amm ammm_G ammm_tNK ammm_tMN
+@whiledef ar trsm_amm ammm_tNK ammm_tK
 ATL_@(pre)t@(ar).o : $(deps) $(INCSdir)/atlas_ttypes.h $(mySRCdir)/ATL_t@(ar).c
 	$(KC) $(KCFLAGS) -D@(typ) -o $@ -c $(mySRCdir)/ATL_t@(ar).c
 @endwhile
 @PTYP C Z
+@whiledef rt _tN _amm
+ATL_@(pre)therk@(rt).o: $(deps) $(INCSdir)/atlas_ttypes.h $(mySRCdir)/ATL_tsyrk@(rt).c
+	$(KC) $(KCFLAGS) -DConj_=1 -D@(typ) -o $@ -c $(mySRCdir)/ATL_tsyrk@(rt).c
+@endwhile
+@whiledef ar ammm_tNK ammm_tK
+ATL_@(pre)t@(ar).o : $(deps) $(INCSdir)/atlas_ttypes.h $(mySRCdir)/ATL_t@(ar).c
+	$(KC) $(KCFLAGS) -D@(typ) -o $@ -c $(mySRCdir)/ATL_t@(ar).c
+@endwhile
 @whiledef cr2
    @define crt @@(cr2)@
 ATL_@(pre)t@(cr2).o : $(deps) $(mySRCdir)/ATL_t@(cr2).c
@@ -7899,12 +8109,15 @@ clean : dclean sclean cclean zclean
 
 @declare "@(pre)obj = " y n
    ATL_@(pre)GetAmmmInfo.o ATL_@(pre)GetAmmmInfoSQ.o 
-   ATL_@(pre)GetRankKInfo.o  ATL_@(pre)iploops.o
-   ATL_@(pre)ammmK.o ATL_@(pre)ammmM.o ATL_@(pre)ammmN.o 
+   ATL_@(pre)GetRankKInfo.o ATL_@(pre)iploops.o ATL_@(pre)oploops.o
+   ATL_@(pre)ammmK.o 
+@skip   ATL_@(pre)ammmM.o ATL_@(pre)ammmN.o 
    ATL_@(pre)ammmKNMK.o ATL_@(pre)ammmKMNK.o ATL_@(pre)ammm_syrk.o
    ATL_@(pre)ammm.o ATL_@(pre)ammm_1b.o
    ATL_@(pre)ammm_rk2.o ATL_@(pre)aliased_rkK.o ATL_@(pre)ammm_rkK.o
    ATL_@(pre)ammm_IP.o ATL_@(pre)ammm_tN.o
+   ATL_@(pre)syrk_OP.o ATL_@(pre)syrk_IP.o ATL_@(pre)syrk_amm.o
+   @ptyp z c `ATL_@(pre)herk_OP.o ATL_@(pre)herk_IP.o ATL_@(pre)herk_amm.o`
    @ptyp d s `ATL_@(pre)rk4n4.o`
    @skip ATL_@(pre)ammmNMK.o ATL_@(pre)ammmMNK.o
    @skip ptyp d s `ATL_@(pre)ammmREC.o ATL_@(pre)ammmNKM.o`
@@ -7919,20 +8132,27 @@ clean : dclean sclean cclean zclean
 	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(@(pre)obj)
 	$(RANLIB) $(ATLASlib)
 	touch @(pre)lib.grd
-@multidef rt iploops ammm_tN
+@multidef rt oploops iploops ammm_tN syrk_OP syrk_IP syrk_amm
 @whiledef rt ammm ammm_IP ammmKNMK ammmKMNK ammm_syrk ammm_rkK aliased_rkK
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt).c \
                     $(INCAdir)/atlas_@(pre)amm_sum.h
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt).c
 @endwhile
 @ptyp z c
-   @whiledef rt ammmN ammmM ammmK ammm_1b ammm_rk2
+   @multidef rt2 syrk_OP syrk_IP syrk_amm
+   @whiledef rt herk_OP herk_IP herk_amm
+ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt2).c \
+                    $(INCAdir)/atlas_@(pre)amm_sum.h
+	$(@(UPR)KC) -D@(typ)=1 -DConj_=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt2).c
+      @undef rt2
+   @endwhile
+   @whiledef rt ammmK ammm_1b ammm_rk2
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_c@(rt).c \
                     $(INCAdir)/atlas_@(pre)amm_sum.h
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_c@(rt).c
    @endwhile
 @ptyp d s
-   @multidef rt rk4n4 ammmREC ammmNKM ammmK ammmM ammmN
+   @multidef rt rk4n4 ammmREC ammmNKM ammmK 
    @multidef rt ammm_1b ammmNMK ammm_rk2 ammmMNK
 @ptyp !
    @whiledef rt GetAmmmInfo GetRankKInfo

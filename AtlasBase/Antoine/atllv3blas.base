@@ -249,17 +249,24 @@ void @(rname)
 @rout ATL_syrk ATL_herk
 @define rname @Mjoin( PATL, @(dn) )@
 @extract @(VER_ATLAS_SRC) -def contributor "@(clint)"
-@skip #define USE_SPRK
 @extract @(LV3_INCLUDE)
-@skip #if defined(USE_SPRK) && !defined(TREAL)
-@skip    #undef USE_SPRK
-@skip #endif
-@skip #ifdef USE_SPRK
-@skip #include "atlas_pkblas.h"
-@skip #endif
-
-#ifndef @up@(dn)_NB
-   #define @up@(dn)_NB 1200
+#if 1 /* ndef USE_AMM */
+   #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+   #undef SYRK_NB  /* present gmmsearch tuning not reliable (no cpy cost) */
+   #if defined(ATL_sqAMM_LASTNB)
+      #define @up@(dn)_NB ATL_sqAMM_LASTNB
+   #elif ATL_geAMM_LASTMB >  ATL_geAMM_LASTNB
+      #define @up@(dn)_NB ATL_geAMM_LASTMB
+   #else
+      #define @up@(dn)_NB ATL_geAMM_LASTNB
+   #endif
+@skip @rout ATL_herk
+@skip #define @up@(dn)_NB SYRK_NB
+@rout ATL_syrk ATL_herk
+#else
+   #ifndef @up@(dn)_NB
+      #define @up@(dn)_NB 1200
+   #endif
 #endif
 
 void @(rname)
@@ -297,14 +304,12 @@ void @(rname)
    RC3_FUN_@up@(dn)_T            ATL_r@(dn);
    RC3_@up@(dn)_T                type;
 @extract @(EXECUTABLE_STATEMENT)
-@rout ATL_syrk
-@beginskip
-   #if defined (USE_SPRK)
-      Mjoin(PATL,sprk)(PackGen, TRANS, UPLO, 0, N, K, ALPHA, A, 0, 0, LDA,
-                       BETA, C, 0, 0, LDC);
+   if (K == 1 || N == 1)   /* don't recur for L1/2 BLAS case */
+   {  /* just call kernel that handles these cases correctly */
+      Mjoin(PATL,@(dn)_IP)(UPLO, TRANS, N, K, ALPHA, A, LDA, BETA, C, LDC);
       return;
-   #endif
-@endskip
+   }
+@rout ATL_syrk
    if( ( N == 0 ) ||
        ( ( SCALAR_IS_ZERO( ALPHA ) || ( K == 0 ) ) && SCALAR_IS_ONE( BETA ) ) )
       return;

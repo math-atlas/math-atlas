@@ -5940,3 +5940,433 @@ int main(int nargs, char **args)
    free(incYs);
    return(ierr);
 }
+@ROUT l1time
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <assert.h>
+#include "atlas_misc.h"
+#include "atlas_tst.h"
+#include "atlas_level1.h"
+#define ATL_GETFLAGS 1
+#include "atlas_genparse.h"
+
+#ifdef TCPLX
+   #define NBLAS 12
+#else
+   #define NBLAS 11
+#endif
+enum eblas{Bnrm2, Biamax, Basum, Bscal, Bset,               /* 1vec routs */
+           Brot, Bcopy, Bcpsc, Bswap, Baxpy, Baxpby, Bdot, Bdotc}; /* 2vecs */
+char *nblas[]={"nrm2", "iamax", "asum", "scal", "set", 
+               "rot", "copy", "cpsc", "swap", "axpy", "axpby", "dot", "dotc"}; 
+
+#define t_iamax(N_, al_, X_, iX_, be_, Y_, iY) \
+   Mjoin(Mjoin(ATL_i,PRE),amax)(N_, X_, iX_);
+
+#define t_pref Mjoin(PATL,f77)
+#define t_nrm2(N_, al_, X_, iX_, be_, Y_, iY) \
+   Mjoin(t_pref,nrm2)(N_, X_, iX_);
+#define t_asum(N_, al_, X_, iX_, be_, Y_, iY) \
+   Mjoin(t_pref,asum)(N_, X_, iX_);
+#ifdef TCPLX
+   #define t_scal(N_, al_, X_, iX_, be_, Y_, iY) \
+      Mjoin(t_pref,scal)(N_, al_, X_, iX_);
+   #define t_set(N_, al_, X_, iX_, be_, Y_, iY) \
+      Mjoin(t_pref,set)(N_, al_, X_, iX_);
+#else
+   #define t_scal(N_, al_, X_, iX_, be_, Y_, iY) \
+      Mjoin(t_pref,scal)(N_, *(al_), X_, iX_);
+   #define t_set(N_, al_, X_, iX_, be_, Y_, iY) \
+      Mjoin(PATL,set)(N_, *(al_), X_, iX_);
+#endif
+void PrintUsage(char *name, int ierr, char *flag);
+
+int *RoutNames2IntList(int nargs, char **args, int i)
+{
+   int n, *iarr, k;
+
+   if (++i >= nargs)
+      PrintUsage(args[0], i, NULL);
+   n = atoi(args[i]);
+   ATL_assert(n > 0);
+   iarr = malloc(sizeof(int)*(n+1));
+   ATL_assert(iarr);
+
+   iarr[0] = n;
+   for (k=0; k < n; k++)
+   {
+      int b;
+      if (++i >= nargs)
+         PrintUsage(args[0], i, NULL);
+      for (b=0; b < NBLAS; b++)
+      {
+         if (!strcmp(args[i], nblas[b]))
+         {
+            iarr[k+1] = b;
+            break;
+         }
+      }
+      if (b == NBLAS)
+         PrintUsage(args[0], i, args[i]);
+   }
+   return(iarr);
+}
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n",
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -R <#> <rout1> ... <rout#>\n");
+   fprintf(stderr, "   -R <rout1/all>\n");
+   fprintf(stderr, "      routs: nrm2, iamax, asum, scal, set, rot\n");
+   fprintf(stderr, "             copy, cpsc, axpy, axpby, dot, dotc\n");
+   fprintf(stderr, "   -A <X> : misalign by X bytes [0]\n");
+   fprintf(stderr, "   -F <mflop> : force <mflops> of timed computation\n");
+   fprintf(stderr, "   -# <#> : repeat each timing # times\n");
+   fprintf(stderr, "   -n <#> <N1> ... <N#>\n");
+   fprintf(stderr, "   -N <Nstart> <Nend> <Ninc>\n");
+   fprintf(stderr, "   -f <flushKB> : flush at least this mem in LRU timers\n");
+   fprintf(stderr, "   -x <#> <incX1> ... <incX#>\n");
+   fprintf(stderr, "   -X <incX1> <incXend> <incXinc>\n");
+   fprintf(stderr, "   -y <#> <incY1> ... <incY#>\n");
+   fprintf(stderr, "   -Y <incY1> <incYend> <incYinc>\n");
+   fprintf(stderr, "   -a <#> <alpha1> ... <alphaN> : real/complex floats\n");
+   fprintf(stderr, "   -b <#> <beta1> ... <betaN> : real/complex floats\n");
+   exit(ierr ? ierr : -1);
+}
+
+unsigned long GetFlags
+   (int nargs, char **args, int *nreps, int *frcMF, int *MALG, int **Ns, 
+    int **XINCs, int **YINCs, int **ROUTs, double **ALPs, double **BETs)
+{
+   int i;
+   unsigned long flushKB;
+
+   *nreps = 1;
+   *frcMF = *MALG = 0;
+   *ALPs = *BETs = NULL;
+   *ROUTs = *XINCs = *YINCs = *Ns = NULL;
+   #ifdef L2SIZE
+      flushKB = L2SIZE / 1024;
+   #else
+      flushKB = 32*1024;
+   #endif
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'A':                          /* -A <bytes> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *MALG = atol(args[i]);
+         break;
+      case 'F':                          /* -F <mflop> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *frcMF = atoi(args[i]);
+         break;
+      case 'f':                          /* -f <flushKB> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         flushKB = atol(args[i]);
+         break;
+      case '#':                          /* -# <reps> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *nreps = atoi(args[i]);
+         break;
+   @multidef fl a   b
+   @whiledef vr ALP BET
+      case '@(fl)':   /* -@(fl) # @(vr)0 ... @(vr)# */
+         *@(vr)s = GF_GetDoubleList(nargs, args, i, 1 SHIFT);
+         break;
+         @undef fl
+   @endwhile
+      @multidef fl N X    Y
+      @whiledef vr N XINC YINC
+      case '@low@(fl)':   /* -@low@(fl) # @(vr)0 ... @(vr)# */
+         *@(vr)s = GF_GetIntList(nargs, args, i, 1);
+         i += (*@(vr)s)[0] + 1;
+         break;
+      case '@(fl)':   /* -@low@(fl) @(vr)0 @(vr)N @(vr)inc */
+         if (i+3 >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *@(vr)s = GF_IntRange2IntList(atoi(args[i+1]), atoi(args[i+2]),
+                   atoi(args[i+3]));
+         break;
+         @undef fl
+      @endwhile
+      case 'R':        /* -R # <rout1> ... <routN#>  */
+         if (i+1 >= nargs)
+            PrintUsage(args[0], i, "out of args to -R");
+         if (isdigit(args[i+1][0]))
+         {
+            *ROUTs = RoutNames2IntList(nargs, args, i);
+            i += (*ROUTs)[0] + 1;
+         }
+         else if (!strcmp(args[++i], "all"))  /* want them all */
+            *ROUTs = GF_IntRange2IntList(Bnrm2, NBLAS-1, 1);
+         else  /* only giving one name */
+         {
+            int k;
+            for (k=0; k < NBLAS; k++)
+               if (!strcmp(args[i], nblas[k]))
+                  break;
+            if (k == NBLAS)
+              PrintUsage(args[0], i,
+                         "Unknown blas name to -R: is it lower case?");
+            *ROUTs = GF_GetIntList1(k);
+         }
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   @multidef df 80000 1    1    Baxpy
+   @whiledef vr N     XINC YINC ROUT
+      if (*@(vr)s == NULL)
+         *@(vr)s = GF_GetIntList1(@(df));
+      @undef df
+   @endwhile
+   #ifdef TCPLX
+   @whiledef vr ALP BET
+      if (*@(vr)s == NULL)
+      {
+         *@(vr)s = malloc(3*sizeof(double));
+         assert(*@(vr)s);
+         (*@(vr)s)[0] = 1;
+         (*@(vr)s)[1] = 2.0;
+         (*@(vr)s)[2] = 0.5;
+      }
+   @endwhile
+   #else
+   @whiledef vr ALP BET
+      if (*@(vr)s == NULL)
+      {
+         *@(vr)s = malloc(2*sizeof(double));
+         assert(*@(vr)s);
+         (*@(vr)s)[0] = 1;
+         (*@(vr)s)[1] = 0.75;
+      }
+   @endwhile
+   #endif
+   return(flushKB);
+}
+
+
+double opbl1
+(
+   enum eblas rt,
+   const int                  N
+)
+{
+   double                     adds = 0.0, en, muls = 0.0;
+
+   if( N <= 0 ) return( 0.0 );
+
+   en = (double)(N);
+
+#if 0
+                        /* Approximate count for rotation computation */
+   if(      rt == ROTG   ) { muls = 8.0;           adds = 6.0;        }
+        /* Approximate count for modified-Givens rotation computation */
+   else if( rt == ROTMG  ) { muls = 9.0;           adds = 3.0;        }
+                            /* Square root counted as 9 muls + 8 adds */
+   else 
+#endif
+   if( rt == Bnrm2   ) { muls = en+9.0;        adds = en-1.0+8.0; }
+                                  /* Absolute value counted as 1 adds */
+   else if( rt == Basum   ) { muls = 0.0;           adds = 2.0 * en;   }
+                           /* Absolute value + test counted as 2 adds */
+   else if( rt == Biamax   ) { muls = 0.0;           adds = 2.0 * en;   }
+   else if( rt == Bscal   ) { muls = en;            adds = 0.0;        }
+                         /* A little bit of cheating for real scaling */
+@skip   else if( rt == BRSCAL  ) { muls = 0.0;           adds = en;         }
+   else if( rt == Baxpy   ) { muls = en;            adds = en;         }
+                        /* Count copy just like adds for practicality */
+   else if( rt == Bcopy || rt == Bset   ) 
+   { muls = 0.0;           adds = en;         }
+                        /* Count swap just like adds for practicality */
+   else if( rt == Bswap   ) { muls = 0.0;           adds = 2.0 * en;   }
+#ifdef TREAL
+   else if( rt == Brot    ) { muls = 4.0*en;        adds = 2.0 * en;   }
+#else
+   else if( rt == Brot    ) { muls = (4.0*en)/3.0;  adds = 2.0 * en;   }
+#endif
+@skip   else if( rt == Brotm   ) { muls = 4.0*en;        adds = 2.0 * en;   }
+   else if( rt == Bdot    ) { muls = en;            adds = en - 1.0;   }
+   else if( rt == Bdotc   ) { muls = en;            adds = en - 1.0;   }
+@skip   else if( rt == DSDOT  ) { muls = en;            adds = en - 1.0;   }
+@skip   else if( rt == SDSDOT ) { muls = en;            adds = en;         }
+
+#ifdef TREAL
+   return(       muls +       adds );
+#else
+   return( 6.0 * muls + 2.0 * adds );
+#endif
+}
+
+double DoTime1(int MA, int frcMF, size_t flsh, int rt, int N, int incX, 
+               double *alp)
+{
+   size_t i, sz, nsets, setsz, vecsz, vecN, reps=1;
+   double t0, t1;
+   void *vp;
+   TYPE *X;
+
+   flsh *= 1024;
+   vecsz = N SHIFT;
+   setsz = vecsz * sizeof(TYPE);
+   vecsz = setsz * incX;
+   vecsz = ATL_MulByCachelen(ATL_DivByCachelen(vecsz + ATL_Cachelen-1));
+   vecN = vecsz / sizeof(TYPE);
+   nsets = (flsh+setsz-1)/setsz;
+   if (nsets < 1)
+      nsets = 1;
+   
+   assert(MA < ATL_Cachelen);
+   sz = nsets * vecsz;
+   vp = malloc(2*ATL_Cachelen + sz);
+   assert(vp);
+   X = ATL_AlignPtr(vp);
+   if (MA)
+      X = (void*) (((size_t)X)+MA);
+   sz /= sizeof(TYPE);
+   Mjoin(PATL,gegen)(sz, 1, X, 1, N*incX+2557);
+
+   if (frcMF)
+   {
+      double d;
+      d = opbl1(rt, N);
+      reps = ((frcMF * 1e6) / d) + 0.9;
+   }
+   switch(rt)
+   {
+   @whiledef bn nrm2 iamax asum scal set
+   case B@(bn):
+      if (reps > 1)
+      {
+         unsigned int r, s;
+         TYPE *x=X;
+         t0 = ATL_walltime();
+         for (s=r=0; r < reps; r++)
+         {
+            t_@(bn)(N, alp, x, incX, NULL, NULL, NULL);
+            if (++s != nsets)
+               x += vecN;
+            else { x = X; s=0; }
+         }
+         t1 = ATL_walltime() - t0;
+         t1 /= reps;
+      }
+      else
+      {
+         t0 = ATL_walltime();
+         t_@(bn)(N, alp, X, incX, NULL, NULL, NULL);
+         t1 = ATL_walltime() - t0;
+      }
+      break;
+   @endwhile
+   }
+   free(vp);
+   return(t1);
+}
+
+void TimeAllL1
+   (int nrep, int frcMF, int MA, size_t flshKB, int *RTs, int *Ns, int *IXs, 
+    int *IYs, double *ALPs, double *BETs)
+{
+   const int nbe=BETs[0], nal=ALPs[0];
+   const int nrt=RTs[0], nn=Ns[0], nix=IXs[0], niy=IYs[0];
+   int irt, icnt=0, ierr=0;
+   #ifdef TCPLX
+   printf(" ROUT         N   IX   IY  ralp  ialp   rbeta ibeta          TIME       MFLOP\n");
+   printf("=====  ========  ===  ===  ===== =====  ===== =====  ============  ==========\n");
+   #else
+      printf(
+" ICASE   ROUT         N   IX   IY  alpha   beta          TIME       MFLOP\n");
+      printf(
+"======  =====  ========  ===  ===  =====  =====  ============  ==========\n");
+   #endif
+
+   for (irt=1; irt <= nrt; irt++)
+   {
+      const int rt = RTs[irt];
+      int in;
+      for (in=1; in <= nn; in++)
+      {
+         const int N = Ns[in];
+         int iy;
+         for (iy=1; iy <= niy; iy++)
+         {
+            const int incY = IYs[iy];
+            int ix;
+            for (ix=1; ix <= nix; ix++)
+            {
+               const int incX = IXs[ix];
+               int ib;
+               for (ib=0; ib < nbe; ib++)
+               {
+                  double *bet = BETs+1+(ib SHIFT);
+                  int ia;
+                  for (ia=0; ia < nal; ia++)
+                  {
+                     double *alp = ALPs+1+(ia SHIFT);
+                     int ir;
+                     icnt++;
+                     for (ir=0; ir < nrep; ir++)
+                     {
+                        double tm, mf;
+                        tm = DoTime1(MA, frcMF, flshKB, rt, N, incX, alp);
+                        mf = opbl1(rt, N) / (tm*1e6);
+                     #ifdef TCPLX
+                        printf(
+                           "%5.5s %9u %4u %4u %6g %5g %6g %5g  %12e %11.1f\n",
+                           nblas[rt], N, incX, incY, *alp, alp[1], 
+                           *bet, bet[1], tm, mf);
+                     #else
+                        printf("%6d  %5.5s %9u %4u %4u %6g %6g  %12e %11.1f\n",
+                               icnt, nblas[rt], N, incX, incY, *alp, *bet, 
+                               tm, mf);
+                     #endif
+                     }
+                     if (rt == Biamax || rt == Basum || rt == Bcopy || 
+                         rt == Bdot || rt == Bdotc)  /* rts don't take alpha */
+                      break;                         /* quit after 1 trip */
+                  }
+                  if (rt != Baxpby && rt != Brot)  /* routs don't take beta */
+                     break;                        /* quit after 1 trip */
+               }
+            }
+            if (rt <= Bset)  /* routs not taking incY */
+               break;        /* quit after 1 trip */
+         }
+      }
+   }
+}
+
+int main(int nargs, char **args)
+{
+   int *Ns, *XINCs, *YINCs, *ROUTs;
+   double *ALPs, *BETs;
+   int MA, nreps, frcMF;
+   size_t flushKB;
+
+   flushKB = GetFlags(nargs, args, &nreps, &frcMF, &MA, &Ns, &XINCs, &YINCs, 
+                      &ROUTs, &ALPs, &BETs);
+   TimeAllL1(nreps, frcMF, MA, flushKB, ROUTs, Ns, XINCs, YINCs, ALPs, BETs);
+   free(Ns);
+   free(XINCs);
+   free(YINCs);
+   free(ROUTs);
+   free(ALPs);
+   free(BETs);
+   return(0);
+}

@@ -6053,8 +6053,8 @@ int main(int nargs, char **args)
    L1Size = 1024 * GetL1CacheSize(64);
    if (pre == 'd') L1Size /= ATL_dsize;
    else if (pre == 's') L1Size /= ATL_ssize;
-   else if (pre == 'z') L1Size /= ATL_csize;
-   else if (pre == 'c') L1Size /= ATL_zsize;
+   else if (pre == 'c') L1Size /= ATL_csize;
+   else if (pre == 'z') L1Size /= ATL_zsize;
    getfpinfo(pre, &muladd, &lat, &lbnreg, &nkflop);
    pgsz = GetPageSize();
    CreateHeader(pre, args[2], L1Size, muladd, lat, lbnreg, nkflop, 0, pgsz);
@@ -20524,8 +20524,9 @@ int cblas_errprn(int ierr, int info, char *form, ...);
    minimum!!@^
 #endif
 
-#define ATL_AlignPtr(vp) \
-   (void*) (ATL_Cachelen + ATL_MulByCachelen(ATL_DivByCachelen((size_t) (vp))))
+#define ATL_AlignPtr(vp) (void*) \
+        ATL_MulByCachelen(ATL_DivByCachelen((((size_t)(vp))+ATL_Cachelen-1)))
+@skip   (ATL_Cachelen + ATL_MulByCachelen(ATL_DivByCachelen((size_t) (vp))))
 
 #define ATL_FindPtrAdjust(vp, iadj_) \
 { \
@@ -21384,7 +21385,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
    #define MBETA *beta, beta[1]
    char *form="%4d   %c   %c %4d %4d %4d  %5.1f %5.1f  %5.1f %5.1f  %6.2f %6.1f %4.2f   %3s\n";
 #endif
-   int *errBV=NULL;
+   ATL_BV_t *errBV=NULL;
    int ii, jj, i, j=0, PASSED, nerrs, Na, Nb, ibad=(-1), jbad=(-1);
    double t0, t1, t2, t3, mflop;
    TYPE maxval, f1, ferr;
@@ -21627,7 +21628,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
    #endif
    if (errBV)
    {
-      ATL_print2dBV(M, N, errBV);
+      ATL_print2dBV(M SHIFT, N, errBV);
       ATL_FreeBV(errBV);
    }
    return(PASSED);
@@ -23312,16 +23313,20 @@ void PrintTypeHead(FILE *fpout)
 
    fprintf(fpout, "#ifndef ATLAS_TYPE_H\n");
    fprintf(fpout, "#define ATLAS_TYPE_H\n\n");
+   fprintf(fpout, "#define ATL_LSIZE %d\n", (int) sizeof(long));
    fprintf(fpout, "#define ATL_ISIZE %d\n", (int) sizeof(int));
    fprintf(fpout, "#define ATL_SSIZE %d\n", (int) sizeof(float));
    fprintf(fpout, "#define ATL_DSIZE %d\n", (int) sizeof(double));
    fprintf(fpout, "#define ATL_CSIZE %d\n", (int) (2*sizeof(float)));
    fprintf(fpout, "#define ATL_ZSIZE %d\n", (int) (2*sizeof(double)));
+   fprintf(fpout, "#define ATL_lsize ((size_t)%d)\n", (int) sizeof(long));
    fprintf(fpout, "#define ATL_isize ((size_t)%d)\n", (int) sizeof(int));
    fprintf(fpout, "#define ATL_ssize ((size_t)%d)\n", (int) sizeof(float));
    fprintf(fpout, "#define ATL_dsize ((size_t)%d)\n", (int) sizeof(double));
    fprintf(fpout, "#define ATL_csize ((size_t)%d)\n", (int) (2*sizeof(float)));
    fprintf(fpout, "#define ATL_zsize ((size_t)%d)\n", (int) (2*sizeof(double)));
+   fprintf(fpout, "#define ATL_%cMulBySize(N_) %s\n", 'l', 
+           GetInc(sizeof(long), "((size_t)(N_))"));
    fprintf(fpout, "#define ATL_%cMulBySize(N_) %s\n", 'i', 
            GetInc(sizeof(int), "((size_t)(N_))"));
    fprintf(fpout, "#define ATL_%cMulBySize(N_) %s\n", 's', 
@@ -23332,6 +23337,42 @@ void PrintTypeHead(FILE *fpout)
            GetInc(2*sizeof(float), "((size_t)(N_))"));
    fprintf(fpout, "#define ATL_%cMulBySize(N_) %s\n", 'z', 
            GetInc(2*sizeof(double), "((size_t)(N_))"));
+
+   @multidef ty long int
+   @whiledef pr l i
+   pwr2 = GetPower2(sizeof(@(ty)));
+   if (pwr2)
+   {
+      fprintf(fpout, "#define ATL_@(pr)shift %d\n", pwr2);
+      fprintf(fpout, "#define ATL_@(pr)DivBySize(N_) ((N_) >> %d)\n", pwr2);
+   }
+   else
+      fprintf(fpout, "#define ATL_@(pr)DivBySize(N_) ((N_) / %d)\n", 
+              sizeof(@(ty)));
+      @undef ty
+   @endwhile
+   @multidef ty double float
+   @multidef p2 z c
+   @whiledef pr d s
+   pwr2 = GetPower2(sizeof(@(ty)));
+   if (pwr2)
+   {
+      fprintf(fpout, "#define ATL_@(pr)shift %d\n", pwr2);
+      fprintf(fpout, "#define ATL_@(pr)DivBySize(N_) ((N_) >> %d)\n", pwr2);
+      fprintf(fpout, "#define ATL_@(p2)shift %d\n", pwr2+1);
+      fprintf(fpout, "#define ATL_@(p2)DivBySize(N_) ((N_) >> %d)\n", pwr2+1);
+   }
+   else
+   {
+      fprintf(fpout, "#define ATL_@(pr)DivBySize(N_) ((N_) / %d)\n", 
+              sizeof(@(ty)));
+      fprintf(fpout, "#define ATL_@(p2)DivBySize(N_) ((N_) / %d)\n", 
+              2*sizeof(@(ty)));
+   }
+      @undef p2
+      @undef ty
+   @endwhile
+@beginskip
    pwr2 = GetPower2(sizeof(int));
    if (pwr2)
    {
@@ -23368,6 +23409,7 @@ void PrintTypeHead(FILE *fpout)
       fprintf(fpout, "#define ATL_zDivBySize(N_) ((N_) / %d)\n", 
               (int)(2*sizeof(double)));
    }
+@endskip
    fprintf(fpout, "\n#endif\n");
 }
 int main(int nargs, char *args[])
@@ -28885,6 +28927,11 @@ enum ATLAS_MATSHAPE {AtlasM_NB=0, AtlasN_NB=1, AtlasMN_NB=2, AtlasK_NB=3,
 
 #define DENMAT 175
 #define MAXALLOC (8*1024*1024*8)
+#if MAXALLOC < 3*L2SIZE
+   #undef MAXALLOC
+   #define MAXALLOC (3*L2SIZE)
+#endif
+
 
 #ifdef ATL_DeclareSlens
 F77_INTEGER ATL_Slen1, ATL_Slen2;
@@ -31027,8 +31074,19 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
 
    sprintf(ln2, "INSTALL_LOG/Stage1.log");
    PrintBanner("INSTALL_LOG/Stage1.log", 1, 1, 0, 0);
-   sprintf(ln, "%s IStage1 nreg=%d %s INSTALL_LOG/Stage1.log\n", 
-           fmake, NREG, redir);
+   #if defined(ATL_OS_Win64)
+      #if defined(ATL_GAS_ARM64)
+         typ = "winARM64";
+      #else
+         typ = "win64";
+      #endif
+   #elif defined(ATL_OS_Win9x) || defined(ATL_OS_WinNT)
+      typ = "ia32";
+   #else
+      typ = "mut";
+   #endif
+   sprintf(ln, "%s IStage1 nreg=%d LOCK=%s %s INSTALL_LOG/Stage1.log\n", 
+           fmake, NREG, typ, redir);
    ATL_Cassert(system(ln)==0, "Stage 1 install", ln2);
    fp = fopen("INSTALL_LOG/L1CacheSize", "r");
 
@@ -35454,6 +35512,907 @@ gemm(...)
    if (M == 1 || N == 1) /* possible gemv */
    else if (K == 1)      /* possible ger */
 }
+@ROUT mmtime_pt3f
+#ifdef ATL_NCPU
+   #if ATL_NCPU < 2
+      #undef ATL_NCPU
+   #endif
+#endif
+#ifdef ATL_NCPU
+   #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
+   #define __USE_GNU   1 /* what you actually need set on linuxes I've seen */
+   #include <sched.h>    /* must include this before pthreads */
+   #include <pthread.h>
+   #define dumb_prand(is_) ( 0.5 - ((double)rand_r(is_))/((double)RAND_MAX) )
+#else
+   #define dumb_prand(is_) ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
+
+#define uint unsigned int
+#ifndef ATL_SZA
+   uint ATL_getszA(uint M, uint K, uint mu, uint ku, uint vlen)
+   {
+      uint nmu=(M+mu-1)/mu;
+      return(nmu*mu*K);
+   }
+#endif
+#ifndef ATL_SZB
+   uint ATL_getszB(uint K, uint N, uint ku, uint nu, uint vlen)
+   {
+      uint nnu=(N+nu-1)/nu;
+      return(nnu*nu*K);
+   }
+#endif
+#ifndef ATL_SZC
+   uint ATL_getszC(uint M, uint N, uint mu, uint nu, uint vlen)
+   {
+      uint nmu=(M+mu-1)/mu, nnu=(N+nu-1)/nu, blksz=((mu*nu+vlen-1)/vlen)*vlen;
+      return(nmu*nnu*blksz);
+   }
+#endif
+#ifdef TIME_TRMVK
+   #include "atlas_misc.h"
+#else
+   double ATL_walltime(void);
+   #define ATL_CSZT const size_t
+   #if defined(SREAL) || defined(SCPLX)
+      #define TYPE float
+   #elif defined(DREAL) || defined(DCPLX)
+      #define TYPE double
+   #endif
+   #ifdef SREAL
+      #define ATL_MulBySize(i_) ((i_)<<2)
+      #define ATL_DivBySize(i_) ((i_)>>2)
+   #elif defined(DREAL) || defined(SCPLX)
+      #define ATL_MulBySize(i_) ((i_)<<3)
+      #define ATL_DivBySize(i_) ((i_)>>3)
+   #else
+      #define ATL_MulBySize(i_) ((i_)<<4)
+      #define ATL_DivBySize(i_) ((i_)>>4)
+   #endif
+   #if defined(SCPLX) || defined(DCPLX)
+      #define SHIFT << 1
+      #define TCPLX 1
+   #else
+      #define TREAL 1
+      #define SHIFT
+   #endif
+   #define ATL_Cachelen 128
+   #define ATL_AlignPtr(vp) \
+      (void*) ( ATL_Cachelen + ((((size_t) (vp))>>7)<<7) )
+#endif
+#define CINT const int
+
+#ifdef TIME_TRMVK
+   #ifdef TCPLX
+      #error "Complex TRSM kernel timing not yet supported!"
+   #else
+      #ifdef SD_Right
+         #error "Side=Right not yet supported!"
+      #else
+         #ifdef UDIAG
+            #define my_trsmk Mjoin(PATL,ktrsmLLNU_rk4)
+         #else
+            #define my_trsmk Mjoin(PATL,ktrsmLLN_rk4)
+         #endif
+      void my_trsmk(ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+          const TYPE *T, TYPE *B, ATL_CINT ldb, TYPE *W);
+      #endif
+   #endif
+#elif defined(TCPLX)
+   size_t rszA, rszB, rszC;
+   void CAMM_b0(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
+                const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
+                const TYPE *pCn);
+   void CAMM_b1(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
+                const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
+                const TYPE *pCn);
+   void CAMM_bn(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
+                 const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
+                 const TYPE *pCn);
+   #ifdef BETA0
+      void KMM(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *Ai,
+               const TYPE *Bi, TYPE *Ci, const TYPE *pAn, const TYPE *pBn,
+               const TYPE *pCn)
+      {
+         extern size_t rszA, rszB, rszC;
+         const TYPE *Ar=Ai+rszA, *Br=Bi+rszB;
+         TYPE *Cr = Ci + rszC;
+         #ifdef CORDER
+            CAMM_b0(mblks, nblks, K, Ai, Bi, Cr, Ar, Br, Cr);
+            CAMM_bn(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+            CAMM_b0(mblks, nblks, K, Ar, Bi, Ci, Ai, Br, Ci);
+            CAMM_b1(mblks, nblks, K, Ai, Br, Ci, pAn, pBn, pCn);
+         #else
+            CAMM_b0(mblks, nblks, K, Ai, Bi, Cr, Ai, Br, Ci);
+            CAMM_b0(mblks, nblks, K, Ai, Br, Ci, Ar, Br, Cr);
+            CAMM_bn(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+            CAMM_b1(mblks, nblks, K, Ar, Bi, Ci, pAn, pBn, pCn);
+         #endif
+      }
+   #elif defined(BETA1)
+      void KMM(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *Ai,
+               const TYPE *Bi, TYPE *Ci, const TYPE *pAn, const TYPE *pBn,
+               const TYPE *pCn)
+      {
+         extern size_t rszA, rszB, rszC;
+         const TYPE *Ar=Ai+rszA, *Br=Bi+rszB;
+         TYPE *Cr = Ci + rszC;
+         #ifdef CORDER
+            CAMM_bn(mblks, nblks, K, Ai, Bi, Cr, Ar, Br, Cr);
+            CAMM_bn(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+            CAMM_b1(mblks, nblks, K, Ar, Bi, Ci, Ai, Br, Ci);
+            CAMM_b1(mblks, nblks, K, Ai, Br, Ci, pAn, pBn, pCn);
+         #else
+            CAMM_bn(mblks, nblks, K, Ai, Bi, Cr, Ai, Br, Ci);
+            CAMM_b1(mblks, nblks, K, Ai, Br, Ci, Ar, Br, Cr);
+            CAMM_bn(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+            CAMM_b1(mblks, nblks, K, Ar, Bi, Ci, pAn, pBn, pCn);
+         #endif
+      }
+   #else
+      void KMM(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *Ai,
+               const TYPE *Bi, TYPE *Ci, const TYPE *pAn, const TYPE *pBn,
+               const TYPE *pCn)
+      {
+         extern size_t rszA, rszB, rszC;
+         const TYPE *Ar=Ai+rszA, *Br=Bi+rszB;
+         TYPE *Cr = Ci + rszC;
+         #ifdef CORDER
+            CAMM_b1(mblks, nblks, K, Ai, Bi, Cr, Ar, Br, Cr);
+            CAMM_b1(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+            CAMM_bn(mblks, nblks, K, Ar, Bi, Ci, Ai, Br, Ci);
+            CAMM_bn(mblks, nblks, K, Ai, Br, Ci, pAn, pBn, pCn);
+         #else
+            CAMM_b1(mblks, nblks, K, Ai, Bi, Cr, Ai, Br, Ci);
+            CAMM_bn(mblks, nblks, K, Ai, Br, Ci, Ar, Br, Cr);
+            CAMM_b1(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+            CAMM_bn(mblks, nblks, K, Ar, Bi, Ci, pAn, pBn, pCn);
+         #endif
+      }
+   #endif
+#else
+   #ifndef KMM
+      #define KMM ATL_USERMM
+   #endif
+   void KMM(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
+            const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
+            const TYPE *pCn);
+#endif
+
+struct kmm_struct{
+   int mb, nb, kb;                      /* C: mbxnb, At: kbxmb, B: kbXnb */
+   int mu, nu, ku;                      /* needed to compute mblks/nblks */
+   int movA, movB, movC;                /* which mat move in flush array? */
+   long FLSIZE;                       /* min area to move in in bytes */
+   long flA, flB, flC;                /* individual flush sizes in bytes*/
+   int reps;                            /* # calls to kmm in one timing */
+   int vlen;                            /* vector length */
+   int iam;                             /* thread rank */
+   int p;                               /* total number of threads */
+   int *pids;                           /* IDs of processors for affinity */
+   double mf;                           /* mflop returned by timing */
+   volatile unsigned char *chkin;       /* P-len array to signal start/done */
+};
+
+static double getMflops(double m, double n, double k)
+{
+   #ifdef TIME_TRMVK
+     return(1e-6*m*m*n);
+   #elif defined(TIME_SYRKK)
+      return(1e-6*n*(n+1)*k);
+   #else
+      return(1e-6*2.0*m*n*k);
+   #endif
+}
+static size_t getSetSz(int mvA, int mvB, int mvC,
+                       size_t szA, size_t szB, size_t szC, size_t *NOMVSZ)
+{
+   size_t nomvsz=0, setsz=0;
+   if (mvA)
+      setsz += szA;
+   else
+      nomvsz += szA;
+   if (mvB)
+      setsz += szB;
+   else
+      nomvsz += szB;
+   if (mvC)
+      setsz += szC;
+   else
+      nomvsz += szC;
+   if (NOMVSZ)
+      *NOMVSZ = nomvsz;
+   return(setsz);
+}
+
+#if 1
+
+double GetKmmMflop
+(
+   CINT mb, CINT nb, CINT kb,           /* C: mbxnb, At: kbxmb, B: kbXnb */
+   CINT mu, CINT nu, CINT ku, CINT vlen,
+   int movA, int movB, int movC,        /* which mat move in flush array? */
+   long FLSIZE,                         /* min area to move in in bytes */
+   long flA, long flB, long flC,        /* min area to move in in bytes */
+   CINT reps                            /* # calls to kmm in one timing */
+)
+/*
+ * Returns MFLOP rate of matmul kernel KMM
+ */
+{
+   CINT mblks = mb/mu, nblks = nb/nu;
+   const int NOMOVE = !(movA|movB|movC);
+   size_t szA, szB, szC, extra, setsz, nsets, tsz, i, j, incA, incB, incC, n;
+   TYPE *C, *A, *B, *a, *b, *c;
+   TYPE *ep, *sp;  /* extra & set ptrs */
+   double t0, t1, mf;
+   const TYPE alpha=1.0;
+   TYPE beta=1.0;
+   void *vp=NULL;
+   unsigned int seed = mb*kb + (nb<<14);
+   size_t nseta, nsetb, nsetc, ja, jb, jc;
+/*
+ * Get size for each matrix, and round up to ensure we keep alignment
+ */
+   szA = ATL_getszA(mb, kb, mu, ku, vlen);
+   szB = ATL_getszB(kb, nb, ku, nu, vlen);
+   szC = ATL_getszC(mb, nb, mu, nu, vlen);
+/*
+ * Compute the setsz & extra
+ * setsz: size of moving mats, extra: size of stationary mats
+ */
+   setsz = getSetSz(movA, movB, movC, szA, szB, szC, &extra);
+   if (!NOMOVE && FLSIZE)
+      nsets = (ATL_DivBySize(FLSIZE)+setsz-1) / setsz;
+   else
+      movA = movB = movC = nsets = 0;
+   extra += (mu+mu)*nu;
+   tsz = ATL_Cachelen << 1;
+   tsz = ATL_DivBySize(tsz);
+   if (flA > 0 || flB > 0 || flC > 0)
+   {
+      nseta = (ATL_DivBySize(flA)+szA-1) / szA;
+      nsetb = (ATL_DivBySize(flA)+szB-1) / szB;
+      nsetc = (ATL_DivBySize(flA)+szC-1) / szC;
+      if (!movA || nseta < 1) nseta = 1;
+      if (!movB || nsetb < 1) nsetb = 1;
+      if (!movC || nsetc < 1) nsetc = 1;
+
+      tsz += nseta*szA + nsetb*szB + nsetc*szC + extra;
+      vp = malloc(6*ATL_Cachelen + ATL_MulBySize(tsz));
+   }
+   else
+   {
+      nseta = nsetb = nsetc = nsets;
+      if (!movA || nseta < 1) nseta = 1;
+      if (!movB || nsetb < 1) nsetb = 1;
+      if (!movC || nsetc < 1) nsetc = 1;
+      tsz += nsets*setsz+extra;
+      vp = malloc(8*ATL_Cachelen + ATL_MulBySize(tsz));
+   }
+   assert(vp);
+   sp = ATL_AlignPtr(vp);
+   if (flA > 0 || flB > 0 || flC > 0)
+      ep = sp + nseta*szA + nsetb*szB + nsetc*szC;
+   else
+      ep = sp + nsets*setsz;
+   ep += ATL_DivBySize(3*ATL_Cachelen);
+   ep = ATL_AlignPtr(ep);
+   if (movA)
+   {
+      A = sp;
+      incA = szA SHIFT;
+      sp += incA * nseta;
+      sp = ATL_AlignPtr(sp);
+   }
+   else
+   {
+      A = ep;
+      ep += szA SHIFT;
+      ep = ATL_AlignPtr(ep);
+      incA = 0;
+   }
+   if (movB)
+   {
+      B = sp;
+      incB = szB SHIFT;
+      sp += incB * nsetb;
+      sp = ATL_AlignPtr(sp);
+   }
+   else
+   {
+      B = ep;
+      ep += szB SHIFT;
+      ep = ATL_AlignPtr(ep);
+      incB = 0;
+   }
+   if (movC)
+   {
+      C = sp;
+      incC = szC SHIFT;
+   }
+   else
+   {
+      C = ep;
+      incC = 0;
+   }
+   /* OLD Init *//*
+   sp = ATL_AlignPtr(vp);
+   for (i=0; i < (tsz+ATL_DivBySize(5*ATL_Cachelen)); i++)
+      sp[i] = dumb_prand(&seed);
+   */
+   for (i=0; i<nseta*szA; i++)
+      A[i] = dumb_prand(&seed);
+   for (i=0; i<nsetb*szB; i++)
+      B[i] = dumb_prand(&seed);
+   for (i=0; i<nsetc*szC; i++)
+      C[i] = dumb_prand(&seed);
+
+   a = A; b = B; c = C;
+   t0 = ATL_walltime();
+   for (ja=jb=jc=0,i=reps; i; i--)
+   {
+      TYPE *an, *bn, *cn;
+      if (++ja != nseta)
+         an = a+incA;
+      else
+      {
+         ja = 0; an = A;
+      }
+      if (++jb != nsetb)
+         bn = b+incB;
+      else
+      {
+         jb = 0; bn = B;
+      }
+      if (++jc != nsetc)
+         cn = c+incC;
+      else
+      {
+         jc = 0; cn = C;
+      }
+      #ifdef TIME_TRMVK
+         my_trsmk(mb, nb, 1.0, a, c, mb, b);
+      #elif defined(TIME_SYRKK)
+         KMM(mblks, nblks, kb, a, a, c, an, an, cn);
+      #else
+         KMM(mblks, nblks, kb, a, b, c, an, bn, cn);
+      #endif
+      a = an;
+      b = bn;
+      c = cn;
+   }
+   t1 = ATL_walltime() - t0;
+   mf = reps*getMflops(mb, nb, kb) / t1;
+   #ifdef TCPLX
+      mf *= 4.0;
+   #endif
+   free(vp);
+   return(mf);
+}
+
+#else
+
+double GetKmmMflop
+(
+   CINT mb, CINT nb, CINT kb,           /* C: mbxnb, At: kbxmb, B: kbXnb */
+   CINT mu, CINT nu, CINT ku, CINT vlen,
+   int movA, int movB, int movC,        /* which mat move in flush array? */
+   long FLSIZE,                       /* min area to move in in bytes */
+   CINT reps                            /* # calls to kmm in one timing */
+)
+/*
+ * Returns MFLOP rate of matmul kernel KMM
+ */
+{
+   CINT mblks = mb/mu, nblks = nb/nu;
+   const int NOMOVE = !(movA|movB|movC);
+   size_t szA, szB, szC, extra, setsz, nsets, tsz, i, j, incA, incB, incC, n;
+   TYPE *C, *A, *B, *a, *b, *c;
+   TYPE *ep, *sp;  /* extra & set ptrs */
+   double t0, t1, mf;
+   const TYPE alpha=1.0;
+   TYPE beta=1.0;
+   void *vp=NULL;
+   unsigned int seed = mb*kb + (nb<<14);
+/*
+ * Get size for each matrix, and round up to ensure we keep alignment
+ */
+   szA = ATL_getszA(mb, kb, mu, ku, vlen);
+   szB = ATL_getszB(kb, nb, ku, nu, vlen);
+   szC = ATL_getszC(mb, nb, mu, nu, vlen);
+/*
+ * Compute the setsz & extra
+ * setsz: size of moving mats, extra: size of stationary mats
+ */
+   setsz = getSetSz(movA, movB, movC, szA, szB, szC, &extra);
+   if (!NOMOVE && FLSIZE)
+      nsets = (ATL_DivBySize(FLSIZE)+setsz-1) / setsz;
+   else
+      movA = movB = movC = nsets = 0;
+   extra += (mu+mu)*nu;
+   tsz = ATL_Cachelen << 1;
+   tsz = ATL_DivBySize(tsz);
+   tsz += nsets*setsz+extra;
+   vp = malloc(2*ATL_Cachelen + ATL_MulBySize(tsz));
+   assert(vp);
+   sp = ATL_AlignPtr(vp);
+   ep = sp + nsets*setsz;
+   ep = ATL_AlignPtr(ep);
+   if (movA)
+   {
+      A = sp;
+      incA = szA SHIFT;
+      sp += incA * nsets;
+      sp = ATL_AlignPtr(sp);
+   }
+   else
+   {
+      A = ep;
+      ep += szA SHIFT;
+      ep = ATL_AlignPtr(ep);
+      incA = 0;
+   }
+   if (movB)
+   {
+      B = sp;
+      incB = szB SHIFT;
+      sp += incB * nsets;
+      sp = ATL_AlignPtr(sp);
+   }
+   else
+   {
+      B = ep;
+      ep += szB SHIFT;
+      ep = ATL_AlignPtr(ep);
+      incB = 0;
+   }
+   if (movC)
+   {
+      C = sp;
+      incC = szC SHIFT;
+   }
+   else
+   {
+      C = ep;
+      incC = 0;
+   }
+   sp = ATL_AlignPtr(vp);
+   for (i=0; i < tsz; i++)
+      sp[i] = dumb_prand(&seed);
+
+   a = A; b = B; c = C;
+   t0 = ATL_walltime();
+   for (j=0,i=reps; i; i--)
+   {
+      TYPE *an, *bn, *cn;
+      if (++j != nsets)
+      {
+         an = a+incA;
+         bn = b+incB;
+         cn = c+incC;
+      }
+      else
+      {
+         j = 0;
+         an = A; bn = B; cn = C;
+      }
+      #ifdef TIME_TRMVK
+         my_trsmk(mb, nb, 1.0, a, c, mb, b);
+      #elif defined(TIME_SYRKK)
+         KMM(mblks, nblks, kb, a, a, c, an, an, cn);
+      #else
+         KMM(mblks, nblks, kb, a, b, c, an, bn, cn);
+      #endif
+      a = an;
+      b = bn;
+      c = cn;
+   }
+   t1 = ATL_walltime() - t0;
+   mf = reps*getMflops(mb, nb, kb) / t1;
+   #ifdef TCPLX
+      mf *= 4.0;
+   #endif
+   free(vp);
+   return(mf);
+}
+
+#endif
+
+#ifdef PRINT_COREID
+   #include <utmpx.h>
+#endif
+//#define PRINT_NUMAIDS
+#ifdef PRINT_NUMAIDS
+   #define _GNU_SOURCE 1
+   #include <unistd.h>
+   #include <sys/syscall.h>
+#endif
+void *TimeOnCore(void *vp)
+{
+   struct kmm_struct *kp = vp;
+   const int P = kp->p;
+   int i;
+   volatile unsigned char *chkin = kp->chkin;
+   #ifdef PRINT_COREID
+      printf("core=%d\n", sched_getcpu());
+   #endif
+#ifdef PRINT_NUMAIDS
+    unsigned cpu, node;
+    syscall(SYS_getcpu, &cpu, &node, NULL);
+    printf("cpu=%u, node=%u\n", cpu, node);
+#endif
+/*
+ * First we barrier, so that all cores are active.  Otherwise, 1st core to
+ * start may run with bus to himself, and not give us a measure of true
+ * parallel performance.  Want full-on contention as in perfect parallel code.
+ * We wait on chkin array to have all non-zero entries.  Even on weakly-ordered
+ * caches this should work, though the delay may be long.
+ */
+   #ifdef ATL_NCPU
+      chkin[kp->iam] = 1;
+      for (i=0; i < P; i++)
+         while(!chkin[i]);
+   #endif
+   kp->mf = GetKmmMflop(kp->mb, kp->nb, kp->kb, kp->mu, kp->nu, kp->ku,
+                        kp->vlen, kp->movA, kp->movB, kp->movC,
+                        kp->FLSIZE, kp->flA, kp->flB, kp->flC, kp->reps);
+   return(NULL);
+}
+
+
+#ifndef ATL_NCPU
+double *TimeOnCores(struct kmm_struct *kb)
+{
+   double *mflops;
+   int i, p;
+
+   mflops = malloc(sizeof(double));
+   assert(mflops);
+   p = kb->p;
+   kb->iam = 0;
+   TimeOnCore(kb);
+   free(kb->pids);
+   mflops[0] = kb->mf;
+   return(mflops);
+}
+#else
+double *TimeOnCores(struct kmm_struct *kb)
+{
+   struct kmm_struct *kp;
+   pthread_t *threads;
+   pthread_attr_t *attr;
+   cpu_set_t *cpuset;
+   double *mflops;
+   int i, p;
+   unsigned char *chkin;
+
+   p = kb->p;
+/*
+ * On PowerPC Linux, pthread_attr_setaffinity_np sometimes attempts to
+ * realloc the cpuset variable, so it must be malloced not taken from
+ * the stack.  This is crazy behaviour, but it is what happens.
+ */
+   cpuset = malloc(sizeof(cpu_set_t));
+   kp = malloc(sizeof(struct kmm_struct)*p);
+   threads = malloc(sizeof(pthread_t)*p);
+   attr = malloc(sizeof(pthread_attr_t)*p);
+   mflops = malloc(sizeof(double)*p);
+   chkin = malloc(sizeof(char)*p);
+   assert(cpuset && kp && threads && attr && mflops && chkin);
+   for (i=0; i < p; i++)   /* init chkin to 0 before starting any threads */
+      chkin[i] = 0;        /* when all entries non-zero, all thrds started */
+   for (i=0; i < p; i++)
+   {
+      memcpy(kp+i, kb, sizeof(struct kmm_struct));
+      kp[i].chkin = (volatile char*)chkin;
+      kp[i].iam = i;
+      CPU_ZERO(cpuset);
+      CPU_SET(kp->pids[i], cpuset);
+      assert(!pthread_attr_init(attr+i));
+      assert(!pthread_attr_setaffinity_np(attr+i, sizeof(cpu_set_t), cpuset));
+      assert(!pthread_attr_setdetachstate(attr+i, PTHREAD_CREATE_JOINABLE));
+      assert(!pthread_create(threads+i, attr+i, TimeOnCore, kp+i));
+   }
+   for (i=0; i < p; i++)
+   {
+      pthread_join(threads[i], NULL);
+      mflops[i] = kp[i].mf;
+   }
+   free(cpuset);
+   free(kp->pids);
+   free(kp);
+   free(threads);
+   free(attr);
+   return(mflops);
+}
+#endif
+
+void GetStat(int n, double *d, double *min, double *max, double *avg)
+{
+   int i;
+   double dmin, dmax, dsum;
+
+   dmin = dmax = dsum = d[0];
+   for (i=1; i < n; i++)
+   {
+      dmax = (dmax >= d[i]) ? dmax : d[i];
+      dmin = (dmin <= d[i]) ? dmin : d[i];
+      dsum += d[i];
+   }
+   *min = dmin;
+   *max = dmax;
+   *avg = dsum / (double)n;
+}
+
+void PrintUsage(char *name, int iarg, char *arg)
+{
+   fprintf(stderr, "\nERROR around arg %d (%s).\n", iarg, arg ? arg:"unknown");
+   fprintf(stderr, "USAGE: %s [flags], where flags are:\n", name);
+   fprintf(stderr, "   -p <#> : use # threads (with affinity)\n");
+   fprintf(stderr, "   -tl <#> id1 ... id# : spawn # threads to given IDs\n");
+   fprintf(stderr, "   -B <#> : mb = nb = kb = #\n");
+   fprintf(stderr, "   -m <#> : mb = #\n");
+   fprintf(stderr, "   -n <#> : nb = #\n");
+   fprintf(stderr, "   -k <#> : kb = #\n");
+   fprintf(stderr, "   -V <veclen>\n");
+   fprintf(stderr, "   -u[mnk] <#> : M/N/K loop unrolling is #\n");
+   fprintf(stderr, "   -r <#> : set the # of times to call KMM\n");
+   fprintf(stderr, "   -R <mf>: set # reps to force <mf> MFLOPs\n");
+   fprintf(stderr, "   -F <kb> : set flush size in kilobytes\n");
+   fprintf(stderr, "   -M[a,b,c] <#> : mov[A,B,C] = #\n");
+   fprintf(stderr, "   -F[a,b,c] <kb> : set flush size for [A,B,C]\n");
+   exit(iarg ? iarg : -1);
+}
+
+struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
+{
+   FILE *fp;
+   struct kmm_struct *kp;
+   double mflops=750.0;
+   int i, j, IGMF=0;  /* ignore mflops.frc file? */
+
+   *fpout = NULL;
+   kp = malloc(sizeof(struct kmm_struct));
+   assert(kp);
+   kp->pids = NULL;
+   kp->p = 1;
+   kp->mb = kp->nb = kp->kb = 40;
+   kp->mu = kp->nu = 4;
+   kp->ku = 1;
+   kp->movA = kp->movB = kp->movC = 0;
+   kp->FLSIZE = L2SIZE;
+   kp->flA = kp->flB = kp->flC = -1;
+   kp->reps = 0;
+   kp->vlen = 1;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'f':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         *fpout = fopen(args[i], "w");
+         break;
+      case 'V':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->vlen = atoi(args[i]);
+         break;
+      case 'F':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         switch(args[i-1][2])
+         {
+         case 'c':
+         case 'C':
+            kp->flC = atoi(args[i]) * 1024;
+            break;
+         case 'b':
+         case 'B':
+            kp->flB = atoi(args[i]) * 1024;
+            break;
+         case 'a':
+         case 'A':
+            kp->flA = atoi(args[i]) * 1024;
+            break;
+         case 0:
+            kp->FLSIZE = atoi(args[i]) * 1024;
+            break;
+         default:
+            PrintUsage(args[0], i-1, "unknown flush operand");
+         }
+         break;
+      case 'u':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         j = atoi(args[i]);
+         if (args[i-1][2] == 'k')
+            kp->ku = j;
+         else if (args[i-1][2] == 'n')
+            kp->nu = j;
+         else
+            kp->mu = j;
+         break;
+      case 'R':
+         if (args[i][2] == 'f')
+            IGMF=1;
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         mflops = atof(args[i]);
+         break;
+      case 'r':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->reps = atoi(args[i]);
+         break;
+      case 't':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->p = atoi(args[i]);
+         kp->pids = malloc(sizeof(int)*kp->p);
+         assert(kp->pids);
+         for (j=0; j < kp->p; j++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, "out of arguments");
+            kp->pids[j] = atoi(args[i]);
+         }
+         break;
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->p = atoi(args[i]);
+         break;
+      case 'm':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->mb = atoi(args[i]);
+         break;
+      case 'n':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->nb = atoi(args[i]);
+         break;
+      case 'k':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->kb = atoi(args[i]);
+         break;
+      case 'B':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->mb = kp->nb = kp->kb = atoi(args[i]);
+         break;
+      case 'M':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         switch(args[i-1][2])
+         {
+         case 'c':
+         case 'C':
+            kp->movC = atoi(args[i]);
+            break;
+         case 'b':
+         case 'B':
+            kp->movB = atoi(args[i]);
+            break;
+         case 'a':
+         case 'A':
+            kp->movA = atoi(args[i]);
+            break;
+         default:
+            PrintUsage(args[0], i-1, "unknown mov matrix");
+         }
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+/*
+ * If there is a tuned <upr>mflops.frc file, use this in preference to the
+ * commandline argument unless the -Rf override flag was used
+ */
+   if (!IGMF)
+   {
+      char fn[16] = {'s', 'm', 'f', 'o', 'p', 's', '.', 'f', 'r', 'c', '\0'};
+      #if defined(DREAL) || defined(DCPLX)
+         fn[0] = 'd';
+      #endif
+      fp = fopen(fn, "r");
+      if (fp)
+      {
+         assert(fscanf(fp, "%le", &mflops) == 1);
+         fclose(fp);
+      }
+   }
+   if (!kp->reps)
+   {
+      kp->reps = (mflops*1000000.0/((2.0*kp->mb)*kp->nb*kp->kb));
+      if (kp->reps < 1)
+         kp->reps = 1;
+   }
+   if (!kp->pids)
+   {
+      kp->pids = malloc(sizeof(int)*kp->p);
+      assert(kp->pids);
+      #ifdef ATL_ARCH_XeonPHI
+      {
+         int n4 = ((kp->p)>>2)<<2, nr = kp->p - n4;
+         for (j=0; j < n4; j += 2)
+         {
+            kp->pids[j] = 2*j;
+            kp->pids[j+1] = 2*j+1;
+         }
+         switch(nr)
+         {
+         case 3:
+            kp->pids[j+2] = 2*(j+2);
+         case 2:
+            kp->pids[j+1] = 2*j+1;
+         case 1:
+            kp->pids[j] = 2*j;
+            break;
+         case 0:;
+         }
+      }
+      #else
+         for (j=0; j < kp->p; j++)
+             kp->pids[j] = j;
+      #endif
+   }
+   #ifdef TIME_SYRKK
+      kp->movB = 0;
+   #endif
+   if (kp->FLSIZE <= 0)
+      kp->FLSIZE = L2SIZE;
+   if (kp->flA > 0 || kp->flB > 0 || kp->flC > 0)
+   {
+      if (kp->flA < 0) kp->flA = kp->FLSIZE;
+      if (kp->flB < 0) kp->flB = kp->FLSIZE;
+      if (kp->flC < 0) kp->flC = kp->FLSIZE;
+   }
+   return(kp);
+}
+
+int main(int nargs, char **args)
+{
+   struct kmm_struct *kp;
+   int i, p;
+   double *dp;
+   double min, max, avg;
+   FILE *fpout = stdout;
+
+   kp = GetFlags(nargs, args, &fpout);
+   p = kp->p;
+   #ifndef ATL_NCPU
+      assert(p < 2);
+   #endif
+   dp = TimeOnCores(kp);
+   free(kp);
+   GetStat(p, dp, &min, &max, &avg);
+   printf("PER-CORE: %le", dp[0]);
+   for (i=1; i < p; i++)
+      printf(", %le", dp[i]);
+   printf("\nALL CORES: min=%.2f, max=%.2f, avg=%.2f\n", min, max, avg);
+   if (fpout)
+   {
+      fprintf(fpout, "%d 1\n", p);
+      for (i=0; i < p; i++)
+         fprintf(fpout, "%e\n", dp[i]);
+   }
+   free(dp);
+   if (fpout && fpout != stdout && fpout != stderr)
+      fclose(fpout);
+   exit(0);
+}
 @ROUT mmtime_pt
 #ifdef ATL_NCPU
    #if ATL_NCPU < 2
@@ -35474,7 +36433,28 @@ gemm(...)
 #include <assert.h>
 #include <string.h>
 
-
+#define uint unsigned int
+#ifndef ATL_SZA
+   uint ATL_getszA(uint M, uint K, uint mu, uint ku, uint vlen)
+   {
+      uint nmu=(M+mu-1)/mu;
+      return(nmu*mu*K);
+   }
+#endif
+#ifndef ATL_SZB
+   uint ATL_getszB(uint K, uint N, uint ku, uint nu, uint vlen)
+   {
+      uint nnu=(N+nu-1)/nu;
+      return(nnu*nu*K);
+   }
+#endif
+#ifndef ATL_SZC
+   uint ATL_getszC(uint M, uint N, uint mu, uint nu, uint vlen)
+   {
+      uint nmu=(M+mu-1)/mu, nnu=(N+nu-1)/nu, blksz=((mu*nu+vlen-1)/vlen)*vlen;
+      return(nmu*nnu*blksz);
+   }
+#endif
 #ifdef TIME_TRMVK
    #include "atlas_misc.h"
 #else
@@ -35518,6 +36498,27 @@ gemm(...)
       void Mjoin(PATL,ktrsmLLN_rk4)
          (ATL_CINT M, ATL_CINT N, const SCALAR alpha, 
           const TYPE *T, TYPE *B, ATL_CINT ldb, TYPE *W);
+      #endif
+   #endif
+#elif defined(TIME_COPY)
+   #ifndef COPYK
+      #define COPYK ATL_USERCPMM
+   #endif
+   #ifdef TREAL
+      #ifdef COPY_C
+         void COPYK(const size_t, const size_t, const TYPE, const TYPE*, 
+                    const TYPE, TYPE*, const size_t);
+      #else
+         void COPYK(const size_t, const size_t, const TYPE,
+                    const TYPE*, const size_t, TYPE*);
+      #endif
+   #else
+      #ifdef COPY_C
+         void COPYK(const size_t, const size_t, const TYPE*, const TYPE*, 
+                    const TYPE*, const TYPE*, TYPE *, const size_t);
+      #else
+         void COPYK(const size_t, const size_t, const TYPE*,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
       #endif
    #endif
 #elif defined(TCPLX)
@@ -35602,12 +36603,17 @@ gemm(...)
 #endif
 
 struct kmm_struct{
+   #ifdef TIME_COPY
+      TYPE *A;
+      size_t nmblks, nnblks, lda;
+      int COLWISE, BM, BN;
+   #endif
    int mb, nb, kb;                      /* C: mbxnb, At: kbxmb, B: kbXnb */
    int mu, nu, ku;                      /* needed to compute mblks/nblks */
    int movA, movB, movC;                /* which mat move in flush array? */
-   int FLSIZE;                          /* min area to move in in bytes */
+   size_t FLSIZE;                       /* min area to move in in bytes */
    int reps;                            /* # calls to kmm in one timing */
-   int LDC;                             /* what should ldc be set to? */
+   int vlen;                            /* vector length */
    int iam;                             /* thread rank */
    int p;                               /* total number of threads */
    int *pids;                           /* IDs of processors for affinity */
@@ -35615,188 +36621,239 @@ struct kmm_struct{
    volatile unsigned char *chkin;       /* P-len array to signal start/done */
 };
 
+#ifdef TIME_COPY
+static double getMflops(double m, double n)
+#else
+static double getMflops(double m, double n, double k)
+#endif
+{
+   #ifdef TIME_TRMVK
+     return(1e-6*m*m*n);
+   #elif defined(TIME_SYRKK)
+      return(1e-6*n*(n+1)*k);
+   #elif defined(TIME_COPY)
+      return(1e-6*m*n);
+   #else
+      return(1e-6*2.0*m*n*k);
+   #endif
+}
+static size_t getSetSz(int mvA, int mvB, int mvC, 
+                       size_t szA, size_t szB, size_t szC, size_t *NOMVSZ)
+{
+   size_t nomvsz=0, setsz=0;
+   if (mvA)
+      setsz += szA;
+   else 
+      nomvsz += szA;
+   if (mvB)
+      setsz += szB;
+   else 
+      nomvsz += szB;
+   if (mvC)
+      setsz += szC;
+   else 
+      nomvsz += szC;
+   if (NOMVSZ)
+      *NOMVSZ = nomvsz;
+   return(setsz);
+}
+
 double GetKmmMflop
 (
    CINT mb, CINT nb, CINT kb,           /* C: mbxnb, At: kbxmb, B: kbXnb */
-   CINT mu, CINT nu, CINT ku,
-   CINT movA, CINT movB, CINT movC,     /* which mat move in flush array? */
-   int FLSIZE,                          /* min area to move in in bytes */
-   CINT reps,                           /* # calls to kmm in one timing */
-   CINT LDC                             /* what should ldc be set to? */
+   CINT mu, CINT nu, CINT ku, CINT vlen,
+   int movA, int movB, int movC,        /* which mat move in flush array? */
+   struct kmm_struct *pd,               /* problem definition */   
+   size_t FLSIZE,                       /* min area to move in in bytes */
+   CINT reps                            /* # calls to kmm in one timing */
 )
 /*
  * Returns MFLOP rate of matmul kernel KMM
- * LDC: if (LDC == 0), then set ldc=MB for timings.  
- *      if (LDC != 0 && movC != 0), then ldc= col length in move space
- *      else ldc = LDC;
- * 
  */
 {
-   CINT mblks = mb/mu, nblks = nb/nu;
-   const int NOMOVE = !(movA|movB|movC);
-   size_t ldc, setsz, nset, i, j, incA, incB, incC, n, extra, EXTRA=0;
+   void *vp=NULL;
    TYPE *C, *A, *B, *a, *b, *c;
+   TYPE *ep, *sp;  /* extra & set ptrs */
    double t0, t1, mf;
+   size_t szA, szB, szC, extra, setsz, nsets, tsz, i, j, incA, incB, incC, n;
+   #ifdef TIME_COPY
+      const size_t lda=pd->lda;
+      size_t INCBLK, INCPAN, II, JJ, NN, MM;
+      unsigned int B0, B1;
+      TYPE *AA=pd->A, *aa;
+      #ifdef TCPLX
+         TYPE alpha[2] = {0.0, 0.0}, *beta = alpha;
+      #else
+         TYPE alpha=0.0, beta=0.0;
+      #endif
+   #else
    const TYPE alpha=1.0;
    TYPE beta=1.0;
-   void *vp=NULL;
+   #endif
+   CINT mblks = mb/mu, nblks = nb/nu;
+   const int NOMOVE = !(movA|movB|movC);
    unsigned int seed = mb*kb + (nb<<14);
-   EXTRA = 4*mu*nu;
 
-   
-   if (NOMOVE)
-   {
-      setsz = (mb * nb + kb*(mb+nb));
-      vp = malloc(2*ATL_Cachelen + ATL_MulBySize(setsz+EXTRA));
-      assert(vp);
-      A = ATL_AlignPtr(vp);
-      B = A + (mb*kb SHIFT);
-      C = B + (kb*nb SHIFT);
-      C = ATL_AlignPtr(C);
-      #ifdef TCPLX
-         setsz += setsz;
-      #endif
-      for (i=0; i < setsz; i++) A[i] = dumb_prand(&seed);
-      incA = incB = incC = 0;
-   }
-   else
-   {
-      if (movA && movB && movC)         /* no reuse at all */
+   #ifdef TIME_COPY
+      if (pd->COLWISE)
       {
-         setsz = ATL_MulBySize(mb*nb+kb*(mb+nb));
-         nset = (FLSIZE+setsz-1)/setsz;
-         FLSIZE = nset*(setsz+ATL_Cachelen);
-         setsz = mb*nb + kb*(mb+nb) + ATL_DivBySize(ATL_Cachelen);
-         vp = malloc(ATL_Cachelen + ATL_MulBySize(nset*setsz+EXTRA));
-         assert(vp);
-         setsz = setsz SHIFT;
-         A = ATL_AlignPtr(vp);
-         B = A + (kb*mb*nset SHIFT);
-         C = B + (kb*nb*nset SHIFT);
-         C = ATL_AlignPtr(B);
-         for (n=setsz*nset,i=0; i < n; i++) A[i] = dumb_prand(&seed);
-         incA = mb*kb SHIFT;
-         incB = kb*nb SHIFT;
-         incC = mb*nb SHIFT;
-      }
-      else if (movA && movB && !movC)   /* square-case ATLAS behavior */
-      {
-         setsz = kb*(mb+nb);
-         extra = mb*nb;
-         incA = mb*kb SHIFT;
-         incB = kb*nb SHIFT;
-         incC = 0;
-      }
-      else if (!movB && movA && movC)   /* rank-K behavior */
-      {
-         setsz = mb*(kb+nb);
-         extra = kb*nb;
-         incA = mb*kb SHIFT; 
-         incB = 0;
-         incC = mb*nb SHIFT;
-      }
-      else if (movA && !movB && !movC) /* used to det cost of B/C access */
-      {
-         setsz = mb*kb;
-         incA = setsz SHIFT;
-         incB = incC = 0;
-         extra = mb*nb + kb*nb;
-      }
-      else if (!movA && movB && !movC) /* used to det cost of ld A/C access */
-      {
-         incB = nb*kb SHIFT;
-         incA = incC = 0;
-         setsz = incB;
-         extra = mb*(nb+kb);
-      }
-      else if (!movA && !movB && movC) /* used to det cost of ld A/B access */
-      {
-         incC = mb*nb SHIFT;
-         incA = incB = 0;
-         setsz = incC;
-         extra = kb*(mb+nb);
+         NN = pd->nnblks;
+         MM = pd->nmblks;
+         INCBLK = mb SHIFT;
+         INCPAN = lda*(nb SHIFT); 
+         B0 = mb;
+         B1 = nb;
       }
       else
       {
-         fprintf(stderr, "%s,%d: What case are you wanting?\n", 
-                 __FILE__, __LINE__);
-         exit(-1);
+         NN = pd->nmblks;
+         MM = pd->nnblks;
+         INCBLK = lda * (nb SHIFT);
+         INCPAN = (mb SHIFT);
+         B0 = nb;
+         B1 = mb;
       }
-      #ifdef TCPLX
-         rszA = mb*kb;
-         rszB = kb*nb;
-         rszC = mb*nb;
-      #endif
-      if (!vp)
-      {
-         TYPE *dp, *ep;
-         i = ATL_MulBySize(setsz);
-         nset = (FLSIZE+i-1)/i;
-         FLSIZE = nset * i;
-         vp = malloc(6*ATL_Cachelen + ATL_MulBySize(extra+EXTRA) + FLSIZE);
-         assert(vp);
-         ep = ATL_AlignPtr(vp);
-         dp = (TYPE*)(((char*)ep) + 2*ATL_Cachelen + ATL_MulBySize(extra));
-         if (movA)
-         {
-            A = ATL_AlignPtr(dp);
-            dp = A + incA*nset;
-         }
-         else
-         {
-            A = ep;
-            ep += (mb*kb SHIFT);
-         }
-         if (movB)
-         {
-            B = ATL_AlignPtr(dp);
-            dp = B + incB*nset;
-         }
-         else
-         {
-            B = ATL_AlignPtr(ep);
-            ep = B + (kb*nb SHIFT);
-         }
-         C = (movC) ? dp : ep;
-         C = ATL_AlignPtr(C);
-         dp = ATL_AlignPtr(vp);
-         setsz = setsz SHIFT;
-         n = setsz*nset + (extra SHIFT);
-         for (i=0; i < n; i++) 
-            dp[i] = dumb_prand(&seed);
-      }
+      AA += pd->iam * INCPAN;
+      INCPAN -= INCBLK*MM;
+      II = JJ = 0;
+   #endif
+/*
+ * Get size for each matrix, and round up to ensure we keep alignment
+ */
+   #ifdef TIME_COPY
+      szA = szB = 0;
+   #else
+      szA = ATL_getszA(mb, kb, mu, ku, vlen);
+      szB = ATL_getszB(kb, nb, ku, nu, vlen);
+   #endif
+   szC = ATL_getszC(mb, nb, mu, nu, vlen);
+/*
+ * Compute the setsz & extra 
+ * setsz: size of moving mats, extra: size of stationary mats
+ */
+   setsz = getSetSz(movA, movB, movC, szA, szB, szC, &extra);
+   if (!NOMOVE && FLSIZE)
+      nsets = (ATL_DivBySize(FLSIZE)+setsz-1) / setsz;
+   else
+      movA = movB = movC = nsets = 0;
+   extra += (mu+mu)*nu;
+   tsz = ATL_Cachelen << 1;
+   tsz = ATL_DivBySize(tsz);
+   tsz += nsets*setsz+extra;
+   vp = malloc(2*ATL_Cachelen + ATL_MulBySize(tsz));
+   assert(vp);
+   sp = ATL_AlignPtr(vp);
+   ep = sp + nsets*setsz;
+   ep = ATL_AlignPtr(ep);
+   if (movA)
+   {
+      A = sp;
+      incA = szA SHIFT;
+      sp += incA * nsets;
+      sp = ATL_AlignPtr(sp);
    }
+   else
+   {
+      A = ep;
+      ep += szA SHIFT;
+      ep = ATL_AlignPtr(ep);
+      incA = 0;
+   }
+   if (movB)
+   {
+      B = sp;
+      incB = szB SHIFT;
+      sp += incB * nsets;
+      sp = ATL_AlignPtr(sp);
+   }
+   else
+   {
+      B = ep;
+      ep += szB SHIFT;
+      ep = ATL_AlignPtr(ep);
+      incB = 0;
+   }
+   if (movC)
+   {
+      C = sp;
+      incC = szC SHIFT;
+   }
+   else
+   {
+      C = ep;
+      incC = 0;
+   }
+   sp = ATL_AlignPtr(vp);
+   for (i=0; i < tsz; i++) 
+      sp[i] = dumb_prand(&seed);
+
    a = A; b = B; c = C;
    t0 = ATL_walltime();
    for (j=0,i=reps; i; i--)
    {
-      #ifdef TIME_TRMVK
-         Mjoin(PATL,ktrsmLLN_rk4)(mb, nb, 1.0, A, c, mb, B);
-      #else
-         KMM(mblks, nblks, kb, a, b, c, movA ? a+incA : a, 
-             movB ? b+incB : b, movC ? c+incC : c);
-      #endif
-      if (++j != nset)
+      TYPE *an, *bn, *cn;
+      if (++j != nsets)
       {
-         a += incA;
-         b += incB;
-         c += incC;
+         an = a+incA;
+         bn = b+incB;
+         cn = c+incC;
       }
       else
       {
          j = 0;
-         a = A; b = B; c = C;
+         an = A; bn = B; cn = C;
       }
+      #ifdef TIME_TRMVK
+         Mjoin(PATL,ktrsmLLN_rk4)(mb, nb, 1.0, a, c, mb, B);
+      #elif defined(TIME_SYRKK)
+         KMM(mblks, nblks, kb, a, a, c, an, an, cn);
+      #elif defined(TIME_COPY)
+         #ifdef COPY_C
+            #ifdef TCPLX
+               COPYK(mb, nb, alpha, c+szC, c, beta, AA, lda);
+            #else
+               COPYK(mb, nb, alpha, c, beta, AA, lda);
+            #endif
+         #else
+            #ifdef TREAL
+               COPYK(B0, B1, alpha, AA, lda, c);
+            #else
+               COPYK(B0, B1, alpha, AA, lda, c+szC, c);
+            #endif
+         #endif
+         aa += INCBLK;
+         if (++II == MM)
+         {
+            II = 0;
+            aa += INCPAN;
+            if (++JJ == NN)
+            {
+               JJ = 0;
+               aa = AA;
+            }
+         }
+      #else
+         KMM(mblks, nblks, kb, a, b, c, an, bn, cn);
+      #endif
+      a = an;
+      b = bn;
+      c = cn;
    }
    t1 = ATL_walltime() - t0;
-   mf = reps;
-   #ifdef TIME_TRMVK
-      mf = (1.0*reps*mb*mb*nb) / (t1*1000000.0);
+   #ifdef TIME_COPY
+      #ifdef COPY_C
+         mf = reps*getMflops(mb, nb) / t1;
+      #else
+         mf = reps*getMflops(nb, kb) / t1;  /* need to dist mb/nb eventually */
+      #endif
+      #ifdef TCPLX
+         mf *= 2.0;
+      #endif
    #else
-      mf = (2.0*reps*mb*nb*kb) / (t1*1000000.0);
-   #endif
-   #ifdef TCPLX
-      mf *= 4.0;
+      mf = reps*getMflops(mb, nb, kb) / t1;
+      #ifdef TCPLX
+         mf *= 4.0;
+      #endif
    #endif
    free(vp);
    return(mf);
@@ -35839,7 +36896,8 @@ void *TimeOnCore(void *vp)
          while(!chkin[i]);
    #endif
    kp->mf = GetKmmMflop(kp->mb, kp->nb, kp->kb, kp->mu, kp->nu, kp->ku, 
-                        kp->movA, kp->movB, kp->movC, kp->FLSIZE, kp->reps, 0);
+                        kp->vlen, kp->movA, kp->movB, kp->movC, kp, 
+                        kp->FLSIZE, kp->reps);
    return(NULL);
 }
 
@@ -35855,6 +36913,7 @@ double *TimeOnCores(struct kmm_struct *kb)
    p = kb->p;
    kb->iam = 0;
    TimeOnCore(kb);
+   free(kb->pids);
    mflops[0] = kb->mf;
    return(mflops);
 }
@@ -35865,18 +36924,24 @@ double *TimeOnCores(struct kmm_struct *kb)
    pthread_t *threads;
    pthread_attr_t *attr;
 @skip   unsigned long long cpuset;
-   cpu_set_t cpuset;
+   cpu_set_t *cpuset;
    double *mflops;
    int i, p;
    unsigned char *chkin;
 
    p = kb->p;
+/*
+ * On PowerPC Linux, pthread_attr_setaffinity_np sometimes attempts to 
+ * realloc the cpuset variable, so it must be malloced not taken from
+ * the stack.  This is crazy behaviour, but it is what happens.
+ */
+   cpuset = malloc(sizeof(cpu_set_t));
    kp = malloc(sizeof(struct kmm_struct)*p);
    threads = malloc(sizeof(pthread_t)*p);
    attr = malloc(sizeof(pthread_attr_t)*p);
    mflops = malloc(sizeof(double)*p);
    chkin = malloc(sizeof(char)*p);
-   assert(kp && threads && attr && mflops && chkin);
+   assert(cpuset && kp && threads && attr && mflops && chkin);
    for (i=0; i < p; i++)   /* init chkin to 0 before starting any threads */
       chkin[i] = 0;        /* when all entries non-zero, all thrds started */
    for (i=0; i < p; i++)
@@ -35884,24 +36949,25 @@ double *TimeOnCores(struct kmm_struct *kb)
       memcpy(kp+i, kb, sizeof(struct kmm_struct));
       kp[i].chkin = (volatile char*)chkin;
       kp[i].iam = i;
-@beginskip
-      cpuset = (((long long)1)<<(kp->pids[i]));
-      pthread_attr_setaffinity_np(attr+i, sizeof(cpuset), &cpuset);
-@endskip
-      CPU_ZERO(&cpuset);
-      CPU_SET(kp->pids[i], &cpuset);
-      assert(!pthread_attr_setaffinity_np(attr+i, sizeof(cpuset), &cpuset));
-      pthread_create(threads+i, attr+i, TimeOnCore, kp+i);
+      CPU_ZERO(cpuset);
+      CPU_SET(kp->pids[i], cpuset);
+      assert(!pthread_attr_init(attr+i));
+      assert(!pthread_attr_setaffinity_np(attr+i, sizeof(cpu_set_t), cpuset));
+      assert(!pthread_attr_setdetachstate(attr+i, PTHREAD_CREATE_JOINABLE));
+      assert(!pthread_create(threads+i, attr+i, TimeOnCore, kp+i));
    }
    for (i=0; i < p; i++)
    {
       pthread_join(threads[i], NULL);
+      pthread_attr_destroy(attr+i);
       mflops[i] = kp[i].mf;
    }
    free(kp->pids);
    free(kp);
    free(threads);
    free(attr);
+   free(cpuset);
+   free(chkin);
    return(mflops);
 }
 #endif
@@ -35933,6 +36999,13 @@ void PrintUsage(char *name, int iarg, char *arg)
    fprintf(stderr, "   -m <#> : mb = #\n");
    fprintf(stderr, "   -n <#> : nb = #\n");
    fprintf(stderr, "   -k <#> : kb = #\n");
+   fprintf(stderr, "   -V <veclen>\n");
+   #ifdef TIME_COPY
+      fprintf(stderr, "   -D <M> <lda> <N> <COLWISE>: copy only\n");
+      #ifndef COPY_C
+      fprintf(stderr, "   -A [a,b]: for A/B copy, set which you are copying\n");
+      #endif
+   #endif
    fprintf(stderr, "   -u[mnk] <#> : M/N/K loop unrolling is #\n");
    fprintf(stderr, "   -r <#> : set the # of times to call KMM\n");
    fprintf(stderr, "   -R <mf>: set # reps to force <mf> MFLOPs\n");
@@ -35944,13 +37017,22 @@ void PrintUsage(char *name, int iarg, char *arg)
 
 struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
 {
+   FILE *fp;
    struct kmm_struct *kp;
    double mflops=750.0;
-   int i, j;
+   int i, j, ACPY=1, IGMF=0;  /* ignore mflops.frc file? */
    
    *fpout = NULL;
    kp = malloc(sizeof(struct kmm_struct));
    assert(kp);
+   #ifdef TIME_COPY
+      kp->nmblks = kp->nnblks = kp->lda = 2000;
+      #ifdef COPY_C
+         kp->COLWISE = 1;
+      #else
+         kp->COLWISE = 0;
+      #endif
+   #endif
    kp->pids = NULL;
    kp->p = 1;
    kp->mb = kp->nb = kp->kb = 40;
@@ -35959,28 +37041,53 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    kp->movA = kp->movB = kp->movC = 0;
    kp->FLSIZE = L2SIZE;
    kp->reps = 0;
-   kp->LDC = 0;
+   kp->vlen = 1;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
          PrintUsage(args[0], i, args[i]);
       switch(args[i][1])
       {
+      #if defined(TIME_COPY) && !defined(COPY_C)
+      case 'A':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         ACPY = (args[i][0] != 'b' && args[i][0] != 'B');
+         break;
+      #endif
       case 'f':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
          *fpout = fopen(args[i], "w");
          break;
+      case 'V':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->vlen = atoi(args[i]);
+         break;
+      #ifdef TIME_COPY
+      case 'D':  /* -D <M> <lda> <N> <COL> */
+         if (i+4 >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         kp->nmblks = atol(args[i+1]);
+         kp->lda = atol(args[i+2]);
+         kp->nnblks = atol(args[i+3]);
+         kp->COLWISE = atoi(args[i+4]);
+         i += 4;
+         break;
+      #endif
       case 'F':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
-         kp->FLSIZE = atoi(args[i]) * 1024;
+         kp->FLSIZE = atol(args[i]) * 1024;
          break;
+@beginskip
       case 'C':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
          kp->LDC = atoi(args[i]);
          break;
+@endskip
       case 'u':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
@@ -35993,6 +37100,8 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
             kp->mu = j;
          break;
       case 'R':
+         if (args[i][2] == 'f')
+            IGMF=1;
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
          mflops = atof(args[i]);
@@ -36065,6 +37174,23 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
          PrintUsage(args[0], i, args[i]);
       }
    }
+/*
+ * If there is a tuned <upr>mflops.frc file, use this in preference to the
+ * commandline argument unless the -Rf override flag was used
+ */
+   if (!IGMF)
+   {
+      char fn[16] = {'s', 'm', 'f', 'o', 'p', 's', '.', 'f', 'r', 'c', '\0'};
+      #if defined(DREAL) || defined(DCPLX)
+         fn[0] = 'd';
+      #endif
+      fp = fopen(fn, "r");
+      if (fp)
+      {
+         assert(fscanf(fp, "%le", &mflops) == 1);
+         fclose(fp);
+      }
+   }
    if (!kp->reps)
    {
       kp->reps = (mflops*1000000.0/((2.0*kp->mb)*kp->nb*kp->kb));
@@ -36100,6 +37226,42 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
              kp->pids[j] = j;
       #endif
    }
+   #ifdef TIME_COPY  /* Reduce M/N to nmblks, nnblks, handle P */
+   {
+      const size_t gap = kp->lda - kp->nmblks;
+      unsigned int nb;
+
+      #ifdef TIME_C
+      if (ACPY)
+      {
+         kp->BM = kp->mb;
+         kp->BN = kp->kb;
+      }
+      else
+      {
+         kp->BM = kp->kb;
+         kp->BN = kp->nb;
+      }
+      #else
+         kp->BM = kp->mb;
+         kp->BN = kp->nb;
+      #endif
+      nb = kp->BM;
+      kp->nmblks = (kp->nmblks+nb-1)/nb;
+      if (!kp->COLWISE)
+         kp->nmblks = (kp->nmblks >= kp->p) ? kp->nmblks : kp->p;
+      kp->lda = kp->nmblks*nb + gap;
+      nb = kp->BN;
+      kp->nnblks = (kp->nnblks+nb-1)/nb;
+      if (kp->COLWISE)
+         kp->nnblks = (kp->nnblks >= kp->p) ? kp->nnblks : kp->p;
+      kp->movA = kp->movB = 0;
+      kp->movC = 1;
+   }
+   #endif
+   #ifdef TIME_SYRKK
+      kp->movB = 0;
+   #endif
    return(kp);
 }
 
@@ -36115,6 +37277,20 @@ int main(int nargs, char **args)
    p = kp->p;
    #ifndef ATL_NCPU
       assert(p < 2);
+   #endif
+   #ifdef TIME_COPY
+   {
+      TYPE *A;
+      size_t k, N;
+      unsigned int seed;
+
+      N = kp->lda * kp->nnblks * kp->nb;
+      seed = kp->lda+(kp->nnblks<<8);
+      kp->A = A = malloc(ATL_MulBySize(N));
+      assert(A);
+      for (k=0; k < N; k++)
+         A[k] = dumb_prand(&seed);
+   }
    #endif
    dp = TimeOnCores(kp);
    free(kp);

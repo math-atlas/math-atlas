@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  10/17/15.                           */
+/*  Last modified by the author on  11/20/15.                           */
 /************************************************************************/
 
 #include <stdio.h>
@@ -1322,6 +1322,14 @@ EXTMAC *FindMac(char *handle)
             if( ptr->Handle[i+2] == ')' ) break;
    }
    return(ptr);
+}
+
+int CountMacros(void)
+{
+   EXTMAC *p;
+   int i;
+   for (i=0,p=MacroBase; p; i++,p = p->next);
+   return(i);
 }
 
 /************************************************************************/
@@ -3311,7 +3319,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Pop MyMacBeg
  */
-   sprintf(line, "__MyMacBeg__%p", &EE);
+   sprintf(line, "@__MyMacBeg__%p", &EE);
    PopMacro2(&EE, line);
 
 /*
@@ -3537,6 +3545,13 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
 
    switch(i)
    {
+   case 4:  /* alias for @skip does not work in middle of line! */
+      if (WstrcmpN(tline, "@// ", 3))
+      {
+         if ( !Use[EC_Skip] ) return(0);
+      }
+      else DONE = 0;
+      break;
    case 5:
       if (WstrcmpN(tline, "@iif ", 4))
       {
@@ -3799,6 +3814,13 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
          if ( Use[EC_Dec] ) ExtWarn(EE, "unmatched @enddeclare");
          else return(0);
       }
+      if (WstrcmpN(tline, "@print@nmac ", 12))
+      {
+         if (Use[EC_Print])
+            fprintf(Warn, "%d:%s", CountMacros(), tline+12);
+         else
+            return(0);
+      }
       else if (WstrcmpN(tline, "@endextract ", 12))
       {
          if ( Use[EC_EndExt] ) ExtDone = 1;
@@ -3818,6 +3840,24 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
             AddIndent(EE, j, k);
          }
          else return(0);
+      }
+      else DONE = 0;
+      break;
+   case 15:
+      if (WstrcmpN(tline, "@print@allmacs ", 15))
+      {
+         if (Use[EC_Print])
+         {
+            int i;
+            EXTMAC *p;
+            for (i=0, p=MacroBase; p; i++,p=p->next)
+            {
+               fprintf(Warn, "'%10s' -> '%s'\n", p->Handle, p->Sub);
+            }
+            fprintf(Warn, "Done %d macros.\n\n", i);
+         }
+         else
+            return(0);
       }
       else DONE = 0;
       break;
