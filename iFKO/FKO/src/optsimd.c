@@ -12550,8 +12550,14 @@ int IsPackInConflict(PACK *pk0)
  */
             if (BitVecCheckComb(iv, pk->uses, '-'))
             {
-               fko_warn(__LINE__, "*****pack-%d is in conflict %d!!!", 
+               fko_warn(__LINE__, "*****pack-%d is in conflict with %d!!!", 
                      pk0->pnum, pk->pnum);
+#if 0
+               iv = BitVecComb(iv, iv, pk->uses, '-');
+               PrintVars(stderr, "common: ", iv);
+               PrintPack(stderr, pk);
+               PrintPack(stderr, pk0);
+#endif
                return(1);
             }
          }
@@ -14478,10 +14484,10 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
  *          vlist may be changed, be careful to use it later
  */
             /*fko_error(__LINE__, "Dependent inst not scheduled yet!!!");*/
-            PrintThisInst(stderr, 0, ip);
-            PrintThisInst(stderr, 1, pk->depil->inst);
             fko_warn(__LINE__, "Dependent inst not scheduled yet!!!");
 #if 0
+            PrintThisInst(stderr, 0, ip);
+            PrintThisInst(stderr, 1, pk->depil->inst);
             for (i=0; i < NPACK; i++)
                if(PACKS[i]) 
                   PrintPack(stderr, PACKS[i]);
@@ -14535,7 +14541,11 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
                {
                   k = STpts2[k-1];
                   vl = FindVectorFromSingleScalar(k, vlist);
-                  if (vl)
+/*
+ *                NOTE: redvars would be scalarized in vvrsum process. so, we 
+ *                can skip them
+ */
+                  if (vl && (k != vl->redvar) ) 
                   {
                      /*fprintf(stderr, "scalar %s is vectorized in %s\n", 
                            STname[k-1], STname[vl->vec-1]);*/
@@ -14575,6 +14585,10 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
                fko_error(__LINE__, 
                      "Conflict with more than one vec while scheduling");
             #endif
+               fko_warn(__LINE__, 
+                     "Conflict with more than one vec while scheduling:%s->%s",
+                     STname[vls->vec-1], STname[vls->next->vec-1]);
+               PrintThisVector(stderr, vls);
                KillVlist(vls);
                *err = 1; /* don't use anything other than 1 to report err */
                return(vlist);
@@ -19184,15 +19198,15 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
    fprintf(stderr, "Liveout vectors:\n");
    PrintVectors(stderr, v2);
 #endif
-   fprintf(stderr, "Applying SLP on prehead\n");
-   fprintf(stderr, "=========================\n");
+   /*fprintf(stderr, "Applying SLP on prehead\n");
+   fprintf(stderr, "=========================\n");*/
 
    ins = BitVecCopy(ins, lp->preheader->ins);
    FilterOutRegs(ins);
    vo1 = DoSingleBlkSLP(preblk, ins, v1, &err0, 0);
    
-   fprintf(stderr, "Applying SLP on posttail\n");
-   fprintf(stderr, "=========================\n");
+   /*fprintf(stderr, "Applying SLP on posttail\n");
+   fprintf(stderr, "=========================\n");*/
    ins = BitVecCopy(ins, lp->posttails->blk->ins);
    FilterOutRegs(ins);
    vo2 = DoSingleBlkSLP(postblk, ins, v2, &err1, 1);
@@ -19202,7 +19216,6 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
  * check consistency of SLP throughout the loop, i.e., loopi-1 + prehead 
  *    + posttail 
  */
-   fprintf(stderr, "%d %d\n", err0, err1);
    /*fprintf(stderr, "%d %d\n", err0, err1);*/
 /*
  * NOTE: can be vectorized even if prehead is not vectorizable!
@@ -19388,7 +19401,7 @@ int LoopNestVec()
  */
    if (PreSlpAccumExpans(optloop))
    {
-      fprintf(stderr, "pre slp accum expansion applied\n");
+      /*fprintf(stderr, "pre slp accum expansion applied\n");*/
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
