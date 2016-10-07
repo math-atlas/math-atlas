@@ -53,25 +53,24 @@
 #define CPF_TOBLK    0  /* set: copy to blk format;  unset: opposite direc */
 #define CPF_CBLK     1  /* set: C format;  unset:A/B */
 #define CPF_ABLK     2  /* set: scope mu;  unset: scope nu */
-#define CPF_KVEC     3  /* 1: vectorize on K dim */
-#define CPF_MVEC     4  /* 1: vectorize on M dim */
-#define CPF_NVEC     5  /* 1: vectorize on N dim */
-#define CPF_TRANS    6  /* 1: transpose, else NoTrans */
-#define CPF_CONJ     7  /* 1: Conjugate, else NoConj */
-#define CPF_SINGLE   8  /* 1: single, else double */
-#define CPF_REAL     9  /* 1: real, else complex */
-#define CPF_BE0     10
-#define CPF_BE1     11
-#define CPF_BEN     12
-#define CPF_BEX     13
-#define CPF_AL0     14
-#define CPF_AL1     15
-#define CPF_ALN     16
-#define CPF_ALX     17
-#define CPF_SYRK    18
-#define CPF_SYMM    19
-#define CPF_TRMM    20
-#define CPF_TRSM    24
+#define CPF_MVEC     3  /* 1: vectorize on M dim */
+#define CPF_NVEC     4  /* 1: vectorize on N dim */
+#define CPF_TRANS    5  /* 1: transpose, else NoTrans */
+#define CPF_CONJ     6  /* 1: Conjugate, else NoConj */
+#define CPF_SINGLE   7  /* 1: single, else double */
+#define CPF_REAL     8  /* 1: real, else complex */
+#define CPF_BE0      9
+#define CPF_BE1     10
+#define CPF_BEN     11
+#define CPF_BEX     12
+#define CPF_AL0     13
+#define CPF_AL1     14
+#define CPF_ALN     15
+#define CPF_ALX     16
+#define CPF_SYRK    17
+#define CPF_SYMM    18
+#define CPF_TRMM    19
+#define CPF_TRSM    20
 
 #define CPF_DEFAULT   0  /* default is no bits set */
 #define CPF_ALLALP ((1<<CPF_AL0)|(1<<CPF_AL1)|(1<<CPF_ALN)|(1<<CPF_ALX))
@@ -90,7 +89,8 @@ struct CPNode
    int ID;         /* ID unique in <pre>copy.idx */
    int STGID;      /* storage ID predefined vals: [1-6] */
    int mu, nu;     /* unrolling along M & N dims, respectively */
-   int vlen;       /* vector length, or 0 if doesn't matter to storage */
+   int vlen;       /* > 1: vector length used in copy generation */
+   int kvec;       /* > 1: vec with size kvec along K dim */
    int rtlen;      /* # of chars/bytes in rout */
    unsigned int flag, asmbits;
 };
@@ -1725,12 +1725,19 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
       p->@(jj) = 1;
 @endwhile
 @ROUT cpread
-@whiledef jj vlen ID mu nu STGID
+@whiledef jj mu nu
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
       p->@(jj) = atoi(sp+@len@(jj)+1);
    else
       p->@(jj) = 1;
+@endwhile
+@whiledef jj vlen kvec ID STGID
+   sp = strstr(ln, "@up@(jj)=");
+   if (sp)
+      p->@(jj) = atoi(sp+@len@(jj)+1);
+   else
+      p->@(jj) = 0;
 @endwhile
 @whiledef jj ALPHA BETA
    sp = strstr(ln, "@(jj)=");
@@ -1807,7 +1814,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @ROUT cpread
 @multidef fl 
-   TOBLK CBLK ABLK KVEC MVEC NVEC TRANS CONJ SINGLE REAL 
+   TOBLK CBLK ABLK MVEC NVEC TRANS CONJ SINGLE REAL 
    SYRK SYMM TRSM TRMM
 @endmultidef
 @ROUT mvread
@@ -1934,7 +1941,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
       i += fprintf(fpout, " ");
    }
    @endwhile
-@whiledef kw mu nu vlen
+@whiledef kw mu nu vlen kvec
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
 @endwhile
@@ -1970,7 +1977,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    @endmultidef
 @ROUT cpread
 @multidef kw SYRK SYMM TRMM TRSM
-@whiledef kw TOBLK CBLK ABLK KVEC MVEC NVEC TRANS CONJ SINGLE REAL
+@whiledef kw TOBLK CBLK ABLK MVEC NVEC TRANS CONJ SINGLE REAL
    if (FLAG_IS_SET(np->flag, @up@(rt)F_@(kw)))
    {
       if (i+@len@(kw) > 72) { fprintf(fpout, " \\\n   "); i = 3; }
@@ -2912,6 +2919,259 @@ static void MMApplyMoves2Flags
       mmp->flag = ((mmp->flag) & mvMSK) | mvSET;
 }
 
+@ROUT cpread
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char CopyGetPre(int flag)
+{
+   char pre;
+   if (flag & (1<<CPF_REAL))
+      pre = (flag & (1<<CPF_SINGLE)) ? 's':'d';
+   else
+      pre = (flag & (1<<CPF_SINGLE)) ? 'c':'z';
+   return(pre);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char *CopyGetCompType(int flag)
+{
+   char *ctyp;
+   if (flag & (1<<CPF_REAL))
+      ctyp = (flag & (1<<CPF_SINGLE)) ? "SREAL":"DREAL";
+   else
+      ctyp = (flag & (1<<CPF_SINGLE)) ? "SCPLX":"DCPLX";
+   return(ctyp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char CopyGetUpr(int flag)
+{
+   return((flag & (1<<CPF_SINGLE)) ? 's':'d');
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char CopyGetTrans(int flag)
+{
+   if (flag & (1<<CPF_TRANS))
+      return((flag & (1<<CPF_CONJ))?'H':'T');
+   return((flag & (1<<CPF_CONJ))?'C':'N');
+}
+
+/* procedure @(ip) */
+static char *CopyGetDirect(int flag)
+{
+   return((flag&(1<<CPF_TOBLK)) ? "Into" : "From");
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int CopyEncodeScal
+(
+   unsigned int flag,  /* flag encoding at least matrix type */
+   int ialp,           /* for mat='A', [1,-1,X], for mat='C': [0,1,-1,X] */
+   int ibet            /* for mat='A', ignored, else [0,1,-1,X] */
+)
+{
+   flag &= ~CPF_ALLALP; /* clear alpha bits */
+   flag &= ~CPF_ALLBET; /* clear beta  bits */
+   if (ialp == 1)
+      flag |= (1L<<CPF_AL1);
+   else if (ialp == 0)
+      flag |= (1L<<CPF_AL0);
+   else if (ialp == -1)
+      flag |= (1L<<CPF_ALN);
+   else 
+      flag |= (1L<<CPF_ALX);
+   if (flag & (1L<<CPF_CBLK))
+   {
+      if (ibet == 1)
+         flag |= (1L<<CPF_BE1);
+      else if (ibet == 0)
+         flag |= (1L<<CPF_BE0);
+      else if (ibet == -1)
+         flag |= (1L<<CPF_BEN);
+      else 
+         flag |= (1L<<CPF_BEX);
+   }
+   return(flag);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int CopyEncode
+(              /* all args take 0, which means don't set */
+   char pre,  /* [s,d,c,z] */
+   char dir,  /* 'I': copy Into block storage, 'F': copy From block */
+   char mat,  /* [C,A] */
+   char TA    /* [N,T,C,H] */
+)
+/* 
+ * returns arginfo as ATL_cpnode_t flag
+ */
+{
+   int flag;
+   if (pre)
+   {
+      flag = (pre == 'd' || pre == 's') ? (1<<CPF_REAL) : 0;
+      flag |= (pre == 's' || pre == 'c') ? (1<<CPF_SINGLE) : 0;
+   }
+   if (dir)
+   {
+      if (!(dir == 'F' || dir == 'f'))
+         flag |= (1<<CPF_TOBLK);
+   }
+   if (mat)
+   {
+      if (mat == 'C' || mat == 'c')
+         flag |= (1<<CPF_CBLK);
+      else /* A or B */
+      {
+         flag |= (mat == 'a' || mat == 'A') ? (1<<CPF_ABLK) : 0;
+         if (TA)
+         {
+            if (TA == 't' || TA == 'T')
+               flag |= (1<<CPF_TRANS);
+            else if (TA == 'c' || TA == 'C')
+               flag |= (1<<CPF_CONJ);
+            else if (TA == 'H' || TA == 'h')
+               flag |= (1<<CPF_TRANS) | (1<<CPF_CONJ);
+         }
+      }
+   }
+   return(flag);
+}
+
+
+@multidef pf AL BE
+@whiledef sc Alpha Beta
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int CopyGet@(sc)I(int flag)
+{
+   int iret;
+   if (flag&(1<<CPF_@(pf)0))
+      iret = 0;
+   else if (flag&(1<<CPF_@(pf)1))
+      iret = 1;
+   else if (flag&(1<<CPF_@(pf)N))
+      iret = -1;
+   else
+      iret = 2;
+   return(iret);
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char CopyGet@(sc)C(int flag)
+{
+   char ch;
+   if (flag&(1<<CPF_@(pf)0))
+      ch = '0';
+   else if (flag&(1<<CPF_@(pf)1))
+      ch = '1';
+   else if (flag&(1<<CPF_@(pf)N))
+      ch = 'N';
+   else if (flag&(1<<CPF_@(pf)X))
+      ch = 'X';
+   else
+      assert(0);
+   return(ch);
+}
+   @undef pf
+@endwhile
+
+char *GetCopyGenStr(ATL_cpnode_t *p)
+{
+   char *gs=NULL, *vecd = p->kvec ? "kdim" : "no";
+   const int flag=p->flag;
+   int sz, ialp, ibet=0;
+   char pre;
+
+   pre = CopyGetPre(flag);
+   ialp = CopyGetAlphaI(flag);
+   if (flag & (1<<CPF_CBLK))
+   {
+      char *gen;
+      ibet = CopyGetBetaI(flag);
+      if (p->vlen > 1)
+      {
+         assert(flag&(1<<CPF_SYRK) == 0);
+         gen = (flag&(1<<CPF_TOBLK)) ? "C2blk":"blk2C";
+         sz = 45 + NumDecDigits(p->mu);
+         sz += NumDecDigits(p->nu);
+         sz += NumDecDigits(ialp);
+         sz += NumDecDigits(ibet);
+         sz += strlen(p->rout);
+         gs = malloc(sz);
+         assert(gs);
+         sprintf(gs, "make %s_%s mu=%d nu=%d alpha=%d beta=%d rt=%s",
+                 gen, vecd, p->mu, p->nu, ialp, ibet, p->rout);
+         return(gs);
+      }
+      if (flag & (1<<CPF_TOBLK))
+         gen = (flag&(1<<CPF_SYRK)) ? "syC2blk":"C2blk";
+      else
+         gen = (flag&(1<<CPF_SYRK)) ? "syblk2C":"blk2C";
+      sz = 72 + NumDecDigits(p->mu);
+      sz += NumDecDigits(p->nu);
+      sz += NumDecDigits(p->kvec);
+      sz += strlen(p->rout);
+      gs = malloc(sz);
+      assert(gs);
+      sprintf(gs,
+"make gen_%s pre=%c vl=%d mu=%d nu=%d cpvl=1 alpha=%d beta=%d vec=%s rt=%s",
+              gen, pre, p->kvec, p->mu, p->nu, ialp, ibet, vecd, p->rout);
+      return(gs);
+   }
+   return(gs);
+}
+
+char *GetCopyName(ATL_cpnode_t *p, int exlen)
+{
+   char *sp=NULL, *dir;
+   const int ID=p->ID, flag=p->flag;
+   int len, i=0;
+   char pre;
+
+   pre = CopyGetPre(flag);
+   dir = CopyGetDirect(flag);
+/*
+ * For C format routine naming scheme is: 
+ * ID=0 : ATL_<pre>cp[Into,From]BlkC[g,k,y,r,s]_<mu>x<nu>x<kvec>_aXbX
+ * ID>0 : ATL_<pre><ID>cp[Into,From]BlkC[g,k,y,r,s]_a[0,1,N,X]b[0,1,N,X]
+ */
+   if (flag & (1<<CPF_CBLK))
+   {
+      char ck='g', cal, cbe;
+      if (p->ID)
+         len = 22 + NumDecDigits(p->ID);
+      else
+         len = 23 + NumDecDigits(p->mu) + NumDecDigits(p->nu)
+               + NumDecDigits(p->kvec);
+      sp = malloc(len+exlen);
+      assert(sp);
+      cal = CopyGetAlphaC(flag);
+      cbe = CopyGetBetaC(flag);
+      if (flag&(1<<CPF_SYRK))
+         ck = 'k';
+      else if (flag&(1<<CPF_SYMM))
+         ck = 'y';
+      else if (flag&(1<<CPF_TRMM))
+         ck = 'r';
+      else if (flag&(1<<CPF_TRSM))
+         ck = 's';
+      if (p->ID)
+         sprintf(sp, "ATL_%c%ucp%sBlkC%c_a%cb%c", pre, p->ID, dir, ck, 
+                 cal, cbe);
+      else
+         sprintf(sp, "ATL_%ccp%sBlkC%c_%ux%ux%u_a%cb%c", pre, dir, ck,
+                 p->mu, p->nu, p->kvec, cal, cbe);
+   }
+   return(sp);
+}
+
 @ROUT mvread r1read mmread cpread
 #endif  /* end atlas_@(rt)parse.h guard */
 @ROUT atlas_mvtesttime.h
@@ -3682,8 +3942,8 @@ char *MMGetCpGenString
       sp = malloc(sz);
       assert(sp);
       sprintf(sp, 
-"make gen_%s pre=%c vl=%d mu=%d nu=%d cpvl=1 alpha=1 beta=-1 vec=%s rt=%s",
-              gen, pre, mp->vlen, mp->mu, mp->nu, vec, mp->rout);
+"make gen_%s pre=%c vl=%d mu=%d nu=%d cpvl=1 alpha=%d beta=%d vec=%s rt=%s",
+              gen, pre, mp->vlen, mp->mu, mp->nu, ialp, ibet, vec, mp->rout);
       return(sp);
    }
    sz = 53 + NumDecDigits(Mmax(mp->mu, mp->nu));
@@ -4637,10 +4897,7 @@ double TimeMMKernel
  * If the file is generated, call generator to create it
  */
    if (mmp->genstr)
-   {
-      printf("genstr='%s'\n", mmp->genstr);
       assert(!MMDoGenString(verb, mmp->genstr));
-   }
    else if (verb > 2)
       printf("NO genstr\n");
 /*
@@ -5523,6 +5780,8 @@ static int MMCopyWorksForKern(int flag, ATL_mmnode_t *mp, ATL_cpnode_t *cp)
 {
    if (flag&(1<<CPF_CBLK))
    {
+      if (!(cp->flag & flag&(CPF_ALLALP|CPF_ALLBET)))
+         return(0);
       if (mp->stgC != cp->STGID)
          return(0);
       if (mp->mu != cp->mu || mp->nu != cp->nu)
@@ -5698,66 +5957,6 @@ void MMCopyTimePrep1(char pre, int kernID, int ialp, int ibet, ATL_mmnode_t *mp)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static char MMCopyGetPre(int flag)
-{
-   char pre;
-   if (flag & (1<<CPF_REAL))
-      pre = (flag & (1<<CPF_SINGLE)) ? 's':'d';
-   else
-      pre = (flag & (1<<CPF_SINGLE)) ? 'c':'z';
-   return(pre);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static char *MMCopyGetCompType(int flag)
-{
-   char *ctyp;
-   if (flag & (1<<CPF_REAL))
-      ctyp = (flag & (1<<CPF_SINGLE)) ? "SREAL":"DREAL";
-   else
-      ctyp = (flag & (1<<CPF_SINGLE)) ? "SCPLX":"DCPLX";
-   return(ctyp);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static char MMCopyGetUpr(int flag)
-{
-   return((flag & (1<<CPF_SINGLE)) ? 's':'d');
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static char MMCopyGetTrans(int flag)
-{
-   if (flag & (1<<CPF_TRANS))
-      return((flag & (1<<CPF_CONJ))?'H':'T');
-   return((flag & (1<<CPF_CONJ))?'C':'N');
-}
-
-@multidef pf AL BE
-@whiledef sc Alpha Beta
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static int MMCopyGet@(sc)(int flag)
-{
-   int iret;
-   if (flag&(1<<CPF_@(pf)0))
-      iret = 0;
-   else if (flag&(1<<CPF_@(pf)1))
-      iret = 1;
-   else if (flag&(1<<CPF_@(pf)N))
-      iret = -1;
-   else
-      iret = 2;
-   return(iret);
-}
-   @undef pf
-@endwhile
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
 void MMCopyTimePrep(char pre, int flag, ATL_mmnode_t *mb)
 {
    ATL_mmnode_t *mp;
@@ -5765,95 +5964,11 @@ void MMCopyTimePrep(char pre, int flag, ATL_mmnode_t *mb)
    int kernID;
 
    kernID = MMCopyGetKernID(flag);
-   ialp = MMCopyGetAlpha(flag);
+   ialp = CopyGetAlphaI(flag);
    if (flag&(1<<CPF_CBLK))
-      ibet = MMCopyGetBeta(flag);
+      ibet = CopyGetBetaI(flag);
    for (mp=mb; mp; mp = mp->next)
      MMCopyTimePrep1(pre, kernID, ialp, ibet, mp);
-}
-
-/* procedure @(ip) */
-static char *MMCopyGetDirect(int flag)
-{
-   return((flag&(1<<CPF_TOBLK)) ? "Into" : "From");
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static int MMCopyEncodeScal
-(
-   unsigned int flag,  /* flag encoding at least matrix type */
-   int ialp,           /* for mat='A', [1,-1,X], for mat='C': [0,1,-1,X] */
-   int ibet            /* for mat='A', ignored, else [0,1,-1,X] */
-)
-{
-   flag &= ~CPF_ALLALP; /* clear alpha bits */
-   flag &= ~CPF_ALLBET; /* clear beta  bits */
-   if (ialp == 1)
-      flag |= (1L<<CPF_AL1);
-   else if (ialp == 0)
-      flag |= (1L<<CPF_AL0);
-   else if (ialp == -1)
-      flag |= (1L<<CPF_ALN);
-   else 
-      flag |= (1L<<CPF_ALX);
-   if (flag & (1L<<CPF_CBLK))
-   {
-      if (ibet == 1)
-         flag |= (1L<<CPF_BE1);
-      else if (ibet == 0)
-         flag |= (1L<<CPF_BE0);
-      else if (ibet == -1)
-         flag |= (1L<<CPF_BEN);
-      else 
-         flag |= (1L<<CPF_BEX);
-   }
-   return(flag);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static int MMCopyEncode
-(              /* all args take 0, which means don't set */
-   char pre,  /* [s,d,c,z] */
-   char dir,  /* 'I': copy Into block storage, 'F': copy From block */
-   char mat,  /* [C,A] */
-   char TA    /* [N,T,C,H] */
-)
-/* 
- * returns arginfo as ATL_cpnode_t flag
- */
-{
-   int flag;
-   if (pre)
-   {
-      flag = (pre == 'd' || pre == 's') ? (1<<CPF_REAL) : 0;
-      flag |= (pre == 's' || pre == 'c') ? (1<<CPF_SINGLE) : 0;
-   }
-   if (dir)
-   {
-      if (!(dir == 'F' || dir == 'f'))
-         flag |= (1<<CPF_TOBLK);
-   }
-   if (mat)
-   {
-      if (mat == 'C' || mat == 'c')
-         flag |= (1<<CPF_CBLK);
-      else /* A or B */
-      {
-         flag |= (mat == 'a' || mat == 'A') ? (1<<CPF_ABLK) : 0;
-         if (TA)
-         {
-            if (TA == 't' || TA == 'T')
-               flag |= (1<<CPF_TRANS);
-            else if (TA == 'c' || TA == 'C')
-               flag |= (1<<CPF_CONJ);
-            else if (TA == 'H' || TA == 'h')
-               flag |= (1<<CPF_TRANS) | (1<<CPF_CONJ);
-         }
-      }
-   }
-   return(flag);
 }
 
 @iexp ip @(ip) 1 +
@@ -5869,8 +5984,8 @@ static char *GetMMCopyName(ATL_cpnode_t *p, int *LEN)
    int len, i=0;
    char pre;
 
-   pre = MMCopyGetPre(flag);
-   dir = MMCopyGetDirect(flag);
+   pre = CopyGetPre(flag);
+   dir = CopyGetDirect(flag);
    if (ID)
       len = 9 + NumDecDigits(p->ID);
    else
@@ -5897,12 +6012,11 @@ static char *GetMMCopyName(ATL_cpnode_t *p, int *LEN)
       }
       else /* ATL_<pre>cpy[To,From]C_<mu>x<nu>_<kvec> */
       {
-         int kvec = (p->flag & (1<<CPF_KVEC)) ? p->vlen : 0;
          len += 24 - 4*2;
          sp = malloc(len+1);
          assert(sp);
          i = sprintf(sp, "ATL_%ccp%sBlkC_%dx%d_%d", pre, dir, 
-                     p->mu, p->nu, kvec);
+                     p->mu, p->nu, p->kvec);
       }
    }
 /*
@@ -5913,7 +6027,7 @@ static char *GetMMCopyName(ATL_cpnode_t *p, int *LEN)
    else
    {
 @skip      char TA;
-@skip      TA  = MMCopyGetTrans(flag);
+@skip      TA  = CopyGetTrans(flag);
 
       if (ID)  /* ATL_<pre><ID>cp[To,From]BlkA */
       {
@@ -5924,11 +6038,10 @@ static char *GetMMCopyName(ATL_cpnode_t *p, int *LEN)
       }
       else     /* ATL_<pre>cp[To,From]BlkA[N,T]_<u>_<kvec> */
       {
-         int kvec = (p->flag & (1<<CPF_KVEC)) ? p->vlen : 0;
          len += 24 - 4*2;
          sp = malloc(len+1);
          assert(sp);
-         i=sprintf(sp, "ATL_%ccp%sBlkA_%d_%d", pre, dir, p->nu, kvec);
+         i=sprintf(sp, "ATL_%ccp%sBlkA_%d_%d", pre, dir, p->nu, p->kvec);
       }
    }
    assert(i <= len);
@@ -5946,11 +6059,7 @@ static ATL_cpnode_t *GetMMCopyNode(int ID, int mu, int nu, int kvec, int flag)
    cp->ID = ID;
    cp->mu = mu;
    cp->nu = nu;
-   if (kvec)
-   {
-      cp->vlen = kvec;
-      flag |= (1<<CPF_KVEC);
-   }
+   cp->kvec = kvec > 1 ? kvec : 0;
    cp->flag = flag;
    assert(cp);
    return(cp);
@@ -6068,7 +6177,7 @@ void GetMMCopyRefresh(int flag, ATL_mmnode_t *mb)
 /* procedure @(ip) */
 ATL_cpnode_t *GetMMCopyFromMMNodes
 (
-   int flag,          /* set with call to MMCopyEncode */
+   int flag,          /* set with call to CopyEncode */
    ATL_mmnode_t *mb   /* list of amm kerns */
 )
 {
@@ -6157,10 +6266,7 @@ void GetMMAllUniqueCopyFromMMNodes
       int kvec = 0;
 
       if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-      {
-         np->flag = flgC | (1<<CPF_KVEC);
-         np->vlen = mp->vlen;
-      }
+         np->kvec = mp->vlen;
       np->ID = mp->stgC; np->mu = mp->mu; np->nu = mp->nu;
       np->flag = flgC;
       if (!FindCopy(cb, np))  /* not already in list, so add it */
@@ -6227,7 +6333,7 @@ ATL_cpnode_t *AddMMCKernCopyFromMMNodes
    if (!mb)
       return(ab);
    assert(KERN == CPF_SYRK);        /* true for now */
-   flag |= MMCopyEncode(pre, dir, 'C', 'N');
+   flag |= CopyEncode(pre, dir, 'C', 'N');
    for (mp=mb; mp; mp = mp->next)
    {
       ATL_cpnode_t *np;
@@ -6256,7 +6362,7 @@ ATL_cpnode_t *AddMMUniqueACopyFromMMNodes
    {
       np = GetMMCopyNode(0, 0, mp->mu, 
                          FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
-                         MMCopyEncode(pre, dirA, 'B', 'N'));
+                         CopyEncode(pre, dirA, 'B', 'N'));
       if (!FindCopy(ab, np))
       {
          np->rout = GetMMCopyName(np, &np->rtlen);
@@ -6269,7 +6375,7 @@ ATL_cpnode_t *AddMMUniqueACopyFromMMNodes
       {
          np = GetMMCopyNode(0, 0, mp->nu, 
                             FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
-                            MMCopyEncode(pre, dirA, 'B', 'N'));
+                            CopyEncode(pre, dirA, 'B', 'N'));
          if (!FindCopy(ab, np))
          {
             np->rout = GetMMCopyName(np, &np->rtlen);
@@ -6534,7 +6640,7 @@ void PrintMMCpProtosA(FILE *fp, char *nm, ATL_cpnode_t *cb, char dir, char alp)
    char *pro;
    char pre;
 
-   pre = MMCopyGetPre(cb->flag);
+   pre = CopyGetPre(cb->flag);
    if (pre == 'd' || pre == 's')
    {
       pro = (dir == 'F') ? 
@@ -6551,7 +6657,7 @@ void PrintMMCpProtosA(FILE *fp, char *nm, ATL_cpnode_t *cb, char dir, char alp)
    for (cp=cb; cp; cp = cp->next)
    {
       char ta;
-      ta = MMCopyGetTrans(cp->flag);
+      ta = CopyGetTrans(cp->flag);
       fprintf(fp, "void %s_%ca%c\n   %s;\n", cp->rout, ta, alp, pro);
    }
    fprintf(fp, "#endif\n\n");
@@ -6567,7 +6673,7 @@ void PrintMMCpProtosC(FILE *fp, char *nm, ATL_cpnode_t *cb,
    char *pro;
    char pre;
 
-   pre = MMCopyGetPre(cb->flag);
+   pre = CopyGetPre(cb->flag);
    ab = FillInMMScalarSuff(0, alp, bet);
    if (pre == 'd' || pre == 's')
    {

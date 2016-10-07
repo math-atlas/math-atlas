@@ -259,13 +259,20 @@ ATL_mmnode_t *GetFlags
          PrintUsage(args[0], i, args[i]);
       }
    }
-   i = MMCopyEncode(pre, dir, mat, ta);
+   i = CopyEncode(pre, dir, mat, ta);
    i |= (mat == 'C') ? (1<<CPF_CBLK) : (1<<1<<CPF_ABLK);
-   *FLAG = MMCopyEncodeScal(i, ial, ibe);
+   *FLAG = CopyEncodeScal(i, ial, ibe);
    mb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    mp = ATL_LastMMNode(mb);
    mp->next = ReadMMFileWithPath(pre, "res", "rkAMMRES.sum");
    assert(mb);
+/*
+ * Timing for copy needs to be MOVC, dont move A or B
+ */
+   for (mp=mb; mp; mp=mp->next)
+   {
+      mp->flag = (mp->flag & (~MMF_MVSET)) | MMF_MVC;
+   }
    return(mb);
 }
 
@@ -277,9 +284,9 @@ void DoTimings(char pre, int verb, unsigned int flag,
    char *fnam;
    int ialp, ibet=0;
 
-   ialp = MMCopyGetAlpha(flag);
+   ialp = CopyGetAlphaI(flag);
    if (flag & (1<<CPF_CBLK))
-      ibet = MMCopyGetBeta(flag);
+      ibet = CopyGetBetaI(flag);
    fnam = GetCpySumNam(mb->blask,0,ialp,ibet);
    printf("FINDING BEST COPY: %s\n", fnam);
    for (mp=mb; mp; mp = mp->next)
@@ -292,7 +299,7 @@ void DoTimings(char pre, int verb, unsigned int flag,
              mp->mbB, mp->nbB, mp->kbB, mp->mu, mp->nu);
       mp->vlen = 1;
       mfB = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, ibet, 0, -1);
-      printf("      ID=     0 VL=1: mf=%.0f\n", mfB);
+      printf("      ID=     0 VL= 1: mf=%.0f\n", mfB);
       mp->mflop[0] = mfB;
 /*
  *    Try any hand-tuned cases that work
@@ -311,7 +318,7 @@ void DoTimings(char pre, int verb, unsigned int flag,
             sprintf(mp->rout, "CPYCASES/%s", cp->rout);
             mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, ibet, 
                                0, -1);
-            printf("      ID=%6d VL=%d: mf=%.0f\n", cp->ID, cp->vlen, mf);
+            printf("      ID=%6d VL=%2d: mf=%.0f\n", cp->ID, cp->vlen, mf);
             if (mf > mfB)
             {
                free(gens);
@@ -440,10 +447,10 @@ int main(int nargs, char **args)
    ATL_mmnode_t *mb, *kb, *mp;
 
    mb = GetFlags(nargs, args, &verb, &flag, &minSz, &kb);
-   pre = MMCopyGetPre(flag);
-   ialp = MMCopyGetAlpha(flag);
+   pre = CopyGetPre(flag);
+   ialp = CopyGetAlphaI(flag);
    if (flag&(1<<CPF_CBLK))
-      ibet = MMCopyGetBeta(flag);
+      ibet = CopyGetBetaI(flag);
 /*
  * Special non-GEMM copy must have kernID set specially
  */
@@ -487,7 +494,9 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT cpcgen
+#include "atlas_cpparse.h"
 #include "atlas_mmgen.h"
+@beginskip
 void GenMakeGen(char pre, char *fnam, ATL_cpnode_t *cb)
 {
    FILE *fp;
@@ -550,10 +559,143 @@ void GenProtos(char pre, FILE *fp, ATL_cpnode_t *cb)
    for (cp=cb; cp; cp = cp->next)
       fprintf(fp, "void %s(%s);\n", cp->rout, (cp->flag&(1<<CPF_TOBLK)?to:frm);
 }
+@endskip
+void GenCopyC(ATL_cpnode_t *cb, char *path)
+{
+   ATL_cpnode_t *cp;
+   char *sp, *typs;
+   int len, plen;
+   char pre;
+
+   if (!cb)
+      return;
+
+   plen = strlen(path);
+   pre = CopyGetPre(cb->flag);
+   if (pre == 'z')
+      typs = "#define TYPE DCPLX\n#define TCPLX 1\n#define TYPE double\n"
+             "#define SCALAR TYPE*";
+   else if (pre == 'c')
+      typs = "#define TYPE SCPLX\n#define TCPLX 1\n#define TYPE float\n"
+             "#define SCALAR TYPE*";
+   else if (pre == 'd')
+      typs = "#define TYPE DREAL\n#define TREAL 1\n#define TYPE double\n"
+             "#define SCALAR TYPE";
+   else if (pre == 's')
+      typs = "#define TYPE SREAL\n#define TREAL 1\n#define TYPE float\n"
+             "#define SCALAR TYPE";
+
+   for (cp=cb; cp; cp = cp->next)
+   {
+      char *nam, *fnam=NULL, *rt=cp->rout;
+      char calp, cbet, fe = 'c';
+      FILE *fp;
+
+      calp = CopyGetAlphaC(cp->flag);
+      cbet = CopyGetBetaC(cp->flag);
+      nam = GetCopyName(cp, 0);
+      if (cp->ID)
+      {
+         char *onam;
+         assert(rt);
+         for (onam=rt; *onam; onam++);
+         fe = onam[-1];
+         if (fe != 'c' && fe != 'S' && fe != 's')
+            fe = 'c';
+         
+         len = 10 + strlen(rt);
+         cp->rout = malloc(len);
+         assert(cp->rout);
+         sprintf(cp->rout, "CPYCASES/%s", rt);
+      }
+      else
+      {
+         char *gens=cp->genstr;
+         cp->rout = "ATL_tmp.c";
+         cp->genstr = GetCopyGenStr(cp);
+         MMDoGenString(0, cp->genstr);
+         free(cp->genstr);
+         cp->genstr = gens;
+      }
+      len = strlen(path) + 1 + strlen(nam) + 2;
+      fnam = malloc(len);
+      sprintf(fnam, "%s/%s.%c", path, nam, fe);
+      fp = fopen(fnam, "w");
+      assert(fp);
+      fprintf(fp, typs);
+      fprintf(fp, "#define ATL_USERCPMM %s\n", nam);
+      fclose(fp);
+      len = 10 + strlen(cp->rout) + strlen(fnam);
+      sp = malloc(len);
+      assert(sp);
+      sprintf(sp, "cat %s >> %s", cp->rout, fnam);
+      assert(!system(sp));
+      free(cp->rout);
+      cp->rout = rt;
+   }
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -F cpyout.sum: repeat for multiple\n");
+@skip   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_cpnode_t *GetFlags(int nargs, char **args, char **OUTD)
+{
+   ATL_cpnode_t *cb=NULL, *cp;
+   char *outd=NULL;
+   int i;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'F':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        if (!cb)
+           cb = ReadCPFile(args[i]);
+        else
+        {
+           cp = ATL_LastCPNode(cb);
+           cp->next = ReadCPFile(args[i]);
+        }
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!outd)
+      outd = DupString("tmp/");
+   *OUTD = outd;
+}
+
 int main(int nargs, char **args)
 {
+   ATL_cpnode_t *cb;
+   char *outd;
+
+   cb = GetFlags(nargs, args, &outd);
+   assert(cb);
+   GenCopyC(cb, outd);
+   free(outd);
+   KillAllCPRouts(cb);
+   return(0);
+@beginskip
    ATL_cpnode_t *gb, *hb;  /* generated & hand-tuned */
    hb = GetFlags(nargs, args);
    gb = YankCPNodesByIntVal(&hb, &(hb->ID), 0);
+@endskip
 }
 @ROUT cpagen
