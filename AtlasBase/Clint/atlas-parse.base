@@ -60,11 +60,23 @@
 #define CPF_CONJ     7  /* 1: Conjugate, else NoConj */
 #define CPF_SINGLE   8  /* 1: single, else double */
 #define CPF_REAL     9  /* 1: real, else complex */
-#define CPF_SYRK    10
-#define CPF_SYMM    11
-#define CPF_TRMM    12
+#define CPF_BE0     10
+#define CPF_BE1     11
+#define CPF_BEN     12
+#define CPF_BEX     13
+#define CPF_AL0     14
+#define CPF_AL1     15
+#define CPF_ALN     16
+#define CPF_ALX     17
+#define CPF_SYRK    18
+#define CPF_SYMM    19
+#define CPF_TRMM    20
+#define CPF_TRSM    24
 
 #define CPF_DEFAULT   0  /* default is no bits set */
+#define CPF_ALLALP ((1<<CPF_AL0)|(1<<CPF_AL1)|(1<<CPF_ALN)|(1<<CPF_ALX))
+#define CPF_ALLBET ((1<<CPF_BE0)|(1<<CPF_BE1)|(1<<CPF_BEN)|(1<<CPF_BEX))
+
 typedef struct CPNode ATL_cpnode_t;
 struct CPNode
 {
@@ -1704,13 +1716,54 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
       p->@(kk) = 0;
 
 @endwhile
-@ROUT mmread cpread
+@ROUT mmread
 @whiledef jj vlen
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
       p->@(jj) = atoi(sp+@len@(jj)+1);
    else
       p->@(jj) = 1;
+@endwhile
+@ROUT cpread
+@whiledef jj vlen ID mu nu STGID
+   sp = strstr(ln, "@up@(jj)=");
+   if (sp)
+      p->@(jj) = atoi(sp+@len@(jj)+1);
+   else
+      p->@(jj) = 1;
+@endwhile
+@whiledef jj ALPHA BETA
+   sp = strstr(ln, "@(jj)=");
+   if (sp)
+   {
+      int cnt=0;
+      sp += @len@(jj) + 1;
+      GET_@(jj):
+      {
+         switch(*sp)
+         {
+         case '0':
+            p->flag |= (1L<<CPF_@2l@(jj)0);
+            break;
+         case '1':
+            p->flag |= (1L<<CPF_@2l@(jj)1);
+            break;
+         case 'N':
+            p->flag |= (1L<<CPF_@2l@(jj)N);
+            break;
+         case 'X':
+            p->flag |= (1L<<CPF_@2l@(jj)X);
+            break;
+         default:
+            assert(0);
+         }
+      }
+      if (*(++sp) == ',')
+      {
+         sp++;
+         goto GET_@(jj);
+      }
+   }
 @endwhile
 @ROUT mmread
 @whiledef jj mu nu ku kbmin kbmax pref ivar pfLS szExtra stgA stgB stgC blask
@@ -1728,8 +1781,6 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
       p->@(jj)B = 0;
 @endwhile
    @multidef jj ID SSE
-@ROUT cpread
-   @multidef jj ID MU NU STGID
 @ROUT mvread r1read 
    @multidef jj ID MU NU minN minM alignX alignY alignA SSE CacheElts rankR
 @ROUT r1read mvread mmread
@@ -1755,7 +1806,10 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 @endmultidef
 
 @ROUT cpread
-@multidef fl TRANS CONJ TOBLK
+@multidef fl 
+   TOBLK CBLK ABLK KVEC MVEC NVEC TRANS CONJ SINGLE REAL 
+   SYRK SYMM TRSM TRMM
+@endmultidef
 @ROUT mvread
 @multidef fl X87 LDYTOP ALLALIGNXY AXPYBASED GEMMBASED CONJDEF FNU ALIGNX2A ADDCFLAGS PFTUNABLE
 @ROUT r1read
@@ -1829,9 +1883,10 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    if (!np->rout)
       np->ID = 0;
 @ROUT cpread
-   fprintf(fpout, "ID=%d STGID=%d ROUT='%s' AUTH='%s'",
+   fprintf(fpout, "ID=%d STGID=%d ROUT='%s' AUTH='%s' \\\n   ",
            np->ID, np->STGID, np->rout ? np->rout : "generated", 
            np->auth ? np->auth : "R. Clint Whaley");
+   i = 3;
 @ROUT r1read
    fprintf(fpout, "ID=%d ROUT='%s' AUTH='%s'",
            np->ID, np->rout ? np->rout : "generated", 
@@ -1857,10 +1912,28 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
            np->ID, np->rout ? np->rout : "generated", 
            np->auth ? np->auth : "R. Clint Whaley", ta, tb);
 
-@ROUT mvread r1read mmread cpread
+@ROUT mvread r1read mmread
    fprintf(fpout, "   ");
    i = 3;
 @ROUT cpread
+   @whiledef sc ALPHA BETA
+   if (np->flag & CPF_ALL@3l@(sc))
+   {
+      int b, f = (np->flag >> CPF_@2l@(sc)0) & 15;
+      int ch[4] = {'0', '1', 'N', 'X'};
+      if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
+      i += fprintf(fpout, "@(sc)=");
+      for (k=0; k < 4; k++, f >>= 1)
+         if (f&1)
+            break;
+      i += fprintf(fpout, "%c", ch[k]);
+      f >>= 1;
+      for (k++; k < 4; k++, f>>= 1)
+         if (f&1)
+            i += fprintf(fpout, ",%c", ch[k]);
+      i += fprintf(fpout, " ");
+   }
+   @endwhile
 @whiledef kw mu nu vlen
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
@@ -1896,7 +1969,14 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
       KUISKB NOBCAST
    @endmultidef
 @ROUT cpread
-   @define kwd @TOBLK TRANS CONJ@
+@multidef kw SYRK SYMM TRMM TRSM
+@whiledef kw TOBLK CBLK ABLK KVEC MVEC NVEC TRANS CONJ SINGLE REAL
+   if (FLAG_IS_SET(np->flag, @up@(rt)F_@(kw)))
+   {
+      if (i+@len@(kw) > 72) { fprintf(fpout, " \\\n   "); i = 3; }
+      i += fprintf(fpout, "@(kw)=1 ");
+   }
+@endwhile
 @ROUT r1read 
    @define kwd @X87 INCYISONE FNU ADDCFLAGS ALIGNX2A PFTUNABLE@
 @ROUT mvread 
@@ -1907,18 +1987,17 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    if (np->@(jj)B != 0)
       i += fprintf(fpout, "@up@(jj)=%d ", np->@(jj)B);
 @endwhile
-@ROUT mvread r1read mmread cpread
+@ROUT mvread r1read mmread
 @whiledef kw @(kwd)
    if (i+@len@(kw) > 72) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@(kw)=%d ", FLAG_IS_SET(np->flag, @up@(rt)F_@(kw)));
 @endwhile
+@ROUT mvread r1read mmread cpread
 
    k = 0;  /* no need to write mflop */
-@ROUT cpread
-   for (j=0; j < 4; j++)
-@ROUT mvread r1read mmread
-   for (j=0; j < 8; j++)
-@ROUT mvread r1read mmread cpread
+@ROUT cpread `@define nmf @4@`
+@ROUT mvread r1read mmread `@define nmf @8@`
+   for (j=0; j < @(nmf); j++)
    {
       if (np->mflop[j] != 0.0)
       {
@@ -1930,7 +2009,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    {
       if (i > 3) { fprintf(fpout, " \\\n   "); i = 3; }
       i += fprintf(fpout, "MFLOP=%le", np->mflop[0]);
-      for (j=7; j && np->mflop[j] == 0.0; j--);
+      for (j=@(nmf)-1; j && np->mflop[j] == 0.0; j--);
       for (k=1; k <= j; k++)
          i += fprintf(fpout, ",%le", np->mflop[k]);
    }
@@ -3558,10 +3637,14 @@ char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
 #endif
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 char *MMGetCpGenString
 (
    char pre,                    /* precision/type prefix */
-   ATL_mmnode_t *mp             /* mmkern ptr */
+   ATL_mmnode_t *mp,            /* mmkern ptr */
+   int ialp,                    /* 0,-1,1,2 */
+   int ibet                     /* 0,-1,1,2 */
 )
 {
    char *sp, *gen, *vec;
@@ -3592,7 +3675,7 @@ char *MMGetCpGenString
          gen = "syblk2C";
          break;
       }
-      sz = 66 + NumDecDigits(mp->mu);
+      sz = 72 + NumDecDigits(mp->mu);
       sz += NumDecDigits(mp->nu);
       sz += NumDecDigits(mp->vlen);
       sz += strlen(mp->rout);
@@ -3612,6 +3695,40 @@ char *MMGetCpGenString
            FLAG_IS_SET(mp->flag,MMF_KVEC), vec, mp->rout);
    return(sp);
 }
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+char *MMGetCpGenString_vec
+(
+   char pre,                    /* precision/type prefix */
+   ATL_mmnode_t *mp,            /* mmkern ptr */
+   int ialp,                    /* 0,-1,1,2 */
+   int ibet,                    /* 0,-1,1,2 */
+   char *vec                    /* sse or avx */
+)
+{
+   char *sp, *gen=NULL;
+   size_t sz;
+
+   if (mp->blask == ATL_KGECPFC)
+      gen = "C2blk";
+   else if (mp->blask == ATL_KGECP2C)
+      gen = "blk2C";
+   else                 /* using old generator for auto-vectorization */
+      return(NULL);     /* & it only supports vec for copy to/from C */
+
+   sz = 45 + NumDecDigits(mp->mu);
+   sz += NumDecDigits(mp->nu);
+   sz += NumDecDigits(ialp);
+   sz += NumDecDigits(ibet);
+   sz += strlen(mp->rout);
+   sp = malloc(sz);
+   assert(sp);
+   sprintf(sp, "make %s_%s mu=%d nu=%d alpha=%d beta=%d rt=%s",
+           gen, vec, mp->mu, mp->nu, ialp, ibet, mp->rout);
+   return(sp);
+}
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 char *MMGetGenString
@@ -3629,7 +3746,7 @@ char *MMGetGenString
    int kb;
 
    if (mp->blask >= ATL_KGECPFA && mp->blask <= ATL_KSKCP2C)
-      return(MMGetCpGenString(pre, mp));
+      return(MMGetCpGenString(pre, mp, 1, 1));
    if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
    {
       if (FLAG_IS_SET(mp->flag, MMF_KVEC))
@@ -3832,6 +3949,8 @@ ATL_mmnode_t *MMGetNodeGEN(char pre, int flag, int kb, int mu, int nu, int ku,
 int MMDoGenString(int verb, char *genstr)
 {
    int err=0;
+   if (verb > 2)
+      printf("genstr='%s'\n", genstr);
    if (!genstr)
       err=1;
    else if (verb < 3) /* want to redirect output */
@@ -4504,7 +4623,8 @@ double TimeMMKernel
       KU = KB;
    else if (ku > KB)
       KU = KB;
-   if (mmp->ID == 0 && (KB != mmp->kbB || KU != mmp->ku || !mmp->genstr))
+   if (mmp->blask == ATL_KGEMM && mmp->ID == 0 && 
+       (KB != mmp->kbB || KU != mmp->ku || !mmp->genstr))
    {
       int kb0=mmp->kbB, ku0=mmp->ku;
       mmp->kbB = KB;
@@ -4517,7 +4637,10 @@ double TimeMMKernel
  * If the file is generated, call generator to create it
  */
    if (mmp->genstr)
+   {
+      printf("genstr='%s'\n", mmp->genstr);
       assert(!MMDoGenString(verb, mmp->genstr));
+   }
    else if (verb > 2)
       printf("NO genstr\n");
 /*
@@ -4610,7 +4733,7 @@ double TimeMMKernel
       else if (mmp->blask == ATL_KTRMM)
          nm = "trm";
       ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
-      if (mmp->blask >= ATL_KGECPFA && mmp->blask <= ATL_KGECP2C)
+      if (mmp->blask >= ATL_KGECPFA && mmp->blask <= ATL_KSKCP2C)
       {
          if (mmp->blask < ATL_KGECPFC)
             i = sprintf(ln, "make %ccpytime mb=%d nb=%d TA=%c", pre, mb, nb, 
@@ -4624,6 +4747,21 @@ double TimeMMKernel
             i += sprintf(ln+i, " %cKC=\"%s\"", ch, mmp->comp);
          if (mmp->cflags)
             i += sprintf(ln+i, " %cKCFLAGS=\"%s\"", ch, mmp->cflags);
+         if (beta == 1 || beta == 0)
+            i += sprintf(ln+i, " beta=%d", beta);
+         else if (beta == -1)
+            i += sprintf(ln+i, " beta=-1 betan=\"N1\"");
+         else
+            i += sprintf(ln+i, " beta=2 betan=X");
+/*
+ *       These routines take alpha from kb, if it is: 0,1,-1,2
+ */
+         if (kb == 0 || kb == 1)
+            i += sprintf(ln+i, " alpha=%d", kb);
+         else if (kb == -1)
+            i += sprintf(ln+i, " alpha=-1 alphan=\"N1\"");
+         else if (kb == 2)
+            i += sprintf(ln+i, " alpha=2 alphan=X");
       }
       else
       {
@@ -4637,6 +4775,10 @@ double TimeMMKernel
             i += sprintf(ln+i, " %cMC=\"%s\"", ch, mmp->comp);
          if (mmp->cflags)
             i += sprintf(ln+i, " %cMCFLAGS=\"%s\"", ch, mmp->cflags);
+         if (beta == 1 || beta == 0)
+            i += sprintf(ln+i, " beta=%d", beta);
+         else
+            i += sprintf(ln+i, " beta=-1 betan=\"N1\"");
       }
       if (mflop)
          i += sprintf(ln+i, " FMFS=\"-Rf %d\"", mflop);
@@ -4664,10 +4806,6 @@ double TimeMMKernel
          else
             i += sprintf(ln+i, " pf=%d", mmp->pref);
       }
-      if (beta == 1 || beta == 0)
-         i += sprintf(ln+i, " beta=%d", beta);
-      else
-         i += sprintf(ln+i, " beta=-1 betan=\"N1\"");
       i += sprintf(ln+i, " outF=\"-f %s\"", fnam);
    }
    if (FORCETIME || !FileExists(fnam))
@@ -5295,6 +5433,76 @@ struct MMCopyFunc
 @endskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static char *GetCpySumNam(int blask, int STGID, int ialp, int ibet)
+{
+   static char fnam[32]={'b','2','C', '_', 'a', 'X', 'b', 'X', '_', '0'};
+   if (STGID)
+   {
+      assert(NumDecDigits(STGID)+9<32-1);
+      sprintf(fnam+9, "%u", STGID);
+   }
+   else
+   {
+      fnam[9] = '0';
+      fnam[10] = '\0';
+   }
+   @multidef ct   5   7
+   @whiledef sc alp bet
+   if (i@(sc) == -1)
+      fnam[@(ct)] = 'N';
+   if (i@(sc) == 0)
+      fnam[@(ct)] = '0';
+   else
+      fnam[@(ct)] = (i@(sc) == 1) ? '1' : 'X';
+      @undef ct
+   @endwhile
+   switch(blask)
+   {
+   case ATL_KGECPFA:
+      fnam[0] = 'A';
+      fnam[1] = '2';
+      fnam[2] = 'b';
+      fnam[6] = 't';
+      if (ibet == AtlasNoTrans)
+         fnam[7] = 'N';
+      else
+         fnam[7] = 'T';
+      break;
+   case ATL_KGECP2A:
+      fnam[0] = 'b';
+      fnam[1] = '2';
+      fnam[2] = 'A';
+      if (ibet == AtlasNoTrans)
+         fnam[7] = 'N';
+      else
+         fnam[7] = 'T';
+      break;
+   case ATL_KGECP2C:
+      fnam[0] = 'b';
+      fnam[1] = '2';
+      fnam[2] = 'C';
+      break;
+   case ATL_KGECPFC:
+      fnam[0] = 'C';
+      fnam[1] = '2';
+      fnam[2] = 'b';
+      break;
+   case ATL_KSKCPFC:
+      fnam[0] = 'K';
+      fnam[1] = '2';
+      fnam[2] = 'b';
+      break;
+   case ATL_KSKCP2C:
+      fnam[0] = 'b';
+      fnam[1] = '2';
+      fnam[2] = 'K';
+      break;
+   }
+   return(fnam);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
 /*
  * RETURNS: 1 if c0 & c1 have different functionality, 0 if equivalent
@@ -5311,17 +5519,38 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static int MMCopyAreDiff(int which, ATL_mmnode_t *m0, ATL_mmnode_t *m1)
+static int MMCopyWorksForKern(int flag, ATL_mmnode_t *mp, ATL_cpnode_t *cp)
+{
+   if (flag&(1<<CPF_CBLK))
+   {
+      if (mp->stgC != cp->STGID)
+         return(0);
+      if (mp->mu != cp->mu || mp->nu != cp->nu)
+         return(0);
+   }
+   else
+      return(0);  // NO SUPPORT NOW FOR A/B TUNING
+   @beginskip
+   else if (cp->flag&(1<<CPF_ABLK))
+   {
+      if (mp->stgA != cp->STGID);
+         return(0);
+      if (mp->mu != cp->nu)
+         return(0);
+   }
+   @endskip
+   return(1);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMCopyAreDiff(int flag, ATL_mmnode_t *m0, ATL_mmnode_t *m1)
 /*
  * RETURNS: 0 if m0 & m1 need same copy for matrix indicated by which:
- *  0 : C
- *  1 : A or B (A & B same-style storeage)
- *  2 : storage special to A only
- *  3 : storage special to B only
  */
 {
    int iret;
-   if (which == 0)  /* copy C */
+   if (flag&(1<<CPF_CBLK))  /* copy C */
    {
       int KV0, KV1, UU;
       if (m0->stgC != m1->stgC)
@@ -5355,18 +5584,14 @@ static int MMCopyAreDiff(int which, ATL_mmnode_t *m0, ATL_mmnode_t *m1)
             return(1);
       }
    }
-   else if (which == 1) /* copy A or B */
-     ;
-   else if (which == 2) /* copy A only */
-     ;
-   else if (which == 3) /* copy B only */
+   else /* copy A or B */
      ;
    return(0);
 }
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_mmnode_t *MMNoCopyRep(int which, int minSz, ATL_mmnode_t *mb)
+ATL_mmnode_t *MMNoCopyRep(int flag, int minSz, ATL_mmnode_t *mb)
 /*
  * Eliminates mmnodes with duplicate copy routines for matrix indicated by 
  * which.  In throwing away duplicates, retain routine with mb*nb > minSz,
@@ -5383,37 +5608,27 @@ ATL_mmnode_t *MMNoCopyRep(int which, int minSz, ATL_mmnode_t *mb)
  *       See if up has same copy routine as prior/unique mmnode
  */
          for (mp=mb; mp != up; mp = mp->next)
-            if (!MMCopyAreDiff(which, mp, up))
+            if (!MMCopyAreDiff(flag, mp, up))
                break;
          if (mp != up) /* duplicate copy routine found, eliminate mp or up */
          {
             int sz0, sz1;
             ATL_mmnode_t *kill, *nxt=up->next;
-            if (!which)
+            if (flag&(1<<CPF_CBLK))
             {
                sz0 = mp->mbB*mp->nbB; 
                sz1 = up->mbB*up->nbB;
             }
-            else if (which == 1) /* copy A or B */
+            else /* copy A or B */
             {
                sz0 = Mmax(mp->mbB,mp->nbB); 
                sz1 = Mmax(up->mbB,up->nbB);
                sz0 *= mb->kbB;
                sz1 *= up->kbB;
             }
-            else if (which == 2) /* copy A only */
-            {
-               sz0 = mp->mbB*mp->kbB; 
-               sz1 = up->mbB*up->kbB;
-            }
-            else if (which == 3) /* copy B only */
-            {
-               sz0 = mp->kbB*mp->nbB; 
-               sz1 = up->kbB*up->nbB;
-            }
-            if (sz0 > minSz && sz1 > minSz) /* elim largest */
+            if (sz0 > minSz && sz1 > minSz)   /* elim largest */
                kill = (sz0 <= sz1) ? up : mp;
-            else /* eliminate smallest */
+            else                              /* eliminate smallest */
                kill = (sz0 <= sz1) ? mp : up;
             mb = RemoveMMNodeFromQ(mb, kill);
             KillMMNode(kill);
@@ -5428,28 +5643,57 @@ ATL_mmnode_t *MMNoCopyRep(int which, int minSz, ATL_mmnode_t *mb)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-void MMCopyTimePrep(char pre, int kernID, ATL_mmnode_t *mb)
+static int MMCopyGetKernID(int flag)
 {
-   ATL_mmnode_t *mp;
-   for (mp=mb; mp; mp = mp->next)
+   int kernID;
+   if (flag&(1<<CPF_TOBLK)) /* col-maj to block */
    {
-      mp->blask = ATL_KGECPFA;
-      mp->TB = mp->TA = AtlasTrans; /* generally, worst case perf-wise */
-      if (mp->rout)
-        free(mp->rout);
-      mp->rout = DupString("ATL_tmp.c");
-      if (mp->comp)
-         free(mp->comp);
-      if (mp->cflags)
-         free(mp->cflags);
-      if (mp->auth)
-         free(mp->auth);
-      mp->auth = mp->comp = mp->cflags = NULL;
-      if (mp->genstr)
-        free(mp->genstr);
-      mp->genstr = MMGetGenString(pre, mp);
-      mp->ivar = 1;  /* effective VLEN for copy kern (not amm) */
-  }
+      if (flag&(1<<CPF_CBLK)) /* copy C matrix */
+      {
+         if (flag&(1<<CPF_SYRK))
+            kernID = ATL_KSKCPFC;
+         else
+            kernID = ATL_KGECPFC;
+      }
+      else /* involves A or B matrix */
+         kernID = ATL_KGECPFA;
+   }
+   else  /* block to col-maj */
+   {
+      if (flag&(1<<CPF_CBLK)) /* copy C matrix */
+      {
+         if (flag&(1<<CPF_SYRK))
+            kernID = ATL_KSKCP2C;
+         else
+            kernID = ATL_KGECP2C;
+      }
+      else /* involves A or B matrix */
+         kernID = ATL_KGECP2A;
+   }
+   return(kernID);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void MMCopyTimePrep1(char pre, int kernID, int ialp, int ibet, ATL_mmnode_t *mp)
+{
+   mp->blask = kernID;
+   mp->ID = 0;
+   mp->TB = mp->TA = AtlasTrans; /* generally, worst case perf-wise */
+   if (mp->rout)
+     free(mp->rout);
+   mp->rout = DupString("ATL_tmp.c");
+   if (mp->comp)
+      free(mp->comp);
+   if (mp->cflags)
+      free(mp->cflags);
+   if (mp->auth)
+      free(mp->auth);
+   mp->auth = mp->comp = mp->cflags = NULL;
+   if (mp->genstr)
+     free(mp->genstr);
+   mp->genstr = MMGetCpGenString(pre, mp, ialp, ibet);
+   mp->ivar = 1;  /* effective VLEN for copy kern (not amm) */
 }
 
 @iexp ip @(ip) 1 +
@@ -5492,12 +5736,80 @@ static char MMCopyGetTrans(int flag)
    return((flag & (1<<CPF_CONJ))?'C':'N');
 }
 
+@multidef pf AL BE
+@whiledef sc Alpha Beta
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMCopyGet@(sc)(int flag)
+{
+   int iret;
+   if (flag&(1<<CPF_@(pf)0))
+      iret = 0;
+   else if (flag&(1<<CPF_@(pf)1))
+      iret = 1;
+   else if (flag&(1<<CPF_@(pf)N))
+      iret = -1;
+   else
+      iret = 2;
+   return(iret);
+}
+   @undef pf
+@endwhile
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void MMCopyTimePrep(char pre, int flag, ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp;
+   int ialp, ibet=0;
+   int kernID;
+
+   kernID = MMCopyGetKernID(flag);
+   ialp = MMCopyGetAlpha(flag);
+   if (flag&(1<<CPF_CBLK))
+      ibet = MMCopyGetBeta(flag);
+   for (mp=mb; mp; mp = mp->next)
+     MMCopyTimePrep1(pre, kernID, ialp, ibet, mp);
+}
+
 /* procedure @(ip) */
 static char *MMCopyGetDirect(int flag)
 {
    return((flag&(1<<CPF_TOBLK)) ? "Into" : "From");
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMCopyEncodeScal
+(
+   unsigned int flag,  /* flag encoding at least matrix type */
+   int ialp,           /* for mat='A', [1,-1,X], for mat='C': [0,1,-1,X] */
+   int ibet            /* for mat='A', ignored, else [0,1,-1,X] */
+)
+{
+   flag &= ~CPF_ALLALP; /* clear alpha bits */
+   flag &= ~CPF_ALLBET; /* clear beta  bits */
+   if (ialp == 1)
+      flag |= (1L<<CPF_AL1);
+   else if (ialp == 0)
+      flag |= (1L<<CPF_AL0);
+   else if (ialp == -1)
+      flag |= (1L<<CPF_ALN);
+   else 
+      flag |= (1L<<CPF_ALX);
+   if (flag & (1L<<CPF_CBLK))
+   {
+      if (ibet == 1)
+         flag |= (1L<<CPF_BE1);
+      else if (ibet == 0)
+         flag |= (1L<<CPF_BE0);
+      else if (ibet == -1)
+         flag |= (1L<<CPF_BEN);
+      else 
+         flag |= (1L<<CPF_BEX);
+   }
+   return(flag);
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -6399,6 +6711,25 @@ void PrintKernComp
                  cbet, mp->rout);
 }
 @endskip
+void PrintMakeTargs(FILE *fp, char pre)
+{
+/*
+ * library make targets
+ */
+   fprintf(fp, "\n\nlib : %clib.grd\nall : %clib.grd\n%clib : %clib.grd\n",
+           pre, pre, pre, pre);
+   fprintf(fp, "%clib.grd : $(objs)\n", pre);
+   fprintf(fp, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t touch %clib.grd\n", pre);
+   fprintf(fp, "clean : %cclean\n", pre);
+   fprintf(fp, "%cclean:\n\t- rm -f $(objs)\n", pre);
+   fprintf(fp, "killall : %ckillall\n", pre);
+   fprintf(fp, "%ckillall : %cclean\n", pre, pre);
+   fprintf(fp, "\t- $(ARCHIVER) d $(ATLASlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t- rm -f ATL_%c*.[S,c]\n\n", pre);
+}
 #endif  /* end guard around atlas_@(rt)mmgen.h */
 @ROUT getflagarrs
 

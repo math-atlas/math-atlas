@@ -2245,4 +2245,163 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    }
 @endiif
 }
-@ROUT
+@ROUT blk2C_x87
+@BEGINPROC GetAOff i_ j_
+   @define of @1@
+@iif @iexp @(i_) 0 = @(j_) 0 = &
+   @define ao @(pA)@
+@endiif
+@iif @(j_) = 0
+   @define al @@(i_)*SZ(pA)@
+@endiif
+@iif @(j_) = 1
+   @iif (i_) = 0
+      @define al @(pA,lda)@
+   @endiif
+   @iif (i_) ! 0
+      @define al @@(i_)*SZ(pA,lda)@
+   @endiif
+@endiif
+@iif @(j_) = 2
+   @iif (i_) = 0
+      @define al @(pA,lda,2)@
+   @endiif
+   @iif (i_) ! 0
+      @define al @@(i_)*SZ(pA,lda,2)@
+   @endiif
+@endiif
+@iif @(j_) = 3
+   @iif (i_) = 0
+      @define al @(pA,lda3)@
+   @endiif
+   @iif (i_) ! 0
+      @define al @@(i_)*SZ(pA,lda3)@
+   @endiif
+@endiif
+@iif @(j_) = 4
+   @iif (i_) = 0
+      @define al @(pA,lda,4)@
+   @endiif
+   @iif (i_) ! 0
+      @define al @@(i_)*SZ(pA,lda,4)@
+   @endiif
+@endiif
+@ENDPROC
+#include "atlas_asm.h"
+/*
+ *                            rdi       rsi             xmm0            rdx
+ * void ATL_ATL_USERCPMM(size_t M, size_t N, const TYPE alpha, const TYPE *w,
+ *                                  xmm1       rcx         r8
+ *                       const TYPE beta, TYPE *A, size_t lda);
+ *                       
+ */
+#define M    %rdi
+#deifne N    %rsi
+#define pW   %rdx
+#define pA   %rcx
+#define lda  %rax  /* comes in r8 */
+#define lda3 %r8  
+#define Mr   %r9
+#define Nr   %r10
+#define II   %r11
+.text
+.global ATL_asmdecor(ATL_USERCPMM)
+ALIGN16
+ATL_asmdecor(ATL_USERCPMM):
+   mov M, Mr
+/*
+ * M = M / 12  -> (M/4) /3;
+ */
+   shr $2, M   /* M /= 4 */
+   mov M, %rax
+   movabsq $-6148914691236517205, M
+   mulq M
+   shrq M
+/*
+ * rax = 12*(M/12)
+ */
+   lea (M,M,2), %rax /* rax = 3*(M/12) */
+   shl $2, %rax      /* rax = 12*(M/12) */
+   sub %rax, Mr      /* Mr = M - (M/12)*12 */
+
+   shr $2, N  /* N /= 4 */
+   mov N, %rax
+   shl $2, %rax
+   sub %rax, Nr     /* Nr = N - (N/4)*4 */
+
+   mov %r8, lda
+   lea (%r8,%r8,2), lda3
+   #ifdef ALPHAX
+      movlpd %xmm0, -8(%rsp)
+      fldl -8(%esp)              /* ST={alpha} */
+      #ifdef BETAX
+         movlpd %xmm1, -8(%rsp)
+         fldl -8(%esp)           /* ST={beta,alpha} */
+         #define SCAN 2
+      #else
+         #define SCAN 1
+      #endif
+   #elif defined(BETAX)
+      #define SCAN 1
+      movlpd %xmm1, -8(%rsp)
+      fldl -8(%esp)              /* ST={beta} */
+   #else
+      #define SCAN 0
+   #endif
+   #if SCAN == 1
+      #define ST4 %st4
+      #define ST5 %st5
+      #define ST6 %st6
+   #elif SCAN == 2
+      #define ST4 %st5
+      #define ST5 %st6
+      #define ST6 %st7
+   #endif
+   cmp $0, N
+   je CLEAN_N
+   cmp $0, M
+   je CLEAN_N
+   LOOPN:
+      mov M, II
+      LOOPM:
+         fldl (pW)          /* ST={p[0],[bet],[alp]} */
+         #ifdef BETAX
+            fmul %st1, %st  /* ST={bet*p[0],[bet],[alp]} */
+         #elif defined(BETAN) || defined(BETAN1)
+            fchs
+         #endif
+         fldl 8(pW)         /* ST={p[1], bet*p[0],[bet],[alp]} */
+         #ifdef BETAX
+            fmul %st2, %st  /* ST={bet*p[1],bet*p[0],[bet],[alp]} */
+         #elif defined(BETAN) || defined(BETAN1)
+            fchs
+         #endif
+         fldl 16(pW)        /* ST={p[2], bet*p[1],bet*p[0],[bet],[alp]} */
+         #ifdef BETAX
+            fmul %st3, %st  /* ST={bet*p[2],bet*p[1],bet*p[0],[bet],[alp]} */
+         #elif defined(BETAN) || defined(BETAN1)
+            fchs
+         #endif
+         fldl (pA)  /* ST={A[0],{bet*p[2],bet*p[1],bet*p[0],[bet],[alp]} */
+         #ifdef ALPHAX
+            fmul ST4, %st
+         #elif defined(BETAN) || defined(BETAN1)
+            fchs
+         #endif
+         fldl 8(pA)
+         #ifdef ALPHAX
+            fmul ST5, %st
+         #elif defined(ALPHAN) || defined(ALPHAN1)
+            fchs
+         #endif
+         fldl 16(pA)
+         #ifdef ALPHAX
+            fmul ST6, %st /*{A[2],A[1],A[0],p[2],p[1],p[0],[bet],[alp] */
+         #elif defined(ALPHAN) || defined(ALPHAN1)
+            fchs
+         #endif
+         dec II
+      jne LOOPM
+      dec N
+   jne LOOPN
+

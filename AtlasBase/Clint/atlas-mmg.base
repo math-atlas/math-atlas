@@ -32,6 +32,32 @@
    @define nalp @@(alpha)@
    @define calp @-@
    @define beta @@(be)@
+@ROUT blk2C_avx blk2C_sse C2blk_avx C2blk_sse 
+@iif @(alpha) = -1
+   @define nalp @n@
+   @define malp @-@
+   @define calp @@
+@endiif
+@iif @(alpha) = 1 
+   @define nalp @1@
+   @define malp @@
+   @define calp @-@
+@endiif
+@ifdef ! nalp
+   @define nalp @X@
+   @define malp @alpha*@
+   @define calp @(-alpha)*@
+@endifdef
+@iif @(beta) = -1
+   @define nbet @n@
+@endiif
+@iif @iexp @(beta) 1 =  @(beta) 0 = |
+   @define nbet @@(beta)@
+@endiif
+@ifdef ! nbet
+   @define nbet @X@
+@endifdef
+#include "atlas_misc.h"
 @ROUT ATL_am2rm ATL_am2cm ATL_cm2am ATL_rm2am ATL_ablk2cmat ATL_cmat2ablk @\
       ATL_cam2rm ATL_cam2cm ATL_ccm2am ATL_crm2am ATL_cablk2cmat ATL_ccmat2ablk
 #include "atlas_misc.h"
@@ -1833,7 +1859,7 @@ void ATL_USERCPMM       /* row- to access-major */
 @ROUT ammmtst
   @define beta @0@
   @define nbet @0@
-@ROUT ATL_ablk2cmat
+@ROUT ATL_ablk2cmat blk2C_avx blk2C_sse
 @beginproc cploops aligned vtyp ralp rbet
    @mif vtyp = "__m256
       @define velts @8@
@@ -1909,11 +1935,11 @@ void ATL_USERCPMM       /* row- to access-major */
          @iexp h 0 0 +
             rc0 = @(vld)(p+@(k));
          @mif nalp = "X
-            rc0 = @(vmul)(rc0, rALP);
+            rc0 = @(vmul)(rc0, @(ralp));
          @endmif
          @mif nbet = "0
             @mif nalp = "n
-            rc0 = @(vmul)(rc0, rALP);
+            rc0 = @(vmul)(rc0, @(ralp));
             @endmif
             @(vstu)(C@(j)+i+@(i), rc0);
             @iexp h 1 0 +
@@ -1921,17 +1947,17 @@ void ATL_USERCPMM       /* row- to access-major */
          @iif h = 0
             rC0 = @(vldu)(C@(j)+i+@(i));
             @mif nbet = "X
-            rC0 = @(vmul)(rC0, rBETA);
+            rC0 = @(vmul)(rC0, @(rbet));
             @endmif
             @mif nalp = "n
                @mif nbet = "0
-            rc0 = @(vmul)(rc0, rALP);
+            rc0 = @(vmul)(rc0, @(ralp));
             @(vstu)(C@(j)+i+@(i), rc0);
                   @iexp h 1 0 +
                @endmif
                @mif nbet = "n
             rC0 = @(vadd)(rC0, rc0);
-            rC0 = @(vmul)(rC0, rALP);
+            rC0 = @(vmul)(rC0, @(ralp));
             @(vstu)(C@(j)+i+@(i), rC0);
                   @iexp h 1 0 +
                @endmif
@@ -2052,6 +2078,9 @@ void ATL_USERCPMM       /* row- to access-major */
       @define ibe @{beta,beta,beta,beta}@
       @define ial @{alpha,alpha,alpha,alpha}@
       @define in1 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+      @define ib2 @{beta,beta,}@
+      @define ia2 @{alpha,alpha}@
+      @define in2 @{ATL_rnone,ATL_rnone}@
    @endmif
    @mif vtyp = "__m128
       @define andC @0xF@
@@ -2084,6 +2113,7 @@ void ATL_USERCPMM       /* access-major C to col-major C */
    ATL_CINT pansz = (nr) ? (n+@(nu))*@(mu) : n*@(mu);
    ATL_CINT incC = ldc*@(nu), incb = @(mu)*@(nu);
    ATL_INT i, j;
+   @iexp URALP 0
    @mif nbet = "X
    const register @(vtyp) rBETA=@(ibe);
    @endmif
@@ -2092,9 +2122,11 @@ void ATL_USERCPMM       /* access-major C to col-major C */
    @endmif
    @mif nalp = "X
    const register @(vtyp) rALP=@(ial);
+      @iexp URALP 1
    @endmif
    @mif nalp = "n
    const register @(vtyp) rALP=@(in1);
+      @iexp URALP 1
    @endmif
    @declare "   TYPE " n n ";"
       *C0=C
@@ -2106,6 +2138,7 @@ void ATL_USERCPMM       /* access-major C to col-major C */
       @endiwhile
    @enddeclare
 
+@ROUT ATL_ablk2cmat
 /*
  * If C is aligned, use aligned load/stores to C
  */
@@ -2116,16 +2149,15 @@ void ATL_USERCPMM       /* access-major C to col-major C */
    @mif andC = "0x1F
    else if (((((size_t)C) & @(andC2))|(ldc&@(andL2))) == 0)
    {
-      @(vtyp2) ralp=(@(vtyp2)) rALP;
-      @callproc cploops 1 @(vtyp2) rALP rBETA
+      @(vtyp2) ralp=@(ia2), rbet=@(ib2);
+      @callproc cploops 1 @(vtyp2) ralp rbet
    }
    @endmif
-   @mif andC ! "0x1F
    else
+@ROUT ATL_ablk2cmat blk2C_avx blk2C_sse
    {
       @callproc cploops 0 @(vtyp) rALP rBETA
    }
-   @endmif
    @mif nu ! "1
    switch(nr)
    {
@@ -2205,6 +2237,33 @@ void ATL_USERCPMM       /* access-major C to col-major C */
    @undef andC
    @undef andL
 @endproc
+@ROUT blk2C_avx 
+#if defined(ATL_AVX) && defined(DREAL)
+   @iif @iexp 0 4 @(mu) % !
+   #error "MU must be a multiple of 4!"
+   @endiif
+   @callproc cpfunc __m256d
+#endif
+#if defined(ATL_AVX) && defined(SREAL)
+   @iif @iexp 0 8 @(mu) % !
+   #error "MU must be a multiple of 8!"
+   @endiif
+   @callproc cpfunc __m256
+#endif
+@ROUT blk2C_sse
+#if defined(ATL_SSE2) && defined(DREAL)
+   @iif @iexp 0 2 @(mu) % !
+   #error "MU must be a multiple of 2!"
+   @endiif
+   @callproc cpfunc __m128d
+#endif
+#if defined(ATL_SSE) && defined(SREAL)
+   @iif @iexp 0 4 @(mu) % !
+   #error "MU must be a multiple of 4!"
+   @endiif
+   @callproc cpfunc __m128
+#endif
+@ROUT ATL_ablk2cmat
 @iexp vtst 4 @(mu) %
 @iif vtst = 0
 #if 0 && defined(ATL_AVX) && defined(DREAL)  /* AVX loses perf for unaligned */
@@ -5422,7 +5481,7 @@ int ATL_ChooseNB(ATL_CINT M, ATL_CINT N, ATL_CINT K)
 #define ATL_B2blk_a@(al) Mjoin(Mjoin(PATL,cm2am_a@(al)_),ATL_MM_NU)
 #define ATL_BT2blk_a@(al) Mjoin(Mjoin(PATL,rm2am_a@(al)_),ATL_MM_NU)
 @endwhile
-@ROUT ATL_cmat2ablk
+@ROUT ATL_cmat2ablk C2blk_sse C2blk_avx
 @beginproc pcloops aligned vtyp ralp rbet
    @mif vtyp = "__m256
       @define velts @8@
@@ -5502,11 +5561,11 @@ int ATL_ChooseNB(ATL_CINT M, ATL_CINT N, ATL_CINT K)
          @iexp h 0 0 +
             rp0 = @(vldu)(C@(j)+i+@(i));
          @mif nalp = "X
-            rp0 = @(vmul)(rp0, rALP);
+            rp0 = @(vmul)(rp0, @(ralp));
          @endmif
          @mif nbet = "0
             @mif nalp = "n
-            rp0 = @(vmul)(rp0, rALP);
+            rp0 = @(vmul)(rp0, @(ralp));
             @endmif
             @(vst)(p+@(k), rp0);
             @iexp h 1 0 +
@@ -5514,17 +5573,17 @@ int ATL_ChooseNB(ATL_CINT M, ATL_CINT N, ATL_CINT K)
          @iif h = 0
             rP0 = @(vld)(p+@(k));
             @mif nbet = "X
-            rP0 = @(vmul)(rP0, rBETA);
+            rP0 = @(vmul)(rP0, @(rbet));
             @endmif
             @mif nalp = "n
                @mif nbet = "0
-            rp0 = @(vmul)(rp0, rALP);
+            rp0 = @(vmul)(rp0, @(ralp));
             @(vst)(p+@(k), rp0);
                   @iexp h 1 0 +
                @endmif
                @mif nbet = "n
             rP0 = @(vadd)(rP0, rp0);
-            rP0 = @(vmul)(rP0, rALP);
+            rP0 = @(vmul)(rP0, @(ralp));
             @(vst)(p+@(k), rP0);
                   @iexp h 1 0 +
                @endmif
@@ -5645,6 +5704,9 @@ int ATL_ChooseNB(ATL_CINT M, ATL_CINT N, ATL_CINT K)
       @define ibe @{beta,beta,beta,beta}@
       @define ial @{alpha,alpha,alpha,alpha}@
       @define in1 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+      @define ib2 @{beta,beta}@
+      @define ia2 @{alpha,alpha}@
+      @define in2 @{ATL_rnone,ATL_rnone}@
    @endmif
    @mif vtyp = "__m128
       @define andC @0xF@
@@ -5661,7 +5723,8 @@ int ATL_ChooseNB(ATL_CINT M, ATL_CINT N, ATL_CINT K)
       @define in1 @{ATL_rnone,ATL_rnone}@
    @endmif
 
-void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
+@skip void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
+void ATL_USERCPMM       /* col-major C to access-major C */
 (
    ATL_CSZT M,          /* number of rows in A */
    ATL_CSZT N,          /* number of columns in A */
@@ -5698,6 +5761,7 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
       @endiwhile
    @enddeclare
 
+@ROUT ATL_cmat2ablk
 /*
  * If C is aligned, use aligned load/stores to C
  */
@@ -5708,16 +5772,15 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    @mif andC = "0x1F
    else if (((((size_t)C) & @(andC2))|(ldc&@(andL2))) == 0)
    {
-      @(vtyp2) ralp=(@(vtyp2)) rALP;
-      @callproc pcloops 1 @(vtyp2) rALP rBETA
+      @(vtyp2) ralp=@(ia2), rbet=@(ib2);
+      @callproc pcloops 1 @(vtyp2) ralp rbet
    }
    @endmif
-   @mif andC ! "0x1F
    else
+@ROUT ATL_cmat2ablk C2blk_sse C2blk_avx
    {
       @callproc pcloops 0 @(vtyp) rALP rBETA
    }
-   @endmif
    @mif nu ! "1
    switch(nr)
    {
@@ -5797,6 +5860,33 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    @undef andC
    @undef andL
 @endproc
+@ROUT C2blk_avx 
+#if defined(ATL_AVX) && defined(DREAL)
+   @iif @iexp 0 4 @(mu) % !
+   #error "MU must be a multiple of 4!"
+   @endiif
+   @callproc pcfunc __m256d
+#endif
+#if defined(ATL_AVX) && defined(SREAL)
+   @iif @iexp 0 8 @(mu) % !
+   #error "MU must be a multiple of 8!"
+   @endiif
+   @callproc pcfunc __m256
+#endif
+@ROUT C2blk_sse
+#if defined(ATL_SSE2) && defined(DREAL)
+   @iif @iexp 0 2 @(mu) % !
+   #error "MU must be a multiple of 2!"
+   @endiif
+   @callproc pcfunc __m128d
+#endif
+#if defined(ATL_SSE) && defined(SREAL)
+   @iif @iexp 0 4 @(mu) % !
+   #error "MU must be a multiple of 4!"
+   @endiif
+   @callproc pcfunc __m128
+#endif
+@ROUT ATL_cmat2ablk
 @iexp vtst 4 @(mu) %
 @iif vtst = 0
 #if 0 && defined(ATL_AVX) && defined(DREAL)  /* AVX loses perf for unaligned */
