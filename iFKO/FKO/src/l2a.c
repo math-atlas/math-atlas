@@ -1079,12 +1079,14 @@ struct assmln *lil2ass(BBLOCK *bbase)
  * HERE HERE: need to remember that eax & edx are overwritten!!
  */
          #ifdef X86_32
-            fprintf(stderr, "op1=%d, op2=%d (%d,%d)\n", op1, op2,
-                    iName2Reg("@eax"), iName2Reg("@edx"));
+            /*fprintf(stderr, "op1=%d, op2=%d (%d,%d)\n", op1, op2,
+                    iName2Reg("@eax"), iName2Reg("@edx"));*/
 
             assert(op1 == -iName2Reg("@eax") && op2 == -iName2Reg("@edx"));
             ap->next = PrintAssln("\tidiv %s\n", GetIregOrDeref(op3));
          #elif defined (X86_64)
+            /*fprintf(stderr, "op1=%d, op2=%d (%d,%d)\n", op1, op2,
+                    iName2Reg("@rax"), iName2Reg("@rdx"));*/
             assert(op1 == -iName2Reg("@rax") && op2 == -iName2Reg("@rdx"));
             ap->next = PrintAssln("\tidiv %s\n", GetIregOrDeref(op3));
          #elif defined(SPARC)

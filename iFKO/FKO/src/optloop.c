@@ -4706,6 +4706,7 @@ OPTLOOP=1
                CheckFlow(bbbase, __FILE__, __LINE__);
 
                /*Vslp = !SlpVectorization();*/
+               VECT_FLAG |= VECT_SLP; /* need to specify the vect for optloop*/
                Vslp = !LoopNestVec();
                iVecMethod[SLP] = Vslp;
 
@@ -5524,7 +5525,7 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
    {
       ibase->prev = ip = NewInst(NULL, NULL, NULL, COMMENT, 
                          STstrconstlookup("Begin shadow accum init"), 0, 0);
-      ip->next = NewInst(NULL, ip, NULL, zero, r0, 0, 0);
+      /*ip->next = NewInst(NULL, ip, NULL, zero, r0, 0, 0);*/
    }
    else /* option left: Max/Min */
    {
@@ -5543,16 +5544,22 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
          ip->next = NewInst(NULL, ip, NULL, vsld, r0, SToff[se-1].sa[2], 0);
          ip = ip->next;
          ip->next = NewInst(NULL, ip, NULL, vshuf, r0, r0, STiconstlookup(0));
+         ip = ip->next;
       }
       else
       {
          ip->next = NewInst(NULL, ip, NULL, ld, r0, SToff[se-1].sa[2], 0);
+         ip = ip->next;
       }
    }
 
-   ip = ip->next;
    for (i=1; i < ne; i++)
    {
+      if (sflag & SC_ACC)
+      {
+         ip->next = NewInst(NULL, ip, NULL, zero, r0, 0, 0);
+         ip = ip->next;
+      }
       ip->next = NewInst(NULL, ip, NULL, st, SToff[ses[i]-1].sa[2], r0, 0);
       ip = ip->next;
    }
@@ -5590,7 +5597,7 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
                            STstrconstlookup("Begin shadow min reduce"), 0, 0);
    else;
 /*
- * FIXED: Majedul: there was a problem with the reduction. It wasn't work with
+ * FIXED: Majedul: there was a problem with the reduction. It didn't work with
  * ne >= 8. I fixed that by changing the condition of inner loop. 
  */
 #if 0
