@@ -10991,15 +10991,30 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
                   {
                      il1 = il2;
                      il2 = il2->next;
+                     if (il2)
+                     {
+                     #if 0
+                        FindPtrInfoFromDT(il2->inst, &iptr, &ilda, &ioffset, 
+                           &imul);
+                     #else
+                        if (isload)
+                           ioffset = SToff[il2->inst->inst[2]-1].sa[3] /
+                                 type2len(FLAG2TYPE(STflag[ptr-1]));
+                        else
+                           ioffset = SToff[il2->inst->inst[1]-1].sa[3] /
+                                 type2len(FLAG2TYPE(STflag[ptr-1]));
+                     #endif
+                     }
                   }
                   if (!il1)
                   {
-                     //fprintf(stderr, "%d offset added at the beginning\n",offset);
+                     /*fprintf(stderr, "%d offset added at the beginning\n",
+                               offset);*/
                      ilam[i] = NewIlist(ip, ilam[i]);
                   }
                   else
                   {
-                     //fprintf(stderr, "%d offset added in between\n",offset);
+                     /*fprintf(stderr, "%d offset added in between\n",offset);*/
                      NewIlistInBetween(ip, il1, il2);
                   }
                   break;
@@ -11520,6 +11535,10 @@ INSTQ *FinalizePack(PACK *pk, INSTQ *uinst, int *change)
 
    if (!pk) return(uinst);
 
+#if 0
+   PrintPack(stderr, pk);
+#endif
+
  /* don't allow that. all dependencies should be removed by scalar expansion 
  * before applying SLP.
  * Remove pack if 
@@ -11554,6 +11573,7 @@ INSTQ *FinalizePack(PACK *pk, INSTQ *uinst, int *change)
  */
       iv = BitVecCopy(iv, sets); 
       FilterOutRegs(iv);
+
       if (BitVecCheckComb(iv, pk->defs, '&')) /* waw */
       {
          #if IFKO_DEBUG_LEVEL > 1
@@ -11562,6 +11582,7 @@ INSTQ *FinalizePack(PACK *pk, INSTQ *uinst, int *change)
                   PrintVars(stderr, "sets", iv);
          #endif
          pk->isVec = 0;
+         fko_warn(__LINE__, "pack-%d has dependency : WAW", pk->pnum);
       }
       
       pk->uses = BitVecComb(pk->uses, pk->uses, uses, '|');
@@ -11588,6 +11609,7 @@ INSTQ *FinalizePack(PACK *pk, INSTQ *uinst, int *change)
          PrintVars(stderr, "pk->sets", pk->defs);
          PrintVars(stderr, "pk->uses", iv);
       #endif
+      fko_warn(__LINE__, "pack-%d has dependency : RAW / WAR", pk->pnum);
       pk->isVec = 0;
    }
 /*
@@ -12105,7 +12127,13 @@ INSTQ *FindFirstLILforHIL(INSTQ *ipX)
          ip0 = ip;
       ip = ip->prev;
    }
-   assert(IS_LOAD(ip0->inst[0]));
+/*
+ * FIXME: for some specific compiler generated instructions, 1st inst may not be
+ * the load of vars, like: 
+ *    FZEROD reg0;
+ *    FSTD v0, reg0;
+ */
+   //assert(IS_LOAD(ip0->inst[0]));
    return(ip0);
 }
  
@@ -12119,23 +12147,10 @@ INSTQ *InstdefsVar(INT_BVI bvvar, INSTQ *upackq)
    ip = upackq;
    while (ip)
    {
-      //PrintThisInst(stderr, 1, ip);
+      //PrintThisInst(stderr, 777, ip);
       if (BitVecCheckComb(bvvar, ip->set, '&'))
       {
-#if 0
          //PrintThisInst(stderr, 1, ip);
-         if(IS_LOAD(ip->inst[0])) 
-            ip0 = ip;
-/*
- *       FIXME: consider FMAC inst and load of dest.. this assumption
- *       may not be true.
- */
-         else ip0 = ip->prev; /* should be a load, incase ip an operation*/
-         while (IS_LOAD(ip0->prev->inst[0]))
-            ip0 = ip0->prev;
-         //PrintThisInst(stderr, 2, ip0);
-         return(ip0);
-#endif
          return(FindFirstLILforHIL(ip));
       }
       ip = ip->next;
@@ -12157,9 +12172,11 @@ INSTQ *InstFirstUseVar(INT_BVI bvvar, INSTQ *upackq)
    return(NULL);
 }
 
-
 INSTQ *FollowUseDefs(PACK *pk, INSTQ *upackq, int *change)
 {
+   int i, n;
+   int ch, suc;
+   short *sp;
    ILIST *il, *iln;
    INSTQ *ip;
    INSTQ *ipu, *ipdup, *ip0;
@@ -12175,76 +12192,138 @@ INSTQ *FollowUseDefs(PACK *pk, INSTQ *upackq, int *change)
  * in this pack. need to consider the order to create pack, so can't use pk->def
  * here.
  */
-   iln = NULL;
-   il = pk->sil;
-   while(il)
-   {
-/*
- *    calc def for this instq
- */
-      ip = il->inst;
-      SetVecAll(iv, 0); 
-      while(ip)
-      {
-         iv = BitVecComb(iv, iv, ip->use, '|');
-         ip = ip->next;
-      }
-      FilterOutRegs(iv);
-      ipu = InstdefsVar(iv, upackq);
-      if (ipu)
-      {
-         assert(IS_LOAD(ipu->inst[0]));
-         ipdup = ip0 = NULL;
-         do
-         {
-            ipdup = NewInst(NULL, ipdup, NULL, ipu->inst[0], ipu->inst[1], 
-                               ipu->inst[2], ipu->inst[3]);
-            CalcThisUseSet(ipdup);
-            if (ip0)
-               ip0->next = ipdup;
-            ip0 = ipdup;
-            ipu = ipu->next;
-         } while (!IS_STORE(ipdup->inst[0])); /* NOTE: no pref in pack */ 
-         
-         while(ipdup->prev) ipdup = ipdup->prev;
-         iln = NewIlistAtEnd(ipdup, iln);
-      }
-      else 
-      {
-         /*fprintf(stderr, "NO match : uses_defs\n");*/
-         *change = 0;
-         return(upackq);
-      }
-      il = il->next;
-   }
-/*
- *       check whether inst are isomorphic, die otherwise
- *       FIXME: need to check again if there are not isomorphic...
- */
-   for (il=iln; il; il=il->next)
-   {
-      ip0 = iln->inst;
-      ip = il->inst;
-      while (ip)
-      {
-         if (!IsIsomorphicInst(ip, ip0))
-         {
-            PrintThisInst(stderr, 1, ip);
-            PrintThisInst(stderr, 2, ip0);
-            fko_error(__LINE__, "not isomorphic inst\n");
-         }
-         ip = ip->next;
-         ip0 = ip0->next;
-      }
-   }
-   new = NewPack(iln, pk->vlen);
-   new->vflag = pk->vflag;
-   upackq = FinalizePack(new, upackq, change); 
 #if 0
-   if (*change)
-      fprintf(stderr, "Extending pack=%d from pack=%d by use-def\n", new->pnum, 
-         pk->pnum);
+   iv = BitVecCopy(iv, pk->uses);
+   FilterOutRegs(iv);
+   sp = BitVec2Array(iv, 1-TNREG);
+   fprintf(stderr, "****** uses var count = %d\n", sp[0]);
+   for (i=1, n=sp[0]; i <= n; i++)
+      fprintf(stderr, "%s\n", STname[sp[i]-1]);
+   fprintf(stderr, "======================================\n");
+
 #endif
+#if 0
+   fprintf(stderr, "Print seed Pack before extending\n");
+   fprintf(stderr, "======================================\n");
+   PrintPack(stderr, pk);
+   fprintf(stderr, "======================================\n");
+#endif
+/*
+ * find out number of uses 
+ */
+   for (ip = pk->sil->inst; ip; ip=ip->next)
+      iv = BitVecComb(iv, iv, ip->use, '|');
+   FilterOutRegs(iv);
+   sp = BitVec2Array(iv, 1-TNREG);
+   n = sp[0];
+   free(sp);
+
+   *change = 0;
+   for (i=1; i <= n; i++) /* apply uses by order */ 
+   {
+      suc = 1;
+      iln = NULL;
+      il = pk->sil;
+      while(il)
+      {
+/*
+ *       calc def for this instq
+ */
+         ip = il->inst;
+         SetVecAll(iv, 0); 
+         while(ip)
+         {
+            iv = BitVecComb(iv, iv, ip->use, '|');
+            ip = ip->next;
+         }
+         FilterOutRegs(iv);
+#if 0
+         PrintVars(stderr, "all uses: ", iv);
+         //fprintf(stderr, "upackq :\n");
+         //fprintf(stderr, "==========================\n");
+         //PrintThisInstQ(stderr, upackq);
+         //fprintf(stderr, "==========================\n");
+#endif
+/*
+ *       FIXME: ip->use can be multiple variables. We need to exlore all of them
+ *       consequitively, like: all 1st operand then all 2nd operand, etc.
+ */
+         sp = BitVec2Array(iv, 1-TNREG);
+         assert(i <= sp[0]);
+         SetVecAll(iv, 0); 
+         SetVecBit(iv, sp[i] + TNREG-1, 1); /* STderef = 0 otherwise add this */
+         free(sp);
+         /*PrintVars(stderr, "working var: ", iv);*/
+         ipu = InstdefsVar(iv, upackq);
+         if (ipu)
+         {
+            assert(IS_LOAD(ipu->inst[0]));
+            ipdup = ip0 = NULL;
+            do
+            {
+               ipdup = NewInst(NULL, ipdup, NULL, ipu->inst[0], ipu->inst[1], 
+                     ipu->inst[2], ipu->inst[3]);
+               CalcThisUseSet(ipdup);
+               if (ip0)
+                  ip0->next = ipdup;
+               ip0 = ipdup;
+               ipu = ipu->next;
+            } while (!IS_STORE(ipdup->inst[0])); /* NOTE: no pref in pack */ 
+
+            while(ipdup->prev) ipdup = ipdup->prev;
+            iln = NewIlistAtEnd(ipdup, iln);
+         }
+         else 
+         {
+            /*fprintf(stderr, "NO match : uses_defs\n");*/
+            suc = 0;
+            /*return(upackq);*/
+            break;
+         }
+         il = il->next;
+      }
+/*
+ *    check whether inst are isomorphic, die otherwise
+ *    FIXME: need to check again if there are not isomorphic...
+ */
+      if (suc)
+      {
+         for (il=iln; il; il=il->next)
+         {
+            ip0 = iln->inst;
+            ip = il->inst;
+            while (ip)
+            {
+               if (!IsIsomorphicInst(ip, ip0))
+               {
+               #if IFKO_DEBUG_LEVEL > 1
+                  PrintThisInst(stderr, 1, ip);
+                  PrintThisInst(stderr, 2, ip0);
+                  fko_error(__LINE__, "not isomorphic inst\n");
+               #endif
+                  suc = 0;
+                  break;
+               }
+               ip = ip->next;
+               ip0 = ip0->next;
+            }
+         }
+         if (suc)
+         {
+            new = NewPack(iln, pk->vlen);
+            new->vflag = pk->vflag;
+            upackq = FinalizePack(new, upackq, &ch); 
+            if (ch)
+            {
+               *change = 1;
+#if 0
+               fprintf(stderr, "Extending pack=%d from pack=%d by use-def\n", 
+                  new->pnum, pk->pnum);
+#endif
+            }
+         }
+      }
+   } 
    return(upackq);
 }
 
@@ -12264,6 +12343,7 @@ INSTQ *InstUsesVar(INT_BVI bvvar, INSTQ *upackq)
 
 INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
 {
+   int suc;
    ILIST *il, *iln;
    INSTQ *ip;
    INSTQ *ipu, *ipdup, *ip0;
@@ -12294,6 +12374,16 @@ INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
          ip = ip->next;
       }
       FilterOutRegs(iv);
+#if 0
+      PrintVars(stderr, "all sets: ", iv);
+      fprintf(stderr, "upackq :\n");
+      fprintf(stderr, "==========================\n");
+      PrintThisInstQ(stderr, upackq);
+      fprintf(stderr, "==========================\n");
+#endif
+/*
+ *    NOTE: there should be only one set var... so, we may extend one pack
+ */
       ipu = InstUsesVar(iv, upackq);
       if (ipu)
       {
@@ -12324,6 +12414,7 @@ INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
  *       check whether inst are isomorphic, die otherwise
  *       FIXME: need to check again if there are not isomorphic...
  */
+   suc = 1;
    for (il=iln; il; il=il->next)
    {
       ip0 = iln->inst;
@@ -12332,9 +12423,14 @@ INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
       {
          if (!IsIsomorphicInst(ip, ip0))
          {
+         #if IFKO_DEBUG_LEVEL > 1
             PrintThisInst(stderr, 1, ip);
             PrintThisInst(stderr, 2, ip0);
             fko_error(__LINE__, "not isomorphic inst\n");
+         #endif
+            suc = 0;
+            *change = 0;
+            break;
          }
          ip = ip->next;
          ip0 = ip0->next;
@@ -12343,19 +12439,22 @@ INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
 /*
  * time to create a new pack 
  */
-   new = NewPack(iln, pk->vlen);
-   new->vflag = pk->vflag;
+   if (suc)
+   {
+      new = NewPack(iln, pk->vlen);
+      new->vflag = pk->vflag;
 /*
  * during finalizing the pack, we check for dependencies within a pack.
  * if vlen is less than actual vlen in the system, we don't allow SLP for now.
  * check for consecutive memory access too 
  */
-   upackq = FinalizePack(new, upackq, change); 
+      upackq = FinalizePack(new, upackq, change); 
 #if 0
-   if (*change)
-      fprintf(stderr, "Extending pack=%d from pack=%d by use-def\n", new->pnum, 
-         pk->pnum);
+      if (*change)
+         fprintf(stderr, "Extending pack=%d from pack=%d by def-use\n", 
+                 new->pnum, pk->pnum);
 #endif
+   }
    return(upackq);
 }
 
@@ -12450,7 +12549,17 @@ int IsPackInConflict(PACK *pk0)
  *          used
  */
             if (BitVecCheckComb(iv, pk->uses, '-'))
+            {
+               fko_warn(__LINE__, "*****pack-%d is in conflict with %d!!!", 
+                     pk0->pnum, pk->pnum);
+#if 0
+               iv = BitVecComb(iv, iv, pk->uses, '-');
+               PrintVars(stderr, "common: ", iv);
+               PrintPack(stderr, pk);
+               PrintPack(stderr, pk0);
+#endif
                return(1);
+            }
          }
       }
    }
@@ -13254,6 +13363,7 @@ SLP_VECTOR *AppendVoVlist(SLP_VECTOR *vd, SLP_VECTOR *vs)
          vln->next = vl;
          vln = vl;
          vl = vl->next;
+         vln->next = NULL;
       }
       else
       {
@@ -13843,8 +13953,9 @@ int MemBroadcast(BBLOCK *blk, short var, short vec)
  * search from last inst to first 
  */
    ptr = lda = offset = mul = 0;
-#if 1   
-   for (ip=blk->ainstN; ip; ip=ip->prev)
+   assert(blk->instN);
+   /*for (ip=blk->ainstN; ip; ip=ip->prev)*/
+   for (ip=blk->instN; ip; ip=ip->prev)
    {
       if (IS_STORE(ip->inst[0]) && ip->inst[1] == SToff[var-1].sa[2])
       {
@@ -13852,7 +13963,9 @@ int MemBroadcast(BBLOCK *blk, short var, short vec)
          while (ip0 && IS_LOAD(ip0->inst[0]))
          {
             if (NonLocalDeref(ip0->inst[2]))
+            {
                FindPtrInfoFromDT(ip0, &ptr, &lda, &offset, &mul);
+            }
             else if (ip0->inst[2] == SToff[var-1].sa[2] 
                      || (ptr && ip0->inst[2] == SToff[ptr-1].sa[2]) 
                      || (lda && ip0->inst[2] == SToff[lda-1].sa[2]) )
@@ -13869,33 +13982,6 @@ int MemBroadcast(BBLOCK *blk, short var, short vec)
          break;
       }
    }
-#else
-   for (ip=blk->inst1; ip; ip=ip->next)
-   {
-      if (IS_STORE(ip->inst[0]) && ip->inst[1] == SToff[var-1].sa[2])
-      {
-         ip0 = ip->prev;
-         while (ip0 && IS_LOAD(ip0->inst[0]))
-         {
-            if (NonLocalDeref(ip0->inst[2]))
-               FindPtrInfoFromDT(ip0, &ptr, &lda, &offset, &mul);
-            else if (ip0->inst[2] == SToff[var-1].sa[2] 
-                     || (ptr && ip0->inst[2] == SToff[ptr-1].sa[2]) 
-                     || (lda && ip0->inst[2] == SToff[lda-1].sa[2]) )
-            {
-               ismemb = 1;
-            }
-            else 
-            {
-               ismemb = 0;
-               break;
-            }
-            ip0 = ip0->prev;
-         }
-         break;
-      }
-   }
-#endif
 
    if (ismemb && ptr )
    {
@@ -13907,65 +13993,7 @@ int MemBroadcast(BBLOCK *blk, short var, short vec)
  *    now, time to covert the mem load into vmem load
  *    FIXME: why don't we convert all such mem load into vmem load
  */
-#if 0      
-      for (ip=ip0; ip && IS_LOAD(ip->inst[0]); ip=ip->next )
-      {
-         if (ip->inst[0] == fld)
-         {
-            if (NonLocalDeref(ip->inst[2]))
-               ip->inst[0] = vbld;
-            else 
-               ip->inst[0] = vld;
-            for (i=1; i < 4; i++)
-            {
-               op = ip->inst[i];
-               if (!op) continue;
-               else if (op < 0)
-               {
-                  op = -op;
-                  j = FindInShortList(nfr, sregs, op);
-                  if (!j)
-                  {
-                     nfr = AddToShortList(nfr, sregs, op);
-                     j = FindInShortList(nfr, sregs, op);
-                     vregs[j-1] = GetReg(vtype);
-                  }
-                  ip->inst[i] = -vregs[j-1];
-               }
-               else
-               {
-                  if (IS_DEREF(STflag[op-1]) && !NonLocalDeref(op))
-                  {
-                     assert(op == SToff[var-1].sa[2]);
-                     ip->inst[i] = SToff[vec-1].sa[2];
-                  }
-               }
-            }
-         }
-      }
-      assert(IS_STORE(ip->inst[0]));
-      if (ip->inst[0] == fst)
-         ip->inst[0] = vst;
-      for (i=1; i < 4; i++)
-      {
-         op = ip->inst[i];
-         if (!op) continue;
-         else if (op < 0)
-         {
-            op = -op;
-            j = FindInShortList(nfr, sregs, op);
-            assert(j);
-            ip->inst[i] = -vregs[j-1];
-         }
-         else if (IS_DEREF(STflag[op-1]))
-         {
-            assert(op == SToff[var-1].sa[2]);
-            ip->inst[i] = SToff[vec-1].sa[2];
-         }
-      }
-#else
       assert(ConvertLoad2MemBroadcast(ip0, var, vec));
-#endif
       return(1);
    }
    else
@@ -14406,6 +14434,7 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
 #if 0
                fprintf(stderr, "Unscheduled dependent inst\n");
                PrintThisInst(stderr, 123, il->inst);
+               fprintf(stderr, "inst to schedule\n");
                PrintThisInstQ(stderr, pk->sil->inst);
                fprintf(stderr, "printing nsbp\n");
                PrintThisInstQ(stderr, nsbp->ainst1);
@@ -14456,6 +14485,13 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
  */
             /*fko_error(__LINE__, "Dependent inst not scheduled yet!!!");*/
             fko_warn(__LINE__, "Dependent inst not scheduled yet!!!");
+#if 0
+            PrintThisInst(stderr, 0, ip);
+            PrintThisInst(stderr, 1, pk->depil->inst);
+            for (i=0; i < NPACK; i++)
+               if(PACKS[i]) 
+                  PrintPack(stderr, PACKS[i]);
+#endif
             *err = 1;
             return(vlist);
          }
@@ -14498,7 +14534,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
          {
             if (!ip)
                break;
-#if 1
             for (i=1; i < 4; i++)
             {
                k = ip->inst[i];
@@ -14506,7 +14541,11 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
                {
                   k = STpts2[k-1];
                   vl = FindVectorFromSingleScalar(k, vlist);
-                  if (vl)
+/*
+ *                NOTE: redvars would be scalarized in vvrsum process. so, we 
+ *                can skip them
+ */
+                  if (vl && (k != vl->redvar) ) 
                   {
                      /*fprintf(stderr, "scalar %s is vectorized in %s\n", 
                            STname[k-1], STname[vl->vec-1]);*/
@@ -14514,7 +14553,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
                   }
                }
             }
-#endif
             if (IS_STORE(ip->inst[0]) //|| ip->inst[0] == LABEL 
                   || IS_BRANCH(ip->inst[0]) || IS_PREF(ip->inst[0]))
             {
@@ -14542,8 +14580,19 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
          if (vls)
          {
             if (vls->next)
+            {
+            #if IFKO_DEBUG_LEVEL > 1  
                fko_error(__LINE__, 
                      "Conflict with more than one vec while scheduling");
+            #endif
+               fko_warn(__LINE__, 
+                     "Conflict with more than one vec while scheduling:%s->%s",
+                     STname[vls->vec-1], STname[vls->next->vec-1]);
+               PrintThisVector(stderr, vls);
+               KillVlist(vls);
+               *err = 1; /* don't use anything other than 1 to report err */
+               return(vlist);
+            }
             if (NeedBroadcast(vls->svars))
             {
                ip1 = FindFirstLILforHIL(vbp->instN);
@@ -14554,7 +14603,7 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
                   fko_warn(__LINE__, 
                "can't use scalars which is a part of vec as standalone inst");
                   KillVlist(vls);
-                  *err = 2;
+                  *err = 1; /* always use 1 to report erro */
                   return(vlist);
                }
             }
@@ -15595,7 +15644,7 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
    int isdef = 1;
    ILIST *il, *iln = NULL;
    PACK *new;
-   INSTQ *ip, *ipu, *ip0, *ipdup;
+   INSTQ *ip, *ipu, *ip0, *ipdup = NULL;
    INT_BVI iv;
    extern INT_BVI FKO_BVTMP;
 
@@ -15687,7 +15736,13 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
 #endif
       if (ipu)
       {
-         assert(IS_LOAD(ipu->inst[0]));
+/*
+ *       FIXME: after supporting accumulator expansion, we may have inst group
+ *       with no loads, like:
+ *          FZEROD reg;
+ *          FSTD var, reg
+ */
+         //assert(IS_LOAD(ipu->inst[0]));
          ipdup = ip0 = NULL;
          do
          {
@@ -15709,9 +15764,6 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
       }
       else /* no pack using this vector, don't report error, just return*/
       {
-/*
- *       in posttails, we may have only uses and no defs
- */
          fko_warn(__LINE__, "no def/use found for this var=%s", 
                   STname[vl->svars[i]-1]);
          *change = 0;
@@ -15732,9 +15784,17 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
       {
          if (!IsIsomorphicInst(ip, ip0))
          {
+#if 0
             PrintThisInst(stderr, 1, ip);
             PrintThisInst(stderr, 2, ip0);
             fko_error(__LINE__, "not isomorphic inst\n");
+#else
+            KillAllIlist(iln);
+            if (ipdup)
+               KillAllInst(ipdup);
+            *change = 0;
+            return(upackq);
+#endif
          }
          ip = ip->next;
          ip0 = ip0->next;
@@ -15750,67 +15810,205 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
    return(upackq);
 }
 
-int FindRedVar(BBLOCK *blk, short *svars)
+
+
+int FindRedVarN(BBLOCK *blk, short *svars)
+/*
+ * Format supported:
+ *    1. rC00 = rC00a + rC00b;
+ *       rC00 += rC00c + rC00d;
+ *       --- no longer happens since we apply local variable renaming!
+ *    2. rC00a += rC00b;
+ *       rC00a += rC00c;
+ *       rC00a += rC00d;
+ *       ---- won't support any more. need compliated analysis
+ *    need to support: 
+ *    3. rC00_1 = rC00a + rC00b
+ *       rC00_2 = rC001 + rC00c;
+ *       rC00_3 = rC003 + rC00c;
+ *       ---- case-1 would be converted into this case after renaming private 
+ *       variable
+ *    Assumption: all the operands (svars) are never used later without 
+ *    accumulation
+ */
 {
+   int i, j, k, n;
    int dest = 0;
+   int *scount; 
    INSTQ *ip, *ip0;
 
+#if 0
+   fprintf(stderr, "svars: ");
+   for (i=1, n=svars[0]; i <= n; i++)
+      fprintf(stderr, "%s ", STname[svars[i]-1]);
+   fprintf(stderr, "\n");
+   exit(0);
+#endif
+   
+   n = svars[0];
+   scount = calloc((n+1), sizeof(int));
+   assert(scount);
+   
    for (ip=blk->ainst1; ip; ip=ip->next)
    {
-      if (IS_LOAD(ip->inst[0]) 
-            && FindInShortList(svars[0], svars+1, STpts2[ip->inst[2]-1]))
+      if (IS_LOAD(ip->inst[0]) && !NonLocalDeref(ip->inst[2]))
       {
-         ip0 = FindFirstLILforHIL(ip);
-         while (ip0 && !(IS_STORE(ip0->inst[0]) || IS_BRANCH(ip0->inst[0])) )
+         k = 0;
+         while (ip && IS_LOAD(ip->inst[0]))
          {
-            if (!ACTIVE_INST(ip0->inst[0])) 
-               continue;
-            if (IS_LOAD(ip0->inst[0]) 
-                && !FindInShortList(svars[0], svars+1, STpts2[ip0->inst[2]-1]))
+            j = FindInShortList(svars[0], svars+1, STpts2[ip->inst[2]-1]); 
+            if (j)
             {
-               if (dest && dest == STpts2[ip0->inst[2]-1])
-               {
-                  // do nothing for now
-               }
-               else
-               {
-                  /*fprintf(stderr, "diff var = %s is loaded\n", 
-                          STname[STpts2[ip0->inst[2]-1]-1]);*/
-                  fko_warn(__LINE__, "diff var = %s is loaded\n", 
-                          STname[STpts2[ip0->inst[2]-1]-1]);
-                  return(0); /* use other var? */
-               }
+               scount[j]++;
+               k = 1;
             }
-            else if (!IS_LOAD(ip0->inst[0]))
-            {
-               if (ip0->inst[0] != FADD && ip0->inst[0] != FADDD)
-               {
-                  /*fprintf(stderr, "not an add op. op = %s\n", 
-                        instmnem[ip0->inst[0]]);*/
-                  fko_warn(__LINE__, "not an add op. op = %s\n", 
-                        instmnem[ip0->inst[0]]);
-                  return(0); /* op must be add */
-               }
-            }
-
-            ip0 = ip0->next;
+            ip = ip->next;
          }
-         assert(ip0);
-         if (IS_STORE(ip0->inst[0]) )
+         if (k)
          {
-            if (dest && dest != STpts2[ip0->inst[1]-1])
+            if (ip->inst[0] == FADD || ip->inst[0] == FADDD)
             {
-               /*fprintf(stderr, "diff dest. new dest = %s\n", 
-                     STname[STpts2[ip0->inst[1]-1]-1]);*/
-               fko_warn(__LINE__, "diff dest. new dest = %s\n", 
-                     STname[STpts2[ip0->inst[1]-1]-1]);
-               return(0); /* diff dest */
+/*
+ *             both operands must be either last dest or one of svars
+ */
+               ip0 = ip->prev;
+               while (ip0 && IS_LOAD(ip0->inst[0]))
+               {
+                  if (!FindInShortList(svars[0], svars+1, 
+                                       STpts2[ip0->inst[2]-1])
+                        && STpts2[ip0->inst[2]-1] != dest)
+                  {
+                     free(scount);
+                     return(0);
+                  }
+                  ip0 = ip0->prev;
+               }
+/*
+ *             assign the new dest
+ */
+               ip = ip->next;
+               assert(IS_STORE(ip->inst[0]));
+               dest = STpts2[ip->inst[1]-1];
             }
-            else
-               dest = STpts2[ip0->inst[1]-1];
+            else /* op must be ADD*/
+            {
+               free(scount);
+               return(0);
+            }
          }
       }
    }
+/*
+ * check whether all value od scount is exactly 1
+ */
+   for (i=1, n=svars[0]; i <= n; i++)
+   {
+      if (scount[i] != 1)
+      {
+         fprintf(stderr, "not 1!!!\n");
+         free(scount);
+         return(0);
+      }
+   }
+   free(scount);
+#if 0 
+   if (dest)
+   {
+      fprintf(stderr, "final accumulator = %s\n", STname[dest-1]);
+   }
+#endif
+   return(dest);
+}
+
+int FindRedVarLgN(BBLOCK *blk, short *svars)
+/*
+ * supporting format: 
+ *    <0> += <1>
+ *    <2> += <3>
+ *    <4> += <5>
+ *    <6> += <7>
+ *    <0> += <2>
+ *    <4> += <6>
+ *    <0> += <4>
+ * NOTE: Generated by PreSlpAccumExpans(). also works if user follows this 
+ * sequence
+ */
+{
+   int i, j, k, ne;
+   int i1, i2, type, dest;
+   enum inst inst;
+   INSTQ *ip;
+#if 0
+   for (i=1, n=svars[0]; i <= n; i++)
+      fprintf(stderr, "%d:  %s\n", i-1, STname[svars[i]-1]);
+   exit(0);
+#endif
+   assert(svars[0] > 1);
+   type = FLAG2TYPE(STflag[svars[1]-1]);
+   switch(type)
+   {
+      case T_FLOAT:
+         inst = FADD;
+         break;
+      case T_DOUBLE:
+         inst = FADDD;
+         break;
+      default:
+         fko_error(__LINE__, "Unknown type file %s", __FILE__);
+   }
+   ip = blk->ainst1;
+   dest = svars[1]; 
+   ne = svars[0];
+   for (i=1, j=1; i < ne; i <<= 1, j--)
+   {
+      j = j << 1;
+      for (k=0; k < ne/j; k++)
+      {
+         i1 = k*(i+i);
+         i2 = i1 + i;
+         if (i1 < ne && i2 < ne)
+         {
+            while (ip)
+            {
+               if (IS_LOAD(ip->inst[0]) && svars[i1+1] == STpts2[ip->inst[2]-1])
+               {
+                  ip = ip->next;
+                  if (IS_LOAD(ip->inst[0]) 
+                        && svars[i2+1] == STpts2[ip->inst[2]-1])
+                  {
+                     ip = ip->next;
+                     if (ip->inst[0] = inst)
+                     {
+                        ip = ip->next;
+                        break;
+                     }
+                     else
+                        return(0);
+                  }
+                  else
+                     return(0);
+               }
+               ip = ip->next;
+            }
+         }
+      }
+   }
+   return(dest);
+}
+
+int FindRedVar(BBLOCK *blk, short *svars)
+{
+   int dest = 0; 
+
+   dest = FindRedVarLgN(blk, svars);
+#if 0
+   if (dest)
+      fprintf(stderr, "dest = %s\n", STname[dest-1]);
+   else
+      fprintf(stderr, "red var not found!!!\n");
+#endif
+   if (!dest)
+      dest = FindRedVarN(blk, svars);
    return(dest);
 }
 
@@ -15832,6 +16030,8 @@ int CheckRedVarforVectors(SLP_VECTOR *vlist, BBLOCK *blk)
          vl->redvar = rvar;
          /*fprintf(stderr, "vec=%s, redvar=%s\n", STname[vl->vec-1], 
                STname[rvar-1]);*/
+         fprintf(stderr, "vec=%s, redvar=%s\n", STname[vl->vec-1], 
+               STname[rvar-1]);
       }
    }
    return(suc);
@@ -16861,36 +17061,94 @@ INSTQ *InstVVRSUM(SLP_VECTOR *rvl, int len, SLP_VECTOR *vd)
    return(ip);
 }
 
-void DelRedCodeFromRvars(BBLOCK *blk, short *svars)
+void DelRedCodeFromRvars(BBLOCK *blk, short *svars, short rvar)
 {
-   int i;
+   int i, ok, n;
    int isend;
    INSTQ *ip, *ip0;
    
    ip = blk->ainst1;
    while(ip)
    {
-      for (i=1; i < 4; i++)
-         if(ip->inst[i] > 0 && !NonLocalDeref(ip->inst[i]) 
-               && FindInShortList(svars[0], svars+1, STpts2[ip->inst[i]-1]) )
-            break;
-      if (i != 4)
+      if (IS_LOAD(ip->inst[0]) && !NonLocalDeref(ip->inst[2]-1))
       {
-         ip0 = FindFirstLILforHIL(ip);
-         isend = 0;
-         while(1)
+#if 0         
+         ok = 1;
+         while(IS_LOAD(ip->inst[0]))
          {
-            if(IS_STORE(ip0->inst[0]) )
-               isend = 1;
-            ip0 = DelInst(ip0);
-            if (isend)
-               break;
+            if (STpts2[ip->inst[2]-1] != rvar
+                  && !FindInShortList(svars[0], svars+1, STpts2[ip->inst[2]-1]))
+               ok = 0;
+            ip = ip->next;
          }
-         ip = blk->ainst1;
+         if (ok)
+         {
+            if (ip->inst[0] == FADD || ip->inst[0] == FADDD)
+            {
+               if (ip->next && IS_STORE(ip->next->inst[0]))
+               {
+                  if (STpts2[ip->next->inst[1]-1] == rvar 
+                        || FindInShortList(svars[0], svars+1, 
+                                           STpts2[ip->next->inst[1]-1]))
+                  {
+                     ip0 = FindFirstLILforHIL(ip);
+                     isend = 0;
+                     while(ip0)
+                     {
+                        if(IS_STORE(ip0->inst[0]) )
+                           isend = 1;
+                        PrintThisInst(stderr, 1, ip0);
+                        ip0 = DelInst(ip0);
+                        if (isend)
+                           break;
+                     }
+                     ip = blk->ainst1;
+                  }
+               }
+            }
+         }
+#else
+/*
+ *       assumption: LIL with svar which is not rvar creates reduction code. 
+ *       we ensure it in analysis
+ */
+         ok = 0;
+         while(IS_LOAD(ip->inst[0]))
+         {
+            if (FindInShortList(svars[0], svars+1, STpts2[ip->inst[2]-1])
+                  && STpts2[ip->inst[2]-1] != rvar)
+               ok = 1;
+            ip = ip->next;
+         }
+         if (ok)
+         {
+            assert(ip->inst[0] == FADD || ip->inst[0] == FADDD);
+            ip0 = FindFirstLILforHIL(ip);
+            isend = 0;
+            while(ip0)
+            {
+               if(IS_STORE(ip0->inst[0]) )
+                  isend = 1;
+               ip0 = DelInst(ip0);
+               if (isend)
+                  break;
+            }
+            ip = blk->ainst1;
+         }
+#endif
       }
       else
          ip = ip->next;
    }
+/*
+ * no longer should have the reduction code
+ */
+   /*assert(!FindRedVar(blk, svars));*/
+   for (i=1, n = svars[0]; i <= n; i++)
+      if (svars[i] != rvar) /* if not the rvar, must be deleted */
+         for (ip=blk->ainst1; ip; ip=ip->next)
+            if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == svars[i])
+               fko_error(__LINE__, "Reduction code not deleted properly!");
 }
 
 INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
@@ -17353,7 +17611,7 @@ int MemUnalign2Align(LOOPQ *lp)
    for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
       if (IS_FP(STflag[pi->ptr-1]))
          s[i] = pi->ptr;
-#if 1
+#if 0
    fprintf(stderr, "ptrs: \n");
    for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
       fprintf(stderr, "%s ", STname[s[i]-1]);
@@ -17410,7 +17668,7 @@ int MemUnalign2Align(LOOPQ *lp)
 
 #endif
    }
-   else if (!lp->abalign && lp->abalign)
+   else if (!lp->aaligned && lp->abalign)
    {
 #if 0      
       for (i=1, j=1, n=s[0]; i <=n; i++)
@@ -17448,6 +17706,7 @@ int MemUnalign2Align(LOOPQ *lp)
       free(s);
       free(pts);
       KillAllPtrinfo(pbase);
+      fko_warn(__LINE__, "no ptr meet alignment requirement!!!\n");
       return(1);
    }
 
@@ -17565,6 +17824,291 @@ int MemUnalign2Align(LOOPQ *lp)
    free(pts);
    return(0);
 }
+
+int BlkPrivateVariableRename(BBLOCK *blk)
+/*
+ * Main idea: 
+ * 1. Find Local varibale of the block
+ *    - remove all live-in and live-out variable from the variable list used
+ *      inside the block
+ * 2. Scan top to bottom, rename the variable in-between two sets (upto the set)
+ *
+ */
+{
+   int i, k, n;
+   short *sp, *pvars;
+   short vp, var;
+   int *nv;
+   char vnam[128];
+   INSTQ *ip;
+   INT_BVI iv;
+   extern INT_BVI FKO_BVTMP;
+
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(128);
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+/*
+ * Assuming all data flow analysis already done and updated
+ */
+  
+   iv = BitVecComb(iv, blk->uses, blk->defs, '|');
+   iv = BitVecComb(iv, iv, blk->ins, '-');
+   iv = BitVecComb(iv, iv, blk->outs, '-');
+   
+   FilterOutRegs(iv);
+#if 0
+   fprintf(stderr, "blk-%d :\n", blk->bnum);
+   PrintVars(stderr, "Local vars", iv);
+#endif
+   sp = BitVec2Array(iv, 1-TNREG);
+   n = sp[0];
+   
+   if (!n)
+   {
+      free(sp);
+      return(0);
+   }
+   nv = calloc(n+1, sizeof(int)); /* all 0 */
+   assert(nv);
+#if 0
+   fprintf(stderr, "Local vars: ");
+   for(i=1; i <= n; i++)
+      fprintf(stderr, "%s ", STname[sp[i]-1]);
+   fprintf(stderr, "\n");
+#endif
+   for (ip=blk->ainst1; ip; ip=ip->next)
+   {
+      for (i=1; i <= n; i++)
+      {
+         if (BitVecCheck(ip->use, sp[i]+TNREG-1))
+         {
+            assert(nv[i]);
+            sprintf(vnam,"_%s_%d", STname[sp[i]-1], nv[i]);
+            vp = STstrlookup(vnam);
+            for (k=2; k < 4; k++)
+            {
+               if (ip->inst[k] > 0 && STpts2[ip->inst[k]-1] == sp[i])
+               {
+                  //ip->inst[k] = SToff[sp[i]-1].sa[2];
+#if 0
+                  fprintf(stderr, "***updating USE of %s with %s (%d)\n", 
+                        STname[STpts2[ip->inst[k]-1]-1],
+                        STname[vp-1],
+                        SToff[vp-1].sa[2]
+                        );
+#endif
+                  ip->inst[k] = SToff[vp-1].sa[2];
+               }
+            }
+            CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+/*
+ *          dest-in-use type inst, dest var shouldn't be private!
+ */
+            assert(!IS_DEST_INUSE_IMPLICITLY(ip->inst[0]));
+         }
+         if (BitVecCheck(ip->set, sp[i]+TNREG-1))
+         {
+            nv[i]++;
+/*
+ *          start replacing with renaming var
+ */
+            sprintf(vnam,"_%s_%d", STname[sp[i]-1], nv[i]);
+            vp = STstrlookup(vnam);
+            if (!vp)
+               vp = InsertNewLocal(vnam, FLAG2TYPE(STflag[sp[i]-1]));
+            //PrintVars(stderr, "ip->set: ", ip->set);
+            //PrintThisInst(stderr, 0, ip);
+            //fprintf(stderr, "var = %s(%d)\n", STname[sp[i]-1], sp[i]);
+            assert(ip->inst[1] > 0);
+            assert(STpts2[ip->inst[1]-1] == sp[i]);
+            /*if (STpts2[ip->inst[1]-1] != sp[i])
+            {
+               fprintf(stderr, "%d ----> %d\n", STpts2[ip->inst[1]-1], sp[i]);
+               assert(STpts2[ip->inst[1]-1] == sp[i]);
+            }*/
+#if 0
+            fprintf(stderr, "***updating DEF of %s with %s(%d)\n", 
+                  STname[STpts2[ip->inst[1]-1]-1],
+                  STname[vp-1],
+                  SToff[vp-1].sa[2]
+                  );
+#endif
+            ip->inst[1] = SToff[vp-1].sa[2];
+            CFUSETU2D = INDEADU2D = 0;
+         }
+      }
+   }
+   if (sp) free(sp);
+   if (nv) free(nv);
+   return(0);
+}
+
+
+int FindNumAccVar(BLIST *scope, short var)
+{
+   int nc;
+   BLIST *bl;
+   INSTQ *ip;
+   enum inst ld, st, add, mac;
+   int i;
+
+   i = FLAG2TYPE(STflag[var-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      add = FADD;
+      mac = FMAC;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      add = FADDD;
+      mac = FMACD;
+      break;
+   case T_INT:
+      ld = LD;
+      st = ST;
+      add = ADD;
+      mac = UNIMP; /* INT MAC is not implemented yet */
+      break;
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__, "Already vectorized!! type=%d, file=%s", i, __FILE__);
+   default:
+      fko_error(__LINE__, "Unknown type=%d, file=%s", i, __FILE__);
+   }
+   nc = 0;
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (ip->inst[0] == ld && STpts2[ip->inst[2]-1] == var)
+         {
+            if (ip->next->inst[0] == ld)
+               ip = ip->next;
+            if (ip->next->inst[0] == add || ip->next->inst[0] == mac)
+            {
+               if (mac != UNIMP)
+                  nc ++;
+               else 
+                  return(0);
+            }
+            else
+               return(0);
+            ip = ip->next->next;
+            if (!ip)
+               return(0);
+            if (ip->inst[0] != st || STpts2[ip->inst[1]-1] != var)
+               return(0);
+         }
+         else if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var)
+            return(0);
+      }
+   }
+   return(nc);
+}
+
+int PreSlpAccumExpans(LOOPQ *lp)
+{
+   int i, j, n;
+   int nchanges = 0;
+   short id;
+   short *sp, *ses;
+   int *nac;
+   char sn[128];
+   INSTQ *ipb;
+   INT_BVI iv;
+   extern INT_BVI FKO_BVTMP;
+
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(128);
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+   
+   iv = BitVecCopy(iv, lp->header->ins);
+   assert(lp->tails && !lp->tails->next); /* assuming single posttail */
+   iv = BitVecComb(iv, iv, lp->tails->blk->outs, '|');
+
+   FilterOutRegs(iv);
+   sp = BitVec2Array(iv, 1-TNREG);
+   n = sp[0];
+   if (!n)
+   {
+      free(n);
+      return(0);
+   }
+#if 0
+   fprintf(stderr, "Local vars: ");
+   for(i=1; i <= n; i++)
+      fprintf(stderr, "%s ", STname[sp[i]-1]);
+   fprintf(stderr, "\n");
+#endif
+   nac = calloc(n+1, sizeof(int)); /* all 0 */
+   assert(nac);
+   for (i=1; i <= n; i++ )
+   {
+      nac[i] = FindNumAccVar(lp->blocks, sp[i]);
+   }
+#if 0
+   fprintf(stderr, "Acc vars: ");
+   for(i=1; i <= n; i++)
+   {
+      if (nac[i])
+         fprintf(stderr, "%s(%d) ", STname[sp[i]-1], nac[i]);
+   }
+   fprintf(stderr, "\n");
+   exit(0);
+#endif
+
+   for (i=1; i <= n; i++)
+   {
+      if (nac[i] > 1)
+      {
+/*
+ *       create shadow variables for accumulator
+ */
+         ses = malloc(sizeof(short)*(nac[i]+1));
+         assert(ses);
+         ses[0] = nac[i]-1;
+         for (j=1; j < nac[i]; j++) /* we need 1 less shadow*/
+         {
+            sprintf(sn, "_%s_%d", STname[sp[i]-1], j);
+            id = STstrlookup(sn);
+            if (!id)
+               id = InsertNewLocal(sn, FLAG2TYPE(STflag[sp[i]-1]));
+            ses[j] = id;
+         }
+/*
+ *       Call all steps for scalar expansion
+ */
+         ipb = GetSEHeadTail(lp, sp[i], nac[i], ses, 0, SC_ACC);
+         AddInstToPrehead(lp, ipb->prev, ipb->inst[0], ipb->inst[1], 0);
+         KillAllInst(ipb->prev);
+         AddInstToPosttail(lp, ipb->next, ipb->inst[0],ipb->inst[1], 
+               ipb->inst[2]);
+         KillAllInst(ipb->next);
+         nchanges += DoScalExpansOnLoop(lp, ipb->inst[0], sp[i], ses);
+         ipb->prev = ipb->next = NULL;
+         KillThisInst(ipb);
+         free(ses);
+      }
+   }
+   if (nchanges)
+   {
+      CFUSETU2D = INDEADU2D = INUSETU2D = 0;  
+#if 0
+      extern BBLOCK *bbbase;
+      fprintf(stdout, "After ACCUM EXP: ");
+      PrintInst(stdout, bbbase);
+      exit(0);
+#endif
+   }
+   return(nchanges);
+}
+
 
 /*=============================================================================
  *    Loop Nest vectorization
@@ -17756,7 +18300,7 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err,
             {
                vr = AddVectorInList(vr, vl, vl->islivein, vl->islive);
                if (!(vl->flag & NSLP_ACC))
-                  DelRedCodeFromRvars(bp, vl->svars);
+                  DelRedCodeFromRvars(bp, vl->svars, vl->redvar);
             }
          }
 #if 0
@@ -17780,6 +18324,7 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err,
 /*
  *          FIXME: we may found multiple packs from same same vector
  */
+            /*PrintThisVector(stderr, vl);*/
             while (upackq)
             {
                ip = upackq;
@@ -17897,7 +18442,12 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err,
       for (vl=vr; vl; vl=vl->next)
          SetVecBit(livein, vl->redvar+TNREG-1, 1);
    }
-
+#if 0
+   fprintf(stderr, "BLK before scheduling:\n");
+   fprintf(stderr, "==================================\n");
+   PrintThisInstQ(stderr, nsbp->inst1);
+   fprintf(stderr, "==================================\n");
+#endif
    vo = SchVectorInst(nsbp, sbp, vbp, livein, vo, inpack, err);
 /*
  * delete temporaries    
@@ -17991,6 +18541,38 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err,
  *    vs = vvrsum output
  *    Vli = sub-grouph of vr which is the input of vvrsum
  *    visr = vi - vr
+ *    Algorithm: 
+ *    ---------
+      Visr = Vi - Vr
+      ip = NULL
+      foreach vector vs in V0 which is livein but not in Vi 
+            and consists of reduction variables
+         vli = NULL
+         foreach scalar sc in vs
+            vli += FindVectorFromReduceScalar(sc, Vr)
+         Vs += GetVecVVRSUM(vli)
+         ip += GetInstVVRSUM(vli) 
+         Vr -= vli
+   //Element vectors which are not captured by SLP
+      if (Vr has any remaining vector) 
+         foreach vlen group of vectors vri in Vr
+            vl = GetVecVVRSUM(vri)
+            ip += GetInstRandomOrderVVRSUM(vri)
+            ip += AddVectorScatter(vl)
+            Vr -= vri
+   //Cleanup
+      if ( less than vlen vectors in remaining Vr)
+         n = Count(Vr)
+         vl = GetVecVVRSUM(Vr, n)
+         ip += GetInstRandomOrderVVRSUM(Vr, n)
+         ip += AddVectorElementScatter(vl, n)
+         Vr is set to empty
+
+      Visr = Visr - V0
+      foreach vector vl in visr
+         ip += AddVectorScatter(vl)
+      B = AddInstAtBegin(B, ip)
+ *
  */
       visr = NULL;
       for (vl=vi; vl; vl=vl->next)
@@ -18010,12 +18592,14 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err,
       vs = NULL;
       ipvrsums = ipv = NULL;
 #if 0
-      fprintf(stderr, "output vectors:\n");
-      PrintVectors(stderr, vo);
+      //fprintf(stderr, "output vectors:\n");
+      //PrintVectors(stderr, vo);
+      PrintVectors(stderr, vi);
 #endif
       for (vl=vo; vl; vl=vl->next)
       {
-         if (vl->islivein && !(vl->flag & NSLP_ACC))
+         if (vl->islivein && !(vl->flag & NSLP_ACC)
+               && !FindVectorByVec(vl->vec, vi) )
          {
             nelem = 0;
             for (i=1, n=vl->svars[0]; i <= n; i++ )
@@ -18758,6 +19342,7 @@ int LoopNestVec()
    LOOPQ *lp, *lp0;
    LPLIST *ll, *l;
    SLP_VECTOR *vo;
+   BLIST *bl;
    extern LOOPQ *loopq;
    extern BBLOCK *bbbase;
    
@@ -18791,6 +19376,39 @@ int LoopNestVec()
 #if 0
    for (l = ll; l; l=l->next)
       fprintf(stderr, "%s\n", STname[l->loop->body_label-1]);
+   exit(0);
+#endif
+#if 1  
+/*
+ * renaming local variables
+ */
+   for (bl=ll->loop->blocks; bl; bl=bl->next)
+      BlkPrivateVariableRename(bl->blk);
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+#endif
+#if 0
+   fprintf(stdout, "After applying var renaming: \n");
+   PrintInst(stdout, bbbase);
+   PrintST(stderr);
+   exit(0);
+#endif
+/*
+ * Apply accumulator expansion (which is not local) if needed
+ */
+   if (PreSlpAccumExpans(optloop))
+   {
+      /*fprintf(stderr, "pre slp accum expansion applied\n");*/
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+#if 0
+   fprintf(stdout, "After applying AccumExpan: \n");
+   PrintInst(stdout, bbbase);
+   PrintST(stderr);
    exit(0);
 #endif
 /*

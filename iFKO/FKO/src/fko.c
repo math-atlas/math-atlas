@@ -3395,7 +3395,7 @@ void GenAssembly(FILE *fpout)
    PrintInst(stdout, bbbase);
    exit(0);
 #endif   
-   DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
+   //DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
    bbbase=NULL;                  /* whenever Kill it here, make it NULL */
@@ -4249,7 +4249,7 @@ int main(int nargs, char **args)
  * of that:
  *
  * State 0: Plain LIL (with no prologue/epilogue), initial ST
- *          no update in ST and optloop for AE/SE (Scalar Expansion)
+ *          no update in ST and optloop for AE/SE/RE (Scalar Expansion)
  *
  * State 1:  
  *    a) Generate initial Prologue/Epilogue, so that we can create CFG and 
@@ -4493,25 +4493,34 @@ int main(int nargs, char **args)
       exit(0);
    }
 #endif 
-#if 1
+/*--------------------------------------------------------------------------
+ * new fundamental optimization: loop unswitching... it will make the nested
+ * loop simple to apply our loop nest vectorization
+ * we will apply this only if all the if-conditionals can be removed for now
+ *----------------------------------------------------------------------------*/
    if (optloop)
    {
       lpnest = FindLoopNest(optloop);
-/*--------------------------------------------------------------------------
- *    new fundamental optimization: loop unswitching... it will make the nested
- *    loop simple to apply our loop nest vectorization
- *    we will apply this only if all the if-conditionals can be removed for now
- *----------------------------------------------------------------------------*/
       if (optloop && IsLoopUnswitchable(lpnest))
       {
          /*fprintf(stderr, "Loop unswitchable!!\n");*/
          LoopUnswitch(lpnest);
+         InvalidateLoopInfo();
+         bbbase = NewBasicBlocks(bbbase);
+         CheckFlow(bbbase, __FILE__,__LINE__);
+         FindLoops();
+         CheckFlow(bbbase, __FILE__, __LINE__);
       }
+      KillAllLPlist(lpnest);
+   }
 /*-----------------------------------------------------------------------------
- *    new fundamental optimization: Minimize Ptr update
- *    right now, we will apply this opt when any one pointer is updated
- *    by const
+ * new fundamental optimization: Minimize Ptr update
+ * right now, we will apply this opt when any one pointer is updated
+ * by const
  *----------------------------------------------------------------------------*/
+   if (optloop)
+   {
+      lpnest = FindLoopNest(optloop);
       if (IsPtrMinPossible(lpnest->loop->blocks)) /* blocks of outermost loop */
       {
          /*fprintf(stderr, "MPU possible!\n");*/
@@ -4519,7 +4528,6 @@ int main(int nargs, char **args)
       }
       KillAllLPlist(lpnest);
    }
-#endif
 /*============================================================================
  *    STATE2 : Vectorization 
  *    [This state is dedicated for vectorization. Right now, we deal with two 

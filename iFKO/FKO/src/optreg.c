@@ -2669,9 +2669,6 @@ fprintf(stderr, ", src(%d)=%s\n", src, Int2Reg(-src));
                else
                   goto PUTMOVEBACK;
          }
-/*
- *       FIXME: what if ip is an inst with DEST_IN_USE
- */
          else if (ip->inst[1] == -dest)
          {
             ip->inst[1] = -src;
@@ -3094,6 +3091,19 @@ int DoReverseCopyProp(BLIST *scope)
                          break;
                       }
                    }
+               #endif
+/*
+ *             FIXED: incase of DIV or UDIV, we have restrictions on register
+ *             we can't apply reverse copy prop on them.
+ *             FIXME: need to see what we can in that case to minimize the 
+ *             effect on such registers
+ */
+               #ifdef X86
+                  if (ips->inst[0] == DIV || ips->inst[0] == UDIV)
+                  {
+                     ips = NULL;
+                     break;
+                  }
                #endif
                    if (BitVecCheck(ips->set, src-1) && 
                        !BitVecCheck(ips->use, src-1))

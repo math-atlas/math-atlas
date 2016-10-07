@@ -2379,7 +2379,10 @@ int IsBlkBranchLoopInvariant(LPLIST *l0, BBLOCK *blk)
    if (var0)
    { 
       if (IsVarLoopsInvariant(l0, var0))
-         fprintf(stderr, "var0=%s loop invariant!!!\n", STname[var0-1]);
+      {
+         /*fprintf(stderr, "var0=%s loop invariant!!!\n", STname[var0-1]);*/
+         fko_warn(__LINE__, "var0=%s loop invariant!!!\n", STname[var0-1]);
+      }
       else
          return(0);
    }
@@ -2387,7 +2390,10 @@ int IsBlkBranchLoopInvariant(LPLIST *l0, BBLOCK *blk)
    if (var1)
    {
       if (IsVarLoopsInvariant(l0, var1))
-         fprintf(stderr, "var1=%s loop invariant!!!\n", STname[var1-1]);
+      {
+         /*fprintf(stderr, "var1=%s loop invariant!!!\n", STname[var1-1]);*/
+         fko_warn(__LINE__, "var1=%s loop invariant!!!\n", STname[var1-1]);
+      }
       else
          return(0);
    }
@@ -2506,7 +2512,7 @@ void LoopUnswitch(LPLIST *ll)
    extern BBLOCK *bbbase;
    extern INT_BVI FKO_BVTMP;
 
-#if 1
+#if 0
    fprintf(stderr, "let's unswitch the loop\n");
    ShowFlow("cfg.dot", bbbase);
 #endif
@@ -2679,7 +2685,7 @@ void LoopUnswitch(LPLIST *ll)
    InsNewInst(lp->posttails->blk, NULL, lp->posttails->blk->ainst1, LABEL, 
               STlabellookup("_FKO_UNSWITCH_PT"), 0, 0);
 
-#if 1
+#if 0
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__,__LINE__);
@@ -2693,6 +2699,5 @@ void LoopUnswitch(LPLIST *ll)
    KillAllIlist(ilb);
    KillBlockList(dupblks);
    KillBlockList(ftheads);
-
 }
 

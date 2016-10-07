@@ -175,6 +175,16 @@ void DoMove(short dest, short src)
    {
       type = FLAG2PTYPE(sflag);
       rsrc = GetReg(type);
+/*
+ *    FIXME: need to add const_init for each floating point const, by this way
+ *    we can have a placeholder for that const in stack. We should/will create 
+ *    the placeholder whenever user uses a floating point const, but until it's
+ *    upto user to manage it correctly. 
+ *    Don't need any place-holder for the value 0.0. we can use FZERO LIL 
+ *    inst for that. It won't maintain the load->Arith->store structure of LIL.
+ *    Need to check whether it creates any problem in later transformation!!!
+ */
+#if 0      
       if (IS_CONST(sflag) && (type == T_INT) && SToff[src-1].i == 0)
          InsNewInst(NULL, NULL, NULL, XOR, -rsrc, -rsrc, -rsrc);
       else
@@ -189,6 +199,41 @@ void DoMove(short dest, short src)
          InsNewInst(NULL, NULL, NULL, mov, -rsrc, src, 0);
       }
       LocalStore(dest, rsrc);
+#else
+      if (FLAG2TYPE(STflag[dest-1]) != FLAG2TYPE(sflag))
+         fko_error(__LINE__, "Conversions of constant not yet supported");
+
+      if (type == T_INT)
+      { 
+         if (SToff[src-1].i == 0)
+            InsNewInst(NULL, NULL, NULL, XOR, -rsrc, -rsrc, -rsrc);
+         else
+         {
+            mov = MOV;
+            InsNewInst(NULL, NULL, NULL, mov, -rsrc, src, 0);
+         }
+      }
+      else if (type == T_FLOAT)
+      {
+         if (SToff[src-1].f == 0.0)
+            InsNewInst(NULL, NULL, NULL, FZERO, -rsrc, 0, 0);
+         else
+            fko_error(__LINE__, 
+               "Floating point const other than zero must be defined before");
+      }
+      else if (type == T_DOUBLE)
+      {
+         if (SToff[src-1].d == 0.0)
+            InsNewInst(NULL, NULL, NULL, FZEROD, -rsrc, 0, 0);
+         else
+            fko_error(__LINE__, 
+               "Floating point const other than zero must be defined before");
+      }
+      else
+         fko_error(__LINE__, "unsupported constant!");
+      
+      LocalStore(dest, rsrc);
+#endif
    }
    else if (FLAG2TYPE(STflag[dest-1]) == FLAG2TYPE(sflag))
    {

@@ -10,9 +10,9 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "//"[^\n]*\n    { lnno++; strcpy(yylval.str, yytext+2); return(TCOMMENT); }
 [\t \v]		{}
 [\n]    {lnno++;}
-[-]?{ICON}"."{ICON}[e,E][-+]?{ICON} { sscanf(yytext, "%f", &yylval.fnum);  
+[-]?{ICON}"."{ICON}([e,E][-+]?{ICON})?[f,F] { sscanf(yytext, "%f", &yylval.fnum);  
        return(FCONST); }
-[-]?{ICON}"\."{ICON}([e,E][-+]?{ICON}D)? { yylval.dnum = atof(yytext); 
+[-]?{ICON}"\."{ICON}([e,E][-+]?{ICON})? { yylval.dnum = atof(yytext); 
        return(DCONST); }
 {ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
 {HCON}    { sscanf(yytext, "%x", &yylval.inum);  return(ICONST); }
