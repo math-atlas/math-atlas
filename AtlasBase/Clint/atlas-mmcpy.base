@@ -75,7 +75,7 @@
 #            TOBLK=0 must be present for testing & custom uses.
 #       C  : TOBLK=0 required. TOBLK=1 needed for testing & custom uses.
 #
-@ROUT 00scopy.idx 00dcopy.idx
+@ROUT scopy.idx dcopy.idx
 ID=1 STGID=0 TOBLK=1 MU=12 NU=4 ALPHA=X BETA=X \
      ROUT='ATL_cpammC12x4_aXbX.c' AUTH='R. Clint Whaley'
 ID=2 STGID=0 TOBLK=1 MU=12 NU=4 ROUT='ATL_cpammC12x4_aXbX.c' \
@@ -163,6 +163,7 @@ int main(int nargs, char **args)
 }
 @ROUT cpysearch
 #include "atlas_cpparse.h"
+#include "atlas_cptesttime.h"
 #include "atlas_mmparse.h"
 #include "atlas_mmtesttime.h"
 #include "atlas_mmgen.h"
@@ -276,8 +277,68 @@ ATL_mmnode_t *GetFlags
    return(mb);
 }
 
-void DoTimings(char pre, int verb, unsigned int flag,
-               ATL_mmnode_t *mb, ATL_cpnode_t *cb)
+void DoHandTimings
+   (char pre, int verb, unsigned int flag, ATL_mmnode_t *mb, 
+    ATL_cpnode_t *cb, ATL_cpnode_t *hb)
+{
+   ATL_mmnode_t *mp;
+   ATL_cpnode_t *cp, *hp, *prv=NULL;
+   int ialp, ibet=0;
+
+   ialp = CopyGetAlphaI(flag);
+   if (flag & (1<<CPF_CBLK))
+      ibet = CopyGetBetaI(flag);
+
+   printf("FINDING BEST HAND-TUNED COPY: \n");
+   for (cp=cb,mp=mb; mp; cp=cp->next, mp=mp->next)
+   {
+      double mf, mfB = mp->mflop[0];
+/*
+ *    Try any hand-tuned cases that work
+ */
+      for (hp=hb; hp; hp = hp->next)
+      {
+         if (MMCopyWorksForKern(flag, mp, hp))
+         {
+            char *gens=mp->genstr, *rts=mp->rout;
+            int id=mp->ID, len;
+            mp->ID = hp->ID;
+            mp->genstr = NULL;
+            len = strlen(hp->rout) + 10;
+            mp->rout=malloc(len);
+            assert(mp->rout);
+            sprintf(mp->rout, "CPYCASES/%s", hp->rout);
+            mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, ibet,
+                               0, -1);
+            printf("      ID=%6d VL=%2d: mf=%.0f\n", hp->ID, hp->vlen, mf);
+            if (mf > mfB)
+            {
+               @whiledef iv ID STGID vlen
+               cp->@(iv) = hp->@(iv);
+               @endwhile
+               @whiledef st genstr auth comp cflags
+               if (cp->@(st))
+                  free(cp->@(st));
+               cp->@(st) = DupString(hp->@(st));
+               @endwhile
+               free(gens);
+               free(rts);
+               cp->mflop[0] = mp->mflop[0] = mfB = mf;
+            }
+            else
+            {
+               free(mp->rout);
+               mp->genstr = gens;
+               mp->rout = rts;
+               mp->ID = id;
+            }
+         }
+      }
+   }
+}
+
+ATL_cpnode_t *DoGenTimings
+   (char pre, int verb, unsigned int flag, ATL_mmnode_t *mb)
 {
    ATL_mmnode_t *mp;
    ATL_cpnode_t *cp, *CB=NULL;
@@ -287,8 +348,8 @@ void DoTimings(char pre, int verb, unsigned int flag,
    ialp = CopyGetAlphaI(flag);
    if (flag & (1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
-   fnam = GetCpySumNam(mb->blask,0,ialp,ibet);
-   printf("FINDING BEST COPY: %s\n", fnam);
+   fnam = GetCpySumNam(mb->blask, 'g', ialp, ibet);
+   printf("FINDING BEST GENERATED COPY: %s\n", fnam);
    for (mp=mb; mp; mp = mp->next)
    {
       ATL_mmnode_t *mmp;
@@ -301,39 +362,6 @@ void DoTimings(char pre, int verb, unsigned int flag,
       mfB = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, ibet, 0, -1);
       printf("      ID=     0 VL= 1: mf=%.0f\n", mfB);
       mp->mflop[0] = mfB;
-/*
- *    Try any hand-tuned cases that work
- */
-      for (cp=cb; cp; cp = cp->next)
-      {
-         if (MMCopyWorksForKern(flag, mp, cp))
-         {
-            char *gens=mp->genstr, *rts=mp->rout; 
-            int id=mp->ID, len;
-            mp->ID = cp->ID;
-            mp->genstr = NULL;
-            len = strlen(cp->rout) + 10;
-            mp->rout=malloc(len);
-            assert(mp->rout);
-            sprintf(mp->rout, "CPYCASES/%s", cp->rout);
-            mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, ibet, 
-                               0, -1);
-            printf("      ID=%6d VL=%2d: mf=%.0f\n", cp->ID, cp->vlen, mf);
-            if (mf > mfB)
-            {
-               free(gens);
-               free(rts);
-               mp->mflop[0] = mfB = mf;
-            }
-            else
-            {
-               free(mp->rout);
-               mp->genstr = gens;
-               mp->rout = rts;
-               mp->ID = id;
-            }
-         }
-      }
 /*
  *    See if we can use vectorized generator.
  *    Present vector generator only supports SSE/AVX for real GEMM C copy
@@ -397,7 +425,6 @@ void DoTimings(char pre, int verb, unsigned int flag,
          }    /* end if over trying old vec-basefile */
       #endif  /* end #if on Intel SSE/AVX */
       mp->vlen = vlen;
-      printf("   DONE.\n");
    }
 /*
  * Create output file of copy nodes
@@ -407,15 +434,7 @@ void DoTimings(char pre, int verb, unsigned int flag,
       cp = GetCPNode();
       cp->flag = flag;
       cp->genstr = DupString(mp->genstr);
-@skip      mfB = mp->nbB;
-@skip      mfB = mbp->mbB * mfB;  /* # of elts & flops */
-      if (mp->blask == ATL_KSKCP2C || mp->blask == ATL_KSKCPFC)
-      {
-         cp->mflop[0] = 2e-6 / mp->mflop[0]; /* time per elt */
-         cp->flag |= 1L<<CPF_SYRK;
-      }
-      else
-         cp->mflop[0] = 1e-6 / mp->mflop[0]; /* time per elt */
+      cp->mflop[0] = mp->mflop[0];
       cp->mu = mp->mu;
       cp->nu = mp->nu;
       cp->vlen = mp->ivar;
@@ -424,8 +443,100 @@ void DoTimings(char pre, int verb, unsigned int flag,
    }
    CB = ReverseCPQ(CB);
    WriteCPFileWithPath(pre, "res", fnam, CB);
-   KillAllCPNodes(CB);
    printf("DONE, output in: res/%c%s\n", pre, fnam);
+   return(CB);
+}
+
+void DoTimings
+   (char pre, int verb, int ialp, int ibet, unsigned int flag, ATL_mmnode_t *mb,
+    ATL_cpnode_t *hb)
+{
+   ATL_mmnode_t *mp;
+   ATL_cpnode_t *cb, *cp;
+   char *fnam;
+   const int ials[3] = {1,-1,2}, ibes[4]={0,1,-1,2};
+   int ia, ib;
+
+   for (ib=0; ib < 4; ib++)
+   {
+      const int ibet=ibes[ib];
+      for (ia=0; ia < 3; ia++)
+      {
+         const int ialp=ials[ia];
+
+         flag = CopyEncodeScal(flag, ialp, ibet);
+         cb = DoGenTimings(pre, verb, flag, mb);
+         if (hb)
+            DoHandTimings(pre, verb, flag, mb, cb, hb);
+         else
+            printf("NO USER-SUPPLIED COPY ROUTINES!\n");
+         for (cp=cb,mp=mb; mp; cp=cp->next, mp=mp->next)
+         {
+            if (mp->blask == ATL_KSKCP2C || mp->blask == ATL_KSKCPFC)
+            {
+               cp->mflop[0] = 2e-6 / mp->mflop[0]; /* time per elt */
+               cp->flag |= 1L<<CPF_SYRK;
+            }
+            else
+               cp->mflop[0] = 1e-6 / mp->mflop[0]; /* time per elt */
+         }
+         fnam = GetCpySumNam(mb->blask, 'f', ialp, ibet);
+         WriteCPFileWithPath(pre, "res", fnam, cb);
+         KillAllCPNodes(cb);
+         printf("DONE, output in: res/%c%s\n", pre, fnam);
+      }
+   }
+}
+
+unsigned long GetRep(unsigned long reps, unsigned int mb, unsigned int nb)
+{
+   double ratio;
+   unsigned long nrep;
+   ratio = 16.0 / (((double)mb)*nb);
+   nrep = reps*ratio;
+   nrep = (nrep > 0) ? nrep : 1;
+}
+unsigned long GetReps4x4(int verb, double res)
+/*
+ * Find how many repititions to do for 4x4 copy to get timing interval to
+ * around res seconds
+ */
+{
+   ATL_cpnode_t *cp;
+   double tim, mf;
+   unsigned long nrep = 32;
+   FILE *fp;
+
+   fp = fopen("res/ncprep4x4.txt", "r");
+   if (fp)
+   {
+      fscanf(fp, " %lu", &nrep);
+      fclose(fp);
+      return(nrep);
+   }
+   cp = GetCPNode();
+   cp->mu = 4; 
+   cp->nu = 1;
+   cp->flag = (1<<CPF_BE0)|(1<<CPF_AL1)|(1<<CPF_CBLK)|
+              (1<<CPF_SINGLE)|(1<<CPF_REAL);
+   cp->rout = DupString("ATL_tmp.c");
+   cp->genstr = GetCopyGenStr(cp);
+
+   printf("FINDING NREP:\n");
+   do
+   {
+      nrep += nrep;
+      mf = TimeCPKernel(verb, 1, cp, 4, 4, 1, 0, nrep, -1);
+      tim = (mf / 16e6) * nrep;
+      printf("   NREP=%16lu, tim=%e\n", nrep, tim);
+   }
+   while (tim < res && nrep < 100000);
+   printf("DONE.\n");
+   KillCPNode(cp);
+   fp = fopen("res/ncprep4x4.txt", "w");
+   fprintf(fp, "%lu", nrep);
+   fclose(fp);
+   return(nrep);
 }
 
 int main(int nargs, char **args)
@@ -443,14 +554,17 @@ int main(int nargs, char **args)
    char pre;
    int verb, minSz, ialp, ibet=0;
    unsigned int flag;
-   ATL_cpnode_t *cb;
    ATL_mmnode_t *mb, *kb, *mp;
+   ATL_cpnode_t *hb;
+   unsigned long nrep;
 
    mb = GetFlags(nargs, args, &verb, &flag, &minSz, &kb);
    pre = CopyGetPre(flag);
+   hb = ReadCPFileWithPath(pre, "CPYCASES", "copy.idx");
    ialp = CopyGetAlphaI(flag);
    if (flag&(1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
+   nrep = GetReps4x4(verb, 0.10);
 /*
  * Special non-GEMM copy must have kernID set specially
  */
@@ -459,7 +573,11 @@ int main(int nargs, char **args)
    {
       int kernID;
       ATL_mmnode_t *nxt = mp->next;
-      if (mp->blask == ATL_KGEMM || 
+      if ((flag&(1<<CPF_CBLK)) && mp->blask == ATL_KSYRK)
+         MMCopyTimePrep1(pre, (flag&(1<<CPF_TOBLK)) ? ATL_KSKCPFC:ATL_KSKCP2C,
+                         ialp, ibet, mp);
+@beginskip
+      else if (mp->blask == ATL_KGEMM || 
           (!(flag&(1<<CPF_CBLK)) && mp->blask == ATL_KSYRK))
       {
          mp->blask = ATL_KGEMM;
@@ -467,9 +585,7 @@ int main(int nargs, char **args)
          mp->next = mb;
          mb = mp;
       }
-      else if (mp->blask == ATL_KSYRK)
-         MMCopyTimePrep1(pre, (flag&(1<<CPF_TOBLK)) ? ATL_KSKCPFC:ATL_KSKCP2C,
-                         ialp, ibet, mp);
+@endskip
       else
          assert(0);
       mp = nxt;
@@ -482,84 +598,129 @@ int main(int nargs, char **args)
       mp->next = mb;
       mb = kb;
    }
-   PrintMMNodes(stdout, mb);
-   cb = ReadCPFileWithPath(pre, "CPYCASES", "copy.idx");
-   if (!cb)
-      printf("NO USER-SUPPLIED COPY ROUTINES!\n");
-   DoTimings(pre, verb, flag, mb, cb);
+//   PrintMMNodes(stdout, mb);
+   DoTimings(pre, verb, ialp, ibet, flag, mb, hb);
 
    KillAllMMNodes(mb);
-   if (cb)
-      KillAllCPNodes(cb);
+   if (hb)
+      KillAllCPNodes(hb);
    return(0);
 }
 @ROUT cpcgen
 #include "atlas_cpparse.h"
 #include "atlas_mmgen.h"
-@beginskip
-void GenMakeGen(char pre, char *fnam, ATL_cpnode_t *cb)
+void GenMake(ATL_cpnode_t *cb, char *path)
 {
    FILE *fp;
-   ATL_mmnode_t *cp;
-   char *styp;
-   const int CPLX = (pre == 'z' || pre == 'c');
-   const char upr = (pre == 'c' || pre == 's') ? 's' : 'd'; 
-   const char UPR= (upr=='s') ? 'S': 'D';
+   ATL_cpnode_t *cp;
+   int len;
+   char *fnam;
+   char pre;
+   char UPR;
+   char dcomp[7] = {'$','(', 'D', 'K', 'C',')', '\0'};
+   char dflag[12] = {'$','(','D','K','C', 'F','L','A','G','S', ')', '\0'};
 
-   if (pre == 'c' || pre == 's')
-      dcomp[2] = dflags[2] = 'S';
+   if (!cb)
+      return;
+   pre = CopyGetPre(cb->flag);
+   len = strlen(path) + 13;  /* <pre>Make.[Into,From]C */
+   fnam = malloc(len);
+   assert(fnam);
+   sprintf(fnam, "%s/%cMake%sC", path, pre, CopyGetDirect(cb->flag));
    fp = fopen(fnam, "w");
    assert(fp);
-   fprintf(fp, "#include Make.inc"\n");
-   if (!cb)
-   {
-      fprintf("all :\nlib :\n);
-      fclose(fp);
-      return;
-   }
-   fprintf(fp, "   objs =");
+   free(fnam);
+
+   UPR = (pre == 'c' || pre == 's') ? 'S' : 'D';
+   dflag[2] = dcomp[2] = UPR;
+   fprintf(fp, "include Make.inc\n");
+   fprintf(fp, "\n   objs =");
    for (cp=cb; cp; cp = cp->next)
-      fprintf(fp, " \\\n          %s.o\n", cp->rout);
+      fprintf(fp, " \\\n          %s.o", cp->rout);
          
    PrintMakeTargs(fp, pre);
 /*
  * Print compilation rules 
  */
-   styp = MMCopyGetCompType(cp->flag);
    for (cp=cb; cp; cp = cp->next)
    {
-      fprintf(fp, "%s.o : %s.c\n", cp->rout);
-      fprintf(fp, "\t$(%cKC) $(%cKCFLAGS) -D%s=1 -DATL_MU=%u -DATL_NU=%u \\\n",
-              UPR, UPR, styp, cp->mu, cp->nu);
-      fprintf(fp, "       -DATL_USERCPMM=%s -c -o %s.o %s.c\n", cp->rout,
-              cp->rout, cp->rout);
+      if (cp->comp || cp->cflags)
+      {
+         fprintf(fp, "%s.o : %s.%c\n", cp->rout, cp->rout,
+                 (cp->flag&(1<<CPF_ASM)) ? 'S':'c');
+         fprintf(fp, "\t$%s %s\\\n", cp->comp ? cp->comp:dcomp, 
+                 cp->cflags ? cp->cflags : dflag);
+      }
    }
+/*
+ * Print default rules
+ */
+   fprintf(fp, ".S.o:\n");
+   fprintf(fp, "\t%s $(CDEFS) %s -c $*.S\n", dcomp, dflag);
+   fprintf(fp, ".s.o:\n");
+   fprintf(fp, "\t%s $(CDEFS) %s -c $*.s\n", dcomp, dflag);
+   fprintf(fp, ".c.o:\n");
+   fprintf(fp, "\t%s $(CDEFS) %s -c $*.c\n", dcomp, dflag);
+
    fclose(fp);
 }
 
-void GenProtos(char pre, FILE *fp, ATL_cpnode_t *cb)
+void GenProtos(ATL_cpnode_t *cb, char *path)
 {
    ATL_cpnode_t *cp;
-   static int CPLX=(pre == 'z' || pre == 'c') ? 1 : 0;
-   char *to, *frm;
-   if (CPLX)
+   int i;
+   char *dir, *args, *fnam, *sp;
+   char pre;
+   FILE *fp;
+
+   if (!cb)
+      return;
+   pre = CopyGetPre(cb->flag);
+   if (cb->flag & (1<<CPF_TOBLK)) /* copy from C into blk */
    {
-      to = "ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,"
-           "const SCALAR, TYPE*,TYPE*";
-      frm = "ATL_CSZT,ATL_CSZT,const SCALAR,constTYPE*,const TYPE*,"
-            "const SCALAR,TYPE*,ATL_CSZT";
+      dir = "From";
+      if (cb->flag & (1<<CPF_REAL))
+         args = "ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,"
+                "const SCALAR, TYPE *";
+      else
+         args = "ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,"
+                "const SCALAR, TYPE*,TYPE*";
    }
-   else
+   else /* copy from block into C */
    {
-      to = "ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,"
-           "const SCALAR, TYPE *";
-      frm = "ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,"
-            "const SCALAR,TYPE*,ATL_CSZT";
+      dir = "Into";
+      if (cb->flag & (1<<CPF_REAL))
+         args = "ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,"
+                "const SCALAR,TYPE*,ATL_CSZT";
+      else
+         args = "ATL_CSZT,ATL_CSZT,const SCALAR,constTYPE*,const TYPE*,"
+                "const SCALAR,TYPE*,ATL_CSZT";
    }
+/*
+ * Set up basic filename of form atlas_<pre>[From,Into]C_aXbX.h 
+ */
+   i = strlen(path);
+   fnam = malloc(i+22);
+   assert(fnam);
+   sp = fnam + i+1;
+   sprintf(fnam, "%s/atlas_%c%sC.h", path, pre, dir);
+   fp = fopen(fnam, "w");
+   for (i=0; sp[i]; i++)
+   {
+      if (sp[i] != '.')
+        sp[i] = toupper(sp[i]);
+      else
+        sp[i] = '_';
+   }
+   fprintf(fp, "#ifndef %s /* Genned by ATLAS/src/blas/gemm/cpcgen.c */\n", sp);
+   fprintf(fp, "   #define %s 1\n\n#include \"atlas_amm.h\"\n", sp);
+   free(fnam);
    for (cp=cb; cp; cp = cp->next)
-      fprintf(fp, "void %s(%s);\n", cp->rout, (cp->flag&(1<<CPF_TOBLK)?to:frm);
+      fprintf(fp, "void %s(%s);\n", cp->rout, args);
+   fprintf(fp, "\n#endif\n");
+   fclose(fp);
 }
-@endskip
+
 void GenCopyC(ATL_cpnode_t *cb, char *path)
 {
    ATL_cpnode_t *cp;
@@ -573,17 +734,13 @@ void GenCopyC(ATL_cpnode_t *cb, char *path)
    plen = strlen(path);
    pre = CopyGetPre(cb->flag);
    if (pre == 'z')
-      typs = "#define TYPE DCPLX\n#define TCPLX 1\n#define TYPE double\n"
-             "#define SCALAR TYPE*";
+      typs = "#define DCPLX 1\n#define TYPE double\n#define SCALAR TYPE*\n";
    else if (pre == 'c')
-      typs = "#define TYPE SCPLX\n#define TCPLX 1\n#define TYPE float\n"
-             "#define SCALAR TYPE*";
+      typs = "#define SCPLX 1\n#define TYPE float\n#define SCALAR TYPE*\n";
    else if (pre == 'd')
-      typs = "#define TYPE DREAL\n#define TREAL 1\n#define TYPE double\n"
-             "#define SCALAR TYPE";
+      typs = "#define DREAL 1\n#define TYPE double\n#define SCALAR TYPE\n";
    else if (pre == 's')
-      typs = "#define TYPE SREAL\n#define TREAL 1\n#define TYPE float\n"
-             "#define SCALAR TYPE";
+      typs = "#define SREAL 1\n#define TYPE float\n#define SCALAR TYPE\n";
 
    for (cp=cb; cp; cp = cp->next)
    {
@@ -617,23 +774,29 @@ void GenCopyC(ATL_cpnode_t *cb, char *path)
          free(cp->genstr);
          cp->genstr = gens;
       }
+      if (rt)
+         free(rt);
+      if (fe == 's' || fe == 'S')
+         cp->flag |= 1L<<CPF_ASM;
       len = strlen(path) + 1 + strlen(nam) + 2 + 1;
       fnam = malloc(len);
       sprintf(fnam, "%s/%s.%c", path, nam, fe);
       fp = fopen(fnam, "w");
       assert(fp);
       fprintf(fp, typs);
-      fprintf(fp, "#define ATL_USERCPMM %s\n", nam);
+      fprintf(fp, "#define ATL_MU %u\n#define ATL_NU %u\n", cp->mu, cp->nu);
+      fprintf(fp, "#define ATL_USERCPMM %s\n\n", nam);
       fclose(fp);
-      free(nam);
       len = 10 + strlen(cp->rout) + strlen(fnam);
       sp = malloc(len);
       assert(sp);
       sprintf(sp, "cat %s >> %s", cp->rout, fnam);
+      free(fnam);
       assert(!system(sp));
+      free(sp);
       if (cp->ID)
          free(cp->rout);
-      cp->rout = rt;
+      cp->rout = nam;
    }
 }
 
@@ -691,9 +854,11 @@ int main(int nargs, char **args)
 
    cb = GetFlags(nargs, args, &outd);
    assert(cb);
-   GenCopyC(cb, outd);
+   GenCopyC(cb, outd);   /* sets info for Protos&Make! */
+   GenProtos(cb, outd);
+   GenMake(cb, outd);
    free(outd);
-   KillAllCPRouts(cb);
+   KillAllCPNodes(cb);
    return(0);
 @beginskip
    ATL_cpnode_t *gb, *hb;  /* generated & hand-tuned */
