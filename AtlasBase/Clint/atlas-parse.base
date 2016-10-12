@@ -76,6 +76,7 @@
 #define CPF_DEFAULT   0  /* default is no bits set */
 #define CPF_ALLALP ((1<<CPF_AL0)|(1<<CPF_AL1)|(1<<CPF_ALN)|(1<<CPF_ALX))
 #define CPF_ALLBET ((1<<CPF_BE0)|(1<<CPF_BE1)|(1<<CPF_BEN)|(1<<CPF_BEX))
+#define CPF_ALLKERN ((1<<CPF_SYRK)|(1<<CPF_SYMM)|(1<<CPF_TRMM)|(1<<CPF_TRSM))
 
 typedef struct CPNode ATL_cpnode_t;
 struct CPNode
@@ -90,6 +91,7 @@ struct CPNode
    int ID;         /* ID unique in <pre>copy.idx */
    int STGID;      /* storage ID predefined vals: [1-6] */
    int mu, nu;     /* unrolling along M & N dims, respectively */
+   int mb, nb;     /* M/N dims to use for timing */
    int vlen;       /* > 1: vector length used in copy generation */
    int kvec;       /* > 1: vec with size kvec along K dim */
    int rtlen;      /* # of chars/bytes in rout */
@@ -1733,7 +1735,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
    else
       p->@(jj) = 1;
 @endwhile
-@whiledef jj vlen kvec ID STGID
+@whiledef jj vlen kvec ID STGID mb nb
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
       p->@(jj) = atoi(sp+@len@(jj)+1);
@@ -1942,9 +1944,12 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
       i += fprintf(fpout, " ");
    }
    @endwhile
-@whiledef kw mu nu vlen kvec
-   if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
-   i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
+@whiledef kw mu nu vlen kvec mb nb
+   if (np->@(kw))
+   {
+      if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
+      i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
+   }
 @endwhile
 @ROUT mvread r1read
 @whiledef kw MU NU minN minM alignX alignY alignA SSE CacheElts rankR
@@ -3198,6 +3203,50 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
               p->mu, p->nu, blksz, cal, cbe);
    }
    return(sp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
+/*
+ * RETURNS: 1 if c0 & c1 have different functionality, 0 if equivalent
+ */
+{
+   int iret;
+   iret = (c0->STGID == c1->STGID);
+   iret &= (c0->ID == c1->ID);
+   iret &= (c0->nu == c1->nu);
+   if (c0->flag & (1<<CPF_CBLK))
+   {
+      iret &= (c0->mu == c1->mu);
+      if (c0->kvec || c1->kvec)
+      {
+         int bsz0=c0->mu*c0->nu, bsz1=c1->mu*c1->nu;
+         if (c0->kvec)
+            bsz0 = ((bsz0+c0->kvec-1)/c0->kvec)*c0->kvec;
+         if (c1->kvec)
+            bsz1 = ((bsz1+c1->kvec-1)/c1->kvec)*c1->kvec;
+         iret &= (bsz0 == bsz1);
+      }
+   }
+   else
+      iret &= (c0->kvec == c1->kvec);
+   iret &= (c0->flag == c1->flag);
+   return(!iret);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *FindEquivCopy(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
+/*
+ * RETURNS: NULL if no copy rout equivalent to dup is in cb, else ptr to dup
+ */
+{
+   ATL_cpnode_t *cp;
+   for (cp=cb; cp; cp = cp->next)
+      if (!CopyAreDiff(cp, dup))
+         return(cp);
+   return(NULL);
 }
 
 @ROUT mvread r1read mmread cpread
@@ -5806,97 +5855,48 @@ struct MMCopyFunc
 @endskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static char *GetCpySumNam(int blask, char ch, int ialp, int ibet)
+static char *GetCpySumNam(int flag, char ch)
 {
    static char fnam[32]={'X', 'b','2','C', '_', 'a', 'X', 'b', 'X'};
-   @multidef ct   6   8
-   @whiledef sc alp bet
-   if (i@(sc) == -1)
+   @multidef ct  6  8
+   @whiledef sc AL BE
+   if (flag&(1<<CPF_@(sc)N))
       fnam[@(ct)] = 'N';
-   if (i@(sc) == 0)
+   else if (flag&(1<<CPF_@(sc)0))
       fnam[@(ct)] = '0';
    else
-      fnam[@(ct)] = (i@(sc) == 1) ? '1' : 'X';
+      fnam[@(ct)] = (flag&(1<<CPF_@(sc)1)) ? '1' : 'X';
       @undef ct
    @endwhile
    fnam[0] = ch;
-   switch(blask)
+   if (flag & (1<<CPF_CBLK))
    {
-   case ATL_KGECPFA:
-      fnam[1] = 'A';
-      fnam[2] = '2';
-      fnam[3] = 'b';
-      fnam[4] = 't';
-      if (ibet == AtlasNoTrans)
-         fnam[8] = 'N';
-      else
-         fnam[8] = 'T';
-      break;
-   case ATL_KGECP2A:
-      fnam[1] = 'b';
-      fnam[2] = '2';
-      fnam[3] = 'A';
-      if (ibet == AtlasNoTrans)
-         fnam[8] = 'N';
-      else
-         fnam[8] = 'T';
-      break;
-   case ATL_KGECP2C:
-   case ATL_KSKCP2C:
-      fnam[1] = 'b';
-      fnam[2] = '2';
-      fnam[3] = 'C';
-      break;
-   case ATL_KSKCPFC:
-   case ATL_KGECPFC:
-      fnam[1] = 'C';
-      fnam[2] = '2';
-      fnam[3] = 'b';
-      break;
-@beginskip
-   case ATL_KSKCPFC:
-      fnam[1] = 'K';
-      fnam[2] = '2';
-      fnam[3] = 'b';
-      break;
-   case ATL_KSKCP2C:
-      fnam[1] = 'b';
-      fnam[2] = '2';
-      fnam[3] = 'K';
-      break;
-@endskip
-   }
-   return(fnam);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
-/*
- * RETURNS: 1 if c0 & c1 have different functionality, 0 if equivalent
- */
-{
-   int iret;
-   iret = (c0->STGID == c1->STGID);
-   iret &= (c0->ID == c1->ID);
-   iret = (c0->nu == c1->nu);
-   if (c0->flag & (1<<CPF_CBLK))
-   {
-      iret &= (c0->mu == c1->mu);
-      if (c0->kvec || c1->kvec)
+      if (flag & (1<<CPF_TOBLK))
       {
-         int bsz0=c0->mu*c0->nu, bsz1=c1->mu*c1->nu;
-         if (c0->kvec)
-            bsz0 = ((bsz0+c0->kvec-1)/c0->kvec)*c0->kvec;
-         if (c1->kvec)
-            bsz1 = ((bsz1+c1->kvec-1)/c1->kvec)*c1->kvec;
-         iret &= (bsz0 == bsz1);
+         fnam[1] = 'C';
+         fnam[3] = 'b';
+      }
+      else
+      {
+         fnam[1] = 'b';
+         fnam[3] = 'C';
       }
    }
    else
-      iret &= (c0->kvec == c1->kvec);
-   iret &= (c0->flag == c1->flag);
-   return(!iret);
+   {
+      if (flag & (1<<CPF_TOBLK))
+      {
+         fnam[1] = 'A';
+         fnam[3] = 'b';
+      }
+      else
+      {
+         fnam[1] = 'b';
+         fnam[3] = 'A';
+      }
+      fnam[8] = (flag&(1<<CPF_TRANS)) ? 'T' : 'N';
+   }
+   return(fnam);
 }
 
 @iexp ip @(ip) 1 +
@@ -5984,6 +5984,94 @@ static int MMCopyAreDiff(int flag, ATL_mmnode_t *m0, ATL_mmnode_t *m1)
    else /* copy A or B */
      ;
    return(0);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
+{
+   ATL_cpnode_t *cb=NULL, *cp;
+   cp = GetCPNode();
+   cp->flag = flag;
+   if (flag&(1<<CPF_CBLK))
+   {
+      cp->mb = mp->mbB;
+      cp->nb = mp->nbB;
+      cp->mu = mp->mu;
+      cp->nu = mp->nu;
+      cp->STGID = mp->stgC;
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+         cp->kvec = mp->vlen;
+      if (mp->blask == ATL_KSYRK)
+         cp->flag |= (1<<CPF_SYRK);
+   @whiledef rt SYMM TRMM TRSM
+      else if (mp->blask == ATL_K@(rt))
+         cp->flag |= (1<<CPF_@(rt));
+   @endwhile
+   }
+   else
+   {
+   }
+   return(cp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *GetAllCopyNodesFromMM(int flag, ATL_mmnode_t *mb)
+{
+   ATL_cpnode_t *cb=NULL, *cp;
+   ATL_mmnode_t *mp;
+
+   for (mp=mb; mp; mp = mp->next)
+   {
+      cp = GetCopyNodeFromMM(flag, mp);
+      cp->next = cb;
+      cb = cp;
+   }
+   return(ReverseCPQ(cb));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *NoCopyRep(int flag, int minSz, ATL_cpnode_t *cb)
+/*
+ * Eliminates cpnodes with duplicate copy routines. In throwing away duplicates,
+ * retain routine with mb*nb > minSz, if both > minSz, throw away biggest, 
+ * if both < minSz throw away smallest.
+ */
+{
+   ATL_cpnode_t *cp, *dup;
+   if (!cb)
+     return(NULL);
+   if (!cb || !cb->next)
+      return(NULL);
+   cp = cb;
+   while(cp->next)
+   {
+      const unsigned int sz0 = cp->mb * cp->nb;
+      ATL_cpnode_t *dup, *nxt=cp->next;
+      while(1)
+      {
+         ATL_cpnode_t *kill;
+         unsigned int sz1;
+
+         dup = FindEquivCopy(cp->next, cp);
+         if (!dup)
+            break;
+         sz1 = dup->mb * dup->mb;
+         if (sz0 > minSz && sz1 > minSz)      /* elim largest */
+            kill = (sz0 <= sz1) ? cp : dup;
+         else                                /* elim smallest */
+            kill = (sz0 <= sz1) ? dup : cp;
+         if (kill == nxt)
+            nxt = nxt->next;
+         cb = KillCPNodeFromQ(cb, kill);
+         if (kill == cp)
+            break;
+      }
+      cp = nxt;
+   }
+   return(cb);
 }
 
 @iexp ip @(ip) 1 +

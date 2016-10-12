@@ -277,6 +277,15 @@ ATL_mmnode_t *GetFlags
    return(mb);
 }
 
+unsigned long GetRep(unsigned long reps, unsigned int mb, unsigned int nb)
+{
+   double ratio;
+   unsigned long nrep;
+   ratio = 16.0 / (((double)mb)*nb);
+   nrep = reps*ratio;
+   nrep = (nrep > 0) ? nrep : 1;
+}
+#if 0
 void DoHandTimings
    (char pre, int verb, unsigned int flag, ATL_mmnode_t *mb, 
     ATL_cpnode_t *cb, ATL_cpnode_t *hb)
@@ -336,123 +345,111 @@ void DoHandTimings
       }
    }
 }
+#endif
 
-ATL_cpnode_t *DoGenTimings
-   (char pre, int verb, unsigned int flag, ATL_mmnode_t *mb)
+void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag, 
+                  ATL_cpnode_t *cb)
 {
-   ATL_mmnode_t *mp;
-   ATL_cpnode_t *cp, *CB=NULL;
+   ATL_cpnode_t *cp;
    char *fnam;
    int ialp, ibet=0;
 
+   fnam = GetCpySumNam(flag, 'g');
    ialp = CopyGetAlphaI(flag);
    if (flag & (1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
-   fnam = GetCpySumNam(mb->blask, 'g', ialp, ibet);
    printf("FINDING BEST GENERATED COPY: %s\n", fnam);
-   for (mp=mb; mp; mp = mp->next)
+   for (cp=cb; cp; cp = cp->next)
    {
-      ATL_mmnode_t *mmp;
       double mf, mfB;
-      const int vlen=mp->vlen;
+      unsigned long nrep;
 
-      printf("   TIMINGS B=(%d,%d,%d), U=(%d,%d):\n", 
-             mp->mbB, mp->nbB, mp->kbB, mp->mu, mp->nu);
-      mp->vlen = 1;
-      mfB = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, ibet, 0, -1);
+//      nrep = GetRep(rep4, cp->mb, cp->nb);
+      nrep = rep4;
+      printf("   TIMINGS B=(%d,%d), U=(%d,%d), reps=%lu:\n", 
+             cp->mb, cp->nb, cp->mu, cp->nu, nrep);
+      cp->vlen = 1;
+      if (!cp->rout)
+         cp->rout = DupString("ATL_tmp.c");
+      if (cp->genstr)
+         free(cp->genstr);
+      cp->genstr = GetCopyGenStr(cp);
+      mfB = TimeCPKernel(verb, 0, cp, cp->mb, cp->nb, ialp, ibet, nrep, -1);
       printf("      ID=     0 VL= 1: mf=%.0f\n", mfB);
-      mp->mflop[0] = mfB;
+      cp->mflop[0] = mfB;
 /*
  *    See if we can use vectorized generator.
  *    Present vector generator only supports SSE/AVX for real GEMM C copy
  */
       #if defined(ATL_AVX) || defined(ATL_SSE2) || defined(ATL_SSE)
-         if (mp->blask == ATL_KGECP2C || mp->blask == ATL_KGECPFC &&
-             (pre == 's' || pre == 'd'))
+         if (!(cp->flag & CPF_ALLKERN) && (pre == 's' || pre == 'd'))
          {
             char *gens;
-            int VL = (pre == 's') ? 4 : 2;
+            int VL0=cp->vlen, VL = (pre == 's') ? 4 : 2;
 
          #if defined(ATL_SSE2) || defined(ATL_SSE1)
             #if defined(ATL_SSE2)
-            if (mp->mu % VL == 0 && (pre == 'd' || pre == 's'))
+            if (cp->mu % VL == 0 && (pre == 'd' || pre == 's') && 
+                !(cp->flag&CPF_ALLKERN))
             #else
-            if (mp->mu % VL == 0 && pre == 's')
+            if (cp->mu % VL == 0 && pre == 's' && !(cp->flag&CPF_ALLKERN))
             #endif
             {
-               gens = mp->genstr;
-               mp->vlen = VL;
-               mp->genstr = MMGetCpGenString_vec(pre, mp, ialp, ibet, "sse");
-               mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, 
-                                 ibet, 0, -1);
+               gens = cp->genstr;
+               cp->vlen = VL;
+               cp->genstr = GetCopyGenStr(cp);
+               mf = TimeCPKernel(verb, 0, cp, cp->mb, cp->nb, ialp, ibet, 
+                                 nrep, -1);
                printf("      ID=     0 VL=%2d: mf=%.0f\n", VL, mf);
                if (mf > mfB*1.03)  /* SSE bigger code, must be 3% faster */
                {
                   free(gens);
-                  mp->mflop[0] = mfB = mf;
-                  mp->ivar = VL;
+                  cp->mflop[0] = mfB = mf;
                }
                else
                {
-                  free(mp->genstr);
-                  mp->genstr = gens;
+                  free(cp->genstr);
+                  cp->genstr = gens;
+                  cp->vlen = VL0;
                }
             } /* end SSE if */
          #endif
          #ifdef ATL_AVX
+            VL0 = cp->vlen;
             VL <<= 1;
-            if (mp->mu % VL == 0)
+            if (cp->mu % VL == 0)
             {
-               gens = mp->genstr;
-               mp->vlen = VL;
-               mp->genstr = MMGetCpGenString_vec(pre, mp, ialp, ibet, "avx");
-               mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, 
-                                 ibet, 0, -1);
+               gens = cp->genstr;
+               cp->vlen = VL;
+               cp->genstr = GetCopyGenStr(cp);
+               mf = TimeCPKernel(verb, 0, cp, cp->mb, cp->nb, ialp, ibet, 
+                                 nrep, -1);
                printf("      ID=     0 VL=%2d: mf=%.0f\n", VL, mf);
                if (mf > mfB*1.03)  /* AVX bigger code, must be 3% faster */
                {
                   free(gens);
-                  mp->mflop[0] = mfB = mf;
-                  mp->ivar = VL;
+                  cp->mflop[0] = mfB = mf;
                }
                else
                {
-                  free(mp->genstr);
-                  mp->genstr = gens;
+                  free(cp->genstr);
+                  cp->genstr = gens;
+                  cp->vlen = VL0;
                }
             } /* end AVX if */
          #endif
          }    /* end if over trying old vec-basefile */
       #endif  /* end #if on Intel SSE/AVX */
-      mp->vlen = vlen;
    }
-/*
- * Create output file of copy nodes
- */
-   for (mp=mb; mp; mp = mp->next)
-   {
-      cp = GetCPNode();
-      cp->flag = flag;
-      cp->genstr = DupString(mp->genstr);
-      cp->mflop[0] = mp->mflop[0];
-      cp->mu = mp->mu;
-      cp->nu = mp->nu;
-      cp->vlen = mp->ivar;
-      cp->next = CB;
-      CB = cp;
-   }
-   CB = ReverseCPQ(CB);
-   WriteCPFileWithPath(pre, "res", fnam, CB);
+   WriteCPFileWithPath(pre, "res", fnam, cb);
    printf("DONE, output in: res/%c%s\n", pre, fnam);
-   return(CB);
 }
 
 void DoTimings
-   (char pre, int verb, int ialp, int ibet, unsigned int flag, ATL_mmnode_t *mb,
+   (char pre, int verb, unsigned long rep4, unsigned int flag, ATL_cpnode_t *cb,
     ATL_cpnode_t *hb)
 {
-   ATL_mmnode_t *mp;
-   ATL_cpnode_t *cb, *cp;
+   ATL_cpnode_t *cp;
    char *fnam;
    const int ials[3] = {1,-1,2}, ibes[4]={0,1,-1,2};
    int ia, ib;
@@ -464,38 +461,31 @@ void DoTimings
       {
          const int ialp=ials[ia];
 
-         flag = CopyEncodeScal(flag, ialp, ibet);
-         cb = DoGenTimings(pre, verb, flag, mb);
+//         if (ialp != 1 || ibet != 1)
+//            continue;
+         CopyEncodeAllScal(cb, flag, ialp, ibet);
+         flag = cb->flag;
+         DoGenTimings(pre, verb, rep4, flag, cb);
+         #if 0
          if (hb)
-            DoHandTimings(pre, verb, flag, mb, cb, hb);
+            DoHandTimings(pre, verb, flag, cb, hb);
          else
             printf("NO USER-SUPPLIED COPY ROUTINES!\n");
-         for (cp=cb,mp=mb; mp; cp=cp->next, mp=mp->next)
+         #endif
+         for (cp=cb; cp; cp=cp->next)
          {
-            if (mp->blask == ATL_KSKCP2C || mp->blask == ATL_KSKCPFC)
-            {
-               cp->mflop[0] = 2e-6 / mp->mflop[0]; /* time per elt */
-               cp->flag |= 1L<<CPF_SYRK;
-            }
+            if (cp->flag & (1L<<CPF_SYRK))
+               cp->mflop[0] = 2e-6 / cp->mflop[0]; /* time per elt */
             else
-               cp->mflop[0] = 1e-6 / mp->mflop[0]; /* time per elt */
+               cp->mflop[0] = 1e-6 / cp->mflop[0]; /* time per elt */
          }
-         fnam = GetCpySumNam(mb->blask, 'f', ialp, ibet);
+         fnam = GetCpySumNam(flag, 'f');
          WriteCPFileWithPath(pre, "res", fnam, cb);
-         KillAllCPNodes(cb);
          printf("DONE, output in: res/%c%s\n", pre, fnam);
       }
    }
 }
 
-unsigned long GetRep(unsigned long reps, unsigned int mb, unsigned int nb)
-{
-   double ratio;
-   unsigned long nrep;
-   ratio = 16.0 / (((double)mb)*nb);
-   nrep = reps*ratio;
-   nrep = (nrep > 0) ? nrep : 1;
-}
 unsigned long GetReps4x4(int verb, double res)
 /*
  * Find how many repititions to do for 4x4 copy to get timing interval to
@@ -555,7 +545,7 @@ int main(int nargs, char **args)
    int verb, minSz, ialp, ibet=0;
    unsigned int flag;
    ATL_mmnode_t *mb, *kb, *mp;
-   ATL_cpnode_t *hb;
+   ATL_cpnode_t *hb, *cb;
    unsigned long nrep;
 
    mb = GetFlags(nargs, args, &verb, &flag, &minSz, &kb);
@@ -565,6 +555,7 @@ int main(int nargs, char **args)
    if (flag&(1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
    nrep = GetReps4x4(verb, 0.10);
+@beginskip
 /*
  * Special non-GEMM copy must have kernID set specially
  */
@@ -592,16 +583,20 @@ int main(int nargs, char **args)
    }
    mb = MMNoCopyRep(flag, minSz, mb);
    MMCopyTimePrep(pre, flag, mb);
+@endskip
    if (kb)
    {
       mp = ATL_LastMMNode(kb);
       mp->next = mb;
       mb = kb;
    }
-//   PrintMMNodes(stdout, mb);
-   DoTimings(pre, verb, ialp, ibet, flag, mb, hb);
+   cb = GetAllCopyNodesFromMM(flag, mb);
+   cb = NoCopyRep(flag, minSz, cb);
+   PrintCPNodes(stdout, cb);
+   DoTimings(pre, verb, nrep, flag, cb, hb);
 
    KillAllMMNodes(mb);
+   KillAllCPNodes(cb);
    if (hb)
       KillAllCPNodes(hb);
    return(0);
