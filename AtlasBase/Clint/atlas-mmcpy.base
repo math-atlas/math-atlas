@@ -177,7 +177,7 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags:\n", name);
    fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
-   fprintf(stderr, "   -m [c,t,n] : matrix to copy\n");
+   fprintf(stderr, "   -m [c,a] : matrix to copy\n");
    fprintf(stderr, "   -d [I,F] : copy Into or From block\n");
    fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    fprintf(stderr, "   -a [0,1,-1,2] : alpha to time, 2 means X\n");
@@ -194,7 +194,7 @@ ATL_mmnode_t *GetFlags
  */
 {
    ATL_mmnode_t *mb, *mp;
-   char pre='d', mat='C', dir='I', ta;
+   char pre='d', mat='C', dir='I';
    int i, ibe=1, ial=1, k, n;
 
    *KB = NULL;
@@ -217,18 +217,7 @@ ATL_mmnode_t *GetFlags
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
         mat = toupper(args[i][0]);
-        if (mat == 'N')
-        {
-           ta = mat;
-           mat = 'A';
-        }
-        else if (mat == 'T')
-        {
-           ta = mat;
-           mat = 'A';
-        }
-        else 
-           assert(mat == 'C');
+        assert(mat == 'A' || mat == 'C');
         break;
       case 'd':
         if (++i >= nargs)
@@ -260,19 +249,13 @@ ATL_mmnode_t *GetFlags
          PrintUsage(args[0], i, args[i]);
       }
    }
-   i = CopyEncode(pre, dir, mat, ta);
+   i = CopyEncode(pre, dir, mat, 'N');
+   i &= ~(1<<CPF_ABLK);  /* starts out not set for A/B search */
    *FLAG = CopyEncodeScal(i, ial, ibe);
    mb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    mp = ATL_LastMMNode(mb);
    mp->next = ReadMMFileWithPath(pre, "res", "rkAMMRES.sum");
    assert(mb);
-/*
- * Timing for copy needs to be MOVC, dont move A or B
- */
-   for (mp=mb; mp; mp=mp->next)
-   {
-      mp->flag = (mp->flag & (~MMF_MVSET)) | MMF_MVC;
-   }
    return(mb);
 }
 
@@ -293,6 +276,8 @@ void DoHandTimings
    int ialp, ibet=0;
    unsigned long nrep;
 
+   if (!(flag&(1<<CPF_CBLK)))  /* temp until we support A copy */
+      return;
    ialp = CopyGetAlphaI(flag);
    if (flag & (1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
@@ -378,7 +363,8 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag,
  *    Present vector generator only supports SSE/AVX for real GEMM C copy
  */
       #if defined(ATL_AVX) || defined(ATL_SSE2) || defined(ATL_SSE)
-         if (!(cp->flag & CPF_ALLKERN) && (pre == 's' || pre == 'd'))
+         if (!(cp->flag & CPF_ALLKERN) && (pre == 's' || pre == 'd') &&
+             (cp->flag&(1<<CPF_CBLK)))
          {
             char *gens;
             int VL0=cp->vlen, VL = (pre == 's') ? 4 : 2;
@@ -447,9 +433,9 @@ void DoTimings
    ATL_cpnode_t *cp;
    char *fnam;
    const int ials[3] = {1,-1,2}, ibes[4]={0,1,-1,2};
-   int ia, ib;
+   int ia, ib, nbet = (flag&(1<<CPF_CBLK)) ? 4 : 1;
 
-   for (ib=0; ib < 4; ib++)
+   for (ib=0; ib < nbet; ib++)
    {
       const int ibet=ibes[ib];
       for (ia=0; ia < 3; ia++)
@@ -533,7 +519,7 @@ int main(int nargs, char **args)
    int verb, minSz, ialp, ibet=0;
    unsigned int flag;
    ATL_mmnode_t *mb, *kb, *mp;
-   ATL_cpnode_t *cb;
+   ATL_cpnode_t *cb, *cp, *cb0;
    unsigned long nrep;
 
    mb = GetFlags(nargs, args, &verb, &flag, &minSz, &kb);
@@ -542,35 +528,6 @@ int main(int nargs, char **args)
    if (flag&(1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
    nrep = GetReps4x4(verb, 0.10);
-@beginskip
-/*
- * Special non-GEMM copy must have kernID set specially
- */
-   mp = kb;
-   while(mp)
-   {
-      int kernID;
-      ATL_mmnode_t *nxt = mp->next;
-      if ((flag&(1<<CPF_CBLK)) && mp->blask == ATL_KSYRK)
-         MMCopyTimePrep1(pre, (flag&(1<<CPF_TOBLK)) ? ATL_KSKCPFC:ATL_KSKCP2C,
-                         ialp, ibet, mp);
-@beginskip
-      else if (mp->blask == ATL_KGEMM || 
-          (!(flag&(1<<CPF_CBLK)) && mp->blask == ATL_KSYRK))
-      {
-         mp->blask = ATL_KGEMM;
-         kb = RemoveMMNodeFromQ(kb, mp);
-         mp->next = mb;
-         mb = mp;
-      }
-@endskip
-      else
-         assert(0);
-      mp = nxt;
-   }
-   mb = MMNoCopyRep(flag, minSz, mb);
-   MMCopyTimePrep(pre, flag, mb);
-@endskip
    if (kb)
    {
       mp = ATL_LastMMNode(kb);
@@ -578,8 +535,24 @@ int main(int nargs, char **args)
       mb = kb;
    }
    cb = GetAllCopyNodesFromMM(flag, mb);
+   if (!(flag&(1<<CPF_CBLK)))
+   {
+      cb0 = GetAllCopyNodesFromMM(flag|(1<<CPF_ABLK), mb);
+      cp = ATL_LastCPNode(cb0);
+      cp->next = cb;
+      cb = cb0;
+   }
    cb = NoCopyRep(flag, minSz, cb);
-@skip   PrintCPNodes(stdout, cb);
+   if (!(flag&(1<<CPF_CBLK)))
+   {
+      cb0 = CloneCPQueue(cb);
+      for (cp=cb0; cp; cp = cp->next)
+         cp->flag |= 1<<CPF_TRANS;
+      cp = ATL_LastCPNode(cb0);
+      cp->next = cb;
+      cb = cb0;
+   }
+   PrintCPNodes(stdout, cb);
    DoTimings(pre, verb, nrep, flag, cb);
 
    KillAllMMNodes(mb);

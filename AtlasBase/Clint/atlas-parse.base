@@ -52,7 +52,7 @@
 
 #define CPF_TOBLK    0  /* set: copy to blk format;  unset: opposite direc */
 #define CPF_CBLK     1  /* set: C format;  unset:A/B */
-#define CPF_ABLK     2  /* set: scope mu;  unset: scope nu */
+#define CPF_ABLK     2  /* only used in old ammgen-style */
 #define CPF_MVEC     3  /* 1: vectorize on M dim */
 #define CPF_NVEC     4  /* 1: vectorize on N dim */
 #define CPF_TRANS    5  /* 1: transpose, else NoTrans */
@@ -3197,6 +3197,24 @@ char *GetCopyGenStr(ATL_cpnode_t *p)
               gen, pre, p->kvec, p->mu, p->nu, ialp, ibet, vecd, p->rout);
       return(gs);
    }
+   else
+   {
+      int sz, i;
+      sz = 17 + 20;
+      sz += strlen(p->rout);
+      sz += NumDecDigits(p->kvec);
+      sz += NumDecDigits(p->nu);
+      sz += NumDecDigits(ialp)+1;
+      gs = malloc(sz*sizeof(char));
+      assert(gs);
+      if (flag & (1<<CPF_REAL))
+         i = sprintf(gs, "make gen_A%c2blk", (1<<CPF_TRANS)?'T':'N');
+      else
+         i = sprintf(gs, "make gen_cA%c2blk", (1<<CPF_TRANS)?'T':'N');
+      i += sprintf(gs+i, " rt=%s kmaj=%u UR=%u alpha=%d", p->rout, p->kvec, 
+                   p->nu, ialp);
+      assert(i < sz);
+   }
    return(gs);
 }
 
@@ -3205,19 +3223,18 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
    char *sp=NULL, *dir;
    const int ID=p->ID, flag=p->flag;
    int len, i=0;
-   char pre;
+   char pre, cal;
 
    pre = CopyGetPre(flag);
    dir = CopyGetDirect(flag);
 /*
  * For C format routine naming scheme is: 
- * ATL_<pre>cp[Into,From]C[g,k,y,r,s]_<mu>x<nu>x<blksz>_aXbX
-@skip * ID=0 : ATL_<pre>cp[Into,From]C[g,k,y,r,s]_<mu>x<nu>x<kvec>_aXbX
-@skip * ID>0 : ATL_<pre><ID>cp[Into,From]C[g,k,y,r,s]_a[0,1,N,X]b[0,1,N,X]
+ *    ATL_<pre>cp[Into,From]C[g,k,y,r,s]_<mu>x<nu>x<blksz>_aXbX
  */
+   cal = CopyGetAlphaC(flag);
    if (flag & (1<<CPF_CBLK))
    {
-      char ck='g', cal, cbe;
+      char ck='g', cbe;
       unsigned int blksz = p->mu * p->nu;
       if (p->kvec > 1)
          blksz = ((blksz+p->kvec-1)/p->kvec)*p->kvec;
@@ -3229,7 +3246,6 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
       len = 25+NumDecDigits(p->mu)+NumDecDigits(p->nu)+NumDecDigits(blksz);
       sp = malloc(len+exlen);
       assert(sp);
-      cal = CopyGetAlphaC(flag);
       cbe = CopyGetBetaC(flag);
       if (flag&(1<<CPF_SYRK))
          ck = 'k';
@@ -3239,15 +3255,23 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
          ck = 'r';
       else if (flag&(1<<CPF_TRSM))
          ck = 's';
-   @beginskip
-      if (p->ID)
-         sprintf(sp, "ATL_%c%ucp%sC%c_a%cb%c", pre, p->ID, dir, ck, 
-                 cal, cbe);
-      else
-   @endskip
-      sprintf(sp, "ATL_%ccp%sC%c_%ux%ux%u_a%cb%c", pre, dir, ck,
-              p->mu, p->nu, blksz, cal, cbe);
+      i = sprintf(sp, "ATL_%ccp%sC%c_%ux%ux%u_a%cb%c", pre, dir, ck,
+                  p->mu, p->nu, blksz, cal, cbe);
    }
+/*
+ * For A format routine naming scheme is:
+ *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_<nu>_aX
+ */
+   else
+   {
+      char ck='g';
+      len = 20+NumDecDigits(p->nu);
+      sp = malloc(len+exlen);
+      assert(sp);
+      i = sprintf(sp, "ATL_%ccp%sA%c%c_%u_a%c", pre, dir,
+                  (flag&(1<<CPF_TRANS))?'N':'T', ck, p->nu, cal);
+   }
+   assert(i < len);
    return(sp);
 }
 
@@ -3258,14 +3282,18 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
  * RETURNS: 1 if c0 & c1 have different functionality, 0 if equivalent
  */
 {
-   int iret;
-   iret = (c0->STGID == c1->STGID);
-   if (c0->STGID)
-      return(!iret);
-   iret &= (c0->nu == c1->nu);
+   if (c0->STGID != c1->STGID)
+      return(1);
+   if (c0->STGID)  /* for now, each STGID matches with any other same ID */
+      return(0);   /* this may change when we actually support */
+   if (c0->nu != c1->nu)
+      return(1);
    if (c0->flag & (1<<CPF_CBLK))
    {
-      iret &= (c0->mu == c1->mu);
+      if (c0->mu == c1->mu)
+         return(1);
+      if (c0->flag != c1->flag)
+         return(1);
       if (c0->kvec || c1->kvec)
       {
          int bsz0=c0->mu*c0->nu, bsz1=c1->mu*c1->nu;
@@ -3273,13 +3301,19 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
             bsz0 = ((bsz0+c0->kvec-1)/c0->kvec)*c0->kvec;
          if (c1->kvec)
             bsz1 = ((bsz1+c1->kvec-1)/c1->kvec)*c1->kvec;
-         iret &= (bsz0 == bsz1);
+         if (bsz0 != bsz1)
+            return(1);
       }
    }
    else
-      iret &= (c0->kvec == c1->kvec);
-   iret &= (c0->flag == c1->flag);
-   return(!iret);
+   {
+      int msk = ~(1<<CPF_ABLK);
+      if ((c0->flag&msk) != (c1->flag&msk))
+         return(1);
+      if (c0->kvec != c1->kvec)
+         return(1);
+   }
+   return(0);
 }
 
 @iexp ip @(ip) 1 +
@@ -5954,6 +5988,7 @@ static char *GetCpySumNam(int flag, char ch)
          fnam[1] = 'b';
          fnam[3] = 'C';
       }
+      fnam[7] = 'b';
    }
    else
    {
@@ -5967,6 +6002,7 @@ static char *GetCpySumNam(int flag, char ch)
          fnam[1] = 'b';
          fnam[3] = 'A';
       }
+      fnam[7] = 't';
       fnam[8] = (flag&(1<<CPF_TRANS)) ? 'T' : 'N';
    }
    return(fnam);
@@ -6064,26 +6100,40 @@ static int MMCopyAreDiff(int flag, ATL_mmnode_t *m0, ATL_mmnode_t *m1)
 ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
 {
    ATL_cpnode_t *cp;
+
    cp = GetCPNode();
    cp->flag = flag;
+   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      cp->kvec = (mp->vlen > 1) ? mp->vlen : 0;
+   if (mp->blask == ATL_KSYRK && (flag&(1<<CPF_CBLK)))
+      cp->flag |= (1<<CPF_SYRK);
+   @whiledef rt SYMM TRMM TRSM
+   else if (mp->blask == ATL_K@(rt))
+      cp->flag |= (1<<CPF_@(rt));
+   @endwhile
    if (flag&(1<<CPF_CBLK))
    {
+      cp->STGID = mp->stgC;
       cp->mb = mp->mbB;
       cp->nb = mp->nbB;
       cp->mu = mp->mu;
       cp->nu = mp->nu;
-      cp->STGID = mp->stgC;
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-         cp->kvec = mp->vlen;
-      if (mp->blask == ATL_KSYRK)
-         cp->flag |= (1<<CPF_SYRK);
-   @whiledef rt SYMM TRMM TRSM
-      else if (mp->blask == ATL_K@(rt))
-         cp->flag |= (1<<CPF_@(rt));
-   @endwhile
    }
-   else
+   else if (flag&(1<<CPF_CBLK))
    {
+      cp->STGID = mp->stgA;
+      cp->mb = mp->mbB;
+      cp->nb = mp->kbB;
+      cp->nu = mp->mu;
+      cp->mu = 1;
+   }
+   else /* copy for B */
+   {
+      cp->STGID = mp->stgB;
+      cp->mb = mp->kbB;
+      cp->nb = mp->nbB;
+      cp->nu = mp->nu;
+      cp->mu = 1;
    }
    return(cp);
 }
