@@ -75,11 +75,11 @@
 #            TOBLK=0 must be present for testing & custom uses.
 #       C  : TOBLK=0 required. TOBLK=1 needed for testing & custom uses.
 #
+@ROUT scopy.idx ccopy.idx `@define VL @8@`
+@ROUT dcopy.idx zcopy.idx `@define VL @4@`
 @ROUT scopy.idx dcopy.idx
-ID=1 STGID=0 CBLK=1 TOBLK=0 MU=12 NU=4 ALPHA=X BETA=X \
-     ROUT='ATL_cpammC12x4_aXbX.c' AUTH='R. Clint Whaley'
-ID=2 STGID=0 CBLK=1 TOBLK=0 MU=12 NU=4 ROUT='ATL_cpammC12x4_aXbX.c' \
-     AUTH='R. Clint Whaley' ALPHA=X BETA=X COMP='gcc' CFLAGS='-O2 -mfpmath=387'
+ID=1 STGID=0 CBLK=1 TOBLK=0 MU=3 NU=3 KVEC=@(VL) VLEN=@(VL) SYRK=1 \
+     ALPHA=1,N,X BETA=0,N,1,X ROUT='ATL_skblk2C3x3.c' AUTH='R. Clint Whaley'
 @ROUT cptst.c
 /* 
  * This is a sanity check that takes a known-good copy implementation in
@@ -320,6 +320,7 @@ void DoHandTimings
       {
          printf("   TIMINGS B=(%d,%d), U=(%d,%d), reps=%lu:\n", 
                 cp->mb, cp->nb, cp->mu, cp->nu, nrep);
+         printf("      ID=%6d VL=%2d: mf=%.0f\n", 0, cp->vlen, cp->mflop[0]);
          do
          {
             double mf;
@@ -455,8 +456,6 @@ void DoTimings
       {
          const int ialp=ials[ia];
 
-if (ialp != 2 || ibet != 2)
-   continue;
          CopyEncodeAllScal(cb, flag, ialp, ibet);
          flag = cb->flag;
          DoGenTimings(pre, verb, rep4, flag, cb);
@@ -846,5 +845,211 @@ int main(int nargs, char **args)
    hb = GetFlags(nargs, args);
    gb = YankCPNodesByIntVal(&hb, &(hb->ID), 0);
 @endskip
+}
+@ROUT cphgen
+#include "atlas_mmgen.h"
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   fprintf(stderr, 
+      "This program generates copy header files for lists of kernels.\n"
+      "It will generate seperate header file for each alpha/beta combo.\n");
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -p [d,s,c,z]\n");
+   fprintf(stderr, "   -V mmview.sum: \n");
+   fprintf(stderr, "   -n <name>: base name for header files\n");
+   fprintf(stderr, "   -d /path : specify directory to generate into\n");
+   fprintf(stderr, "   -D [F,I] : copy Into or From col-major\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char *DIR, 
+                       char **PTH, char **NM)
+{
+   ATL_mmnode_t *mb=NULL;
+   char *pth=NULL, *nm=NULL;
+   int i;
+   char pre='d', dir='I';
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pre = tolower(args[i][0]);
+         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 'D':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         dir = toupper(args[i][0]);
+         assert(dir == 'I' || dir == 'F');
+         break;
+      case 'n':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nm = args[i];
+         break;
+      case 'V':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         mb = ReadMMFile(args[i]);
+         assert(mb);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   assert(mb && nm);
+   if (!pth)
+      pth = DupString("tmp");
+   *NM = nm;
+   *PRE = pre;
+   *PTH = pth;
+   *DIR = dir;
+   return(mb);
+}
+
+void GenHeadC
+(
+   char pre,        /* s,d,c,z */
+   char dir,        /* 'F': FromC, i.e. C2blk, 'I': blk2C */
+   char calp,       /* 1,N,X */
+   char cbet,       /* 0,1,N,X */
+   char *nm,        /* view name */
+   char *pnam,      /* name with path */
+   char *nam,       /* name without path */
+   ATL_mmnode_t *mb /* queue of gemms to produce header for */
+)
+{
+   ATL_mmnode_t *mp;
+   ATL_cpnode_t *cb, *cp;
+   FILE *fpp, *fpd;
+   char *sp;
+   int i, flag, ibet, ialp, N;
+   char fnam[32];
+
+   if (calp == 'X')
+      ialp = 2;
+   else 
+      ialp = (calp == 'N') ? -1 : 1;
+   if (cbet == 'X')
+      ibet = 2;
+   else if (cbet == '0')
+      ibet = 0;
+   else 
+      ibet = (cbet == 'N') ? -1 : 1;
+   flag = CopyEncode(pre, dir=='F'?'I':'F', 'C', 'N');
+   flag = CopyEncodeScal(flag, ialp, ibet);
+   sprintf(fnam, "res/%cf%s_a%cb%c.sum", pre, (dir=='F')?"C2b":"b2C", 
+           calp, cbet);
+   cb = ReadCPFile(fnam);
+   assert(cb);
+   for (cp=cb; cp; cp = cp->next)
+   {
+      if (cp->rout)
+         free(cp->rout);
+      cp->rout = GetCopyName(cp,0);
+   }
+   sp = strstr(nam, "ZZZZ");
+   sp[0] = 'p';
+   sp[1] = 'e';
+   sp[2] = 'r';
+   sp[3] = 'f';
+   fpp = fopen(pnam, "w");
+   assert(fpp);
+   PrintBegIfdef(fpp, nam);
+   sp[0] = 'd';
+   sp[1] = 'e';
+   sp[2] = 'c';
+   sp[3] = 'l';
+   fpd = fopen(pnam, "w");
+   assert(fpd);
+   PrintBegIfdef(fpd, nam);
+   sp[0] = 'Z';
+   sp[1] = 'Z';
+   sp[2] = 'Z';
+   sp[3] = 'Z';
+
+   N = ATL_CountNumberOfMMNodes(mb);
+   fprintf(fpd, "\n#include atlas_amm.h\n");
+   if (dir == 'F')
+      fprintf(fpd, "static const cmat2ablk_t ATL_%s_C2blk_a%c_b%c[%d] =\n{\n",
+              nm, calp, cbet, N);
+   else
+      fprintf(fpd, "static const ablk2cmat_t ATL_%s_blk2C_a%c_b%c[%d] =\n{\n",
+              nm, calp, cbet, N);
+   fprintf(fpp, "static const float ATL_%s_%stime_a%c_b%c[%d] = \n{\n", nm,
+           (dir=='F')?"C2blk":"blk2C", calp, cbet, N);
+   for (i=0,mp=mb; mp; i++, mp = mp->next)
+   {
+      ATL_cpnode_t *cm, *cp;
+      cm = GetCopyNodeFromMM(flag, mp);
+      cp = FindEquivCopy(cb, cm);
+      assert(cp);
+      fprintf(fpd, "/* IDX=%3d */ %s%c\n", i, cp->rout, mp->next?',':' ');
+      fprintf(fpp, "/* IDX=%3d */ %e%c\n", i, cp->mflop[0], mp->next?',':' ');
+      KillCPNode(cm);
+   }
+   fprintf(fpd, "}\n\n");
+   fprintf(fpp, "}\n\n");
+
+   fprintf(fpp, "#endif  /* end ifdef guard */\n");
+   fprintf(fpd, "#endif  /* end ifdef guard */\n");
+   KillAllCPNodes(cb);
+   fclose(fpp);
+   fclose(fpd);
+}
+
+void GenAllCHeadDir(char pre, char dir, char *path, char *nm, ATL_mmnode_t *mb)
+{
+   int tlen, nlen, plen, ia, ib;
+   char *nam, *tnam;
+         /* atlas_<pre><nm>_[Into,From]Cxxxx_aXbX.h */
+   char cscls[4]={'1', 'N', 'X', '0'};
+
+   plen = strlen(path) + 1;
+   nlen = strlen(nm);
+   tlen = plen + 6 + 1 + strlen(nm) + 1 + 4 + 13 + 1;
+   tnam = malloc(tlen*sizeof(char));
+   assert(tnam);
+   nam = tnam + plen;
+   assert(sprintf(tnam, "%s/atlas_%c%s_%sCZZZZ_aXbX.h", path, pre, nm, 
+                  dir=='F'?"From":"Into") < tlen);
+   for (ib=0; ib < 4; ib++)
+   {
+      const char cbet=cscls[ib];
+      nam[nlen+21] = cbet;
+      for (ia=0; ia < 3; ia++)
+      {
+         const char calp=cscls[ia];
+         nam[nlen+19] = calp;
+         GenHeadC(pre, dir, calp, cbet, nm, tnam, nam, mb);
+      }
+   }
+   free(tnam);
+}
+
+int main(int nargs, char **args)
+{
+   ATL_mmnode_t *mb;
+   char *path, *nm;
+   char pre, dir;
+
+   mb = GetFlags(nargs, args, &pre, &dir, &path, &nm);
+   GenAllCHeadDir(pre, dir, path, nm, mb);
+
+   KillAllMMNodes(mb);
+   free(path);
+   return(0);
 }
 @ROUT cpagen

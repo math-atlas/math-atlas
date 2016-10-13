@@ -3552,7 +3552,10 @@ double TimeCPKernel
       fnam[2] = 's';
       fnam[3] = '/';
       for (k=4; fnam[k]; k++);
-      sprintf(fnam+k, "_%ux%u_%u.ktim", mb, nb, cp->ID ? cp->ID:cp->vlen);
+      if (cp->ID)
+         sprintf(fnam+k, "_%ux%u_%u.ktim", mb, nb, cp->ID);
+      else
+         sprintf(fnam+k, "_%ux%ux%u.ktim", mb, nb, cp->vlen);
       dp = ReadResultsFile(2, 0, fnam);
       if (dp)
       {
@@ -5896,36 +5899,32 @@ double TimeTSKernel
 #include "atlas_mmparse.h"
 #include "atlas_mmtesttime.h"
 
-@beginskip
-#define CPF_TOBLK    0  /* set: copy to blk format;  unset: opposite direc */
-#define CPF_CBLK     1  /* set: C format;  unset:A/B */
-#define CPF_ABLK     2  /* set: scope mu;  unset: scope nu */
-#define CPF_TRANS    3
-#define CPF_CONJ     4
-#define CPF_SINGLE   5
-#define CPF_REAL     6
-#define CPF_SYRK     7
-#define CPF_SYMM     8
-#define CPF_TRMM     9
-/*
- * C copy routines choose: direction, a[1,n,X], b[0,1,n,X]
- * AB copy routines choose: direction, TA=[N,T,C,H], a[1,n,X]
- * -> C comes from N with Conj_ set, H comes from T with Conj_ set
- */
-typedef struct MMCopyFunc ATL_cpnode_t;
-struct MMCopyFunc
-{                     /* user defined IDs always unique */
-   int ID;            /* 0: access-maj, >0: user defined */
-   int mu, nu;        /* unrollings: A/B copies use only nu */
-   int kvec;          /* vlen for k-vec storage, else 0 */
-   int flag;          /* bits: vals are CPF_* */
-@skip   char *file;        /* filename */
-   int rtlen;         /* # of chars/bytes in rout */
-   char *rout;        /* callable routine name w/o alpha/beta suffix */
-   char *genstr;      /* string that will generate ID=0 kerns */
-   ATL_cpnode_t *next;
-};
-@endskip
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void PrintBegIfdef(FILE *fpout, char *nm)
+{
+   int i, k;
+   assert(nm && fpout);
+   for (k=0; k < 2; k++)
+   {
+      if (!k)
+         fprintf(fpout, "#ifndef ");
+      else
+         fprintf(fpout, "   #define ");
+      for (i=0; nm[i]; i++)
+      {
+         char ch = nm[i];
+         ch = toupper(ch);
+         ch = (ch == '.') ? '_' : ch;
+         fputc(ch, fpout);
+      }
+      if (!k)
+         fprintf(fpout, "\n");
+      else
+         fprintf(fpout, " 1\n");
+   }
+}
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static char *GetCpySumNam(int flag, char ch)
