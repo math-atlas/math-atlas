@@ -1035,6 +1035,8 @@ static int GetIntMaxMinAtOff(void *vb, int nxtoff, int off, int *MAX, int *MIN)
    return(n);
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 void *ATL_FindLastNode(void *vp, int nxtoff)
 {
    if (vp)
@@ -1046,6 +1048,8 @@ void *ATL_FindLastNode(void *vp, int nxtoff)
    return(vp);
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 void *FindNodeWithMaskOR(void *p, int nxtoff, int bvoff, int mask)
 /*
  * Assuming list with next ptr at nxtoff, and bitvec at bvoff, search
@@ -1065,6 +1069,34 @@ void *FindNodeWithMaskOR(void *p, int nxtoff, int bvoff, int mask)
    return(NULL);
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void PrefixStrAllNodes(void *p, int nxtoff, int stoff, char *str)
+/*
+ * Prefixes all strings at stoff in queue starting at p
+ */
+{
+   unsigned int len;
+   if (!str || !p)
+      return;
+   len = strlen(str);
+   if (!len)
+      return;
+   while(p)
+   {
+      char *os, *ns;
+      unsigned int olen;
+      os = GetStrAtOff(p, stoff);
+      olen = strlen(os);
+      ns = malloc(len+olen+1);
+      assert(ns);
+      strcpy(ns, str);
+      strcpy(ns+len, os);
+      free(os);
+      SetPtrAtOff(p, stoff, ns);
+      p = GetPtrAtOff(p, nxtoff);
+   }
+}
 void *FindNodeWithIval(void *p, int nxtoff, int ivoff, int val)
 {
    while (p)
@@ -1141,28 +1173,33 @@ static ATL_@(rt)node_t *Get@up@(rt)Node(void)
    return(p);
 }
 
+@whiledef cc Clone Copy
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+@mif cc = "Clone
 static ATL_@(rt)node_t *Clone@up@(rt)Node(ATL_@(rt)node_t *dup)
+@endmif
+@mif cc = "Copy
+static void Copy@up@(rt)Node(ATL_@(rt)node_t *p, ATL_@(rt)node_t *dup)
+@endmif
 {
+@mif cc = "Clone
    ATL_@(rt)node_t *p;
    p = malloc(sizeof(ATL_@(rt)node_t));
    assert(p);
+@endmif
+@mif cc = "Copy
+   ATL_@(rt)node_t *nxt=p->next;
+   @whiledef st auth comp cflags rout genstr exflags str
+   if (p->@(st))
+      free(p->@(st));
+   @endwhile
+@endmif
    memcpy(p, dup, sizeof(ATL_@(rt)node_t));
-   if (dup->rout)
-      p->rout = DupString(dup->rout);
-   if (dup->auth)
-      p->auth = DupString(dup->auth);
-   if (dup->comp)
-      p->comp = DupString(dup->comp);
-   if (dup->cflags)
-      p->cflags = DupString(dup->cflags);
-   if (dup->str)
-      p->str = DupString(dup->str);
-   if (dup->genstr)
-      p->genstr = DupString(dup->genstr);
-   if (dup->exflags)
-      p->exflags = DupString(dup->exflags);
+   @whiledef st auth comp cflags genstr exflags str
+   if (dup->@(st))
+      p->rout = DupString(dup->@(st));
+   @endwhile
 @ROUT mmread
    if (dup->moves)
       p->moves = DupString(dup->moves);
@@ -1170,9 +1207,15 @@ static ATL_@(rt)node_t *Clone@up@(rt)Node(ATL_@(rt)node_t *dup)
    if (dup->kname)
       p->kname = DupString(dup->kname);
 @ROUT r1read mvread mmread cpread
+@mif cc = "Copy
+   p->next = nxt;
+@endmif
+@mif cc = "Clone
    p->next = NULL;
    return(p);
+@endmif
 }
+@endwhile
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip): clones a queue of @up@(rt) structs */
@@ -2968,6 +3011,9 @@ static char CopyGetTrans(int flag)
 
 /* procedure @(ip) */
 static char *CopyGetDirect(int flag)
+/*
+ * In names, direction is in reference to col-major, not block!
+ */
 {
    return((flag&(1<<CPF_TOBLK)) ? "From" : "Into");
 }
@@ -3025,7 +3071,7 @@ void CopyEncodeAllScal
 static int CopyEncode
 (              /* all args take 0, which means don't set */
    char pre,  /* [s,d,c,z] */
-   char dir,  /* 'I': copy Into block storage, 'F': copy From block */
+   char dir,  /* 'I': copy Into block, 'F': copy From block */
    char mat,  /* [C,A] */
    char TA    /* [N,T,C,H] */
 )
@@ -3041,7 +3087,7 @@ static int CopyEncode
    }
    if (dir)
    {
-      if (!(dir == 'F' || dir == 'f'))
+      if ((dir == 'I' || dir == 'i'))
          flag |= (1<<CPF_TOBLK);
    }
    if (mat)
@@ -3214,7 +3260,8 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
 {
    int iret;
    iret = (c0->STGID == c1->STGID);
-   iret &= (c0->ID == c1->ID);
+   if (c0->STGID)
+      return(!iret);
    iret &= (c0->nu == c1->nu);
    if (c0->flag & (1<<CPF_CBLK))
    {
@@ -3243,9 +3290,12 @@ ATL_cpnode_t *FindEquivCopy(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
  */
 {
    ATL_cpnode_t *cp;
-   for (cp=cb; cp; cp = cp->next)
-      if (!CopyAreDiff(cp, dup))
-         return(cp);
+   if (dup)
+   {
+      for (cp=cb; cp; cp = cp->next)
+         if (!CopyAreDiff(cp, dup))
+            return(cp);
+   }
    return(NULL);
 }
 
@@ -3447,6 +3497,29 @@ static double PrintResultsFromFile(FILE *fpout, double *darr)
 #include "atlas_gentesttime.h"
 
 @ROUT atlas_cptesttime.h
+ATL_cpnode_t *CopyApplyTypeScal2Hand(ATL_cpnode_t *cb, unsigned int flag)
+/*
+ * Get rid of cb not matching flag.  For survivors, change their optional 
+ * alpha/beta cases to only match the one in flag
+ */
+{
+   ATL_cpnode_t *cp=cb;
+   const unsigned int typ = flag & ((1<<CPF_SINGLE) | (1<<CPF_REAL));
+   const unsigned int msk = (flag&(1<<CPF_CBLK)) ? 
+                            (CPF_ALLBET|CPF_ALLALP) : CPF_ALLALP, nmsk=~msk;
+   while (cp)
+   {
+      ATL_cpnode_t *nxt = cp->next;
+      cp->flag |= typ;
+      if (flag&msk&cp->flag)
+         cp->flag = (cp->flag&(nmsk))|(flag&msk);
+      else
+         cb = KillCPNodeFromQ(cb, cp);
+      cp = nxt;
+   }
+   return(cb);
+}
+
 double TimeCPKernel
 (
    int verb,                    /* 0: no output, 1 min output, 2: full output */
@@ -3455,7 +3528,7 @@ double TimeCPKernel
    int mb, int nb,              /* rows & cols to time */
    int alpha,                   /* alpha to time [1,-1,X] */
    int beta,                    /* beta to time [0,1,-1,X] */
-   unsigned long nrep,          /* >0: # of repititions to force */
+   unsigned long nrep,          /* >0: # of repetitions to force */
    int cflush                   /* >=0: size of cache flush, else ignored */
 )
 {
@@ -3472,14 +3545,14 @@ double TimeCPKernel
    else
    {
       int k;
-      k = NumDecDigits(mb) + NumDecDigits(nb) + 2 + 5;
+      k = NumDecDigits(mb) + NumDecDigits(nb) + NumDecDigits(cp->vlen) + 3 + 5;
       fnam = GetCopyName(cp, k);
       fnam[0] = 'r';
       fnam[1] = 'e';
       fnam[2] = 's';
       fnam[3] = '/';
       for (k=4; fnam[k]; k++);
-      sprintf(fnam+k, "_%ux%u.ktim", mb, nb);
+      sprintf(fnam+k, "_%ux%u_%u.ktim", mb, nb, cp->ID ? cp->ID:cp->vlen);
       dp = ReadResultsFile(2, 0, fnam);
       if (dp)
       {
@@ -3505,7 +3578,7 @@ double TimeCPKernel
       i = sprintf(ln, "make %ccpytime TA=%c MTDX='-D 8000 8000 8000 1'", 
                   CopyGetPre(flag), CopyGetTrans(flag));
    i += sprintf(ln+i, " kfnam=%s outF=\"-f %s\"", cp->rout, fnam);
-   i += sprintf(ln+i, " mb=%d nb=%d", mb, nb);
+   i += sprintf(ln+i, " mb=%d nb=%d TOBLK=%u", mb, nb, (flag>>CPF_TOBLK)&1);
    @whiledef sc alpha beta
    if (@(sc) == 0 || @(sc) == 1)
       i += sprintf(ln+i, " @(sc)=%d", @(sc));
@@ -5857,7 +5930,8 @@ struct MMCopyFunc
 /* procedure @(ip) */
 static char *GetCpySumNam(int flag, char ch)
 {
-   static char fnam[32]={'X', 'b','2','C', '_', 'a', 'X', 'b', 'X'};
+   static char fnam[32]={'X', 'b','2','C', '_', 'a', 'X', 'b', 'X',
+                         '.', 's', 'u', 'm'};
    @multidef ct  6  8
    @whiledef sc AL BE
    if (flag&(1<<CPF_@(sc)N))
@@ -5990,7 +6064,7 @@ static int MMCopyAreDiff(int flag, ATL_mmnode_t *m0, ATL_mmnode_t *m1)
 /* procedure @(ip) */
 ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
 {
-   ATL_cpnode_t *cb=NULL, *cp;
+   ATL_cpnode_t *cp;
    cp = GetCPNode();
    cp->flag = flag;
    if (flag&(1<<CPF_CBLK))
@@ -6041,35 +6115,33 @@ ATL_cpnode_t *NoCopyRep(int flag, int minSz, ATL_cpnode_t *cb)
  */
 {
    ATL_cpnode_t *cp, *dup;
-   if (!cb)
-     return(NULL);
-   if (!cb || !cb->next)
-      return(NULL);
-   cp = cb;
-   while(cp->next)
+   for (cp=cb; cp && cp->next; cp = cp->next)
    {
-      const unsigned int sz0 = cp->mb * cp->nb;
-      ATL_cpnode_t *dup, *nxt=cp->next;
-      while(1)
+      unsigned int sz0 = cp->mb * cp->nb;
+      ATL_cpnode_t *dup;
+      while ( (dup = FindEquivCopy(cp->next, cp)) )
       {
-         ATL_cpnode_t *kill;
-         unsigned int sz1;
-
-         dup = FindEquivCopy(cp->next, cp);
-         if (!dup)
-            break;
-         sz1 = dup->mb * dup->mb;
-         if (sz0 > minSz && sz1 > minSz)      /* elim largest */
-            kill = (sz0 <= sz1) ? cp : dup;
-         else                                /* elim smallest */
-            kill = (sz0 <= sz1) ? dup : cp;
-         if (kill == nxt)
-            nxt = nxt->next;
-         cb = KillCPNodeFromQ(cb, kill);
-         if (kill == cp)
-            break;
+         unsigned int sz1 = dup->mb * dup->nb;;
+         if (sz0 > minSz && sz1 > minSz) /* elim largest */
+         {
+            if (sz0 > sz1)
+            {
+               sz0 = sz1;
+               cp->mb = dup->mb;
+               cp->nb = dup->nb;
+            }
+         }
+         else /* elim smallest */
+         {
+            if (sz0 < sz1)
+            {
+               sz0 = sz1;
+               cp->mb = dup->mb;
+               cp->nb = dup->nb;
+            }
+         }
+         KillCPNodeFromQ(cb, dup);
       }
-      cp = nxt;
    }
    return(cb);
 }

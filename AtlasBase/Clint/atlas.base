@@ -35985,6 +35985,16 @@ double GetKmmMflop
    sp = ATL_AlignPtr(vp);
    for (i=0; i < tsz; i++)
       sp[i] = dumb_prand(&seed);
+/*
+ * For copy timing, barrier here so above init traffic not charged to cpytime
+ * Kernels usually have some copying to be done, so its OK to overlap a little
+ * init mem traffic!
+ */
+   #if defined(ATL_NCPU) && defined(TIME_COPY)
+      chkin[kp->iam] = 2;
+      for (i=0; i < P; i++)
+         while(chkin[i] < 2);
+   #endif
 
    a = A; b = B; c = C;
    t0 = ATL_walltime();
@@ -36509,24 +36519,47 @@ int main(int nargs, char **args)
       #endif
    #endif
 #elif defined(TIME_COPY)
+   #ifndef TO_BLK
+      #define TO_BLK 0
+   #endif
    #ifndef COPYK
       #define COPYK ATL_USERCPMM
    #endif
    #ifdef TREAL
       #ifdef COPY_C
-         void COPYK(const size_t, const size_t, const TYPE, const TYPE*, 
-                    const TYPE, TYPE*, const size_t);
+         #if TO_BLK
+            void COPYK(const size_t, const size_t, const TYPE, const TYPE*, 
+                       const size_t, const TYPE, TYPE*);
+         #else
+            void COPYK(const size_t, const size_t, const TYPE, const TYPE*, 
+                       const TYPE, TYPE*, const size_t);
+         #endif
       #else
-         void COPYK(const size_t, const size_t, const TYPE,
-                    const TYPE*, const size_t, TYPE*);
+         #if TO_BLK
+            void COPYK(const size_t, const size_t, const TYPE,
+                       const TYPE*, const size_t, TYPE*);
+         #else
+            void COPYK(const size_t, const size_t, const TYPE,
+                       const TYPE*, TYPE*, const size_t);
+         #endif
       #endif
    #else
       #ifdef COPY_C
-         void COPYK(const size_t, const size_t, const TYPE*, const TYPE*, 
-                    const TYPE*, const TYPE*, TYPE *, const size_t);
+         #if TO_BLK
+            void COPYK(const size_t, const size_t, const TYPE*, const TYPE*, 
+                       const size_t, TYPE*, TYPE*);
+         #else
+            void COPYK(const size_t, const size_t, const TYPE*, const TYPE*, 
+                       const TYPE*, const TYPE*, TYPE *, const size_t);
+         #endif
       #else
-         void COPYK(const size_t, const size_t, const TYPE*,
-                    const TYPE*, const size_t, TYPE*, TYPE*);
+         #if TO_BLK
+            void COPYK(const size_t, const size_t, const TYPE*,
+                       const TYPE*, const size_t, TYPE*, TYPE*);
+         #else
+            void COPYK(const size_t, const size_t, const TYPE*,
+                       const TYPE*, const TYPE*, TYPE*, const size_t);
+         #endif
       #endif
    #endif
 #elif defined(TCPLX)
@@ -36818,15 +36851,31 @@ double GetKmmMflop
       #elif defined(TIME_COPY)
          #ifdef COPY_C
             #ifdef TCPLX
-               COPYK(mb, nb, alpha, c+szC, c, beta, AA, lda);
+               #if TO_BLK
+                  COPYK(mb, nb, alpha, AA, lda, beta, c+szC, c);
+               #else
+                  COPYK(mb, nb, alpha, c+szC, c, beta, AA, lda);
+               #endif
             #else
-               COPYK(mb, nb, alpha, c, beta, AA, lda);
+               #if TO_BLK
+                  COPYK(mb, nb, alpha, AA, lda, beta, c);
+               #else
+                  COPYK(mb, nb, alpha, c, beta, AA, lda);
+               #endif
             #endif
-         #else
+         #else  /* timing A or B copy */
             #ifdef TREAL
-               COPYK(B0, B1, alpha, AA, lda, c);
+               #if TO_BLK
+                  COPYK(B0, B1, alpha, AA, lda, c);
+               #else
+                  COPYK(B0, B1, alpha, c, AA, lda);
+               #endif
             #else
-               COPYK(B0, B1, alpha, AA, lda, c+szC, c);
+               #if TO_BLK
+                  COPYK(B0, B1, alpha, AA, lda, c+szC, c);
+               #else
+                  COPYK(B0, B1, alpha, c+szC, c, AA, lda);
+               #endif
             #endif
          #endif
          aa += INCBLK;

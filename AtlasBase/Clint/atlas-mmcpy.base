@@ -50,9 +50,9 @@
 # This file indexes the user-supplied copy routines for the storage schemes
 # indexed in storage.ids, and has the following format (non-mandatory
 # keys show the default in []):
-# ID=<id> STGID=<stgid> TOBLK=[0,1] TRANS=[0,1] CONJ=[0,1] MU=<mu> NU=<nu> \
-#         VLEN=<vlen> ROUT='rt' AUTH='name' COMP='gcc' CFLAGS='flags' \
-#    ALPHA=lst BETA=lst
+# ID=<id> STGID=<stgid> CBLK=[0,1] TOBLK=[0,1] TRANS=[0,1] CONJ=[0,1] \
+#    MU=<mu> NU=<nu> VLEN=<vlen> ROUT='rt' AUTH='name' \
+#    COMP='gcc' CFLAGS='flags' ALPHA=lst BETA=lst
 # ID: Mandatory.  Unique (in this file only) int >= 0.  
 # STGID: Mandatory.  Number >0 matching and ID in storage.idx.  Predefined:
 #    0: access major, scope TOBLKCBLK,VLEN,KVEC to determine what type
@@ -76,9 +76,9 @@
 #       C  : TOBLK=0 required. TOBLK=1 needed for testing & custom uses.
 #
 @ROUT scopy.idx dcopy.idx
-ID=1 STGID=0 TOBLK=1 MU=12 NU=4 ALPHA=X BETA=X \
+ID=1 STGID=0 CBLK=1 TOBLK=0 MU=12 NU=4 ALPHA=X BETA=X \
      ROUT='ATL_cpammC12x4_aXbX.c' AUTH='R. Clint Whaley'
-ID=2 STGID=0 TOBLK=1 MU=12 NU=4 ROUT='ATL_cpammC12x4_aXbX.c' \
+ID=2 STGID=0 CBLK=1 TOBLK=0 MU=12 NU=4 ROUT='ATL_cpammC12x4_aXbX.c' \
      AUTH='R. Clint Whaley' ALPHA=X BETA=X COMP='gcc' CFLAGS='-O2 -mfpmath=387'
 @ROUT cptst.c
 /* 
@@ -194,7 +194,7 @@ ATL_mmnode_t *GetFlags
  */
 {
    ATL_mmnode_t *mb, *mp;
-   char pre='d', mat='c', dir='F', ta;
+   char pre='d', mat='C', dir='I', ta;
    int i, ibe=1, ial=1, k, n;
 
    *KB = NULL;
@@ -261,7 +261,6 @@ ATL_mmnode_t *GetFlags
       }
    }
    i = CopyEncode(pre, dir, mat, ta);
-   i |= (mat == 'C') ? (1<<CPF_CBLK) : (1<<1<<CPF_ABLK);
    *FLAG = CopyEncodeScal(i, ial, ibe);
    mb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    mp = ATL_LastMMNode(mb);
@@ -284,68 +283,65 @@ unsigned long GetRep(unsigned long reps, unsigned int mb, unsigned int nb)
    ratio = 16.0 / (((double)mb)*nb);
    nrep = reps*ratio;
    nrep = (nrep > 0) ? nrep : 1;
+   return(nrep);
 }
-#if 0
+
 void DoHandTimings
-   (char pre, int verb, unsigned int flag, ATL_mmnode_t *mb, 
-    ATL_cpnode_t *cb, ATL_cpnode_t *hb)
+   (char pre, int verb, unsigned long rep4, unsigned int flag, ATL_cpnode_t *cb)
 {
-   ATL_mmnode_t *mp;
-   ATL_cpnode_t *cp, *hp, *prv=NULL;
+   ATL_cpnode_t *hb, *cp, *hp, *prv=NULL;
    int ialp, ibet=0;
+   unsigned long nrep;
 
    ialp = CopyGetAlphaI(flag);
    if (flag & (1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
-
-   printf("FINDING BEST HAND-TUNED COPY: \n");
-   for (cp=cb,mp=mb; mp; cp=cp->next, mp=mp->next)
+   hb = ReadCPFileWithPath(pre, "CPYCASES", "copy.idx");
+   hb = CopyApplyTypeScal2Hand(hb, flag);
+   if (!hb)
    {
-      double mf, mfB = mp->mflop[0];
+      printf("NO USER-SUPPLIED COPY ROUTINES!\n");
+      return;
+   }
+   PrefixStrAllNodes(hb, GetOffset(&hb->next, hb), GetOffset(&hb->rout, hb),
+                     "CPYCASES/");
+
+   printf("FINDING BEST HAND-TUNED COPY:\n");
+   for (cp=cb; cp; cp=cp->next)
+   {
+      double mf;
+      const unsigned int mb=cp->mb, nb=cp->nb;
 /*
  *    Try any hand-tuned cases that work
  */
-      for (hp=hb; hp; hp = hp->next)
+      nrep = GetRep(rep4, mb, nb);
+      hp = FindEquivCopy(hb, cp);
+      if (hp)
       {
-         if (MMCopyWorksForKern(flag, mp, hp))
+         printf("   TIMINGS B=(%d,%d), U=(%d,%d), reps=%lu:\n", 
+                cp->mb, cp->nb, cp->mu, cp->nu, nrep);
+         do
          {
-            char *gens=mp->genstr, *rts=mp->rout;
-            int id=mp->ID, len;
-            mp->ID = hp->ID;
-            mp->genstr = NULL;
-            len = strlen(hp->rout) + 10;
-            mp->rout=malloc(len);
-            assert(mp->rout);
-            sprintf(mp->rout, "CPYCASES/%s", hp->rout);
-            mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, ialp, ibet,
-                               0, -1);
+            double mf;
+            mf = TimeCPKernel(verb, 0, hp, mb, nb, ialp, ibet, nrep, -1);
             printf("      ID=%6d VL=%2d: mf=%.0f\n", hp->ID, hp->vlen, mf);
-            if (mf > mfB)
+            if (mf > cp->mflop[0])
             {
-               @whiledef iv ID STGID vlen
-               cp->@(iv) = hp->@(iv);
-               @endwhile
-               @whiledef st genstr auth comp cflags
-               if (cp->@(st))
-                  free(cp->@(st));
-               cp->@(st) = DupString(hp->@(st));
-               @endwhile
-               free(gens);
-               free(rts);
-               cp->mflop[0] = mp->mflop[0] = mfB = mf;
+               CopyCPNode(cp, hp);
+               cp->mflop[0] = mf;
+               cp->mb = mb;
+               cp->nb = nb;
+               cp->flag = CopyEncodeScal(flag, ialp, ibet);
             }
-            else
-            {
-               free(mp->rout);
-               mp->genstr = gens;
-               mp->rout = rts;
-               mp->ID = id;
-            }
+            hp = hp->next;
          }
+         while( (hp = FindEquivCopy(hp, cp)) );
+         printf("   DONE\n");
       }
    }
+   if (hb)
+      KillAllCPNodes(hb);
 }
-#endif
 
 void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag, 
                   ATL_cpnode_t *cb)
@@ -364,8 +360,7 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag,
       double mf, mfB;
       unsigned long nrep;
 
-//      nrep = GetRep(rep4, cp->mb, cp->nb);
-      nrep = rep4;
+      nrep = GetRep(rep4, cp->mb, cp->nb);
       printf("   TIMINGS B=(%d,%d), U=(%d,%d), reps=%lu:\n", 
              cp->mb, cp->nb, cp->mu, cp->nu, nrep);
       cp->vlen = 1;
@@ -401,7 +396,7 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag,
                mf = TimeCPKernel(verb, 0, cp, cp->mb, cp->nb, ialp, ibet, 
                                  nrep, -1);
                printf("      ID=     0 VL=%2d: mf=%.0f\n", VL, mf);
-               if (mf > mfB*1.03)  /* SSE bigger code, must be 3% faster */
+               if (mf > mfB)
                {
                   free(gens);
                   cp->mflop[0] = mfB = mf;
@@ -425,7 +420,7 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag,
                mf = TimeCPKernel(verb, 0, cp, cp->mb, cp->nb, ialp, ibet, 
                                  nrep, -1);
                printf("      ID=     0 VL=%2d: mf=%.0f\n", VL, mf);
-               if (mf > mfB*1.03)  /* AVX bigger code, must be 3% faster */
+               if (mf > mfB)
                {
                   free(gens);
                   cp->mflop[0] = mfB = mf;
@@ -446,8 +441,7 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag,
 }
 
 void DoTimings
-   (char pre, int verb, unsigned long rep4, unsigned int flag, ATL_cpnode_t *cb,
-    ATL_cpnode_t *hb)
+   (char pre, int verb, unsigned long rep4, unsigned int flag, ATL_cpnode_t *cb)
 {
    ATL_cpnode_t *cp;
    char *fnam;
@@ -461,17 +455,12 @@ void DoTimings
       {
          const int ialp=ials[ia];
 
-//         if (ialp != 1 || ibet != 1)
-//            continue;
+if (ialp != 2 || ibet != 2)
+   continue;
          CopyEncodeAllScal(cb, flag, ialp, ibet);
          flag = cb->flag;
          DoGenTimings(pre, verb, rep4, flag, cb);
-         #if 0
-         if (hb)
-            DoHandTimings(pre, verb, flag, cb, hb);
-         else
-            printf("NO USER-SUPPLIED COPY ROUTINES!\n");
-         #endif
+         DoHandTimings(pre, verb, rep4, flag, cb);
          for (cp=cb; cp; cp=cp->next)
          {
             if (cp->flag & (1L<<CPF_SYRK))
@@ -545,12 +534,11 @@ int main(int nargs, char **args)
    int verb, minSz, ialp, ibet=0;
    unsigned int flag;
    ATL_mmnode_t *mb, *kb, *mp;
-   ATL_cpnode_t *hb, *cb;
+   ATL_cpnode_t *cb;
    unsigned long nrep;
 
    mb = GetFlags(nargs, args, &verb, &flag, &minSz, &kb);
    pre = CopyGetPre(flag);
-   hb = ReadCPFileWithPath(pre, "CPYCASES", "copy.idx");
    ialp = CopyGetAlphaI(flag);
    if (flag&(1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
@@ -592,13 +580,11 @@ int main(int nargs, char **args)
    }
    cb = GetAllCopyNodesFromMM(flag, mb);
    cb = NoCopyRep(flag, minSz, cb);
-   PrintCPNodes(stdout, cb);
-   DoTimings(pre, verb, nrep, flag, cb, hb);
+@skip   PrintCPNodes(stdout, cb);
+   DoTimings(pre, verb, nrep, flag, cb);
 
    KillAllMMNodes(mb);
    KillAllCPNodes(cb);
-   if (hb)
-      KillAllCPNodes(hb);
    return(0);
 }
 @ROUT cpcgen

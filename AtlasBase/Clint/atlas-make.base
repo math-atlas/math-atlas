@@ -2332,7 +2332,7 @@ L3INCdep = $(INCSdir)/atlas_misc.h $(INCSdir)/atlas_lvl3.h \
 parsedeps = $(INCSdir)/atlas_mmparse.h $(INCSdir)/atlas_mmtesttime.h \
             $(INCSdir)/atlas_genparse.h $(INCSdir)/atlas_gentesttime.h \
             $(INCSdir)/atlas_mmgen.h $(INCSdir)/atlas_cpparse.h \
-            $(INCSdir)/cptesttime.h
+            $(INCSdir)/atlas_cptesttime.h
 basf = $(mySRCdir)/atlas-mmg.base
 fkob = $(mySRCdir)/ammm_fko.B
 extC = $(BINdir)/xextract -b $(basf) -langC
@@ -2346,6 +2346,7 @@ regs = 32
 nb = 28
 mmrout=JIKNBmm
 ID=25
+TOBLK=0
 
 pre = d
 muladd = 1
@@ -2439,11 +2440,13 @@ x@(rout) : $(INCAdir)/atlas_type.h @(rout).o @(dep) $(parsedeps)
 help :
 	@@echo "SEE ALSO: make cpyhelp"
 	@@echo "flags for amm kerns preMCFLAGS='', else preKCFLAGS=''\n"
-	@@echo "make PREcpytime kfnam=FILENAME mu=X nu=X knam=ROUTINE_NAME ta=[N,T] betan=[X,1,n]"
+	@@echo "make PREcpytime kfnam=FILENAME mu=X nu=X knam=ROUTINE_NAME ta=[N,T] betan=[X,1,n] TOBLK=[0,1]"
 	@@echo "-->can take MTXD '-D M lda N COLWISE'\n"
+	@@echo "make PREammmcpytst [blk2C=rt] [CM2blk=rt] mu= nu= alpha= beta= vlen="
 	@@echo "make xPREammtime_pt mmrout=FILENAME mu=X nu=X ku=X mb=X nb=X kb=X M=X N=X K=X\n"
 	@@echo "make PREammmtst mu=X nu=X M=X N=X K=X mmrout=<FILE>\n"
 	@@echo "make gen_amm_[sse,avx,gvec,scalar] mu=X nu=X vlen=VL kmaj=VL rt=FILE\n"
+	@@echo "make gen_amsyrk rt= pre= vec=[no,kdim,mdim] mu= nu= ku= bcast="
 
 cpyhelp :
 	@@echo "make gen_[sy,]blk2C rt= pre= vlen= mu= nu= cpvlen= beta= alpha="
@@ -2865,14 +2868,15 @@ res/@(pre)@(rt) : xgmmsearch
 $(AMMdir)/KERNEL/@(pre)COPY@(rt) :
 	mkdir $(AMMdir)/KERNEL/@(pre)COPY@(rt)
 	ln -s $(BLDdir)/Make.inc $(AMMdir)/KERNEL/@(pre)COPY@(rt)/Make.inc
-@declare "@(pre)install_@(rt): " y n 
+   @declare "@(pre)install_@(rt): " y n 
    $(AMMdir)/KERNEL/@(pre)COPY@(rt) xcpcgen
    @whiledef al 1 N X
       @whiledef be 0 1 N X
-         res/@(pre)b2C_a@(al)b@(be)
+         res/@(pre)@(rt)_a@(al)b@(be).sum
       @endwhile
    @endwhile
-@enddeclare
+   @enddeclare
+@endwhile
 @beginskip
 @(pre)install_amm: res/@(pre)geAMMRES.sum res/@(pre)geAMMKCLEAN.sum \
                    res/@(pre)sqAMMRES.sum res/@(pre)sqAMMKCLEAN.sum \
@@ -3042,7 +3046,8 @@ $(L3Bdir)/kernel/@(trsm) :
 @ptyp !
 @(pre)cpytimeC : 
 	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_COPY -DCOPY_C \
-           -DCOPYK=$(knam) -o @(pre)cpytimeC_pt${bn}.o $(mySRCdir)/mmtime_pt.c
+           -DTO_BLK=$(TOBLK) -DCOPYK=$(knam) \
+           -o @(pre)cpytimeC_pt${bn}.o $(mySRCdir)/mmtime_pt.c
 	$(@up@(pre)KC) $(@up@(pre)KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
            -DALPHA${alphan}=1 -DATL_MU=$(mu) -DATL_NU=$(nu) \
            -o @(pre)cpykern.o -c $(kfnam)
@@ -3054,7 +3059,8 @@ $(L3Bdir)/kernel/@(trsm) :
 
 @(pre)cpytime : 
 	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_COPY \
-           -DCOPYK=$(knam) -o @(pre)cpytime_pt${bn}.o $(mySRCdir)/mmtime_pt.c
+           -DCOPYK=$(knam) -DTO_BLK=$(TOBLK) \
+           -o @(pre)cpytime_pt${bn}.o $(mySRCdir)/mmtime_pt.c
 	$(@up@(pre)KC) $(@up@(pre)KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
            -DTRANS$(ta)_=1 -DALPHA${betan}=1 -DATL_MU=$(mu) -DATL_NU=$(nu) \
            -o @(pre)cpykern.o -c $(kfnam)
@@ -3160,7 +3166,9 @@ cwrk3=0
            -def TRI @(tri) -def mu $(mu) -def nu $(nu) \
            -def cpvl $(cpvlen) -def beta 0 -def alpha 1 ; \
         else \
-           cat $(blk2C) > c@(rt)tst.c ; \
+           echo "#define ATL_USERCPMM ATL_blk2C" > c@(rt)tst.c ; \
+           cat $(blk2C) >> c@(rt)tst.c ; \
+           echo "#undef  ATL_USERCPMM" >> c@(rt)tst.c ; \
         fi
         @whiledef op RM CM
 	if test "$(@(op)2blk)" != "def" ; then \
@@ -3220,7 +3228,13 @@ cwrk3=0
            -def TRI @(tri) ; \
         else \
 @skip           echo "void ATL_blk2C(const size_t,const size_t,const SCALAR, const TYPE*, const SCALAR, TYPE*, const size_t);" > @(rt)tst.c ; \
-           cat $(blk2C) > @(rt)tst.c ; \
+           echo "#define ATL_USERCPMM ATL_blk2C" > @(rt)tst.c ; \
+           echo "#define BETA0" >> @(rt)tst.c ; \
+           echo "#define ALPHA1" >> @(rt)tst.c ; \
+           cat $(blk2C) >> @(rt)tst.c ; \
+           echo "#undef  ATL_USERCPMM" >> @(rt)tst.c ; \
+           echo "#undef  BETA0" >> @(rt)tst.c ; \
+           echo "#undef  ALPHA1" >> @(rt)tst.c ; \
         fi
 	if test "$(C2blk)" = "def" ; then \
            $(extC) -b $(mySRCdir)/atlas-mmkg.base pre=@(pre) vec=NA \
