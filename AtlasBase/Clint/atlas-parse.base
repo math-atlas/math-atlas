@@ -1196,9 +1196,9 @@ static void Copy@up@(rt)Node(ATL_@(rt)node_t *p, ATL_@(rt)node_t *dup)
    @endwhile
 @endmif
    memcpy(p, dup, sizeof(ATL_@(rt)node_t));
-   @whiledef st auth comp cflags genstr exflags str
+   @whiledef st auth comp cflags rout genstr exflags str
    if (dup->@(st))
-      p->rout = DupString(dup->@(st));
+      p->@(st) = DupString(dup->@(st));
    @endwhile
 @ROUT mmread
    if (dup->moves)
@@ -2088,6 +2088,21 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @endwhile
    if (i)
       fprintf(fpout, "\n");
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_@(rt)node_t *Kill@up@(rt)NodesByFlag(int flag, int msk, ATL_@(rt)node_t *bp)
+{
+   ATL_@(rt)node_t *p=bp;
+   while(p)
+   {
+      ATL_@(rt)node_t *next = p->next;
+      if ((p->flag & msk) != (flag & msk))
+        bp = Kill@up@(rt)NodeFromQ(bp, p);
+      p = next;
+   }
+   return(bp);
 }
 
 @iexp ip @(ip) 1 +
@@ -3269,7 +3284,7 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
       sp = malloc(len+exlen);
       assert(sp);
       i = sprintf(sp, "ATL_%ccp%sA%c%c_%u_a%c", pre, dir,
-                  (flag&(1<<CPF_TRANS))?'N':'T', ck, p->nu, cal);
+                  (flag&(1<<CPF_TRANS))?'T':'N', ck, p->nu, cal);
    }
    assert(i < len);
    return(sp);
@@ -3531,6 +3546,9 @@ static double PrintResultsFromFile(FILE *fpout, double *darr)
 #include "atlas_gentesttime.h"
 
 @ROUT atlas_cptesttime.h
+@iexp ip 0
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 ATL_cpnode_t *CopyApplyTypeScal2Hand(ATL_cpnode_t *cb, unsigned int flag)
 /*
  * Get rid of cb not matching flag.  For survivors, change their optional 
@@ -3554,6 +3572,32 @@ ATL_cpnode_t *CopyApplyTypeScal2Hand(ATL_cpnode_t *cb, unsigned int flag)
    return(cb);
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int DoGenString(int verb, char *genstr)
+{
+   int err=0;
+   if (verb > 2)
+      printf("genstr='%s'\n", genstr);
+   if (!genstr)
+      err=1;
+   else if (verb < 3) /* want to redirect output */
+   {
+      char *ln;
+      ln = NewMergedString(genstr, " > /dev/null 2>&1");
+      err = system(ln);
+      free(ln);
+   }
+   else
+      err = system(genstr);
+   if (err)
+      fprintf(stderr, "UNABLE TO GENERATE WITH COMMAND: '%s'\n", 
+              genstr ? genstr : "NULL");
+   return(err);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 double TimeCPKernel
 (
    int verb,                    /* 0: no output, 1 min output, 2: full output */
@@ -3640,6 +3684,82 @@ double TimeCPKernel
    dp = ReadResultsFile(2, 0, fnam);
    free(fnam);
    return(*dp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int CPKernelFailsTest(char pre, int mb, int nb, int ialp, int ibet, 
+                      ATL_cpnode_t *cp)
+/*
+ * RETURNS: 0 on success, non-zero on failure
+ */
+{
+   int i, sz, mu=cp->mu, nu=cp->nu, ku=cp->kvec, kb;
+   char *ln, *tst="ammmcpytst";
+
+   kb = (mb >= nb) ? mb : nb;
+   kb = ((kb+ku-1)/ku)*ku;
+   if (!(cp->flag & (1<<CPF_AL1)))  /* this tester can only test alpha=1 */
+      return(0);                    /* so say anything else passes for now */
+   ialp = 1;
+   if (cp->flag & (1<<CPF_SYRK))
+   {
+      tst = "syrkcpytst";
+      if (cp->flag & (1<<CPF_CBLK))
+         assert(cp->mu == cp->nu);
+   }
+   if (cp->flag & (1<<CPF_CBLK))
+   {  /* can only test alpha=1, beta=0 for these guys */
+      if (!(cp->flag & (1<<CPF_BE0)))  /* this tester can only test beta=0 */
+         return(0);                    /* so say anything else passes for now */
+      ibet=0;
+   }
+   else /* can only test alpha=1 & TOBLK for A/B */
+   {
+      ibet = 0;  /* not used for this test */
+      mu = nu;   /* so that A & B are same */
+      mb = ((mb+mu-1) / mu)*mu;
+      if (!(cp->flag & (1<<CPF_TOBLK)))
+         return(0);
+   }
+   if (cp->genstr)
+      assert(!DoGenString(0, cp->genstr));
+   sz = 10 + 62 + NumDecDigits(nb) + NumDecDigits(mb) + NumDecDigits(kb);
+   sz += NumDecDigits(mu) + NumDecDigits(nu) + NumDecDigits(ku);
+   if (cp->kvec > 1)
+      sz += 15 + NumDecDigits(cp->kvec);
+   sz += 7 + strlen(cp->rout);
+   ln = malloc(sz);
+   assert(ln);
+   i = sprintf(ln, 
+               "make %c%s alpha=%d beta=%d mu=%u nu=%u ku=%u mb=%u nb=%u kb=%u",
+               tst, ialp, ibet, mu, nu, ku, mb, nb, kb);
+   if (cp->kvec > 1)
+      i += sprintf(ln+i, " vec=kdim vlen=%u", cp->kvec);
+   else
+      i += sprintf(ln+i, " vec=no vlen=1");
+   if (cp->flag & (1<<CPF_CBLK))
+   {
+      if (cp->flag & (1<<CPF_TOBLK))
+         i += sprintf(ln+i, " C2blk=%s", cp->rout);
+      else
+         i += sprintf(ln+i, " blk2C=%s", cp->rout);
+   }
+   else
+   {
+      if (cp->flag & (1<<CPF_TRANS))
+         i += sprintf(ln+i, "  RM2blk=%s", cp->rout);
+      else
+         i += sprintf(ln+i, "  CM2blk=%s", cp->rout);
+   }
+   assert(i < sz);
+   i = system(ln);
+   if (i)
+   {
+      fprintf(stderr, "FAILED COMMAND: '%s'\n", ln);
+      if (cp->genstr)
+         fprintf(stderr, "   genstr= '%s'\n", cp->genstr);
+   }
 }
 #endif
 @ROUT atlas_r1testtime.h atlas_r2testtime.h atlas_mvtesttime.h
@@ -5963,47 +6083,25 @@ void PrintBegIfdef(FILE *fpout, char *nm)
 /* procedure @(ip) */
 static char *GetCpySumNam(int flag, char ch)
 {
-   static char fnam[32]={'X', 'b','2','C', '_', 'a', 'X', 'b', 'X',
-                         '.', 's', 'u', 'm'};
-   @multidef ct  6  8
-   @whiledef sc AL BE
-   if (flag&(1<<CPF_@(sc)N))
-      fnam[@(ct)] = 'N';
-   else if (flag&(1<<CPF_@(sc)0))
-      fnam[@(ct)] = '0';
-   else
-      fnam[@(ct)] = (flag&(1<<CPF_@(sc)1)) ? '1' : 'X';
-      @undef ct
-   @endwhile
-   fnam[0] = ch;
+   char pre, calp;
+   static char fnam[16];
+
+   pre = CopyGetPre(flag);
+   calp = CopyGetAlphaC(flag);
    if (flag & (1<<CPF_CBLK))
    {
+      char c0='b', c1='C', cbet;
+      cbet = CopyGetBetaC(flag);
       if (flag & (1<<CPF_TOBLK))
-      {
-         fnam[1] = 'C';
-         fnam[3] = 'b';
-      }
-      else
-      {
-         fnam[1] = 'b';
-         fnam[3] = 'C';
-      }
-      fnam[7] = 'b';
+      { c0 = 'C'; c1 = 'b'; }
+      sprintf(fnam, "%c%c%c2%c_a%cb%c.sum", pre, ch, c0, c1, calp, cbet);
    }
    else
    {
+      char c0='b', c1='A';
       if (flag & (1<<CPF_TOBLK))
-      {
-         fnam[1] = 'A';
-         fnam[3] = 'b';
-      }
-      else
-      {
-         fnam[1] = 'b';
-         fnam[3] = 'A';
-      }
-      fnam[7] = 't';
-      fnam[8] = (flag&(1<<CPF_TRANS)) ? 'T' : 'N';
+      { c0 = 'A'; c1 = 'b'; }
+      sprintf(fnam, "%c%c%c2%c_a%c.sum", pre, ch, c0, c1, calp);
    }
    return(fnam);
 }
@@ -6119,7 +6217,7 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
       cp->mu = mp->mu;
       cp->nu = mp->nu;
    }
-   else if (flag&(1<<CPF_CBLK))
+   else if (flag&(1<<CPF_ABLK))
    {
       cp->STGID = mp->stgA;
       cp->mb = mp->mbB;

@@ -995,7 +995,8 @@ void ATL_USERCPMM
    unsigned int i, j;
    TYPE *C0=C, *C1=C0+ldc, *C2=C1+ldc;
    #ifdef SREAL
-      const __m256i m0={-1L,0xFFFFFFFFL,0L,0L}, m1={0xFFFFFFFF00000000L,0xFFFFFFFFL,0L,0L}, m2={0L, 0xFFFFFFFFL,0L,0L};
+      const __m256i m0={-1L,0xFFFFFFFFL,0L,0L}, 
+         m1={0xFFFFFFFF00000000L,0xFFFFFFFFL,0L,0L}, m2={0L, 0xFFFFFFFFL,0L,0L};
    #else
       const __m256i m0={-1,-1,-1,0}, m1={ 0,-1,-1,0}, m2={ 0, 0,-1,0};
    #endif
@@ -1117,4 +1118,129 @@ void ATL_USERCPMM
       break;
    default:;
    }
+}
+@ROUT ATL_cpAN2blk4_avx2.c ATL_cpAN2blk12_avx2.c
+#include "atlas_misc.h"
+#ifdef ALPHAN1
+   #define ALPHAN 1
+#endif
+#ifdef SREAL
+   #define ATL_VTYPE __m128
+@skip   #define ATL_vild(v_, p_) v_ = _mm_loadu_si128((void*)p_)
+   #define ATL_vgather(v_, p_, i_) v_ = _mm_i64gather_ps(p_, i_, 4)
+   #define ATL_vmskgat(v_, p_, i_, m_) v_ = _mm_mask_i64gather_ps(z0, p_, i_, m_, 4)
+   #define ATL_vmul(d_, s1_, s2_) d_ =  _mm_mul_ps(s1_, s2_)
+   #define ATL_vst(p_, v_) _mm_store_ps(p_, v_)
+   #define ATL_vzero(v_) v_ = _mm_setzero_ps()
+@skip   #define ATL_rnone -1.0f
+#else
+@skip   #define ATL_vild(v_, p_) v_ = _mm256_loadu_si256((void*)p_)
+   #define ATL_VLEN 4
+   #include "atlas_simd.h"
+   #undef ATL_VLEN
+   #define ATL_vgather(v_, p_, i_) v_ = _mm256_i64gather_pd(p_, i_, 8)
+   #define ATL_vmskgat(v_, p_, i_, m_) \
+      v_ = _mm256_mask_i64gather_pd(z0, p_, i_, m_, 8)
+@skip   #define NONE -1.0
+#endif
+void ATL_USERCPMM(const size_t K, const size_t D, const SCALAR alpha,
+                  const TYPE *A, const size_t lda, TYPE *b)
+{
+   
+   const __m256i off = {0, lda, lda<<1, (lda<<1)+lda};
+@ROUT ATL_cpAN2blk12_avx2.c
+   const size_t D12=D/12, Dr=D-12*D12, lda4=lda<<2, lda12=(lda4+(lda<<1))<<1;
+   const TYPE *A4=A+lda4, *A8=A4+lda4;
+@ROUT ATL_cpAN2blk4_avx2.c
+   const size_t D4=D>>2, Dr=D-(D4<<2), lda4=lda<<2;
+@ROUT ATL_cpAN2blk4_avx2.c ATL_cpAN2blk12_avx2.c
+   size_t j;
+   #ifdef ALPHAN
+      const ATL_VTYPE valp = {ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone};
+   #elif defined(ALPHAX)
+      const ATL_VTYPE valp = {alpha,alpha,alpha,alpha};
+   #endif
+@ROUT ATL_cpAN2blk12_avx2.c
+   for (j=0; j < D12; j++)
+   {
+      size_t k;
+      for (k=0; k < K; k++)
+      {
+         ATL_VTYPE a0, a1, a2;
+         ATL_vgather(a0, A+k, off);
+         ATL_vgather(a1, A4+k, off);
+         ATL_vgather(a2, A8+k, off);
+         #if defined(ALPHAN) || defined(ALPHAX)
+            ATL_vmul(a0, a0, valp);
+            ATL_vmul(a1, a1, valp);
+            ATL_vmul(a2, a2, valp);
+         #endif
+         ATL_vst(b, a0);
+         ATL_vst(b+4, a1);
+         ATL_vst(b+8, a2);
+         b += 12;
+      }
+      A += lda12;
+      A4 += lda12;
+      A8 += lda12;
+   }
+   if (Dr)
+   {
+      const size_t D4 = Dr>>2, Drr=Dr-(D4<<2);
+      #define Dr Drr
+      @beginindent 3 3
+@ROUT ATL_cpAN2blk4_avx2.c ATL_cpAN2blk12_avx2.c
+   for (j=0; j < D4; j++, A += lda4)
+   {
+      size_t k;
+      for (k=0; k < K; k++)
+      {
+         ATL_VTYPE a0;
+         ATL_vgather(a0, A+k, off);
+         #if defined(ALPHAN) || defined(ALPHAX)
+            ATL_vmul(a0, a0, valp);
+         #endif
+         ATL_vst(b, a0);
+         b += 4;
+      }
+   }
+   if (Dr)
+   {
+      const ATL_VTYPE z0={0,0,0,0};
+      ATL_VTYPE vmsk;
+      #ifdef SREAL
+         int msk[4]={0,0,0,0};
+         #define NONE -1
+      #else
+         long long int msk[4]={0,0,0,0};
+         #define NONE -1L
+      #endif
+      size_t k;
+
+      switch(Dr)
+      {
+      case 3:
+         msk[2] = NONE;
+      case 2:
+         msk[1] = NONE;
+      case 1:
+         msk[0] = NONE;
+      default:;
+      }
+      ATL_vuld(vmsk, (void*)msk);
+      for (k=0; k < K; k++)
+      {
+         ATL_VTYPE a0;
+         ATL_vmskgat(a0, A+k, off, vmsk);
+         #if defined(ALPHAN) || defined(ALPHAX)
+            ATL_vmul(a0, a0, valp);
+         #endif
+         ATL_vst(b, a0);
+         b += 4;
+      }
+   }
+@ROUT ATL_cpAN2blk12_avx2.c
+   @endindent
+   }
+@ROUT ATL_cpAN2blk4_avx2.c ATL_cpAN2blk12_avx2.c
 }

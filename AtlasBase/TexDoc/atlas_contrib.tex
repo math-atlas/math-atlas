@@ -2639,6 +2639,49 @@ API as previously described:
 \end{enumerate}
 
 
+\newpage
+\section{Speeding up small-case Level 3 BLAS by writing copy kernels}
+\subsection{Access-major Copy for A or B matrix}
+For access-major GEMM, you need to supply functions that copy from
+row- or column-major storage into access-major storage.  The signature of
+these functions for real precision is:
+\begin{verbatim}
+   void ATL_USERCPMM(const size_t K, const size_t D, const SCALAR alpha,
+                     const TYPE *A, const size_t lda, TYPE *b);
+\end{verbatim}
+and for complex it is:
+\begin{verbatim}
+   void ATL_USERCPMM(const size_t K, const size_t D, const SCALAR alpha,
+                     const TYPE *A, const size_t lda, TYPE *rb, TYPE *ib);
+\end{verbatim}
+
+These functions take only a single unrolling parameter, $U$.  For the $A$
+matrix, $U = M_u$, while for $B$, $U = N_u$.  For any given $U$, there will
+be 6 compiled copy routines, 3 coming from variants of $\alpha$, and two
+coming from the transpose parameter.  
+This function is copying a $K \times D$ block into access-major storage,
+where $K$ is the dimension common to both $A$ and $B$.  The unrolling factor
+$U$ is always being applied to $D$ (which is $M$ for $A$ and $N$ for $B$).
+The transpose parameter indicates whether $K$ comes from contiguous or
+strided storage:
+\begin{itemize}
+\item NoTrans : The $K$ dimension is contiguous, while $D$ is strided by the
+                leading dimension.
+   \begin{itemize}
+   \item [$\rightarrow$] $U$ must be {\em gathered} into a contiguous $U$-length vectors
+   \end{itemize}
+\item Transpose: $K$ is strided by the leading dimension, while $D$ is
+                 stored contiguously.
+   \begin{itemize}
+   \item [$\rightarrow$] $U$ must can just be taken directly from storage
+   \end{itemize}
+\end{itemize}
+To remind $K$ is always the dimension common to $A$ and $B$ matrices,
+while the $D$ will be $M$ ($N$) for $A$ ($B$).
+
+\subsection{Access-major Copy for C matrix}
+
+\newpage
 \section{Speeding up the Level 2 BLAS}
 
 ATLAS presently empirically tunes four kernels to optimize the various

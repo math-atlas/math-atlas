@@ -80,6 +80,10 @@
 @ROUT scopy.idx dcopy.idx
 ID=1 STGID=0 CBLK=1 TOBLK=0 MU=3 NU=3 KVEC=@(VL) VLEN=@(VL) SYRK=1 \
      ALPHA=1,N,X BETA=0,N,1,X ROUT='ATL_skblk2C3x3.c' AUTH='R. Clint Whaley'
+ID=2 STGID=0 TOBLK=1 MU=1 NU=4 VLEN=4 ALPHA=1,N,X \
+     ROUT='ATL_cpAN2blk4_avx2.c' AUTH='R. Clint Whaley'
+ID=2 STGID=0 TOBLK=1 MU=1 NU=12 VLEN=4 ALPHA=1,N,X \
+     ROUT='ATL_cpAN2blk12_avx2.c' AUTH='R. Clint Whaley'
 @ROUT cptst.c
 /* 
  * This is a sanity check that takes a known-good copy implementation in
@@ -269,24 +273,27 @@ unsigned long GetRep(unsigned long reps, unsigned int mb, unsigned int nb)
    return(nrep);
 }
 
-void DoHandTimings
+ATL_cpnode_t *DoHandTimings
    (char pre, int verb, unsigned long rep4, unsigned int flag, ATL_cpnode_t *cb)
 {
-   ATL_cpnode_t *hb, *cp, *hp, *prv=NULL;
-   int ialp, ibet=0;
+   ATL_cpnode_t *hb, *cp, *hp, *HB=NULL;
+   int ialp, ibet=0, msk;
    unsigned long nrep;
 
-   if (!(flag&(1<<CPF_CBLK)))  /* temp until we support A copy */
-      return;
    ialp = CopyGetAlphaI(flag);
    if (flag & (1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
+
    hb = ReadCPFileWithPath(pre, "CPYCASES", "copy.idx");
+/*
+ * Get rid of kernels for other matrix type
+ */
+   hb = KillCPNodesByFlag(flag, 1<<CPF_CBLK, hb);
    hb = CopyApplyTypeScal2Hand(hb, flag);
    if (!hb)
    {
       printf("NO USER-SUPPLIED COPY ROUTINES!\n");
-      return;
+      return(NULL);
    }
    PrefixStrAllNodes(hb, GetOffset(&hb->next, hb), GetOffset(&hb->rout, hb),
                      "CPYCASES/");
@@ -295,6 +302,7 @@ void DoHandTimings
    for (cp=cb; cp; cp=cp->next)
    {
       double mf;
+      ATL_cpnode_t *np=NULL;
       const unsigned int mb=cp->mb, nb=cp->nb;
 /*
  *    Try any hand-tuned cases that work
@@ -303,30 +311,39 @@ void DoHandTimings
       hp = FindEquivCopy(hb, cp);
       if (hp)
       {
-         printf("   TIMINGS B=(%d,%d), U=(%d,%d), reps=%lu:\n", 
-                cp->mb, cp->nb, cp->mu, cp->nu, nrep);
+         printf("   TIMINGS B=(%d,%d), U=(%d,%d) TA=%c, reps=%lu:\n", 
+                cp->mb, cp->nb, cp->mu, cp->nu, 
+                (cp->flag&(1<<CPF_TRANS))?'T':'N', nrep);
          printf("      ID=%6d VL=%2d: mf=%.0f\n", 0, cp->vlen, cp->mflop[0]);
          do
          {
             double mf;
+
             mf = TimeCPKernel(verb, 0, hp, mb, nb, ialp, ibet, nrep, -1);
             printf("      ID=%6d VL=%2d: mf=%.0f\n", hp->ID, hp->vlen, mf);
             if (mf > cp->mflop[0])
             {
-               CopyCPNode(cp, hp);
-               cp->mflop[0] = mf;
-               cp->mb = mb;
-               cp->nb = nb;
-               cp->flag = CopyEncodeScal(flag, ialp, ibet);
+               if (np)
+                  KillCPNode(np);
+               np = CloneCPNode(hp);
+               np->mflop[0] = mf;
+               np->mb = mb;
+               np->nb = nb;
+               np->flag = CopyEncodeScal(flag, ialp, ibet);
             }
             hp = hp->next;
          }
          while( (hp = FindEquivCopy(hp, cp)) );
          printf("   DONE\n");
       }
+      if (!np)
+         np = CloneCPNode(cp);
+      np->next = HB;
+      HB = np;
    }
    if (hb)
       KillAllCPNodes(hb);
+   return(ReverseCPQ(HB));
 }
 
 void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag, 
@@ -347,8 +364,9 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag,
       unsigned long nrep;
 
       nrep = GetRep(rep4, cp->mb, cp->nb);
-      printf("   TIMINGS B=(%d,%d), U=(%d,%d), reps=%lu:\n", 
-             cp->mb, cp->nb, cp->mu, cp->nu, nrep);
+      printf("   TIMINGS B=(%d,%d), U=(%d,%d), TA=%c, reps=%lu:\n", 
+             cp->mb, cp->nb, cp->mu, cp->nu, (cp->flag&(1<<CPF_TRANS))?'T':'N',
+             nrep);
       cp->vlen = 1;
       if (!cp->rout)
          cp->rout = DupString("ATL_tmp.c");
@@ -441,12 +459,15 @@ void DoTimings
       for (ia=0; ia < 3; ia++)
       {
          const int ialp=ials[ia];
+         ATL_cpnode_t *fb;
 
          CopyEncodeAllScal(cb, flag, ialp, ibet);
          flag = cb->flag;
          DoGenTimings(pre, verb, rep4, flag, cb);
-         DoHandTimings(pre, verb, rep4, flag, cb);
-         for (cp=cb; cp; cp=cp->next)
+         fb = DoHandTimings(pre, verb, rep4, flag, cb);
+         if (!fb)
+            fb = cb;
+         for (cp=fb; cp; cp=cp->next)
          {
             if (cp->flag & (1L<<CPF_SYRK))
                cp->mflop[0] = 2e-6 / cp->mflop[0]; /* time per elt */
@@ -454,7 +475,9 @@ void DoTimings
                cp->mflop[0] = 1e-6 / cp->mflop[0]; /* time per elt */
          }
          fnam = GetCpySumNam(flag, 'f');
-         WriteCPFileWithPath(pre, "res", fnam, cb);
+         WriteCPFileWithPath(pre, "res", fnam, fb);
+         if (fb != cb)
+            KillAllCPNodes(fb);
          printf("DONE, output in: res/%c%s\n", pre, fnam);
       }
    }
@@ -543,6 +566,7 @@ int main(int nargs, char **args)
       cb = cb0;
    }
    cb = NoCopyRep(flag, minSz, cb);
+   PrintCPNodes(stdout, cb);
    if (!(flag&(1<<CPF_CBLK)))
    {
       cb0 = CloneCPQueue(cb);
@@ -552,7 +576,6 @@ int main(int nargs, char **args)
       cp->next = cb;
       cb = cb0;
    }
-   PrintCPNodes(stdout, cb);
    DoTimings(pre, verb, nrep, flag, cb);
 
    KillAllMMNodes(mb);
