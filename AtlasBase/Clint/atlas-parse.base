@@ -3305,7 +3305,7 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
       return(1);
    if (c0->flag & (1<<CPF_CBLK))
    {
-      if (c0->mu == c1->mu)
+      if (c0->mu != c1->mu)
          return(1);
       if (c0->flag != c1->flag)
          return(1);
@@ -3694,7 +3694,7 @@ int CPKernelFailsTest(char pre, int mb, int nb, int ialp, int ibet,
  * RETURNS: 0 on success, non-zero on failure
  */
 {
-   int i, sz, mu=cp->mu, nu=cp->nu, ku=cp->kvec, kb;
+   int i, sz, mu=cp->mu, nu=cp->nu, ku=(cp->kvec)?cp->kvec:1, kb;
    char *ln, *tst="ammmcpytst";
 
    kb = (mb >= nb) ? mb : nb;
@@ -3727,15 +3727,18 @@ int CPKernelFailsTest(char pre, int mb, int nb, int ialp, int ibet,
    sz = 10 + 62 + NumDecDigits(nb) + NumDecDigits(mb) + NumDecDigits(kb);
    sz += NumDecDigits(mu) + NumDecDigits(nu) + NumDecDigits(ku);
    if (cp->kvec > 1)
-      sz += 15 + NumDecDigits(cp->kvec);
+      sz += 21 + 2*NumDecDigits(cp->kvec);
+   else
+      sz += 14;
    sz += 7 + strlen(cp->rout);
+   sz += 17;
    ln = malloc(sz);
    assert(ln);
    i = sprintf(ln, 
                "make %c%s alpha=%d beta=%d mu=%u nu=%u ku=%u mb=%u nb=%u kb=%u",
-               tst, ialp, ibet, mu, nu, ku, mb, nb, kb);
+               pre, tst, ialp, ibet, mu, nu, ku, mb, nb, kb);
    if (cp->kvec > 1)
-      i += sprintf(ln+i, " vec=kdim vlen=%u", cp->kvec);
+      i += sprintf(ln+i, " vec=kdim vlen=%u kmaj=%u", cp->kvec, cp->kvec);
    else
       i += sprintf(ln+i, " vec=no vlen=1");
    if (cp->flag & (1<<CPF_CBLK))
@@ -3748,10 +3751,11 @@ int CPKernelFailsTest(char pre, int mb, int nb, int ialp, int ibet,
    else
    {
       if (cp->flag & (1<<CPF_TRANS))
-         i += sprintf(ln+i, "  RM2blk=%s", cp->rout);
+         i += sprintf(ln+i, " RM2blk=%s", cp->rout);
       else
-         i += sprintf(ln+i, "  CM2blk=%s", cp->rout);
+         i += sprintf(ln+i, " CM2blk=%s", cp->rout);
    }
+   i += sprintf(ln+i, " > /dev/null 2>&1");
    assert(i < sz);
    i = system(ln);
    if (i)
@@ -3760,7 +3764,53 @@ int CPKernelFailsTest(char pre, int mb, int nb, int ialp, int ibet,
       if (cp->genstr)
          fprintf(stderr, "   genstr= '%s'\n", cp->genstr);
    }
+   free(ln);
+   return(i);
 }
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *KillFailingCPNodes(char pre, ATL_cpnode_t *cb)
+{
+   ATL_cpnode_t *cp;
+   int i;
+   int nerr=0;
+   for (i=0,cp=cb; cp; i++)
+   {
+      ATL_cpnode_t *next = cp->next;
+      int err, ibet=0, ialp, mb=cp->mb, nb=cp->nb;
+
+      ialp = CopyGetAlphaI(cp->flag);
+      if (cp->flag & (1<<CPF_CBLK))
+         ibet = CopyGetBetaI(cp->flag);
+      if (!mb)
+         mb = 5*cp->mu;
+      if (!nb)
+         nb = 7*cp->nu;
+      if (cp->flag&(1<<CPF_SYRK))
+         nb = mb;
+      err = CPKernelFailsTest(pre, mb, nb, ialp, ibet, cp);
+      if (cp->ID)
+         printf("%3d. ID=%d (%s) : %s\n", i, cp->ID, cp->rout, 
+                (err) ? "FAIL!":"PASS.");
+      else
+         printf("%3d. B=(%u,%u), U=(%u,%u), VL=(%d,%d) : %s\n", i, 
+                cp->mb, cp->nb, cp->mu, cp->nu, cp->vlen, cp->kvec, 
+                (err) ? "FAIL!":"PASS.");
+      if (err)
+      {
+         cb = KillCPNodeFromQ(cb, cp);
+         nerr++;
+      }
+      cp = next;
+   }
+   if (nerr)
+      printf("FAILED %u of %u tests!\n\n", nerr, i);
+   else
+      printf("PASSED ALL %u tests.\n\n", i);
+   return(cb);
+}
+
 #endif
 @ROUT atlas_r1testtime.h atlas_r2testtime.h atlas_mvtesttime.h
 static int SprintAlignStr

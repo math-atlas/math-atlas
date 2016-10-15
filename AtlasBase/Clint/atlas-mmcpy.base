@@ -135,6 +135,7 @@ int cntErr(int verb, int M, int N, TYPE *A, size_t lda, TYPE *E, size_t lde,
       }
    }
 }
+
 int main(int nargs, char **args)
 {
    int mb=28, nb=36, lda, m=27, n=33, N=nb+4;
@@ -273,6 +274,33 @@ unsigned long GetRep(unsigned long reps, unsigned int mb, unsigned int nb)
    return(nrep);
 }
 
+ATL_cpnode_t *GetWorkingKerns(char pre, int verb, unsigned int flag)
+/*
+ * Later, need to specialize to alpha,beta combo
+ */
+{
+   ATL_cpnode_t *hb=NULL;
+   int DOTEST=0;
+   hb = ReadCPFileWithPath(pre, "res", "cpywork_a1b0.sum");
+   if (!hb)
+   {
+      hb = ReadCPFileWithPath(pre, "CPYCASES", "copy.idx");
+      if (flag&(1<<CPF_CBLK))
+         DOTEST = (CopyGetAlphaI(flag) == 1 && CopyGetBetaI(flag) == 0);
+      else
+         DOTEST = CopyGetAlphaI(flag) == 1;
+   }
+   hb = CopyApplyTypeScal2Hand(hb, flag);
+   PrefixStrAllNodes(hb, GetOffset(&hb->next, hb), GetOffset(&hb->rout, hb),
+                     "CPYCASES/");
+   if (DOTEST)
+   {
+      hb = KillFailingCPNodes(pre, hb);
+      WriteCPFileWithPath(pre, "res", "cpywrk_a1b0.sum", hb);
+   }
+   hb = KillCPNodesByFlag(flag, 1<<CPF_CBLK, hb); /* kill wrong-mat kerns */
+   return(hb);
+}
 ATL_cpnode_t *DoHandTimings
    (char pre, int verb, unsigned long rep4, unsigned int flag, ATL_cpnode_t *cb)
 {
@@ -284,20 +312,12 @@ ATL_cpnode_t *DoHandTimings
    if (flag & (1<<CPF_CBLK))
       ibet = CopyGetBetaI(flag);
 
-   hb = ReadCPFileWithPath(pre, "CPYCASES", "copy.idx");
-/*
- * Get rid of kernels for other matrix type
- */
-   hb = KillCPNodesByFlag(flag, 1<<CPF_CBLK, hb);
-   hb = CopyApplyTypeScal2Hand(hb, flag);
+   hb = GetWorkingKerns(pre, verb, flag);
    if (!hb)
    {
       printf("NO USER-SUPPLIED COPY ROUTINES!\n");
       return(NULL);
    }
-   PrefixStrAllNodes(hb, GetOffset(&hb->next, hb), GetOffset(&hb->rout, hb),
-                     "CPYCASES/");
-
    printf("FINDING BEST HAND-TUNED COPY:\n");
    for (cp=cb; cp; cp=cp->next)
    {
