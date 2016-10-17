@@ -59,19 +59,18 @@
 #define CPF_CONJ     6  /* 1: Conjugate, else NoConj */
 #define CPF_SINGLE   7  /* 1: single, else double */
 #define CPF_REAL     8  /* 1: real, else complex */
-#define CPF_BE0      9
-#define CPF_BE1     10
-#define CPF_BEN     11
-#define CPF_BEX     12
-#define CPF_AL0     13
-#define CPF_AL1     14
-#define CPF_ALN     15
-#define CPF_ALX     16
-#define CPF_SYRK    17
-#define CPF_SYMM    18
-#define CPF_TRMM    19
-#define CPF_TRSM    20
-#define CPF_ASM     21 /* only set during gen, prevents comparison! */
+#define CPF_BE1      9
+#define CPF_BEN     10
+#define CPF_BEX     11
+#define CPF_BE0     12
+#define CPF_AL1     13
+#define CPF_ALN     14
+#define CPF_ALX     15
+#define CPF_SYRK    16
+#define CPF_SYMM    17
+#define CPF_TRMM    18
+#define CPF_TRSM    19
+#define CPF_ASM     20 /* only set during gen */
 
 #define CPF_DEFAULT   0  /* default is no bits set */
 #define CPF_ALLALP ((1<<CPF_AL0)|(1<<CPF_AL1)|(1<<CPF_ALN)|(1<<CPF_ALX))
@@ -323,6 +322,50 @@ struct SIDNode  /* holds string, integer, and double */
    else (bits_) &= ~(1<<(flg_)); \
 }
 #define FLAG_IS_SET(field_, bit_) ( ((field_) & (1<<(bit_))) != 0 )
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int Sys2File(char *cmnd, char *file)
+/*
+ * Executes cmnd, and redirects stdout to file
+ * RETURNS: 0 for success, else error code from system call
+ */
+{
+   int lF, lC, i;
+   char *sp, *sys;
+   assert(cmnd);
+   if (!file)
+      file = "/dev/null";
+   lC = strlen(cmnd);
+   lF = strlen(file);
+   sys = malloc((lC+lF+4)*sizeof(char));
+   assert(sys);
+   for (i=0; i < lC; i++)
+      sys[i] = cmnd[i];
+   sp = sys + lC;
+   *sp = ' ';
+   sp[1] = '>';
+   sp[2] = ' ';
+   sp += 3;
+   for (i=0; i < lF; i++)
+      sp[i] = file[i];
+   sp[lF] = '\0';
+   i = system(sys);
+   free(sys);
+   return(i);
+}
+@BEGINSKIP
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+char *GetSysStr(char *cmnd)
+/*
+ * Executes cmnd, and returns stdout as string
+ */
+{
+   int len;
+   len strlen(cmnd)
+}
+@ENDSKIP
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) : allocates ATL_sidnode_t */
@@ -1073,7 +1116,7 @@ void *FindNodeWithMaskOR(void *p, int nxtoff, int bvoff, int mask)
 /* procedure @(ip) */
 void PrefixStrAllNodes(void *p, int nxtoff, int stoff, char *str)
 /*
- * Prefixes all strings at stoff in queue starting at p
+ * Prefixes all strings at stoff in queue starting at p if not already prefxd
  */
 {
    unsigned int len;
@@ -1086,14 +1129,26 @@ void PrefixStrAllNodes(void *p, int nxtoff, int stoff, char *str)
    {
       char *os, *ns;
       unsigned int olen;
+      int DOPREF;
+
       os = GetStrAtOff(p, stoff);
-      olen = strlen(os);
-      ns = malloc(len+olen+1);
-      assert(ns);
-      strcpy(ns, str);
-      strcpy(ns+len, os);
-      free(os);
-      SetPtrAtOff(p, stoff, ns);
+      if (os)
+      {
+         olen = strlen(os);
+         if (olen < len)
+            DOPREF = 1;
+         else
+            DOPREF = strncmp(os, str, len);
+         if (DOPREF)
+         {
+            ns = malloc(len+olen+1);
+            assert(ns);
+            strcpy(ns, str);
+            strcpy(ns+len, os);
+            free(os);
+            SetPtrAtOff(p, stoff, ns);
+         }
+      }
       p = GetPtrAtOff(p, nxtoff);
    }
 }
@@ -3144,6 +3199,7 @@ static int CopyGet@(sc)I(int flag)
       iret = 2;
    return(iret);
 }
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static char CopyGet@(sc)C(int flag)
@@ -3164,6 +3220,8 @@ static char CopyGet@(sc)C(int flag)
    @undef pf
 @endwhile
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 char *GetCopyGenStr(ATL_cpnode_t *p)
 {
    char *gs=NULL, *vecd = p->kvec ? "kdim" : "no";
@@ -3233,6 +3291,34 @@ char *GetCopyGenStr(ATL_cpnode_t *p)
    return(gs);
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+char *ConjCopyName(ATL_cpnode_t *cp)
+{
+   if (!(cp->flag&(1<<CPF_CBLK)))
+   {
+      char ch;
+      assert(cp->rout);
+      ch = cp->rout[12];
+      assert(ch == 'T' || ch == 'N');
+      ch = (ch == 'T') ? 'H' : 'C';
+   }
+}
+
+char *UnConjCopyName(ATL_cpnode_t *cp)
+{
+   if (!(cp->flag&(1<<CPF_CBLK)))
+   {
+      char ch;
+      assert(cp->rout);
+      ch = cp->rout[12];
+      assert(ch == 'H' || ch == 'C');
+      ch = (ch == 'H') ? 'T' : 'N';
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 char *GetCopyName(ATL_cpnode_t *p, int exlen)
 {
    char *sp=NULL, *dir;
@@ -3253,11 +3339,6 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
       unsigned int blksz = p->mu * p->nu;
       if (p->kvec > 1)
          blksz = ((blksz+p->kvec-1)/p->kvec)*p->kvec;
-   @beginskip
-      if (p->ID)
-         len = 22 + NumDecDigits(p->ID);
-      else
-   @endskip
       len = 25+NumDecDigits(p->mu)+NumDecDigits(p->nu)+NumDecDigits(blksz);
       sp = malloc(len+exlen);
       assert(sp);
@@ -3275,16 +3356,20 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
    }
 /*
  * For A format routine naming scheme is:
- *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_<nu>_aX
+ *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_<nu>_<kvec>_aX
  */
    else
    {
+      char cks[4]={'k', 'y', 'r', 's'};
       char ck='g';
-      len = 20+NumDecDigits(p->nu);
+      for (i=CPF_SYRK; i <= CPF_TRSM; i++)
+         if ((flag>>i)&1)
+            ck = cks[i-CPF_SYRK];
+      len = 21 + NumDecDigits(p->nu) + NumDecDigits(p->kvec);
       sp = malloc(len+exlen);
       assert(sp);
-      i = sprintf(sp, "ATL_%ccp%sA%c%c_%u_a%c", pre, dir,
-                  (flag&(1<<CPF_TRANS))?'T':'N', ck, p->nu, cal);
+      i = sprintf(sp, "ATL_%ccp%sA%c%c_%u_%u_a%c", pre, dir,
+                  (flag&(1<<CPF_TRANS))?'T':'N', ck, p->nu, p->kvec, cal);
    }
    assert(i < len);
    return(sp);
@@ -3305,9 +3390,10 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
       return(1);
    if (c0->flag & (1<<CPF_CBLK))
    {
+      int msk = ~(1<<CPF_ASM);
       if (c0->mu != c1->mu)
          return(1);
-      if (c0->flag != c1->flag)
+      if ((c0->flag&msk) != (c1->flag&msk))
          return(1);
       if (c0->kvec || c1->kvec)
       {
@@ -3322,7 +3408,7 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
    }
    else
    {
-      int msk = ~(1<<CPF_ABLK);
+      int msk = ~((1<<CPF_ABLK)|(1<<CPF_ASM));
       if ((c0->flag&msk) != (c1->flag&msk))
          return(1);
       if (c0->kvec != c1->kvec)
@@ -3346,6 +3432,74 @@ ATL_cpnode_t *FindEquivCopy(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
             return(cp);
    }
    return(NULL);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char *GetCpySumNam(int flag, char ch)
+{
+   char pre, calp;
+   static char fnam[16];
+
+   pre = CopyGetPre(flag);
+   calp = CopyGetAlphaC(flag);
+   if (flag & (1<<CPF_CBLK))
+   {
+      char c0='b', c1='C', cbet;
+      cbet = CopyGetBetaC(flag);
+      if (flag & (1<<CPF_TOBLK))
+      { c0 = 'C'; c1 = 'b'; }
+      sprintf(fnam, "%c%c%c2%c_a%cb%c.CPS", pre, ch, c0, c1, calp, cbet);
+   }
+   else
+   {
+      char c0='b', c1='A';
+      if (flag & (1<<CPF_TOBLK))
+      { c0 = 'A'; c1 = 'b'; }
+      sprintf(fnam, "%c%c%c2%c_a%c.CPS", pre, ch, c0, c1, calp);
+   }
+   return(fnam);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *CopyNoRep(int flag, int minSz, ATL_cpnode_t *cb)
+/*
+ * Eliminates cpnodes with duplicate copy routines. In throwing away duplicates,
+ * retain routine with mb*nb > minSz, if both > minSz, throw away biggest, 
+ * if both < minSz throw away smallest.
+ */
+{
+   ATL_cpnode_t *cp, *dup;
+   for (cp=cb; cp && cp->next; cp = cp->next)
+   {
+      unsigned int sz0 = cp->mb * cp->nb;
+      ATL_cpnode_t *dup;
+      while ( (dup = FindEquivCopy(cp->next, cp)) )
+      {
+         unsigned int sz1 = dup->mb * dup->nb;;
+         if (sz0 > minSz && sz1 > minSz) /* elim largest */
+         {
+            if (sz0 > sz1)
+            {
+               sz0 = sz1;
+               cp->mb = dup->mb;
+               cp->nb = dup->nb;
+            }
+         }
+         else /* elim smallest */
+         {
+            if (sz0 < sz1)
+            {
+               sz0 = sz1;
+               cp->mb = dup->mb;
+               cp->nb = dup->nb;
+            }
+         }
+         KillCPNodeFromQ(cb, dup);
+      }
+   }
+   return(cb);
 }
 
 @ROUT mvread r1read mmread cpread
@@ -4402,6 +4556,7 @@ char *MMGetCpGenString
            FLAG_IS_SET(mp->flag,MMF_KVEC), vec, mp->rout);
    return(sp);
 }
+@beginskip
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -4435,6 +4590,7 @@ char *MMGetCpGenString_vec
            gen, vec, mp->mu, mp->nu, ialp, ibet, mp->rout);
    return(sp);
 }
+@endskip
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -6131,120 +6287,6 @@ void PrintBegIfdef(FILE *fpout, char *nm)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static char *GetCpySumNam(int flag, char ch)
-{
-   char pre, calp;
-   static char fnam[16];
-
-   pre = CopyGetPre(flag);
-   calp = CopyGetAlphaC(flag);
-   if (flag & (1<<CPF_CBLK))
-   {
-      char c0='b', c1='C', cbet;
-      cbet = CopyGetBetaC(flag);
-      if (flag & (1<<CPF_TOBLK))
-      { c0 = 'C'; c1 = 'b'; }
-      sprintf(fnam, "%c%c%c2%c_a%cb%c.sum", pre, ch, c0, c1, calp, cbet);
-   }
-   else
-   {
-      char c0='b', c1='A';
-      if (flag & (1<<CPF_TOBLK))
-      { c0 = 'A'; c1 = 'b'; }
-      sprintf(fnam, "%c%c%c2%c_a%c.sum", pre, ch, c0, c1, calp);
-   }
-   return(fnam);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-#define ALLKERN ((1L<CPF_SYRK)|(1L<CPF_SYMM)|(1L<CPF_TRMM)|(1L<CPF_TRSM))
-static int MMCopyWorksForKern(int flag, ATL_mmnode_t *mp, ATL_cpnode_t *cp)
-{
-   if (flag&(1<<CPF_CBLK))
-   {
-      unsigned int KV0, KV1;
-      if (mp->blask == ATL_KGECPFC || mp->blask == ATL_KGECP2C)
-      {  
-         if (cp->flag&ALLKERN) 
-            return(0);
-      }
-      else if (mp->blask == ATL_KSKCPFC || mp->blask == ATL_KSKCP2C)
-         if (!(cp->flag & CPF_SYRK))
-            return(0);
-      if (!(cp->flag & flag&(CPF_ALLALP|CPF_ALLBET)))
-         return(0);
-      if (mp->stgC != cp->STGID)
-         return(0);
-      if (mp->mu != cp->mu || mp->nu != cp->nu)
-         return(0);
-      KV0 = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 0;
-      KV1 = (cp->kvec > 1) ? cp->kvec : 0;
-      if (KV0 || KV1)
-      {
-         unsigned int bsz0=mp->mu*mp->nu, bsz1=cp->mu*cp->nu;
-         if (KV0)
-            bsz0 = ((bsz0+KV0-1)/KV0)*KV0;
-         if (KV1)
-            bsz1 = ((bsz1+KV1-1)/KV1)*KV1;
-         if (bsz0 != bsz1)
-            return(0);
-      }
-   }
-   else
-      return(0);  // NO SUPPORT NOW FOR A/B TUNING
-   @beginskip
-   else if (cp->flag&(1<<CPF_ABLK))
-   {
-      if (mp->stgA != cp->STGID);
-         return(0);
-      if (mp->mu != cp->nu)
-         return(0);
-   }
-   @endskip
-   return(1);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-static int MMCopyAreDiff(int flag, ATL_mmnode_t *m0, ATL_mmnode_t *m1)
-/*
- * RETURNS: 0 if m0 & m1 need same copy for selected matrix
- */
-{
-   int iret;
-   if (flag&(1<<CPF_CBLK))  /* copy C */
-   {
-      int KV0, KV1, UU;
-      if (m0->blask != m1->blask)  /* for now only SYRK/GEMM C */
-         return(1);                /* and they never match */
-      if (m0->stgC != m1->stgC)
-      {
-         if (m0->stgC > ATL_CPMAXACCMAJ || m1->stgC > ATL_CPMAXACCMAJ)
-            return(1);
-      }
-      if (m0->mu != m1->mu || m0->nu != m1->nu)
-         return(1);
-      KV0 = FLAG_IS_SET(m0->flag, MMF_KVEC) ? m0->vlen : 0;
-      KV1 = FLAG_IS_SET(m1->flag, MMF_KVEC) ? m1->vlen : 0;
-      if (KV0 || KV1)
-      {
-         unsigned int bsz0=m0->mu*m0->nu, bsz1=m1->mu*m1->nu;
-         if (KV0)
-            bsz0 = ((bsz0+KV0-1)/KV0)*KV0;
-         if (KV1)
-            bsz1 = ((bsz1+KV1-1)/KV1)*KV1;
-         if (bsz0 != bsz1)
-            return(1);
-      }
-   }
-   else /* copy A or B */
-     ;
-   return(0);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
 ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
 {
    ATL_cpnode_t *cp;
@@ -6300,99 +6342,6 @@ ATL_cpnode_t *GetAllCopyNodesFromMM(int flag, ATL_mmnode_t *mb)
       cb = cp;
    }
    return(ReverseCPQ(cb));
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-ATL_cpnode_t *NoCopyRep(int flag, int minSz, ATL_cpnode_t *cb)
-/*
- * Eliminates cpnodes with duplicate copy routines. In throwing away duplicates,
- * retain routine with mb*nb > minSz, if both > minSz, throw away biggest, 
- * if both < minSz throw away smallest.
- */
-{
-   ATL_cpnode_t *cp, *dup;
-   for (cp=cb; cp && cp->next; cp = cp->next)
-   {
-      unsigned int sz0 = cp->mb * cp->nb;
-      ATL_cpnode_t *dup;
-      while ( (dup = FindEquivCopy(cp->next, cp)) )
-      {
-         unsigned int sz1 = dup->mb * dup->nb;;
-         if (sz0 > minSz && sz1 > minSz) /* elim largest */
-         {
-            if (sz0 > sz1)
-            {
-               sz0 = sz1;
-               cp->mb = dup->mb;
-               cp->nb = dup->nb;
-            }
-         }
-         else /* elim smallest */
-         {
-            if (sz0 < sz1)
-            {
-               sz0 = sz1;
-               cp->mb = dup->mb;
-               cp->nb = dup->nb;
-            }
-         }
-         KillCPNodeFromQ(cb, dup);
-      }
-   }
-   return(cb);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-ATL_mmnode_t *MMNoCopyRep(int flag, int minSz, ATL_mmnode_t *mb)
-/*
- * Eliminates mmnodes with duplicate copy routines for matrix indicated by 
- * which.  In throwing away duplicates, retain routine with mb*nb > minSz,
- * if both > minSz, throw away biggest, if both < minSz throw away smallest.
- */
-{
-   if (mb && mb->next)
-   {
-      ATL_mmnode_t *up = mb->next;
-      while (up)
-      {
-         ATL_mmnode_t *mp;
-/*
- *       See if up has same copy routine as prior/unique mmnode
- */
-         for (mp=mb; mp != up; mp = mp->next)
-            if (!MMCopyAreDiff(flag, mp, up))
-               break;
-         if (mp != up) /* duplicate copy routine found, eliminate mp or up */
-         {
-            int sz0, sz1;
-            ATL_mmnode_t *kill, *nxt=up->next;
-            if (flag&(1<<CPF_CBLK))
-            {
-               sz0 = mp->mbB*mp->nbB; 
-               sz1 = up->mbB*up->nbB;
-            }
-            else /* copy A or B */
-            {
-               sz0 = Mmax(mp->mbB,mp->nbB); 
-               sz1 = Mmax(up->mbB,up->nbB);
-               sz0 *= mb->kbB;
-               sz1 *= up->kbB;
-            }
-            if (sz0 > minSz && sz1 > minSz)   /* elim largest */
-               kill = (sz0 <= sz1) ? up : mp;
-            else                              /* eliminate smallest */
-               kill = (sz0 <= sz1) ? mp : up;
-            mb = RemoveMMNodeFromQ(mb, kill);
-            KillMMNode(kill);
-            up = nxt;
-         }
-         else  /* new copy to add to unique list */
-            up = up->next;
-      } /* end while (up) */
-   }
-   return(mb);
 }
 
 @iexp ip @(ip) 1 +
