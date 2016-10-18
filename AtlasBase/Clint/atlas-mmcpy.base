@@ -1139,6 +1139,49 @@ int main(int nargs, char **args)
 @ROUT cpydrv
 #include "atlas_mmgen.h"
 
+typedef struct ViewNode ATL_view_t;
+struct ViewNode
+{
+   char *fnam;
+   char *nam;
+   int flag;
+   ATL_view_t *next;
+};
+
+static ATL_view_t *ATL_NewView(int flag, char *nam, char *fnam)
+{
+   ATL_view_t *p;
+   p = malloc(sizeof(ATL_view_t));
+   assert(p);
+   p->flag = flag;
+   p->nam  = nam;
+   p->fnam = fnam;
+   p->next = NULL;
+   return(p);
+}
+
+static ATL_view_t *KillView(ATL_view_t *p)
+{
+   ATL_view_t *next=NULL;
+   if (p)
+   {
+      next = p->next;
+      if (p->fnam)
+         free(p->fnam);
+      if (p->nam)
+         free(p->nam);
+      free(p);
+   }
+   return(next);
+}
+
+static void KillAllViews(ATL_view_t *p)
+{
+   while (p)
+      p = KillView(p);
+}
+
+
 #define MY_C2BLK  0
 #define MY_BLK2C  1
 #define MY_A2BLK  2
@@ -1218,20 +1261,34 @@ int ScalStr2bits(char *st, int ibit)
       st++;
       goto GET_SCAL;
    }
-   return(ibit);
+   return(flag);
 }
 
-ATL_sidnode_t *GetFlags
+int DirStr2bits(char *st, int ibit)
+{
+   int flag;
+   char ch = *st++;
+   flag = (ch == 'F' || ch == 'f') ? (1<<ibit) : (1<<(ibit+1));
+   if (*st++ == ',')
+   {
+      char ch = *st;
+      flag |= (ch == 'F' || ch == 'f') ? (1<<ibit) : (1<<(ibit+1));
+   }
+   return(flag);
+}
+
+ATL_view_t *GetFlags
    (int nargs, char **args, char *PRE, char **PTH, int *MINSZ)
 {
-   ATL_sidnode_t *sb=NULL, *sp;
+   ATL_view_t *vb=NULL, *vp;
    char *pth=NULL;
    int i, minSz=24*24;
    char pre='d';
 
    for (i=1; i < nargs; i++)
    {
-      int k;
+      char *nam;
+      int k, flag;
       if (args[i][0] != '-')
          PrintUsage(args[0], i, args[i]);
 
@@ -1253,11 +1310,11 @@ ATL_sidnode_t *GetFlags
             PrintUsage(args[0], i-1, NULL);
          pth = DupString(args[i]);
          break;
-      case 'V': /* -V C/Aa=1,N,X C/Ab=0,1,N,X C/Ad=I,F <name> mmview.sum */
+      case 'V': /* -V C/Aa=1,N,X Cb=0,1,N,X C/Ad=I,F <name> mmview.sum */
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-         sp = ATL_NewSIDNode();
-         for (k=0; k < 3; k++)
+         flag = 0;
+         for (k=0; k < 5; k++)
          {
             char mt, wt;
             int st;
@@ -1270,43 +1327,50 @@ ATL_sidnode_t *GetFlags
             if (args[i][2] != '=')
                break;
             if (wt == 'b')
-               sp->i |= ScalStr2bits(args[i]+3, MY_BE1C);
+            {
+               assert(mt == 'C');
+               flag |= ScalStr2bits(args[i]+3, MY_BE1C);
+            }
             else if (wt == 'a')
-               sp->i |= ScalStr2bits(args[i]+3, (mt == 'C')?MY_AL1C:MY_AL1A);
+               flag |= ScalStr2bits(args[i]+3, (mt == 'C')?MY_AL1C:MY_AL1A);
             else if (wt == 'd')
-               sp->i |= DirStr2bits(args[i]+3, (mt == 'C')?MY_C2BLK:MY_A2BLK);
+               flag |= DirStr2bits(args[i]+3, (mt == 'C')?MY_C2BLK:MY_A2BLK);
             else
                PrintUsage(args[0], i-1, NULL);
             if (++i >= nargs)
                PrintUsage(args[0], i-1, NULL);
          }
-         sp->next = sb;
-         sb = sp;
+         nam = DupString(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         vp = ATL_NewView(flag, nam, DupString(args[i]));
+         vp->next = vb;
+         vb = vp;
          break;
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
-   assert(sb);
+   assert(vb);
    if (!pth)
       pth = DupString("tmp");
    *PTH = pth;
    *PRE = pre;
    *MINSZ = minSz;
-   return(sb);
+   return(vb);
 }
 
-ATL_cpnode_t *GetAllCopy(char pre, ATL_sidnode_t *vb, int minSz)
+ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
 {
    int d;
-   ATL_cpnode *cb=NULL, *cbC=NULL;
+
+   ATL_cpnode_t *cb=NULL, *cbC=NULL, *cp;
    for (d=0; d < 2; d++)  /* 0: M2BLK, 1: BLK2M */
    {
       int a;
       for (a=0; a < 3; a++) /* 0:alp=1, 1:alp=-1, 2:alp=X */
       {
-         ATL_sidnode_t *vp;
-         ATL_cpnode_t *cb=NULL, *cp; /* copies that this search matches */
+         ATL_view_t *vp;
          for (vp=vb; vp; vp = vp->next) /* scope all input views */
          {
             int flg;
@@ -1323,21 +1387,21 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_sidnode_t *vb, int minSz)
 /*
  *          Add copies A needs from all views (TRANS added later) 
  */
-            if ((vp->i & (1<<(MY_A2BLK+d))) && (vp->i & (1<<(MY_AL1A+a))))
+            if ((vp->flag & (1<<(MY_A2BLK+d))) && (vp->flag & (1<<(MY_AL1A+a))))
             {
                ATL_mmnode_t *mb;
-               ATL_cpnode_t *b;
-               mb = ReadMMFile(vp->str);
-               b = GetAllCopyNodesFromMM(flg, mb);
-               if (b)
+               ATL_cpnode_t *bb;
+               mb = ReadMMFile(vp->fnam);
+               bb = GetAllCopyNodesFromMM(flg, mb);
+               if (bb)
                {
-                  cp = ATL_LastCPNode(b);
+                  cp = ATL_LastCPNode(bb);
                   cp->next = cb;
-                  cb = b;
-                  b = GetAllCopyNodesFromMM(flag|(1<<CPF_ABLK), mb);
-                  cp = ATL_LastCPNode(b);
+                  cb = bb;
+                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb);
+                  cp = ATL_LastCPNode(bb);
                   cp->next = cb;
-                  cb = b;
+                  cb = bb;
                }
                KillAllMMNodes(mb);
             }
@@ -1346,18 +1410,18 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_sidnode_t *vb, int minSz)
             {
                flg &= ~CPF_ALLBET;
                flg |= 1<<(CPF_BE1+b);
-               if ((vp->i & (1<<(MY_C2BLK+d))) && (vp->i & (1<<(MY_AL1C+a))) &&
-                   (vp->i & (1<<(MY_BE1C+b))))
+               if ((vp->flag&(1<<(MY_C2BLK+d))) && (vp->flag&(1<<(MY_AL1C+a))) 
+                   && (vp->flag & (1<<(MY_BE1C+b))))
                {
                   ATL_mmnode_t *mb;
-                  ATL_cpnode_t *b;
-                  mb = ReadMMFile(vp->str);
-                  b = GetAllCopyNodesFromMM(flg, mb);
-                  if (b)
+                  ATL_cpnode_t *bb;
+                  mb = ReadMMFile(vp->fnam);
+                  bb = GetAllCopyNodesFromMM(flg, mb);
+                  if (bb)
                   {
-                     cp = ATL_LastCPNode(b);
+                     cp = ATL_LastCPNode(bb);
                      cp->next = cbC;
-                     cbC = b;
+                     cbC = bb;
                   }
                   KillAllMMNodes(mb);
                }
@@ -1368,25 +1432,38 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_sidnode_t *vb, int minSz)
 /*
  * Having added all copies from views that matched, get rid of dups
  */
-   CopyNoRep(cb, minSz);
-   CopyNoRep(cbC, minSz);
+   if (cb)
+   {
+      ATL_cpnode_t *b, *last;
+      cb = CopyNoRep(cb, minSz);
+      last = b = CloneCPQueue(cb);
+      for (cp=b; cp; cp = cp->next)
+      {
+         cp->flag |= 1<<CPF_TRANS;
+         last = cp;
+      }
+      last->next = cb;
+      cb = b;
+   }
+   cbC = CopyNoRep(cbC, minSz);
    cp = ATL_LastCPNode(cb);
    cp->next = cbC;
+   WriteCPFileWithPath(pre, "res", "COPY.CPS", cb);
    return(cb);
 }
 
 int main(int nargs, char **args)
 {
-   ATL_sidnode_t *vb=NULL, *vp;  /* view base & ptr */
+   ATL_view_t *vb=NULL, *vp;  /* view base & ptr */
    ATL_cpnode_t *cb=NULL, *op;   /* cpsearch output files */
    char *path;
    int minSz;
    char pre;
 
-   vb = GetFlags(nargs, args, &pre, &path, &minSz)
+   vb = GetFlags(nargs, args, &pre, &path, &minSz);
    cb = GetAllCopy(pre, vb, minSz);
    KillAllCPNodes(cb);
-   while (vb)
-      vb = ATL_FreeSIDNode(vb);
+   KillAllViews(vb);
+   free(path);
    return(0);
 }
