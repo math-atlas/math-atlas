@@ -75,14 +75,24 @@
 #            TOBLK=0 must be present for testing & custom uses.
 #       C  : TOBLK=0 required. TOBLK=1 needed for testing & custom uses.
 #
-@ROUT scopy.idx ccopy.idx `@define VL @8@`
-@ROUT dcopy.idx zcopy.idx `@define VL @4@`
+@ROUT scopy.idx 
+   @define TP @ REAL=1 SINGLE=1@
+@ROUT ccopy.idx 
+   @define TP @ SINGLE=1@
+@ROUT scopy.idx ccopy.idx 
+@define VL @8@
+@ROUT dcopy.idx
+   @define TP @ REAL=1@
+@ROUT zcopy.idx 
+   @define TP @@
+@ROUT dcopy.idx zcopy.idx 
+@define VL @4@
 @ROUT scopy.idx dcopy.idx
-ID=1 STGID=0 CBLK=1 TOBLK=0 MU=3 NU=3 KVEC=@(VL) VLEN=@(VL) SYRK=1 \
+ID=1 STGID=0 CBLK=1 TOBLK=0 MU=3 NU=3 KVEC=@(VL) VLEN=@(VL) SYRK=1@(TP) \
      ALPHA=1,N,X BETA=0,N,1,X ROUT='ATL_skblk2C3x3.c' AUTH='R. Clint Whaley'
-ID=2 STGID=0 TOBLK=1 MU=1 NU=4 VLEN=4 ALPHA=1,N,X \
+ID=2 STGID=0 TOBLK=1 MU=1 NU=4 VLEN=4 ALPHA=1,N,X@(TP) \
      ROUT='ATL_cpAN2blk4_avx2.c' AUTH='R. Clint Whaley'
-ID=2 STGID=0 TOBLK=1 MU=1 NU=12 VLEN=4 ALPHA=1,N,X \
+ID=2 STGID=0 TOBLK=1 MU=1 NU=12 VLEN=4 ALPHA=1,N,X@(TP) \
      ROUT='ATL_cpAN2blk12_avx2.c' AUTH='R. Clint Whaley'
 @ROUT cptst.c
 /* 
@@ -182,29 +192,22 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags:\n", name);
    fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
-   fprintf(stderr, "   -m [c,a] : matrix to copy\n");
-   fprintf(stderr, "   -d [I,F] : copy Into or From block\n");
+   fprintf(stderr, "   -i <cpyin.CPS>: (stdin) list of copy to search\n");
+   fprintf(stderr, "   -o <cpyout.CPS>: (stdout) fastest copy kernels\n");
    fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
-   fprintf(stderr, "   -a [0,1,-1,2] : alpha to time, 2 means X\n");
-   fprintf(stderr, "   -b [0,1,-1,2] : beta  to time, 2 means X\n");
-   fprintf(stderr, 
-      "   -K <file> : non-gemm kern support; repeat for multiple\n");
    exit(ierr ? ierr : -1);
 }
 
-ATL_mmnode_t *GetFlags
-   (int nargs, char **args, int *VERB, int *FLAG, int *MINSZ, ATL_mmnode_t **KB)
+ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
 /*
  * RETURNS: list of all kerns/blk factors to tune copies for
  */
 {
-   ATL_mmnode_t *mb, *mp;
-   char pre='d', mat='C', dir='I';
-   int i, ibe=1, ial=1, k, n;
+   ATL_cpnode_t *cb=NULL, *cp;
+   int i;
 
-   *KB = NULL;
    *VERB = 0;
-   *MINSZ = 24*24;
+   *FOUT = NULL;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
@@ -212,56 +215,24 @@ ATL_mmnode_t *GetFlags
 
       switch(args[i][1])
       {
-      case 'p':
+      case 'i':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-        pre = tolower(args[i][0]);
-        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        cb = ReadCPFile(args[i]);
+        assert(cb);
         break;
-      case 'm':
+      case 'o':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-        mat = toupper(args[i][0]);
-        assert(mat == 'A' || mat == 'C');
+        *FOUT = args[i];
         break;
-      case 'd':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        dir = toupper(args[i][0]);
-        assert(dir == 'I' || dir == 'F');
-        break;
-      case 'K':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        if (!(*KB))
-           *KB = ReadMMFile(args[i]);
-        else
-        {
-           mp = ATL_LastMMNode(*KB);
-           mp->next = ReadMMFile(args[i]);
-        }
-        break;
-      @multidef iv ial ibe
-      @whiledef ch a    b
-      case '@(ch)':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-         @(iv) = atoi(args[i]);
-         break;
-         @undef iv
-      @endwhile
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
-   i = CopyEncode(pre, dir, mat, 'N');
-   i &= ~(1<<CPF_ABLK);  /* starts out not set for A/B search */
-   *FLAG = CopyEncodeScal(i, ial, ibe);
-   mb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
-   mp = ATL_LastMMNode(mb);
-   mp->next = ReadMMFileWithPath(pre, "res", "rkAMMRES.sum");
-   assert(mb);
-   return(mb);
+   if (!cb)
+      cb = ReadCPFile(NULL);
+   return(cb);
 }
 
 unsigned long GetRep(unsigned long reps, unsigned int mb, unsigned int nb)
@@ -274,23 +245,27 @@ unsigned long GetRep(unsigned long reps, unsigned int mb, unsigned int nb)
    return(nrep);
 }
 
-ATL_cpnode_t *GetWorkingKerns(char pre, int verb, unsigned int flag)
+ATL_cpnode_t *GetWorkingKerns(char pre, int verb, ATL_cpnode_t *cb)
 /*
- * Later, need to specialize to alpha,beta combo
+ * Right now, just reads in all kerns.  Later, should eliminate kerns that
+ * won't work with any cb.
  */
 {
    ATL_cpnode_t *hb=NULL;
    int DOTEST=0;
-   hb = ReadCPFileWithPath(pre, "res", "cpywork_a1b0.sum");
+@skip   hb = ReadCPFileWithPath(pre, "res", "cpywork_a1b0.sum");
    if (!hb)
    {
       hb = ReadCPFileWithPath(pre, "CPYCASES", "copy.idx");
+      #if 0
       if (flag&(1<<CPF_CBLK))
          DOTEST = (CopyGetAlphaI(flag) == 1 && CopyGetBetaI(flag) == 0);
       else
          DOTEST = CopyGetAlphaI(flag) == 1;
+      #endif
    }
-   hb = CopyApplyTypeScal2Hand(hb, flag);
+
+@skip   hb = CopyApplyTypeScal2Hand(hb, flag);
    PrefixStrAllNodes(hb, GetOffset(&hb->next, hb), GetOffset(&hb->rout, hb),
                      "CPYCASES/");
    if (DOTEST)
@@ -298,21 +273,18 @@ ATL_cpnode_t *GetWorkingKerns(char pre, int verb, unsigned int flag)
       hb = KillFailingCPNodes(pre, hb);
       WriteCPFileWithPath(pre, "res", "cpywrk_a1b0.sum", hb);
    }
-   hb = KillCPNodesByFlag(flag, 1<<CPF_CBLK, hb); /* kill wrong-mat kerns */
+@skip   hb = KillCPNodesByFlag(flag, 1<<CPF_CBLK, hb); /* kill wrong-mat kerns */
    return(hb);
 }
+
 ATL_cpnode_t *DoHandTimings
-   (char pre, int verb, unsigned long rep4, unsigned int flag, ATL_cpnode_t *cb)
+   (char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
 {
    ATL_cpnode_t *hb, *cp, *hp, *HB=NULL;
-   int ialp, ibet=0, msk;
    unsigned long nrep;
 
-   ialp = CopyGetAlphaI(flag);
-   if (flag & (1<<CPF_CBLK))
-      ibet = CopyGetBetaI(flag);
 
-   hb = GetWorkingKerns(pre, verb, flag);
+   hb = GetWorkingKerns(pre, verb, cb);
    if (!hb)
    {
       printf("NO USER-SUPPLIED COPY ROUTINES!\n");
@@ -323,12 +295,17 @@ ATL_cpnode_t *DoHandTimings
    {
       double mf;
       ATL_cpnode_t *np=NULL;
-      const unsigned int mb=cp->mb, nb=cp->nb;
+      const unsigned int mb=cp->mb, nb=cp->nb, flag=cp->flag;
+      int ialp, ibet=0;
+
+      nrep = GetRep(rep4, mb, nb);
+      ialp = CopyGetAlphaI(flag);
+      if (flag & (1<<CPF_CBLK))
+         ibet = CopyGetBetaI(flag);
 /*
  *    Try any hand-tuned cases that work
  */
-      nrep = GetRep(rep4, mb, nb);
-      hp = FindEquivCopy(hb, cp);
+      hp = FindEquivCopy_ab(hb, cp);
       if (hp)
       {
          printf("   TIMINGS B=(%d,%d), U=(%d,%d) TA=%c, reps=%lu:\n", 
@@ -353,7 +330,7 @@ ATL_cpnode_t *DoHandTimings
             }
             hp = hp->next;
          }
-         while( (hp = FindEquivCopy(hp, cp)) );
+         while( (hp = FindEquivCopy_ab(hp, cp)) );
          printf("   DONE\n");
       }
       if (!np)
@@ -366,22 +343,21 @@ ATL_cpnode_t *DoHandTimings
    return(ReverseCPQ(HB));
 }
 
-void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag, 
-                  ATL_cpnode_t *cb)
+void DoGenTimings(char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
 {
    ATL_cpnode_t *cp;
    char *fnam;
-   int ialp, ibet=0;
 
-   fnam = GetCpySumNam(flag, 'g');
-   ialp = CopyGetAlphaI(flag);
-   if (flag & (1<<CPF_CBLK))
-      ibet = CopyGetBetaI(flag);
-   printf("FINDING BEST GENERATED COPY: %s\n", fnam);
+@skip   fnam = GetCpySumNam(flag, 'g');
+   printf("FINDING BEST GENERATED COPY:\n");
    for (cp=cb; cp; cp = cp->next)
    {
       double mf, mfB;
       unsigned long nrep;
+      int ialp, ibet=0, flag=cp->flag;
+      ialp = CopyGetAlphaI(flag);
+      if (flag & (1<<CPF_CBLK))
+         ibet = CopyGetBetaI(flag);
 
       nrep = GetRep(rep4, cp->mb, cp->nb);
       printf("   TIMINGS B=(%d,%d), U=(%d,%d), TA=%c, reps=%lu:\n", 
@@ -461,46 +437,31 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, unsigned int flag,
          }    /* end if over trying old vec-basefile */
       #endif  /* end #if on Intel SSE/AVX */
    }
-   WriteCPFileWithPath(pre, "res", fnam, cb);
-   printf("DONE, output in: res/%c%s\n", pre, fnam);
+   printf("DONE GENERATED COPY SEARCH\n");
+@skip   WriteCPFileWithPath(pre, "res", fnam, cb);
+@skip   printf("DONE, output in: res/%c%s\n", pre, fnam);
 }
 
 void DoTimings
-   (char pre, int verb, unsigned long rep4, unsigned int flag, ATL_cpnode_t *cb)
+   (char *fnam, char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
 {
-   ATL_cpnode_t *cp;
-   char *fnam;
-   const int ials[3] = {1,-1,2}, ibes[4]={0,1,-1,2};
-   int ia, ib, nbet = (flag&(1<<CPF_CBLK)) ? 4 : 1;
+   ATL_cpnode_t *cp, *fb;
 
-   for (ib=0; ib < nbet; ib++)
+   DoGenTimings(pre, verb, rep4, cb);
+   fb = DoHandTimings(pre, verb, rep4, cb);
+   if (!fb)
+      fb = cb;
+   for (cp=fb; cp; cp=cp->next)
    {
-      const int ibet=ibes[ib];
-      for (ia=0; ia < 3; ia++)
-      {
-         const int ialp=ials[ia];
-         ATL_cpnode_t *fb;
-
-         CopyEncodeAllScal(cb, flag, ialp, ibet);
-         flag = cb->flag;
-         DoGenTimings(pre, verb, rep4, flag, cb);
-         fb = DoHandTimings(pre, verb, rep4, flag, cb);
-         if (!fb)
-            fb = cb;
-         for (cp=fb; cp; cp=cp->next)
-         {
-            if (cp->flag & (1L<<CPF_SYRK))
-               cp->mflop[0] = 2e-6 / cp->mflop[0]; /* time per elt */
-            else
-               cp->mflop[0] = 1e-6 / cp->mflop[0]; /* time per elt */
-         }
-         fnam = GetCpySumNam(flag, 'f');
-         WriteCPFileWithPath(pre, "res", fnam, fb);
-         if (fb != cb)
-            KillAllCPNodes(fb);
-         printf("DONE, output in: res/%c%s\n", pre, fnam);
-      }
+      if (cp->flag & (1L<<CPF_SYRK))
+         cp->mflop[0] = 2e-6 / cp->mflop[0]; /* time per elt */
+      else
+         cp->mflop[0] = 1e-6 / cp->mflop[0]; /* time per elt */
    }
+   WriteCPFile(fnam, fb);
+   if (fb != cb)
+      KillAllCPNodes(fb);
+   printf("DONE, OUTPUT IN: %s.\n", fnam);
 }
 
 unsigned long GetReps4x4(int verb, double res)
@@ -558,47 +519,18 @@ int main(int nargs, char **args)
  * (3) User-contributed cases
  */
 {
+   ATL_cpnode_t *cb, *cp, *cb0;
+   char *fout;
+   unsigned long nrep;
    char pre;
    int verb, minSz, ialp, ibet=0;
    unsigned int flag;
-   ATL_mmnode_t *mb, *kb, *mp;
-   ATL_cpnode_t *cb, *cp, *cb0;
-   unsigned long nrep;
 
-   mb = GetFlags(nargs, args, &verb, &flag, &minSz, &kb);
-   pre = CopyGetPre(flag);
-   ialp = CopyGetAlphaI(flag);
-   if (flag&(1<<CPF_CBLK))
-      ibet = CopyGetBetaI(flag);
+   cb = GetFlags(nargs, args, &verb, &fout);
+   pre = CopyGetPre(cb->flag);
    nrep = GetReps4x4(verb, 0.10);
-   if (kb)
-   {
-      mp = ATL_LastMMNode(kb);
-      mp->next = mb;
-      mb = kb;
-   }
-   cb = GetAllCopyNodesFromMM(flag, mb);
-   if (!(flag&(1<<CPF_CBLK)))
-   {
-      cb0 = GetAllCopyNodesFromMM(flag|(1<<CPF_ABLK), mb);
-      cp = ATL_LastCPNode(cb0);
-      cp->next = cb;
-      cb = cb0;
-   }
-   cb = NoCopyRep(flag, minSz, cb);
-   PrintCPNodes(stdout, cb);
-   if (!(flag&(1<<CPF_CBLK)))
-   {
-      cb0 = CloneCPQueue(cb);
-      for (cp=cb0; cp; cp = cp->next)
-         cp->flag |= 1<<CPF_TRANS;
-      cp = ATL_LastCPNode(cb0);
-      cp->next = cb;
-      cb = cb0;
-   }
-   DoTimings(pre, verb, nrep, flag, cb);
+   DoTimings(fout, pre, verb, nrep, cb);
 
-   KillAllMMNodes(mb);
    KillAllCPNodes(cb);
    return(0);
 }
@@ -781,8 +713,9 @@ void PrintUsage(char *name, int ierr, char *flag)
               flag?flag:"OUT-OF_ARGUMENTS");
    else if (ierr < 0)
       fprintf(stderr, "ERROR: %s\n", flag);
-   fprintf(stderr, "USAGE: %s [flags:\n", name);
-   fprintf(stderr, "   -F cpyout.sum: repeat for multiple\n");
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -i cpyout.sum: repeat for multiple\n");
+   fprintf(stderr, "   -o <output path>\n");
 @skip   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    exit(ierr ? ierr : -1);
 }
@@ -800,7 +733,7 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, char **OUTD)
 
       switch(args[i][1])
       {
-      case 'F':
+      case 'i':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
         if (!cb)
@@ -810,6 +743,11 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, char **OUTD)
            cp = ATL_LastCPNode(cb);
            cp->next = ReadCPFile(args[i]);
         }
+        break;
+      case 'o':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        outd = DupString(args[i]);
         break;
       default:
          PrintUsage(args[0], i, args[i]);
@@ -944,23 +882,29 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags:\n", name);
    fprintf(stderr, "   -p [d,s,c,z]\n");
-   fprintf(stderr, "   -V mmview.sum: \n");
-   fprintf(stderr, "   -n <name>: base name for header files\n");
-   fprintf(stderr, "   -d /path : specify directory to generate into\n");
-   fprintf(stderr, "   -D [F,I] : copy Into or From col-major\n");
+   fprintf(stderr, "   -o /path : specify directory to generate into\n");
+   fprintf(stderr,
+   "   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F <name> mmview.sum:\n");
+   fprintf(stderr, 
+"      Any of the = args may be ommitted, which means all values are set.\n"
+"      <name> and <mmview> must appear in that order.\n"
+"      A/Cd=[I,F]: copy Into or From col-major (I,F means both directions).\n"
+"      A/Ca/b give the list of needed alpha/beta for that matrix copy.\n"
+"      <name> is a unique string that will be used in all header files.\n"
+"      mmview.sum: list of amm kerns demanding the copies.\n");
    exit(ierr ? ierr : -1);
 }
 
-ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char *DIR, 
-                       char **PTH, char **NM)
+ATL_view_t *GetFlags(int nargs, char **args, char *PRE, char **PTH)
 {
-   ATL_mmnode_t *mb=NULL;
+   ATL_view_t *vb=NULL;
    char *pth=NULL, *nm=NULL;
    int i;
    char pre='d', dir='I';
 
    for (i=1; i < nargs; i++)
    {
+      int flag=0;
       if (args[i][0] != '-')
          PrintUsage(args[0], i, args[i]);
 
@@ -972,35 +916,58 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char *DIR,
          pre = tolower(args[i][0]);
          assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
          break;
-      case 'D':
+      case 'o':
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-         dir = toupper(args[i][0]);
-         assert(dir == 'I' || dir == 'F');
+         pth = DupString(args[i]);
          break;
-      case 'n':
+      case 'V': /* -V C/Aa=1,N,X Cb=0,1,N,X C/Ad=I,F <name> mmview.sum */
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-         nm = args[i];
-         break;
-      case 'V':
+         flag = 0;
+         for (k=0; k < 5; k++)
+         {
+            char mt, wt;
+            int st;
+            mt = args[i][0];
+            if (mt != 'C' && mt != 'A')
+               break;
+            wt = args[i][1];
+            if (wt != 'a' && wt != 'b' && wt != 'd')
+               break;
+            if (args[i][2] != '=')
+               break;
+            if (wt == 'b')
+            {
+               assert(mt == 'C');
+               flag |= CPV_ScalStr2bits(args[i]+3, CPV_BE1C);
+            }
+            else if (wt == 'a')
+               flag |= CPV_ScalStr2bits(args[i]+3, (mt=='C')?CPV_AL1C:CPV_AL1A);
+            else if (wt == 'd')
+               flag |= CPV_DirStr2bits(args[i]+3,(mt=='C')?CPV_C2BLK:CPV_A2BLK);
+            else
+               PrintUsage(args[0], i-1, NULL);
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+         }
+         nam = DupString(args[i]);
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-         mb = ReadMMFile(args[i]);
-         assert(mb);
+         vp = ATL_NewView(flag, nam, DupString(args[i]));
+         vp->next = vb;
+         vb = vp;
          break;
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
-   assert(mb && nm);
+   assert(vb);
    if (!pth)
       pth = DupString("tmp");
-   *NM = nm;
    *PRE = pre;
    *PTH = pth;
-   *DIR = dir;
-   return(mb);
+   return(vb);
 }
 
 void GenHeadC
@@ -1020,7 +987,6 @@ void GenHeadC
    FILE *fpp, *fpd;
    char *sp;
    int i, flag, ibet, ialp, N;
-   char fnam[32];
 
    if (calp == 'X')
       ialp = 2;
@@ -1034,9 +1000,7 @@ void GenHeadC
       ibet = (cbet == 'N') ? -1 : 1;
    flag = CopyEncode(pre, dir=='F'?'I':'F', 'C', 'N');
    flag = CopyEncodeScal(flag, ialp, ibet);
-   sprintf(fnam, "res/%cf%s_a%cb%c.sum", pre, (dir=='F')?"C2b":"b2C", 
-           calp, cbet);
-   cb = ReadCPFile(fnam);
+   cb = ReadCPFileWithPath(pre, "res", "cpyPERF.CPS");
    assert(cb);
    for (cp=cb; cp; cp = cp->next)
    {
@@ -1096,7 +1060,7 @@ void GenHeadC
 
 void GenAllCHeadDir(char pre, char dir, char *path, char *nm, ATL_mmnode_t *mb)
 {
-   int tlen, nlen, plen, ia, ib;
+   int tlen, nlen, plen, ia, ib, d;
    char *nam, *tnam;
          /* atlas_<pre><nm>_[Into,From]Cxxxx_aXbX.h */
    char cscls[4]={'1', 'N', 'X', '0'};
@@ -1107,17 +1071,36 @@ void GenAllCHeadDir(char pre, char dir, char *path, char *nm, ATL_mmnode_t *mb)
    tnam = malloc(tlen*sizeof(char));
    assert(tnam);
    nam = tnam + plen;
-   assert(sprintf(tnam, "%s/atlas_%c%s_%sCZZZZ_aXbX.h", path, pre, nm, 
-                  dir=='F'?"From":"Into") < tlen);
-   for (ib=0; ib < 4; ib++)
+
+   assert(sprintf(tnam, "%s/atlas_%c%s_%sCInto_aXbX.h", path, pre, nm) < tlen);
+   for (d=0; d < 2; d++)
    {
-      const char cbet=cscls[ib];
-      nam[nlen+21] = cbet;
-      for (ia=0; ia < 3; ia++)
+      if (!(vp->flag &(1<<(CPV_C2BLK+d))))
+         continue
+      if (d)
       {
-         const char calp=cscls[ia];
-         nam[nlen+19] = calp;
-         GenHeadC(pre, dir, calp, cbet, nm, tnam, nam, mb);
+         sp = strstr(tnam, "Into_");
+         sp[0] = 'F';
+         sp[1] = 'r';
+         sp[2] = 'o';
+         sp[3] = 'm';
+      }
+      for (ib=0; ib < 4; ib++)
+      {
+         const char cbet=cscls[ib];
+
+         if (!(vp->flag &(1<<(CPV_BE1C+ib))))
+            continue
+         nam[nlen+21] = cbet;
+         for (ia=0; ia < 3; ia++)
+         {
+            const char calp=cscls[ia];
+
+            if (!(vp->flag &(1<<(CPV_AL1C+ia))))
+               continue
+            nam[nlen+19] = calp;
+            GenHeadC(pre, dir, calp, cbet, nm, tnam, nam, mb);
+         }
       }
    }
    free(tnam);
@@ -1125,82 +1108,22 @@ void GenAllCHeadDir(char pre, char dir, char *path, char *nm, ATL_mmnode_t *mb)
 
 int main(int nargs, char **args)
 {
-   ATL_mmnode_t *mb;
+   ATL_view_t *vb, *vp;
    char *path, *nm;
    char pre, dir;
 
-   mb = GetFlags(nargs, args, &pre, &dir, &path, &nm);
-   GenAllCHeadDir(pre, dir, path, nm, mb);
+   vb = GetFlags(nargs, args, &pre, &path);
+   for (vp=vb; vp; vp = vp->next)
+   {
+      GenAllCHeadDir(pre, path, vp);
+   }
 
-   KillAllMMNodes(mb);
+   KillAllViews(vb);
    free(path);
    return(0);
 }
 @ROUT cpydrv
 #include "atlas_mmgen.h"
-
-typedef struct ViewNode ATL_view_t;
-struct ViewNode
-{
-   char *fnam;
-   char *nam;
-   int flag;
-   ATL_view_t *next;
-};
-
-static ATL_view_t *ATL_NewView(int flag, char *nam, char *fnam)
-{
-   ATL_view_t *p;
-   p = malloc(sizeof(ATL_view_t));
-   assert(p);
-   p->flag = flag;
-   p->nam  = nam;
-   p->fnam = fnam;
-   p->next = NULL;
-   return(p);
-}
-
-static ATL_view_t *KillView(ATL_view_t *p)
-{
-   ATL_view_t *next=NULL;
-   if (p)
-   {
-      next = p->next;
-      if (p->fnam)
-         free(p->fnam);
-      if (p->nam)
-         free(p->nam);
-      free(p);
-   }
-   return(next);
-}
-
-static void KillAllViews(ATL_view_t *p)
-{
-   while (p)
-      p = KillView(p);
-}
-
-
-#define MY_C2BLK  0
-#define MY_BLK2C  1
-#define MY_A2BLK  2
-#define MY_BLK2A  3
-#define MY_BE1C   4
-#define MY_BENC   5
-#define MY_BEXC   6
-#define MY_BE0C   7
-#define MY_AL1C   8
-#define MY_ALNC   9
-#define MY_ALXC  10
-#define MY_AL1A  11
-#define MY_ALNA  12
-#define MY_ALXA  13
-#define MY_ALLDIRA ( (1<<MY_BLK2A)|(1<<MY_A2BLK) )
-#define MY_ALLDIRC ( (1<<MY_BLK2C)|(1<<MY_C2BLK) )
-#define MY_ALLALA ( (1<<MY_AL1A)|(1<<MY_ALNA)|(1<<MY_ALXA) )
-#define MY_ALLALC ( (1<<MY_AL1C)|(1<<MY_ALNC)|(1<<MY_ALXC) )
-#define MY_ALLBEC ( (1<<MY_BE1C)|(1<<MY_BENC)|(1<<MY_BEXC)|(1<<MY_BE0C) )
 
 void PrintUsage(char *name, int ierr, char *flag)
 {
@@ -1209,7 +1132,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 "Output file of cumulative views: res/<pre>full.CPS, used for xcpygen.\n"
 "Delete this file if you get kerns you don't need in a prior search.\n"
 "You can either invoke this driver routine multiple times, or repeat\n"
-"the -v/-V flags.\n");
+"the -V flag.\n");
 
    if (ierr > 0)
       fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
@@ -1220,7 +1143,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr,"USAGE: %s [flags:\n", name);
    fprintf(stderr,"   -p [d,s,c,z]\n");
    fprintf(stderr,"   -z <minsz>: (24*24) demand mb*nb>minsz\n");
-   fprintf(stderr, "   -d /path : specify directory to generate into\n");
+   fprintf(stderr, "   -o /path : specify directory to generate into\n");
    fprintf(stderr,
    "   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F <name> mmview.sum:\n");
    fprintf(stderr, 
@@ -1231,50 +1154,6 @@ void PrintUsage(char *name, int ierr, char *flag)
 "      <name> is a unique string that will be used in all header files.\n"
 "      mmview.sum: list of amm kerns demanding the copies.\n");
    exit(ierr ? ierr : -1);
-}
-
-int ScalStr2bits(char *st, int ibit)
-{
-   int flag=0;
-   GET_SCAL:
-   {
-      switch(*st)
-      {
-      case '1':
-         flag |= (1L<<ibit);
-         break;
-      case 'N':
-         flag |= (1L<<(ibit+1));
-         break;
-      case 'X':
-         flag |= (1L<<(ibit+2));
-         break;
-      case '0':
-         flag |= (1L<<(ibit+3));
-         break;
-      default:
-         assert(0);
-      }
-   }
-   if (*(++st) == ',')
-   {
-      st++;
-      goto GET_SCAL;
-   }
-   return(flag);
-}
-
-int DirStr2bits(char *st, int ibit)
-{
-   int flag;
-   char ch = *st++;
-   flag = (ch == 'F' || ch == 'f') ? (1<<ibit) : (1<<(ibit+1));
-   if (*st++ == ',')
-   {
-      char ch = *st;
-      flag |= (ch == 'F' || ch == 'f') ? (1<<ibit) : (1<<(ibit+1));
-   }
-   return(flag);
 }
 
 ATL_view_t *GetFlags
@@ -1305,7 +1184,7 @@ ATL_view_t *GetFlags
             PrintUsage(args[0], i-1, NULL);
          minSz = atoi(args[i]);
          break;
-      case 'd':
+      case 'o':
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
          pth = DupString(args[i]);
@@ -1329,12 +1208,12 @@ ATL_view_t *GetFlags
             if (wt == 'b')
             {
                assert(mt == 'C');
-               flag |= ScalStr2bits(args[i]+3, MY_BE1C);
+               flag |= CPV_ScalStr2bits(args[i]+3, CPV_BE1C);
             }
             else if (wt == 'a')
-               flag |= ScalStr2bits(args[i]+3, (mt == 'C')?MY_AL1C:MY_AL1A);
+               flag |= CPV_ScalStr2bits(args[i]+3, (mt=='C')?CPV_AL1C:CPV_AL1A);
             else if (wt == 'd')
-               flag |= DirStr2bits(args[i]+3, (mt == 'C')?MY_C2BLK:MY_A2BLK);
+               flag |= CPV_DirStr2bits(args[i]+3,(mt=='C')?CPV_C2BLK:CPV_A2BLK);
             else
                PrintUsage(args[0], i-1, NULL);
             if (++i >= nargs)
@@ -1387,7 +1266,7 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
 /*
  *          Add copies A needs from all views (TRANS added later) 
  */
-            if ((vp->flag & (1<<(MY_A2BLK+d))) && (vp->flag & (1<<(MY_AL1A+a))))
+            if ((vp->flag & (1<<(CPV_A2BLK+d))) && (vp->flag & (1<<(CPV_AL1A+a))))
             {
                ATL_mmnode_t *mb;
                ATL_cpnode_t *bb;
@@ -1410,8 +1289,8 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
             {
                flg &= ~CPF_ALLBET;
                flg |= 1<<(CPF_BE1+b);
-               if ((vp->flag&(1<<(MY_C2BLK+d))) && (vp->flag&(1<<(MY_AL1C+a))) 
-                   && (vp->flag & (1<<(MY_BE1C+b))))
+               if ((vp->flag&(1<<(CPV_C2BLK+d))) && (vp->flag&(1<<(CPV_AL1C+a))) 
+                   && (vp->flag & (1<<(CPV_BE1C+b))))
                {
                   ATL_mmnode_t *mb;
                   ATL_cpnode_t *bb;
@@ -1448,21 +1327,64 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
    cbC = CopyNoRep(cbC, minSz);
    cp = ATL_LastCPNode(cb);
    cp->next = cbC;
-   WriteCPFileWithPath(pre, "res", "COPY.CPS", cb);
+   WriteCPFileWithPath(pre, "res", "cpylst.CPS", cb);
    return(cb);
+}
+
+void DoSearch(char pre)
+{
+   char *ln;
+   ln = DupString("./xcpysearch -i res/Xcpylst.CPS -o res/XcpyPERF.CPS");
+   ln[20] = pre;
+   ln[39] = pre;
+   assert(!Sys2File(ln, NULL));
+   free(ln);
+}
+
+void DoGen(char pre, char *path)
+{
+   char *ln;
+   ln = NewMergedString("./xcpygen -i res/XcpyPERF.CPS -o ", path);
+   ln[17] = pre;
+   assert(!Sys2File(ln, NULL));
+   free(ln);
+}
+
+void DoGenH(char pre, char *path, ATL_view_t *vb)
+{
+   ATL_view_t *vp;
+   for (vp=vb; vp; vp = vp->next)
+   {
+      char *ln, *sp;
+      int len, d;
+      char dirs[2] = {'F', 'I'};
+      len = 32 + strlen(vp->fnam) + strlen(vp->nam) + strlen(path);
+      ln = malloc(len*sizeof(char));
+      assert(ln);
+      for (d=0; d < 2; d++)
+      {
+         sprintf(ln, "./xcphgen -p %c -V %s -n %s -D %c -o %s", pre, 
+                 vp->fnam, vp->nam, dirs[d], path);
+         assert(!Sys2File(ln, NULL));
+      }
+      free(ln);
+   }
 }
 
 int main(int nargs, char **args)
 {
    ATL_view_t *vb=NULL, *vp;  /* view base & ptr */
    ATL_cpnode_t *cb=NULL, *op;   /* cpsearch output files */
-   char *path;
+   char *path, *ln;
    int minSz;
    char pre;
 
    vb = GetFlags(nargs, args, &pre, &path, &minSz);
    cb = GetAllCopy(pre, vb, minSz);
    KillAllCPNodes(cb);
+   DoSearch(pre);
+   DoGen(pre, path);
+   DoGenH(pre, path, vb);
    KillAllViews(vb);
    free(path);
    return(0);

@@ -351,6 +351,8 @@ int Sys2File(char *cmnd, char *file)
       sp[i] = file[i];
    sp[lF] = '\0';
    i = system(sys);
+   if (i)
+      fprintf(stderr, "\nERROR %d for '%s'!\n\n", i, sys);
    free(sys);
    return(i);
 }
@@ -3443,6 +3445,41 @@ ATL_cpnode_t *FindEquivCopy(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+ATL_cpnode_t *FindEquivCopy_ab(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
+/*
+ * Searches cb for kerns that match dup, but whose alpha/beta settings may
+ * be a superset of dup.
+ * RETURNS: NULL if no copy rout equivalent to dup is in cb, else ptr to dup
+ */
+{
+   ATL_cpnode_t *cp;
+   if (dup)
+   {
+      const int dflag=dup->flag, dalp=dflag&CPF_ALLALP, dbet=dflag&CPF_ALLBET;
+      const int CBLK=dup->flag&(1<<CPF_CBLK), dab=dflag&(CPF_ALLBET|CPF_ALLALP);
+      for (cp=cb; cp; cp = cp->next)
+      {
+         int flg0=cp->flag, ab;
+         if (CBLK != (flg0&(1<<CPF_CBLK)))
+             continue;
+         if (!(flg0 & dalp))
+            continue;
+         if (CBLK && !(flg0 & dbet))
+            continue;
+         cp->flag = (cp->flag & (~(CPF_ALLBET|CPF_ALLALP))) | dab;
+         if (!CopyAreDiff(cp, dup))
+         {
+            cp->flag = flg0;
+            return(cp);
+         }
+         cp->flag = flg0;
+      }
+   }
+   return(NULL);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static char *GetCpySumNam(int flag, char ch)
 {
    char pre, calp;
@@ -6265,6 +6302,116 @@ double TimeTSKernel
 #include "atlas_cpparse.h"
 #include "atlas_mmparse.h"
 #include "atlas_mmtesttime.h"
+
+#define CPV_C2BLK  0
+#define CPV_BLK2C  1
+#define CPV_A2BLK  2
+#define CPV_BLK2A  3
+#define CPV_BE1C   4
+#define CPV_BENC   5
+#define CPV_BEXC   6
+#define CPV_BE0C   7
+#define CPV_AL1C   8
+#define CPV_ALNC   9
+#define CPV_ALXC  10
+#define CPV_AL1A  11
+#define CPV_ALNA  12
+#define CPV_ALXA  13
+#define CPV_ALLDIRA ( (1<<CPV_BLK2A)|(1<<CPV_A2BLK) )
+#define CPV_ALLDIRC ( (1<<CPV_BLK2C)|(1<<CPV_C2BLK) )
+#define CPV_ALLALA ( (1<<CPV_AL1A)|(1<<CPV_ALNA)|(1<<CPV_ALXA) )
+#define CPV_ALLALC ( (1<<CPV_AL1C)|(1<<CPV_ALNC)|(1<<CPV_ALXC) )
+#define CPV_ALLBEC ( (1<<CPV_BE1C)|(1<<CPV_BENC)|(1<<CPV_BEXC)|(1<<CPV_BE0C) )
+
+typedef struct ViewNode ATL_view_t;
+struct ViewNode
+{
+   char *fnam;
+   char *nam;
+   int flag;
+   ATL_view_t *next;
+};
+
+static ATL_view_t *ATL_NewView(int flag, char *nam, char *fnam)
+{
+   ATL_view_t *p;
+   p = malloc(sizeof(ATL_view_t));
+   assert(p);
+   p->flag = flag;
+   p->nam  = nam;
+   p->fnam = fnam;
+   p->next = NULL;
+   return(p);
+}
+
+static ATL_view_t *KillView(ATL_view_t *p)
+{
+   ATL_view_t *next=NULL;
+   if (p)
+   {
+      next = p->next;
+      if (p->fnam)
+         free(p->fnam);
+      if (p->nam)
+         free(p->nam);
+      free(p);
+   }
+   return(next);
+}
+
+static void KillAllViews(ATL_view_t *p)
+{
+   while (p)
+      p = KillView(p);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int CPV_ScalStr2bits(char *st, int ibit)
+{
+   int flag=0;
+   GET_SCAL:
+   {
+      switch(*st)
+      {
+      case '1':
+         flag |= (1L<<ibit);
+         break;
+      case 'N':
+         flag |= (1L<<(ibit+1));
+         break;
+      case 'X':
+         flag |= (1L<<(ibit+2));
+         break;
+      case '0':
+         flag |= (1L<<(ibit+3));
+         break;
+      default:
+         assert(0);
+      }
+   }
+   if (*(++st) == ',')
+   {
+      st++;
+      goto GET_SCAL;
+   }
+   return(flag);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int CPV_DirStr2bits(char *st, int ibit)
+{
+   int flag;
+   char ch = *st++;
+   flag = (ch == 'F' || ch == 'f') ? (1<<ibit) : (1<<(ibit+1));
+   if (*st++ == ',')
+   {
+      char ch = *st;
+      flag |= (ch == 'F' || ch == 'f') ? (1<<ibit) : (1<<(ibit+1));
+   }
+   return(flag);
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
