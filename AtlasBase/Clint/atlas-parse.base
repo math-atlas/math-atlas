@@ -6365,6 +6365,70 @@ static void KillAllViews(ATL_view_t *p)
       p = KillView(p);
 }
 
+static char *View2Args(ATL_view_t *p)
+{
+   const unsigned int flag=p->flag;
+   unsigned int i, k;
+   char *Ca, *Aa, *Ad, *Cd, *sp;
+   char scl[4]={'1', 'N', 'X', '0'};
+   char Cb[8]={'C', 'b', '=', '\0'};
+
+   i = (flag>>CPV_C2BLK)&3;
+   if (i == 3)
+      Cd ="I,F";
+   else 
+      Cd = (i == 1) ? "F" : "I";
+
+   i = (flag>>CPV_A2BLK)&3;
+   if (i == 3)
+      Ad ="I,F";
+   else 
+      Ad = (i == 1) ? "F" : "I";
+
+   i = (flag>>CPV_BE1C)&0xF;
+   if (i == 0xF || !i)
+      strcat(Cb, "0,1,N,X");
+   else if (i)
+   {
+      for (k=0; (i&1) == 0 && k <= 4; k++, i>>=1)
+      Cb[3] = scl[k];
+      sp = Cb+4;
+      for (i>>=1; i; k++, i>>=1)
+      {
+         if (i&1)
+         {
+            *sp = ',';
+            sp[1] = scl[k];
+            sp += 2;
+         }
+      }
+      *sp = '\0';
+   }
+   @whiledef mt C A 
+   i = (flag>>CPV_AL1@(mt))&7;
+   switch(i)
+   {
+   @multidef st  N,X 1,X  X  1,N  N   1
+   @whiledef ct   6   5   4   3   2   1 
+   case @(ct):
+      @(mt)a = "@(st)";
+      break;
+      @undef st
+   @endwhile
+   default:
+      @(mt)a = "1,N,X";
+   }
+   @endwhile
+
+   i = strlen(p->nam) + strlen(p->fnam) + strlen(Cb) + 25 + 2*5 + 2*4;
+   sp = malloc(i);
+   assert(sp);
+   k = sprintf(sp, "-V Ca=%s Aa=%s %s Ad=%s Cd=%s %s %s", Ca, Aa, Cb, Ad, Cd,
+               p->nam, p->fnam);
+   assert(k < i);
+   return(sp);
+}
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int CPV_ScalStr2bits(char *st, int ibit)
@@ -6497,6 +6561,27 @@ ATL_cpnode_t *GetAllCopyNodesFromMM(int flag, ATL_mmnode_t *mb)
    }
    return(ReverseCPQ(cb));
 }
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *MMGetCopiesFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
+{
+   ATL_cpnode_t *mcb=NULL;
+   ATL_mmnode_t *mp;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      ATL_cpnode_t *cm, *cp;
+      cm = GetCopyNodeFromMM(flag, mp);
+      cp = FindEquivCopy(cb, cm);
+      assert(cp);
+      KillCPNode(cm);
+      cm = CloneCPNode(cp);
+      cm->next = mcb;
+      mcb = cm;
+   }
+   return(ReverseCPQ(mcb));
+}
+
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
