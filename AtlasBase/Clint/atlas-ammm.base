@@ -8585,11 +8585,13 @@ void ComputeKClean(int verb, char pre)
  *    you can't peel first partial for some reason).
  */
 {
-   ATL_mmnode_t *mkb, *mmGE, *mmSQ, *mp, *mmGEk=NULL, *mmSQk=NULL;
+   ATL_mmnode_t *mkb, *mmGE=NULL, *mmSQ=NULL, *mp, *mmGEk=NULL, *mmSQk=NULL;
+   ATL_mmnode_t *ipb, *ipk;
    mmGEk = TimeMMFileWithPath(pre, "res", "geAMMKCLEAN.sum", 
                               0, verb, 0, 0, 0, -1);
    mmSQk = TimeMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum", 
                               0, verb, 0, 0, 0, -1);
+   @beginskip
    if (mmGEk && mmSQk)
    {
       KillAllMMNodes(mmGEk);
@@ -8601,50 +8603,88 @@ void ComputeKClean(int verb, char pre)
    if (mmSQk)
       KillAllMMNodes(mmSQk);
    mmGEk = mmSQk = NULL;
-@skip   if (verb)
-@skip      printf("FINDING K-CLEANUP FOR EACH KB:");
+   @endskip
 /*
- * Will use only one K-cleanup for any (mu,nu,kmaj) combo.  Will decide between
- * competing kernels based on timings, with larger KB more important, so we
- * reverse the list order so that the larger block factors choose cleanup for
- * smaller, rather than reverse.
+ * Find all unique K-clean kernels
  */
-   mmGE = ReverseMMQ(ReadMMFileWithPath(pre, "res", "geAMMRES.sum"));
-   mmSQ = ReverseMMQ(ReadMMFileWithPath(pre, "res", "sqAMMRES.sum"));
-   assert(mmGE && mmSQ);
+   mkb = ReadMMFileWithPath(pre, "res", "k1AMM.sum");
+   if (!mkb)
+   {
 /*
- * Now temporarily join rect & square lists into one, and get a list of
- * all cleanup routines that are required.  Routines that provide their
- * own cleanup will always be used regardless of what is in the list,
- * and the first such kernel will appear in mkb
+ *    Will use only one K-cleanup for any (mu,nu,kmaj) combo.  Decide between
+ *    competing kernels based on timings, with larger KB more important, so we
+ *    reverse the list order so that the larger block factors choose cleanup for
+ *    smaller, rather than reverse.
  */
-   for (mp=mmGE; mp->next; mp = mp->next);
-   mp->next = mmSQ;
-   mkb = FindAllUniqueKClean(verb, pre, mmGE);
-   mp->next = NULL;  /* go back to separate lists */
+      mmGE = ReverseMMQ(ReadMMFileWithPath(pre, "res", "geAMMRES.sum"));
+      mmSQ = ReverseMMQ(ReadMMFileWithPath(pre, "res", "sqAMMRES.sum"));
+      assert(mmGE && mmSQ);
+/*
+ *    Now temporarily join rect & square lists into one, and get a list of
+ *    all cleanup routines that are required.  Routines that provide their
+ *    own cleanup will always be used regardless of what is in the list,
+ *    and the first such kernel will appear in mkb
+ */
+      for (mp=mmGE; mp->next; mp = mp->next);
+      mp->next = mmSQ;
+      mkb = FindAllUniqueKClean(verb, pre, mmGE);
+      mp->next = NULL;  /* go back to separate lists */
+   }
 /*
  * Use reversed lists to build lists of cleanup, which will be in correct
  * order due to the way we build them
  */
-   if (verb)
-      printf("SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS:\n");
-   mmGEk = SpecializeKClean(verb, pre, mmGE, mkb);
-   if (verb)
-      printf("DONE SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS.\n");
-   KillAllMMNodes(mmGE);
-   WriteRefreshedMMFileWithPath(pre, "res", "geAMMKCLEAN.sum", mmGEk);
+   if (!mmGEk)
+   {
+      if (verb)
+         printf("SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS:\n");
+      if (!mmGE)
+         mmGE = ReverseMMQ(ReadMMFileWithPath(pre, "res", "geAMMRES.sum"));
+      mmGEk = SpecializeKClean(verb, pre, mmGE, mkb);
+      if (verb)
+         printf("DONE SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS.\n");
+      KillAllMMNodes(mmGE);
+      WriteRefreshedMMFileWithPath(pre, "res", "geAMMKCLEAN.sum", mmGEk);
+   }
    KillAllMMNodes(mmGEk);
 /*
  * Now do same for square kernels
  */
-   if (verb)
-      printf("SPECIALIZING K-CLEANERS FOR SQUARE BLOCKINGS:\n");
-   mmSQk = SpecializeKClean(verb, pre, mmSQ, mkb);
-   if (verb)
-      printf("DONE SPECIALIZING K-CLEANERS FOR SQUARE BLOCKINGS.\n");
-   KillAllMMNodes(mmSQ);
-   WriteRefreshedMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum", mmSQk);
+   if (!mmSQk)
+   {
+      if (verb)
+         printf("SPECIALIZING K-CLEANERS FOR SQUARE BLOCKINGS:\n");
+      if (!mmSQ)
+         mmSQ = ReverseMMQ(ReadMMFileWithPath(pre, "res", "sqAMMRES.sum"));
+      mmSQk = SpecializeKClean(verb, pre, mmSQ, mkb);
+      if (verb)
+         printf("DONE SPECIALIZING K-CLEANERS FOR SQUARE BLOCKINGS.\n");
+      KillAllMMNodes(mmSQ);
+      WriteRefreshedMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum", mmSQk);
+   }
    KillAllMMNodes(mmSQk);
+/*
+ * Specialize cleaners to inner-product views.  We don't have to read this
+ * for unique, since they come from geAMMRES exclusively
+ */
+   @whiledef fn mn m n
+   ipk = TimeMMFileWithPath(pre, "res", "@(fn)AMMKCLEAN.sum", 0, verb,0,0,0,-1);
+   if (!ipk)
+   {
+      ipb = ReverseMMQ(ReadMMFileWithPath(pre, "res", "ip@(fn)PERF.sum"));
+      assert(ipb);
+      if (verb)
+         printf("SPECIALIZING K-CLEANERS FOR IP DEGEN @up@(fn):\n");
+      ipk = SpecializeKClean(verb, pre, ipb, mkb);
+      if (verb)
+         printf("DONE SPECIALIZING K-CLEANERS FOR IP DEGEN @up@(fn).\n");
+      KillAllMMNodes(ipb);
+      WriteRefreshedMMFileWithPath(pre, "res", "@(fn)AMMKCLEAN.sum", ipk);
+   }
+   KillAllMMNodes(ipk);
+   @endwhile
+
+   KillAllMMNodes(mkb);
    if (verb)
       printf("\nDONE FINDING K-CLEANUP FOR EACH KB.\n");
 }
@@ -9517,6 +9557,17 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, ATL_mmnode_t *mmb)
    return(mmSQ);
 }
 @ROUT ammsearch
+/*
+ * Sets all MV[A,B,C] bits in mmb to those provided in low 3 bits of bits
+ */
+void ResetMoveBitsInQ(ATL_mmnode_t *mmb, int bits)
+{
+   while (mmb)
+   {
+      ATL_MMF_MVPUT(mmb->flag, bits);
+      mmb = mmb->next;
+   }
+}
 ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB, 
                                   ATL_mmnode_t *mmb)
 {
@@ -9554,6 +9605,7 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB,
  */
    mmS = ReadMMFileWithPath(upr, "res", "WORKING.sum");
    ATL_LastMMNode(mmS)->next = CloneMMQueue(mmGN);
+   ResetMoveBitsInQ(mmS, 5);  /* mmb already set to movA=movC=1, movB=0 */
 /*
  * Find best NB=4 case to start queue
  */
@@ -9598,17 +9650,6 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB,
       }
    }
    return(mmSQ);
-}
-/*
- * Sets all MV[A,B,C] bits in mmb to those provided in low 3 bits of bits
- */
-void ResetMoveBitsInQ(ATL_mmnode_t *mmb, int bits)
-{
-   while (mmb)
-   {
-      ATL_MMF_MVPUT(mmb->flag, bits);
-      mmb = mmb->next;
-   }
 }
 
 ATL_mmnode_t *MergeRankKKernels
@@ -9874,7 +9915,8 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
    {
       int maxNB=0;
       ATL_mmnode_t *mp;
-      for (mp=mmb; mp; mp = mp->next)
+
+      for (mp=mmb; mp; mp = mp->next) /* find maximum NB */
       {
           if (mp->kbB > maxNB)
              maxNB = mp->kbB;
@@ -9883,10 +9925,7 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
           if (mp->nbB > maxNB)
              maxNB = mp->nbB;
       }
-@skip      mmb = GetWorkingUserCases(verb, upr);
-@skip      mmb = GetUniqueUserKerns(mmb);
       mmSQ = FindBestSquareCases(pre, verb, nregs, maxNB, mmb);
-@skip      KillAllMMNodes(mmb);
       WriteRefreshedMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
    }
    return(mmSQ);
@@ -10171,9 +10210,9 @@ ATL_mmnode_t *FindBestK_MN
    return(mpMax);
 }
 
-void GenAllViews(char pre, int verb)
+void GenAllIPViews(char pre, int verb)
 /*
- * Generates performance views of [ge,rk]AMMRES.sum
+ * Generates performance views of geAMMRES.sum
  */
 {
    ATL_mmnode_t *mmb, *mp, *mpL;
@@ -10216,50 +10255,6 @@ void GenAllViews(char pre, int verb)
       KillAllMMNodes(mb);
       printf("   DONE DEGENERATE MB/NB SEARCH.\n\n");
    }
-@beginskip
-   mp = TimeMMFileWithPath(pre, "res", "ipmnPERFcp.sum", 0, verb, 0, 1, 0, -1);
-   if (!mp)
-   {
-      ATL_mmnode_t *mb;
-      printf("TIMING COPY ROUTINES FOR DEG MB/NB:\n");
-      mb = ReadMMFileWithPath(pre, "res", "ipmnPERF.sum");
-      for (mp=mb; mp; mp = mp->next)
-      {
-         double mf;
-         mp->blask = ATL_KGECPFA;
-         mp->TB = mp->TA = AtlasTrans; /* generally, worst case perf-wise */
-         if (mp->rout)
-           free(mp->rout);
-         mp->rout = DupString("ATL_tmp.c");
-         if (mp->comp)
-            free(mp->comp);
-         if (mp->cflags)
-            free(mp->cflags);
-         if (mp->auth)
-            free(mp->auth);
-         mp->auth = mp->comp = mp->cflags = NULL;
-         if (mp->genstr)
-           free(mp->genstr);
-         mp->genstr = MMGetGenString(pre, mp);
-         mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1,0,-1);
-         mp->mflop[0] = mf;
-         printf("      cpA, NB=%d: %d-%s, KB=%d  mf=%.2f.\n", mp->nbB,
-                mp->ID, mp->rout ? mp->rout:"gen", mp->kbB, mf);
-         mp->blask = ATL_KGECP2C;
-         if (mp->genstr)
-           free(mp->genstr);
-         mp->genstr = MMGetGenString(pre, mp);
-         mf = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1,0,-1);
-         mp->mflop[1] = mf;
-         printf("      cpC, NB=%d: %d-%s, KB=%d  mf=%.2f.\n", mp->nbB,
-                mp->ID, mp->rout ? mp->rout:"gen", mp->kbB, mf);
-      }
-      WriteMMFileWithPath(pre, "res", "ipmnPERFcp.sum", mb);
-      printf("DONE TIMING COPY ROUTINES FOR DEG MB/NB.\n\n");
-      mp = mb;
-   }
-@endskip
-   KillAllMMNodes(mp);
 
    mp = TimeMMFileWithPath(pre, "res", "ipnPERF.sum", 0, verb, 0, 1, 0, -1);
    if (mp)
@@ -10364,17 +10359,21 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
  * Find the best user-supplied cases for the three common cache blking cases
  */
    mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
+   #if 0  /* switching square case to rank-K */
 /*
- * Now find best square cases
+ *    Now find best square cases
  */
-   sqmmb = DoSquare(pre, verb, nregs, mmb);
+      sqmmb = DoSquare(pre, verb, nregs, mmb);
 /*
- * Now merge square & rect lists for best performing kernels, and write it out
+ *     Now merge square & rect lists for best performing kernels, and write out
  */
-   mp = MergeCases(0, mmb, sqmmb);
-   KillAllMMNodes(sqmmb);
-   KillAllMMNodes(mmb);
-   mmb = WinnowCases(0, mp);
+      mp = MergeCases(0, mmb, sqmmb);
+      KillAllMMNodes(sqmmb);
+      KillAllMMNodes(mmb);
+      mmb = WinnowCases(0, mp);
+   #else
+      mmb = WinnowCases(0, mmb);
+   #endif
    WriteRefreshedMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
    return(mmb);
 }
@@ -10638,6 +10637,8 @@ int main(int nargs, char **args)
       WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
    }
    rnkK = DoRankK(pre, verb, nregs, mmb);
+   DoSquare(pre, verb, nregs, rnkK);
+   GenAllIPViews(pre, verb);
 /*
  * Handle K-cleanup
  */
@@ -10659,7 +10660,6 @@ int main(int nargs, char **args)
    WriteRefreshedMMFileWithPath(pre, "res", "AMMFRCLST.sum", mp);
    KillAllMMNodes(mp);
    GetGenKernForNB(pre, 0);  /* dealloc static mmnodes */
-   GenAllViews(pre, verb);
    exit(0);
 }
 @ROUT uammsearch
