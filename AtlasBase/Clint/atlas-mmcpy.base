@@ -974,7 +974,7 @@ ATL_view_t *GetFlags(int nargs, char **args, char *PRE, char **PTH)
 void GenHead
 (
    char pre,        /* s,d,c,z */
-   char mtx,        /* C,A */
+   char mtx,        /* C,A,B */
    char dir,        /* 'F': FromC, i.e. C2blk, 'I': blk2C */
    char calp,       /* 1,N,X */
    char cbet,       /* C:0,1,N,X or A:T,N */
@@ -986,7 +986,7 @@ void GenHead
 {
    ATL_cpnode_t *cp;
    FILE *fpp, *fpd;
-   char *sp;
+   char *sp, *arrnm;
    int i, flag, N;
 
    assert(cb);
@@ -1011,38 +1011,53 @@ void GenHead
    sp[2] = 'Z';
    sp[3] = 'Z';
 
-   fprintf(fpd, "\n#include atlas_amm.h\n");
+   fprintf(fpd, "\n#include \"atlas_amm.h\"\n");
    fprintf(fpd, "/*\n * Prototypes\n */\n");
    PrintProtos(fpd, cb);
    fprintf(fpd, "/*\n * Index array\n */\n");
    N = ATL_CountNumberOfCPNodes(cb);
    if (mtx == 'C')
    {
-      if (dir == 'F')
-         fprintf(fpd,"static const cmat2ablk_t ATL_%s_C2blk_a%cb%c[%d] =\n{\n",
-                 nm, calp, cbet, N);
-      else
-         fprintf(fpd,"static const ablk2cmat_t ATL_%s_blk2C_a%cb%c[%d] =\n{\n",
-                 nm, calp, cbet, N);
-      fprintf(fpp, "static const float ATL_%s_%stime_a%cb%c[%d] = \n{\n", nm,
-              (dir=='F')?"C2blk":"blk2C", calp, cbet, N);
+      fprintf(fpd, "static const %s_t ATL_AMM_%s_a%c_b%c[%d] =\n{\n",
+              (dir=='F')?"cmat2ablk":"ablk2cmat", (dir=='F')?"BLK2C":"C2BLK",
+              calp, cbet, N);
+      fprintf(fpp, "static const float ATL_AMM_%sTIME_a%cb%c[%d] = \n{\n",
+              (dir=='F')?"C2BLK":"BLK2C", calp, cbet, N);
    }
-   else /* A */
+   else /* A or B */
    {
       char *bn;
       if (dir == 'F')
       {
-         fprintf(fpd,"static const cm2am_t ATL_%s_A%c2blk_a%c[%d] =\n{\n",
-                 nm, cbet, calp, N);
-         bn = (cbet == 'N') ? "AN2blk" : "AT2blk";
+         if (cbet == 'N')
+            bn = (mtx == 'A') ? "AN2BLK" : "BN2BLK";
+         else if (cbet == 'C')
+            bn = (mtx == 'A') ? "AC2BLK" : "BC2BLK";
+         else if (cbet == 'H')
+            bn = (mtx == 'A') ? "AH2BLK" : "BH2BLK";
+         else
+            bn = (mtx == 'A') ? "AT2BLK" : "BT2BLK";
+         fprintf(fpd,"static const cm2am_t ATL_AMM_%s_a%c[%d] =\n{\n",
+                 bn, calp, N);
       }
       else
       {
-         bn = (cbet == 'N') ? "blk2AN" : "blk2AT";
-         fprintf(fpd,"static const am2cm_t ATL_%s_blk2A%c_a%c[%d] =\n{\n",
-                 nm, cbet, calp, N);
+         if (cbet == 'N')
+            bn = (mtx == 'A') ? "BLK2AN" : "BLK2BN";
+         else if (cbet == 'C')
+            bn = (mtx == 'A') ? "BLK2AC" : "BLK2BC";
+         else if (cbet == 'H')
+            bn = (mtx == 'A') ? "BLK2AH" : "BLK2BH";
+         else
+            bn = (mtx == 'A') ? "BLK2AT" : "BLK2BT";
+         if (mtx == 'A')
+            bn = (cbet == 'N') ? "BLK2AN" : "BLK2AT";
+         else
+            bn = (cbet == 'N') ? "BLK2BN" : "BLK2BT";
+         fprintf(fpd,"static const am2cm_t ATL_AMM_%s_a%c[%d] =\n{\n",
+                 bn, calp, N);
       }
-      fprintf(fpp, "static const float ATL_%s_%stime_a%c[%d] = \n{\n", nm,
+      fprintf(fpp, "static const float ATL_AMM_%stime_a%c[%d] = \n{\n",
               bn, calp, N);
    }
    for (i=0,cp=cb; cp; i++, cp = cp->next)
@@ -1128,11 +1143,12 @@ void GenAllAHeadDir(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
                     ATL_cpnode_t *CB)
 {
    int tlen, nlen, plen, ia, it, d;
+   const int nta = (pre == 'c' || pre == 'z') ? 4 : 2;
    char *nam, *tnam;
          /* atlas_<pre><nm>_[Into,From]A[T,N]xxxx_aX.h */
    char iscls[3]={1, -1, 2};
    char cscls[3]={'1', 'N', 'X'};
-   char ctas[2] = {'N', 'T'};
+   char ctas[4] = {'N', 'T', 'C', 'H'};
 
    plen = strlen(path) + 1;
    nlen = strlen(vp->nam);
@@ -1157,9 +1173,9 @@ void GenAllAHeadDir(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
          sp[2] = 't';
          sp[3] = 'o';
       }
-      for (it=0; it < 2; it++)
+      for (it=0; it < nta; it++)
       {
-         const char cta = it ? 'T' : 'N';
+         const char cta = ctas[it];
 
          nam[nlen+13] = cta;
          for (ia=0; ia < 3; ia++)
@@ -1168,19 +1184,18 @@ void GenAllAHeadDir(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
             const char calp=cscls[ia];
             int flag;
 
-            if (!(vp->flag &(1<<(CPV_AL1C+ia))))
+            if (!(vp->flag &(1<<(CPV_AL1A+ia))))
                continue;
             nam[nlen+20] = calp;
-            flag = CopyEncode(pre, d?'F':'I', 'A', cta);
+            flag = CopyEncode(pre, d?'F':'I', 'A', 'N');
             flag = CopyEncodeScal(flag, iscls[ia], 0);
             cb = MMGetCopiesFromList(flag, mb, CB);
-            for (cp=cb; cp; cp = cp->next)
-            {
-               if (cp->rout)
-                  free(cp->rout);
-               cp->rout = GetCopyName(cp,0);
-            }
+            nam[nlen+12] = 'A';
+            CopyFixTransByMtx('A', cta, cb);
             GenHead(pre, 'A', dir, calp, cta, vp->nam, tnam, nam, cb);
+            nam[nlen+12] = 'B';
+            CopyFixTransByMtx('B', cta, cb);
+            GenHead(pre, 'B', dir, calp, cta, vp->nam, tnam, nam, cb);
             KillAllCPNodes(cb);
          }
       }
@@ -1341,6 +1356,7 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
          ATL_view_t *vp;
          for (vp=vb; vp; vp = vp->next) /* scope all input views */
          {
+            const int vflg=vp->flag;
             int flg;
             int b;
 
@@ -1355,11 +1371,12 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
 /*
  *          Add copies A needs from all views (TRANS added later) 
  */
-            if ((vp->flag & (1<<(CPV_A2BLK+d))) && (vp->flag & (1<<(CPV_AL1A+a))))
+            if ((vflg&(1<<(CPV_A2BLK+d))) && (vflg&(1<<(CPV_AL1A+a))))
             {
                ATL_mmnode_t *mb;
                ATL_cpnode_t *bb;
                mb = ReadMMFile(vp->fnam);
+               assert(mb);
                bb = GetAllCopyNodesFromMM(flg, mb);
                if (bb)
                {
@@ -1373,17 +1390,22 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
                }
                KillAllMMNodes(mb);
             }
+
+            if (!(vflg&(1<<(CPV_AL1C+a))))
+               continue;
+            if (!(vflg&(1<<(CPV_C2BLK+d))))
+               continue;
             flg |= 1<<CPF_CBLK;
             for (b=0; b < 4; b++) /* 0:beta=1, 1:beta=N, 2:beta=X, 3:beta=0 */
             {
                flg &= ~CPF_ALLBET;
                flg |= 1<<(CPF_BE1+b);
-               if ((vp->flag&(1<<(CPV_C2BLK+d))) && (vp->flag&(1<<(CPV_AL1C+a))) 
-                   && (vp->flag & (1<<(CPV_BE1C+b))))
+               if (vflg & (1<<(CPV_BE1C+b)))
                {
                   ATL_mmnode_t *mb;
                   ATL_cpnode_t *bb;
                   mb = ReadMMFile(vp->fnam);
+                  assert(mb);
                   bb = GetAllCopyNodesFromMM(flg, mb);
                   if (bb)
                   {
@@ -1434,7 +1456,7 @@ void DoSearch(char pre)
    ln = DupString("./xcpysearch -i res/Xcpylst.CPS -o res/XcpyPERF.CPS");
    ln[20] = pre;
    ln[39] = pre;
-   assert(!Sys2File(ln, NULL));
+   assert(!Sys2File(ln, "stdout"));
    free(ln);
 }
 
@@ -1470,6 +1492,9 @@ void DoGenH(char pre, char *path, ATL_view_t *vb)
    }
 }
 
+/*
+ * xcpydrv -Vs -o cpylst.CPS | xcpysearch -o cpyPERF.CPS | xcpygen/xcphgen
+ */
 int main(int nargs, char **args)
 {
    ATL_view_t *vb=NULL, *vp;  /* view base & ptr */

@@ -336,20 +336,30 @@ int Sys2File(char *cmnd, char *file)
    assert(cmnd);
    if (!file)
       file = "/dev/null";
+   else if (!strcmp(file, "stdout"))
+      file = NULL;
    lC = strlen(cmnd);
-   lF = strlen(file);
+   if (file)
+      lF = strlen(file);
+   else 
+      lF = 0;
    sys = malloc((lC+lF+4)*sizeof(char));
    assert(sys);
    for (i=0; i < lC; i++)
       sys[i] = cmnd[i];
-   sp = sys + lC;
-   *sp = ' ';
-   sp[1] = '>';
-   sp[2] = ' ';
-   sp += 3;
-   for (i=0; i < lF; i++)
-      sp[i] = file[i];
-   sp[lF] = '\0';
+   if (file)
+   {
+      sp = sys + lC;
+      *sp = ' ';
+      sp[1] = '>';
+      sp[2] = ' ';
+      sp += 3;
+      for (i=0; i < lF; i++)
+         sp[i] = file[i];
+      sp[lF] = '\0';
+   }
+   else
+      sys[lC] = '\0';
    i = system(sys);
    if (i)
       fprintf(stderr, "\nERROR %d for '%s'!\n\n", i, sys);
@@ -3219,7 +3229,6 @@ static int CopyEncode
    return(flag);
 }
 
-
 @multidef pf AL BE
 @whiledef sc Alpha Beta
 @iexp ip @(ip) 1 +
@@ -3341,11 +3350,12 @@ char *ConjCopyName(ATL_cpnode_t *cp)
 {
    if (!(cp->flag&(1<<CPF_CBLK)))
    {
+      char *sp = cp->rout + 12;
       char ch;
       assert(cp->rout);
-      ch = cp->rout[12];
+      ch = *sp;
       assert(ch == 'T' || ch == 'N');
-      ch = (ch == 'T') ? 'H' : 'C';
+      *sp = (ch == 'T') ? 'H' : 'C';
    }
 }
 
@@ -3353,11 +3363,12 @@ char *UnConjCopyName(ATL_cpnode_t *cp)
 {
    if (!(cp->flag&(1<<CPF_CBLK)))
    {
+      char *sp = cp->rout + 12;
       char ch;
       assert(cp->rout);
-      ch = cp->rout[12];
+      ch = *sp;
       assert(ch == 'H' || ch == 'C');
-      ch = (ch == 'H') ? 'T' : 'N';
+      *sp = (ch == 'H') ? 'T' : 'N';
    }
 }
 
@@ -3405,15 +3416,19 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
    else
    {
       char cks[4]={'k', 'y', 'r', 's'};
-      char ck='g';
+      char ck='g', cta;
       for (i=CPF_SYRK; i <= CPF_TRSM; i++)
          if ((flag>>i)&1)
             ck = cks[i-CPF_SYRK];
       len = 21 + NumDecDigits(p->nu) + NumDecDigits(p->kvec);
       sp = malloc(len+exlen);
       assert(sp);
+      if (flag & (1<<CPF_TRANS))  /* transpose */
+         cta = (flag & (1<<CPF_CONJ)) ? 'H' : 'T';
+      else
+         cta = (flag & (1<<CPF_CONJ)) ? 'C' : 'N';
       i = sprintf(sp, "ATL_%ccp%sA%c%c_%u_%u_a%c", pre, dir,
-                  (flag&(1<<CPF_TRANS))?'T':'N', ck, p->nu, p->kvec, cal);
+                  cta, ck, p->nu, p->kvec, cal);
    }
    assert(i < len);
    return(sp);
@@ -3579,6 +3594,50 @@ ATL_cpnode_t *CopyNoRep(ATL_cpnode_t *cb, int minSz)
       }
    }
    return(cb);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void CopyFixTransByMtx(char mtx, char ta, ATL_cpnode_t *cb)
+/*
+ * This function takes a list of copy functions and applies the Tranpose
+ * rules necessary for A or B storage.  In NoTrans the K dim is contiguous,
+ * while in Transpose K is strided.  Therefore, A (naturally MxK) must always
+ * swap the transpose setting, while B (KxN) keeps the input setting.
+ * More explicitly, the rules are:
+ *    AN:cpT, AC:cpH, AT:cpN, AH:cpC; 
+ *    BN:cpN, BC:cpC, BT:cpyT, BH:cpyH
+ */
+{
+   ATL_cpnode_t *cp;
+   const int nmsk=~((1<<CPF_TRANS)|(1<<CPF_CONJ)|(1<<CPF_ABLK));
+   int msk;
+   if (mtx == 'A' || mtx == 'a')
+   {
+      msk = 1<<CPF_ABLK;
+      if (ta == 'N')
+         msk |= (1<<CPF_TRANS);
+      else if (ta == 'C')
+         msk |= (1<<CPF_TRANS) | (1<<CPF_CONJ);
+      else if (ta == 'H')
+         msk |= (1<<CPF_CONJ);
+   }
+   else
+   {
+      if (ta == 'T')
+         msk = (1<<CPF_TRANS);
+      else if (ta == 'C')
+         msk = (1<<CPF_CONJ);
+      else if (ta == 'H')
+         msk = (1<<CPF_TRANS) | (1<<CPF_CONJ);
+   }
+   for (cp=cb; cp; cp = cp->next)
+   {
+      cp->flag = (cp->flag & nmsk) | msk;
+      if (cp->rout)
+         free(cp->rout);
+      cp->rout = GetCopyName(cp, 0);
+   }
 }
 
 @ROUT mvread r1read mmread cpread
@@ -6425,7 +6484,7 @@ static char *View2Args(ATL_view_t *p)
       strcat(Cb, "0,1,N,X");
    else if (i)
    {
-      for (k=0; (i&1) == 0 && k <= 4; k++, i>>=1)
+      for (k=0; (i&1) == 0 && k <= 4; k++, i>>=1);
       Cb[3] = scl[k];
       sp = Cb+4;
       for (i>>=1; i; k++, i>>=1)
@@ -6608,6 +6667,12 @@ ATL_cpnode_t *MMGetCopiesFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
       ATL_cpnode_t *cm, *cp;
       cm = GetCopyNodeFromMM(flag, mp);
       cp = FindEquivCopy(cb, cm);
+      if (!cp)
+      {
+         fprintf(stderr, "NO COPY: ID=%d '%s', mu=%d, nu=%d, flg=%x\n",
+                 cm->ID, cm->rout?cm->rout:"gen", cm->mu, cm->nu, cm->flag);
+         PrintCPLine(stderr, cm);
+      }
       assert(cp);
       KillCPNode(cm);
       cm = CloneCPNode(cp);

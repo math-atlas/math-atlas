@@ -33823,3 +33823,226 @@ int main(int nargs, char **args)
    KillAllMMNodes(mmB);
    return(0);
 }
+@ROUT ATL_CopyInfo_rkK
+@skip gemm ipmn ipm ipn
+#include "atlas_amm.h"
+@whiledef vw rkmm sqrk
+#ifdef ATL_@(vw)_
+   #define CCPRE Mjoin(ATLAS_PRE,@(vw)_)
+   #define ATL_FillInCopy Mjoin(PATL,FillInCopy_@(vw))
+#endif
+@endwhile
+@whiledef al 1 N X
+   @whiledef ta N T
+#include Mstr(Mjoin(CCPRE,FromA@(ta)decl_a@(al).h))
+#include Mstr(Mjoin(CCPRE,FromB@(ta)decl_a@(al).h))
+   @endwhile
+   @whiledef be 0 1 N X
+#include Mstr(Mjoin(CCPRE,IntoCdecl_a@(al)b@(be).h))
+   @endwhile
+@endwhile
+#ifdef TCPLX
+@whiledef al 1 N X
+   @whiledef ta H C
+   #include Mstr(Mjoin(CCPRE,FromA@(ta)decl_a@(al).h))
+   #include Mstr(Mjoin(CCPRE,FromB@(ta)decl_a@(al).h))
+   @endwhile
+@endwhile
+#endif
+
+void ATL_FillInCopy
+   (rkinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
+    int ALPA, const SCALAR alpha, const SCALAR beta)
+{
+   const int AlpOne = SCALAR_IS_ONE(alpha);
+
+   if (ALPA || AlpOne) /* alpha 1,N or X, apply it to A */
+   {
+      ip->alpA = alpha;
+      #ifdef TCPLX
+         ip->alpB = ip->ONE;
+      #else
+         ip->alpB = ATL_rone;
+      #endif
+      if (AlpOne)
+      {
+         #ifdef TCPLX
+         if (TA == AtlasConj)
+            ip->a2blk = ATL_AMM_AC2BLK_a1[idx];
+         else if (TA == AtlasConjTrans)
+            ip->a2blk = ATL_AMM_AH2BLK_a1[idx];
+         else
+         #endif
+         ip->a2blk = (TA == AtlasNoTrans) ? 
+                     ATL_AMM_AN2BLK_a1[idx]:ATL_AMM_AT2BLK_a1[idx];
+      }
+      else  /* know alpha=N or X if we reach here */
+      {
+         if (TA == AtlasNoTrans)
+            ip->a2blk = SCALAR_IS_NONE(alpha) ? 
+                        ATL_AMM_AN2BLK_aN[idx]:ATL_AMM_AN2BLK_aX[idx];
+         #ifdef TCPLX
+         else if (TA == AtlasConj)
+            ip->a2blk = SCALAR_IS_NONE(alpha) ? 
+                        ATL_AMM_AC2BLK_aN[idx]:ATL_AMM_AC2BLK_aX[idx];
+         else if (TA == AtlasConjTrans)
+            ip->a2blk = SCALAR_IS_NONE(alpha) ? 
+                        ATL_AMM_AH2BLK_aN[idx]:ATL_AMM_AH2BLK_aX[idx];
+         #endif
+         else
+            ip->a2blk = SCALAR_IS_NONE(alpha) ? 
+                        ATL_AMM_AT2BLK_aN[idx]:ATL_AMM_AT2BLK_aX[idx];
+      }
+      #ifdef TCPLX
+         if (TB == AtlasConj)
+            ip->b2blk = ATL_AMM_BC2BLK_a1[idx];
+         else if (TB == AtlasConjTrans)
+            ip->b2blk = ATL_AMM_BH2BLK_a1[idx];
+         else
+      #endif
+         ip->b2blk = (TB == AtlasNoTrans) ? 
+                     ATL_AMM_BN2BLK_a1[idx]:ATL_AMM_BT2BLK_a1[idx];
+   }
+   else /* alpha=N or X, apply alpha to B */
+   {
+      ip->alpB = alpha;
+      #ifdef TCPLX
+         ip->alpA = ip->ONE;
+      #else
+         ip->alpA = ATL_rone;
+      #endif
+      if (TB == AtlasNoTrans)
+         ip->b2blk = SCALAR_IS_NONE(alpha) ? 
+                     ATL_AMM_BN2BLK_aN[idx]:ATL_AMM_BN2BLK_aX[idx];
+      #ifdef TCPLX
+      else if (TB == AtlasConj)
+         ip->b2blk = SCALAR_IS_NONE(alpha) ? 
+                     ATL_AMM_BC2BLK_aN[idx]:ATL_AMM_BC2BLK_aX[idx];
+      else if (TB == AtlasConjTrans)
+         ip->b2blk = SCALAR_IS_NONE(alpha) ? 
+                     ATL_AMM_BH2BLK_aN[idx]:ATL_AMM_BH2BLK_aX[idx];
+      #endif
+      else
+         ip->b2blk = SCALAR_IS_NONE(alpha) ? 
+                     ATL_AMM_BT2BLK_aN[idx]:ATL_AMM_BT2BLK_aX[idx];
+      #ifdef TCPLX
+         if (TA == AtlasConj)
+            ip->a2blk = ATL_AMM_AC2BLK_a1[idx];
+         else if (TA == AtlasConjTrans)
+            ip->a2blk = ATL_AMM_AH2BLK_a1[idx];
+         else
+      #endif
+         ip->a2blk = (TA == AtlasNoTrans) ? 
+                     ATL_AMM_AN2BLK_a1[idx]:ATL_AMM_AT2BLK_a1[idx];
+   }
+   if (SCALAR_IS_NONE(beta))
+      ip->blk2C = ATL_AMM_C2BLK_a1_b0[idx];
+   else if (SCALAR_IS_ONE(beta))
+      ip->blk2C = ATL_AMM_C2BLK_a1_b1[idx];
+   else
+      ip->blk2C = SCALAR_IS_ZERO(beta) ? 
+                  ATL_AMM_C2BLK_a1_b0[idx]:ATL_AMM_C2BLK_a1_b1[idx];
+}
+@ROUT ATL_GetInfo_rkK
+#include "atlas_amm.h"
+@multidef hn rkamm sqamm
+@whiledef vw rkmm  sqrk
+#ifdef ATL_@(vw)_
+   #define AMPRE Mjoin(ATLAS_PRE,@(hn)_)
+   #define ATL_FillInInfo Mjoin(PATL,FillInInfo_@(vw))
+   @undef hn
+#endif
+@endwhile
+#include Mstr(Mjoin(AMPRE,kern.h))
+#include Mstr(Mjoin(AMPRE,blk.h))
+#include Mstr(Mjoin(AMPRE,perf.h))
+void ATL_FillInCopy
+   (rkinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
+    int ALPA, const SCALAR alpha, const SCALAR beta);
+
+void ATL_FillInInfo
+   (rkinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb, 
+    ATL_CSZT ldc, SCALAR alpha, const SCALAR beta,
+    size_t nfmblks, size_t npmblks, int mb, int pmb,
+    size_t nfnblks, size_t npnblks, int nb, int pnb)
+{
+   #if ATL_rkAMM_MAXKVEC == 0
+      const unsigned int kb = K;
+   #else
+      int unsigned kb = K;
+   #endif
+   const unsigned int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx];
+   const unsigned int ku=ATL_AMM_KUs[idx], vlen=ATL_AMM_VLENs[idx];
+   unsigned int sz, nmu, nnu;
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define CONE ATL_rone
+   #endif
+
+   #if ATL_rkAMM_MAXKVEC > 0
+      if (ATL_AMM_KMAJOR(idx))
+         kb = ((K + ku - 1)/ku)*ku;
+   #endif
+   ip->kb = K;
+   ip->KB = kb;
+   #ifdef TCPLX
+      ip->ONE = CONE;
+   #endif
+   ip->beta = beta;
+   @multidef v mu nu ku vlen idx
+   @whiledef v nfmblks npmblks mb pmb nfnblks npnblks nb pnb lda ldb ldc
+   ip->@(v) = @(v);
+   @endwhile
+   @multidef mt B A
+   @whiledef d  n m
+   if (np@(d)blks)
+   {
+      ip->@(d)F = @up@(d) - nf@(d)blks*@(d)b - (np@(d)blks-1)*p@(d)b;
+      ip->n@(d)uF = (ip->@(d)F+@(d)u-1) / @(d)u;
+   }
+   else
+      ip->n@(d)uF = ip->@(d)F = 0;
+   ip->psz@(mt) = p@(d)b*kb;
+   ip->sz@(mt) = kb * (@(d)b ? @(d)b:p@(d)b);
+   @endwhile
+   sz = ((mu*nu+vlen-1)/vlen)*vlen;
+   sz *= (ip->nmu) ? ip->nmu : ip->pnmu;
+   sz *= (ip->nnu) ? ip->nnu : ip->pnnu;
+   ip->szC = sz;
+   ip->amm_b0 = ATL_AMM_KERN_b0[idx];
+   #ifdef TCPLX
+      ip->amm_b1 = ATL_AMM_KERN_b1[idx];
+      ip->amm_bn = ATL_AMM_KERN_bn[idx];
+   #endif
+   #ifdef TCPLX
+   if (TA == AtlasNoTrans || TA == AtlasConj)
+   #else
+   if (TA == AtlasNoTrans)
+   #endif
+   {
+      ip->incAm = mb SHIFT;
+      ip->pincAm = pmb SHIFT;
+   }
+   else
+   {
+      ip->incAm = lda*(mb SHIFT);
+      ip->pincAm = lda*(pmb SHIFT);
+   }
+   #ifdef TCPLX
+   if (TB == AtlasNoTrans || TB == AtlasConj)
+   #else
+   if (TB == AtlasNoTrans)
+   #endif
+   {
+      ip->incBn = ldb*(nb SHIFT);
+      ip->pincBn = ldb*(pnb SHIFT);
+   }
+   else
+   {
+      ip->incBn  = nb SHIFT;
+      ip->pincBn = pnb SHIFT;
+   }
+   ATL_FillInCopy(ip, idx, TA, TB, (M<=N), alpha, beta);
+}
