@@ -2405,6 +2405,7 @@ blk2C=def
 C2blk=def
 CM2blk=def
 RM2blk=def
+minsz=576
 @BEGINSKIP
 RunMMDef : xmmsearch
 	./xmmsearch -p $(pre) -r $(nreg)
@@ -2771,7 +2772,8 @@ res/@(pre)nreg : xgmmsearch @(pre)mflops.frc
 @(pre)tfc :
 	$(MAKE) x@(pre)tfc pre=@(pre) typ=@(typ)
 
-@whiledef rt geAMMRES.sum sqAMMRES.sum rkAMMRES.sum geAMMKCLEAN.sum sqAMMKCLEAN.sum
+@multidef rt ipmnPERF.sum ipmPERF.sum ipnPERF.sum geAMMRES.sum geAMMKCLEAN.sum
+@whiledef rt sqAMMRES.sum rkAMMRES.sum sqAMMKCLEAN.sum
 res/@(pre)@(rt) : xammsearch
 	./xammsearch -p @(pre)
 @endwhile
@@ -2869,19 +2871,25 @@ res/@(pre)@(rt) : xgmmsearch
 	./xammgen -p @(pre) -d $(AMMdir)/KERNEL 
 	mv $(AMMdir)/KERNEL/*.h $(INCAdir)/.
 	cd $(AMMdir) ; $(PMAKE) @(pre)lib
-@whiledef rt b2C C2b
-$(AMMdir)/KERNEL/@(pre)COPY@(rt) :
-	mkdir $(AMMdir)/KERNEL/@(pre)COPY@(rt)
-	ln -s $(BLDdir)/Make.inc $(AMMdir)/KERNEL/@(pre)COPY@(rt)/Make.inc
-   @declare "@(pre)install_@(rt): " y n 
-   $(AMMdir)/KERNEL/@(pre)COPY@(rt) xcpygen
-   @whiledef al 1 N X
-      @whiledef be 0 1 N X
-         res/@(pre)f@(rt)_a@(al)b@(be).sum
+@(pre)views=-V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1 syrk @(pre)gAMSYRK.sum \
+    @multidef pf gemm     sqrk     rkmm     ipmn     ipn     ipm
+    @whiledef rt geAMMRES sqAMMRES rkAMMRES ipmnPERF ipnPERF ipmPERF
+       -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X @(pf) res/@(pre)@(rt).sum \
+       @undef pf
+    @endwhile
+       -V Cd=F Ca=1 Cb=0 Ad=I Aa=1,N sqlu res/@(pre)sqAMMRES.sum
+$(AMMdir)/KERNEL/@up@(pre)COPY:
+	mkdir $(AMMdir)/KERNEL/@up@(pre)COPY
+@skip	ln -s $(BLDdir)/Make.inc $(AMMdir)/KERNEL/@up@(pre)COPY/Make.inc
+   @declare "@(pre)install_cpy: " y n 
+   $(AMMdir)/KERNEL/@up@(pre)COPY xcpydrv
+      @whiledef rt geAMMRES sqAMMRES rkAMMRES gAMSYRK ipmnPERF ipnPERF ipmPERF
+         res/@(pre)@(rt).sum
       @endwhile
-   @endwhile
    @enddeclare
-@endwhile
+	- cd $(AMMdir)/KERNEL/@up@(pre)COPY ; $(MAKE) killall
+	./xcpydrv -p @(pre) -z $(minsz) $(@(pre)views) \
+                  -o $(AMMdir)/KERNEL/@up@(pre)COPY
 @beginskip
 @(pre)install_amm: res/@(pre)geAMMRES.sum res/@(pre)geAMMKCLEAN.sum \
                    res/@(pre)sqAMMRES.sum res/@(pre)sqAMMKCLEAN.sum \

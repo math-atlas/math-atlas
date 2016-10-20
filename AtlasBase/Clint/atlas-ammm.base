@@ -97,7 +97,7 @@ ID=27 MU=24 NU=1 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_dammm24x1x256_sse3.S' \
      SSE=3 VLEN=2 KBMAX=256 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
 ID=28 MU=6 NU=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_dammm6x4x256_fma3.S' \
-     SSE=5 VLEN=4 KBMAX=256 ASM=GAS_x8664 \
+     SSE=5 VLEN=2 KBMAX=256 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3 -mfma'
 ID=29 MU=12 NU=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_dammm12x4x256_fma3.S' \
      SSE=5 VLEN=4 KBMAX=256 ASM=GAS_x8664 \
@@ -470,7 +470,7 @@ ID=49 MU=24 NU=4 KU=1 AUTH="Rakib Hasan" ROUT='ATL_damm12x4x1_aarch64-A53.S' \
    typedef void (*cm2am_t)(const size_t, const size_t, const SCALAR,
                            const TYPE*, const size_t, TYPE*);
    typedef void (*am2cm_t)(const size_t, const size_t, const SCALAR,
-                           TYPE*, const size_t, const TYPE*);
+                           const TYPE*, TYPE*, const size_t);
    typedef void (*ablk2cmat_t)(const size_t, const size_t, const SCALAR,
                                const TYPE*, const SCALAR, TYPE *, const size_t);
    typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR,
@@ -480,7 +480,7 @@ ID=49 MU=24 NU=4 KU=1 AUTH="Rakib Hasan" ROUT='ATL_damm12x4x1_aarch64-A53.S' \
    typedef void (*cm2am_t)(const size_t, const size_t, const SCALAR,
                            const TYPE*, const size_t, TYPE*, TYPE*);
    typedef void (*am2cm_t)(const size_t, const size_t, const SCALAR,
-                           TYPE*, const size_t, const TYPE*, const TYPE*);
+                           const TYPE*, const TYPE*, TYPE*, const size_t);
    typedef void (*ablk2cmat_t)(const size_t, const size_t, const SCALAR,
                                const TYPE*, const TYPE*, const SCALAR, 
                                TYPE *, const size_t);
@@ -6805,6 +6805,11 @@ ATL_mmnode_t *GetNewKCleanGenNode
       if (kp->vlen)
       {
          vl = kp->vlen;
+         if (mu%vl)
+         {
+            fprintf(stderr, "kern=%d '%s', mu=%d, vlen=%d\n", kp->ID,
+                    kp->rout?kp->rout:"NULL", kp->mu, kp->vlen);
+         }
          assert(mu%vl == 0);
       }
       else
@@ -10465,7 +10470,6 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
 
 int KernHandlesThisKB(ATL_mmnode_t *mp, int kb)
 {
-   int ku;
    if (!mp->ID)  /* genned kernel handles all K (kvec needs padding) */
       return(1);
    if (mp->kbmax && kb > mp->kbmax)
@@ -10477,6 +10481,7 @@ int KernHandlesThisKB(ATL_mmnode_t *mp, int kb)
    if (FLAG_IS_SET(mp->flag, MMF_KVEC))
    {
       int KB;
+      const int ku = mp->ku;
       if (mp->kbmin)
       {
          KB = (mp->kbmin / mp->vlen)*mp->vlen;
@@ -10489,9 +10494,9 @@ int KernHandlesThisKB(ATL_mmnode_t *mp, int kb)
    }
    else
    {
+      const int ku = mp->ku;
       if (kb < mp->kbmin)
          return(0);
-      ku = mp->ku;
       if ((kb/ku)*ku != kb)
       {
          if (mp->ID)
