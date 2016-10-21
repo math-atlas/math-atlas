@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  11/20/15.                           */
+/*  Last modified by the author on  10/21/16.                           */
 /************************************************************************/
 
 #include <stdio.h>
@@ -1463,15 +1463,17 @@ int PopMacro(EXTENV *EE, char *line)
    return(j);
 }
 
-void MakeMacSub(char *line, int I, EXTMAC *mp)
+int MakeMacSub(char *line, int I, EXTMAC *mp)
 /*****************************************************************************/
 /* PURPOSE: substitute mp->Sub at &line[I].                                  */
+/* RETURNS: # of chars to go back after copy (due to @up, etc)               */
 /*****************************************************************************/
 {
    char ch1, ch='l';
    char *p, *st, *sub=mp->Sub;
    char lstr[32];
    int i=I, k, Spcs=0, len=mp->SubLen, sublen=mp->SubLen, hanlen=mp->HanLen;
+   int nback=0;
    void (*cpyfuncN)(char *, char *, int);
    cpyfuncN = WstrcpyN;
 
@@ -1484,6 +1486,7 @@ void MakeMacSub(char *line, int I, EXTMAC *mp)
       {
          if ( (line[i-2] == 'u') && (line[i-3] == '@') )
          {
+            nback = 3;
             i -= 3;
             cpyfuncN = WstrcpyN_UP;
          }
@@ -1494,11 +1497,13 @@ void MakeMacSub(char *line, int I, EXTMAC *mp)
          {
             if (line[i-3] == 'l' && line[i-2] == 'o' && line[i-1] == 'w')
             {
+               nback = 4;
                i -= 4;
                cpyfuncN = WstrcpyN_LOW;
             }
             else if (line[i-3] == 'l' && line[i-2] == 'e' && line[i-1] == 'n')
             {
+               nback = 4;
                sprintf(lstr, "%d", mp->SubLen);
                len = sublen = Wstrlen(lstr);
                sub = lstr;
@@ -1519,6 +1524,7 @@ void MakeMacSub(char *line, int I, EXTMAC *mp)
                for (k=i-3; k && Mcisnum(line[k]); k--);
                if (line[k] == '@') /* it is one of those formats */
                {
+                  nback += i-k;
                   line[i-1] = '\0'; /* gonna overwrite this later anyway */
                   sscanf(line+k+1, "%d", &len);
                   if (len < sublen) sublen = len;
@@ -1557,6 +1563,7 @@ void MakeMacSub(char *line, int I, EXTMAC *mp)
    cpyfuncN(line+i, sub, sublen);     /* Copy Macro sub string */
    i += sublen;                           /* handle trailing spaces */
    for (k=len - Spcs - sublen; k; k--) line[i++] = ' ';
+   return(nback);
 }
 
 int ExpandMacro(EXTMAC *macp, char *line)
@@ -1568,29 +1575,33 @@ int ExpandMacro(EXTMAC *macp, char *line)
    while ( (i = Wfnd_substr(line, macp->Handle)) )
    {
       Expanded = 1;
-      MakeMacSub(line, i-1, macp);
+      i -= MakeMacSub(line, i-1, macp);
    }
    return(Expanded);
 }
 
 int ExpandThisMacro(EXTENV *EE, char *line, int i, int hlen)
+/*
+ * RETURNS: -1 on error, else # of chars to go back due to substition
+ */
 {
    EXTMAC *mp;
+   int iret=0;
    
    for (mp=MacroBase; mp; mp = mp->next)
       if (mp->HanLen == hlen) if ( WstrcmpN(line+i, mp->Handle, hlen) ) break;
    if (mp)
    {
-      MakeMacSub(line, i, mp);
-      return(1);
+      iret = MakeMacSub(line, i, mp);
+      return(iret);
    }
-   else return(0);
+   else return(-1);
 }
 
 void MacroSub(EXTENV *EE, char *line)
 {
    char *p;
-   int i, hlen, il=0, DONE=1;
+   int bck=0, i, hlen, il=0, DONE=1;
    EXTMAC *macp;
 
 /*
@@ -1599,14 +1610,15 @@ void MacroSub(EXTENV *EE, char *line)
  */
    while ( i = Wfnd_substr(line+il, "@(") )
    {
-      il += i - 1;
+      il += i - 1 - bck;
       p = line + il + 2;
       for (hlen=2; (*p) && (*p != ')'); hlen++, p++);
       if (*p) hlen++;
       else return;  /* no macros without end paren */
-      if (!ExpandThisMacro(EE, line, il, hlen))
+      bck = ExpandThisMacro(EE, line, il, hlen);
+      if (bck == -1)
       {
-         DONE=0;
+         bck = DONE=0;
          break;
       }
    }

@@ -586,7 +586,7 @@ void GenMake(ATL_cpnode_t *cb, char *path)
       if (cp->comp || cp->cflags)
       {
          fprintf(fp, "%s.o : %s.%c\n", cp->rout, cp->rout, ch);
-         fprintf(fp, "\t$%s %s -c %s.%c", cp->comp ? cp->comp:dcomp, 
+         fprintf(fp, "\t%s $(CDEFS) %s -c %s.%c", cp->comp ? cp->comp:dcomp, 
                  cp->cflags ? cp->cflags : dflag, cp->rout, ch);
       }
       if (CPLX && !(cp->flag&(1<<CPF_CBLK)))  /* Need conjugate target? */
@@ -595,7 +595,7 @@ void GenMake(ATL_cpnode_t *cb, char *path)
          fprintf(fp, "%s.o :", cp->rout);
          UnConjCopyName(cp);
          fprintf(fp, " %s.%c\n", cp->rout, ch);
-         fprintf(fp, "\t$%s %s -DConj=1 -c %s.%c\\\n", 
+         fprintf(fp, "\t%s $(CDEFS) %s -DConj_=1 -c %s.%c\\\n", 
                  cp->comp ? cp->comp:dcomp, cp->cflags ? cp->cflags:dflag,
                  cp->rout, ch);
          ConjCopyName(cp);
@@ -619,7 +619,7 @@ void GenMake(ATL_cpnode_t *cb, char *path)
 void GenCopy(ATL_cpnode_t *cb, char *path)
 {
    ATL_cpnode_t *cp;
-   char *sp, *typs;
+   char *sp, *typs, *untyp;
    int len, plen;
    char pre;
 
@@ -628,6 +628,12 @@ void GenCopy(ATL_cpnode_t *cb, char *path)
 
    plen = strlen(path);
    pre = CopyGetPre(cb->flag);
+   untyp = "#ifdef SCALAR\n   #undef SCALAR\n#endif\n"
+           "#ifdef TYPE\n   #undef TYPE\n#endif\n"
+           "#ifdef SREAL\n   #undef SREAL\n#endif\n"
+           "#ifdef DREAL\n   #undef DREAL\n#endif\n"
+           "#ifdef SCPLX\n   #undef SCPLX\n#endif\n"
+           "#ifdef DCPLX\n   #undef DCPLX\n#endif\n";
    if (pre == 'z')
       typs = "#define DCPLX 1\n#define TYPE double\n#define SCALAR TYPE*\n";
    else if (pre == 'c')
@@ -682,12 +688,24 @@ void GenCopy(ATL_cpnode_t *cb, char *path)
       sprintf(fnam, "%s/%s.%c", path, nam, fe);
       fp = fopen(fnam, "w");
       assert(fp);
+      fprintf(fp, untyp);
       fprintf(fp, typs);
       if (cp->flag&(1<<CPF_CBLK))
          fprintf(fp, "#define ATL_MU %u\n#define ATL_NU %u\n", cp->mu, cp->nu);
       else
          fprintf(fp, "#define ATL_NU %u\n", cp->nu);
-      fprintf(fp, "#define ATL_USERCPMM %s\n\n", nam);
+      fprintf(fp, "#define ATL_USERCPMM %s\n", nam);
+      if (!(cp->flag&(1<<CPF_REAL)) && !(cp->flag&(1<<CPF_CBLK)))
+      {  /* if complex A/B copy, need conj_! */
+         char *rt = cp->rout;
+         cp->rout = nam;
+         fprintf(fp, "#ifdef Conj_\n   #undef ATL_USERCPMM\n");
+         ConjCopyName(cp);
+         fprintf(fp, "   #define ATL_USERCPMM %s\n#endif\n", nam);
+         UnConjCopyName(cp);
+         cp->rout = rt;
+      }
+      fprintf(fp, "\n");
       fclose(fp);
       len = 10 + strlen(cp->rout) + strlen(fnam);
       sp = malloc(len);

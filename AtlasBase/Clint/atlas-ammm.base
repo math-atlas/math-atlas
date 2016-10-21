@@ -15743,7 +15743,7 @@ int Mjoin(PATL,ammm_IP)
    ammkern_t amm;
    rkinfo_t mminfo;
 
-   ATL_assert(K < ATL_rkAMM_LASTKB)
+   ATL_assert(K <= ATL_rkAMM_LASTKB)
    Mjoin(PATL,GetInfo_rkmm)(&mminfo, TA, TB, M, N, K, lda, ldb, ldc,
                             alpha, beta);
    alpA = mminfo.alpA;
@@ -15785,29 +15785,18 @@ int Mjoin(PATL,ammm_IP)
    int i;
    int nmu, nnu, nku, bM, bN, bK;
    int szA, szB, szC;
-   #if ATL_geAMM_MAXKVEC > 1
-      int KK;
-   #else
-      #define KK K
-   #endif
+   int KK;
    int mu, nu, ku, appAl;
    void *vp;
    TYPE *rA, *iA, *rB, *iB, *rC, *iC, *p, *w;
    const TYPE one[2] = {ATL_rone, ATL_rzero};
    const TYPE *alpA=one, *alpB=one, *alpC=one;
    ammkern_t amm;
-   ablk2cmat_t blk2c;
-   cm2am_t a2blk, b2blk;
-   amminfo_t mminfo;
-   appAl = Mjoin(PATL,GetAmmmInfo)(&mminfo, TA, TB, M, N, K, alpha, beta);
-   if (K < mminfo.kbmin || (mminfo.kbmax && mminfo.kbmax < K))
-      return(1);
-   if (!appAl)
-      alpA = alpha;
-   else if (appAl == 1)
-      alpB = alpha;
-   else
-      alpC = alpha;
+   rkinfo_t mminfo;
+
+   ATL_assert(K <= ATL_rkAMM_LASTKB)
+   Mjoin(PATL,GetInfo_rkmm)(&mminfo, TA, TB, M, N, K, lda, ldb, ldc, 
+                            alpha, beta);
 /*
  * These kernels all take runtime M/N, and do well with near-square, so
  * blindly use this kernel with nM = CEIL(M/mu)*mu, nN = CEIL(N/nu)*nu
@@ -15815,45 +15804,14 @@ int Mjoin(PATL,ammm_IP)
    mu = mminfo.mu;
    nu = mminfo.nu;
    ku = mminfo.ku;
-   nmu = (M+mu-1)/mu;
-   nnu = (N+nu-1)/nu;
-   nku = (K+ku-1)/ku;
-   bM = nmu * mu;
-   bN = nnu * nu;
-   bK = nku * ku;
-   a2blk = mminfo.a2blk;
-   b2blk = mminfo.b2blk;
-   blk2c = mminfo.Cblk2cm;
-   #if ATL_geAMM_MAXKVEC > 1
-      KK = K;
-      if (ATL_AMMFLG_KMAJOR(mminfo.flag))
-      {
-         KK = bK;
-         if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
-            amm = mminfo.amm_b0;
-         else 
-            amm = (mminfo.kb==KK) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
-      }
-      else
-   #endif
-      if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
-         amm = (bK == K) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
-      else
-         amm = (K == mminfo.kb) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
-/*
- * Force rank-K code to handle this case if we would have to use K-cleanup
- * code with unknown performance
- */
-   if (amm != mminfo.amm_b0 && K > 2 && K <= ATL_rkAMM_LASTKB)
-      return(-1);
-   szB = KK*bN;
-   szA = bM*KK;
-   #if ATL_geAMM_MAXKVEC > 1
-      szC = ((mu*nu+mminfo.vlen-1)/mminfo.vlen)*mminfo.vlen * nmu * nnu;
-   #else
-      szC = bM*bN;
-   #endif
-   vp = malloc((szC+mu*nu*ku + szA + szB)*2*ATL_sizeof + 3*ATL_Cachelen);
+   KK = mminfo.KB;
+   nmu = mminfo.nmu;
+   nnu = mminfo.nnu;
+   amm = mminfo.amm_b0;
+   szB = mminfo.szB;
+   szA = mminfo.szA;
+   szC = mminfo.szC;
+   vp = malloc(ATL_MulBySize((szC+mu*nu*ku + szA + szB)) + 3*ATL_Cachelen);
    ATL_assert(vp);
    iB = ATL_AlignPtr(vp);
    rB = iB + szB;
@@ -15867,21 +15825,13 @@ int Mjoin(PATL,ammm_IP)
 /*
  * Copy A & B into workspace, and pad K its if necessary
  */
-   a2blk(K, M, alpA, A, lda, rA, iA);
-   b2blk(K, N, alpB, B, ldb, rB, iB);
+   mminfo.a2blk(K, M, alpA, A, lda, rA, iA);
+   mminfo.b2blk(K, N, alpB, B, ldb, rB, iB);
    amm(nmu, nnu, KK, iA, iB, rC, rA, iB, iC);
    amm(nmu, nnu, KK, rA, iB, iC, rA, rB, rC);
-   if (amm == mminfo.amm_b0)
-   {
-      mminfo.amm_bn(nmu, nnu, KK, rA, rB, rC, iA, rB, iC);
-      mminfo.amm_b1(nmu, nnu, KK, iA, rB, iC, iA, rB, iC);
-   }
-   else
-   {
-      mminfo.amm_k1_bn(nmu, nnu, KK, rA, rB, rC, iA, rB, iC);
-      mminfo.amm_k1_b1(nmu, nnu, KK, iA, rB, iC, iA, rB, iC);
-   }
-   blk2c(M, N, alpC, rC, iC, beta, C, ldc);
+   mminfo.amm_bn(nmu, nnu, KK, rA, rB, rC, iA, rB, iC);
+   mminfo.amm_b1(nmu, nnu, KK, iA, rB, iC, iA, rB, iC);
+   mminfo.blk2C(M, N, alpC, rC, iC, beta, C, ldc);
 
    free(vp);
    return(0);
@@ -16079,6 +16029,7 @@ int Mjoin(PATL,ammm_IP)
  * Special case mainly for real LU, where K==4, N==4 beta=1.0, TA==AtlasNoTrans;
  * Can do a no-copy update with only one loop.
  */
+   #if 0
    #ifndef TCPLX
    if (K == 4 && N == 4 && TA==AtlasNoTrans && SCALAR_IS_ONE(beta))
    {
@@ -16088,11 +16039,12 @@ int Mjoin(PATL,ammm_IP)
          return(0);
    }
    #endif
+   #endif
 /*
  * 1-block special case code can return w/o doing op if it thinks
  * rank-K would be faster
  */
-   if (M <= ATL_geAMM_LASTMB && N <= ATL_geAMM_LASTNB && K <= ATL_geAMM_LASTKB)
+   if (M <= ATL_rkAMM_LASTMB && N <= ATL_rkAMM_LASTNB && K <= ATL_rkAMM_LASTKB)
       if (!Mjoin(PATL,ammm_1b)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                beta, C, ldc))
          return(0);
@@ -34048,19 +34000,35 @@ void ATL_FillInInfo
 int ATL_GetInfo
    (rkinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb, 
-    ATL_CSZT ldc, SCALAR alpha, const SCALAR beta)
+    ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta)
 {
-   int idx, mu, nu, mb, nb, pmb, pnb, nfnblks, npnblks;
+   int idx, mu, nu, mb, nb, pmb, pnb;
+   ATL_SZT nfmblks, npmblks, nfnblks, npnblks;
 
-   ATL_assert(K < ATL_rkAMM_LASTKB);
+   ATL_assert(K <= ATL_rkAMM_LASTKB);
    idx = K-3;
    mu = ATL_AMM_MUs[idx];
    nu = ATL_AMM_NUs[idx];
-   mb = ((M+mu-1)/mu)*mu;
-   nb = ((N+nu-1)/nu)*nu;
+
+   @whiledef d n m
+   @(d)b = ATL_AMM_@up@(d)Bs[idx];
+   if (@(d)b > @up@(d))
+   {
+      @(d)b = ((@up@(d)+@(d)u-1)/@(d)u)*@(d)u;
+      p@(d)b = 0;
+      nf@(d)blks = 1;
+      np@(d)blks = 0;
+   }
+   else
+   {
+      nf@(d)blks = @up@(d) / @(d)b;
+      p@(d)b = @up@(d) - nf@(d)blks*@(d)b;
+      np@(d)blks = (p@(d)b) ? 1 : 0;
+   }
+   @endwhile
    pmb = pnb = 0;
    ATL_FillInInfo(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta,
-                  1, 0, mb, pmb, 1, 0, nb, pnb);
+                  nfmblks, npmblks, mb, pmb, nfnblks, npnblks, nb, pnb);
    return(idx);
 }
 @ROUT
