@@ -30590,7 +30590,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    if (!mb)
       return;
    assert(!mb->next);
-   fp = OpenMMGenHeader(outd, 0, pre, NULL, 0, 0, "syrk", NULL);
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, NULL, "syrk", NULL);
    fprintf(fp, "#define SYRK_NB %d\n", mb->kbB);
    fprintf(fp, "#define ATL_SYRKK_VLEN %d\n", mb->vlen);
    fprintf(fp, "#define ATL_SYRKK_KVEC %d\n", 
@@ -30668,7 +30668,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    CloseGenHeader(fp);
 }
 
-double GenPerfH(char pre, char *outd, char *cn, double mfMax,
+double GenPerfH(char pre, char *outd, char *ip, char *cn, double mfMax,
                 ATL_mmnode_t *mb, ATL_mmnode_t *k1)
 {
    FILE *fp;
@@ -30681,7 +30681,7 @@ double GenPerfH(char pre, char *outd, char *cn, double mfMax,
    int i, n, idxMax=0;
    double fcnt;
 
-   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "perf", mb);
+   fp = OpenMMGenHeader(outd, 0, pre, ip, cn, "perf", mb);
 /*
  * If not already set, compute the max perf & its index.  We'll use this
  * max as the denominator in our PERF array.
@@ -30785,8 +30785,8 @@ double GenPerfH(char pre, char *outd, char *cn, double mfMax,
 }
 
 void GenKernH
-   (char pre, char *outd, char *cn, ATL_mmnode_t *mb, ATL_mmnode_t *mkb,
-    ATL_mmnode_t *ub)
+   (char pre, char *outd, char *ip, char *cn, ATL_mmnode_t *mb, 
+    ATL_mmnode_t *mkb, ATL_mmnode_t *ub)
 {
    FILE *fp;
    int ib, inxt, iaut;
@@ -30794,7 +30794,7 @@ void GenKernH
 
    inxt = GetOffset(&mb->next, mb);
    iaut = GetOffset(&ub->auth, ub);
-   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "kern", mb);
+   fp = OpenMMGenHeader(outd, 0, pre, ip, cn, "kern", mb);
    for (ib=0; ib < 3; ib++)
       PrintMMProtos(fp, pre, "KERN", ub, iaut, bes[ib]);
    for (ib=0; ib < 3; ib++)
@@ -30828,14 +30828,14 @@ void PrintFlagArr(FILE *fp, ATL_mmnode_t *mb)
    fprintf(fp, "   #define ATL_AMM_KMAJOR(idx_) (ATL_AMM_KFLAG[idx_] & 2)\n");
    fprintf(fp, "#endif\n");
 }
-void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
+void GenBlkH(char pre, char *outd, char *ip, char *cn, ATL_mmnode_t *mb)
 {
    FILE *fp;
    ATL_mmnode_t *mp;
    int *KUs;
    int i, n, inxt;
 
-   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "blk", mb);
+   fp = OpenMMGenHeader(outd, 0, pre, ip, cn, "blk", mb);
    inxt = GetOffset(&mb->next, mb);
    mp = ATL_FindLastNode(mb, inxt);
    fprintf(fp, "#define ATL_%sAMM_LASTMB %d\n", cn, mp->mbB);
@@ -30877,6 +30877,7 @@ void GenBlkH(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
    CloseGenHeader(fp);
 }
 
+@BEGINSKIP
 void GenCpyA(char pre, char *outd, char *cn, char dir, char alp, 
              ATL_mmnode_t *mb)
 // presently leaving alp='[1,n,X]', cn=[ge,sq,rk], dir='[F,T]' to caller
@@ -30941,6 +30942,7 @@ void GenCpyC(FILE *fp, char pre, char *outd, char *cn, char dir, char *type,
                     GetOffset(&cb->rout, cb), type, 0, alp, bet);
    KillAllCopyNodes(cb);
 }
+@ENDSKIP
 
 void PrintDiv(FILE *fp, char *exp, int v)
 /* 
@@ -30987,6 +30989,7 @@ void PrintCeilMul(FILE *fp, char *exp, int v)
       fprintf(fp, "(((%s+%d)/%d)*%d)", exp, v-1, v, v);
 }
 
+@BEGINSKIP
 void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
 {
    ATL_mmnode_t *mp;
@@ -31114,6 +31117,7 @@ void GenAllCpyA(char pre, char *outd, char dir, ATL_mmnode_t *gb,
          GenCpyA(pre, outd, "rk", dir, alps[ia], rb);
    }
 }
+@ENDSKIP
 
 double PrintSum(FILE *fp, char *cn, ATL_mmnode_t *b, double mfGE)
 {
@@ -31161,7 +31165,7 @@ void GenSumH(char pre, char *outd, ATL_mmnode_t *gb, ATL_mmnode_t *sb,
    double mf;
    int i;
 
-   fp = OpenMMGenHeader(outd, 0, pre, NULL, 0, 0, "sum", gb);
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, NULL, "sum", gb);
    mf = PrintSum(fp, "ge", gb, 0.0);
    if (sb)
       PrintSum(fp, "sq", sb, mf);
@@ -31170,8 +31174,7 @@ void GenSumH(char pre, char *outd, ATL_mmnode_t *gb, ATL_mmnode_t *sb,
    CloseGenHeader(fp);
 }
 
-void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb, 
-                  ATL_mmnode_t *cpb)
+void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb)
 /*
  * Used to generate timing/index file for when one or more dims are degenerate
  * for inner product.  mb should be ordered by the degen dim(s), ivar should
@@ -31183,7 +31186,7 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb,
    int i, n, idxMax=0, maxM=0, maxN=0, maxK=0;
    double fcnt, mfMax=0.0;
 
-   fp = OpenMMGenHeader(outd, 0, pre, cn, 0, 0, "degen", mb);
+   fp = OpenMMGenHeader(outd, 0, pre, "ip", cn, "geIdx", mb);
 /*
  * Compute max perf & M,N,K
  */
@@ -31236,38 +31239,6 @@ void GenDegenH_IP(char pre, char *outd, char *cn, ATL_mmnode_t *mb,
               (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
    }
    fprintf(fp, "};\n#endif\n");
-   if (cpb)
-   {
-      fprintf(fp, "#if !defined(NOCPTIMEA) && !defined(NOARRS)\n");
-      fprintf(fp, "static const float ATL_%sAMM_CPTIMEA[%d] =\n", cn, n);
-      fprintf(fp, "{  /* actual seconds to coy one A block row-wise */\n");
-      for (i=0,mp=mb; mp; i++,mp = mp->next)
-      {
-         fcnt = ((double)mp->nbB)*mp->kbB;  /* copy flop count */
-         if (pre == 'z' || pre == 'c')
-            fcnt *= 2.0;
-         fprintf(fp, "   %e%c  /* CNT=%d, B=(%d,%d,%d) */\n",
-                 fcnt / (mp->mflop[0]*1.0e6),
-                 (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
-      }
-      fprintf(fp, "};\n#endif\n");
-      if (mb->mflop[0] > 0.0)
-      {
-         fprintf(fp, "#if !defined(NOCPTIMEC) && !defined(NOARRS)\n");
-         fprintf(fp, "static const float ATL_%sAMM_CPTIMEC[%d] =\n", cn, n);
-         fprintf(fp, "{  /* actual seconds to coy one A block row-wise */\n");
-         for (i=0,mp=mb; mp; i++,mp = mp->next)
-         {
-            fcnt = ((double)mp->mbB)*mp->nbB;  /* copy flop count */
-            if (pre == 'z' || pre == 'c')
-               fcnt *= 2.0;
-            fprintf(fp, "   %e%c  /* CNT=%d, B=(%d,%d,%d) */\n",
-                    fcnt / (mp->mflop[0]*1.0e6),
-                    (mp->next)?',':' ', i, mp->mbB, mp->nbB, mp->kbB);
-         }
-         fprintf(fp, "};\n#endif\n");
-      }
-   }
 
    fprintf(fp, "#define ATL_AMM_NBs ATL_pmnAMM_NBs\n");
    PrintIntArrAtOff(fp, pre, "NBs", mb, GetOffset(&mb->next, mb), 
@@ -31293,7 +31264,7 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
    ATL_cpnode_t *cb;
    ATL_mmnode_t *mmb;
    char *nm="perf";
-   char *cn[4]={"ge", "sq", "rk", "ts"};
+   char *cn[4]={"ge", "sq", "ge", "ts"};
    double mfMax;
    int i, k, SKSAME;
    char pr;
@@ -31303,13 +31274,12 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
  */
    pr=pre;
    DO_TYPE:
-   @whiledef nm n m mn
+   @multidef pf dn dm mn
+   @whiledef nm n   m mn
    mmb = ReadMMFileWithPath(pr, "res", "ip@(nm)PERF.sum");
    if (mmb)
    {
-      ATL_mmnode_t *cpb;
-      cpb = ReadMMFileWithPath(pr, "res", "ip@(nm)PERFcp.sum");
-      GenDegenH_IP(pr, outd, "p@(nm)", mmb, cpb);
+      GenDegenH_IP(pr, outd, "@(pf)", mmb);
       KillAllMMNodes(mmb);  /* done with these! */
    }
    @endwhile
@@ -31324,25 +31294,25 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
  */
    for (pr=pre,k=0; k < 2*NMMLISTS; k += NMMLISTS)
    {
-      mfMax = GenPerfH(pr, outd, "ge", 0.0, lists[k+IGE], lists[k+IGEK1]);
+      mfMax = GenPerfH(pr, outd, "op", "ge", 0.0, lists[k+IGE], lists[k+IGEK1]);
       if (k < NMMLISTS)  /* ts only in real for now */
-         GenPerfH(pr, outd, "ts", mfMax, lists[k+ITRSM], NULL);
+         GenPerfH(pr, outd, "tr","sm", mfMax, lists[k+ITRSM], NULL);
       KillAllMMNodes(lists[k+ITRSM]);  /* done with these! */
       lists[k+ITRSM] = NULL;
 @skip      if (lists[k+ISYRKT])
 @skip      {
-      GenPerfH(pr, outd, "sk", mfMax, lists[k+ISYRKT], NULL);
+      GenPerfH(pr, outd, "sy","sk", mfMax, lists[k+ISYRKT], NULL);
       KillAllMMNodes(lists[k+ISYRKT]);  /* done with these! */
       lists[k+ISYRKT] = NULL;
 @skip      }
       GenSyrkH(pr, outd, lists[k+ISYRK], SKSAME);
 
-      GenPerfH(pr, outd, "sq", 0.0, lists[k+ISQ], lists[k+ISQK1]);
-      GenPerfH(pr, outd, "rk", 0.0, lists[k+IRKK], NULL);
+      GenPerfH(pr, outd, "op","sq", 0.0, lists[k+ISQ], lists[k+ISQK1]);
+      GenPerfH(pr, outd, "op","ge", 0.0, lists[k+IRKK], NULL);
 
-      GenBlkH(pr, outd, "ge", lists[k+IGE]); 
-      GenBlkH(pr, outd, "sq", lists[k+ISQ]); 
-      GenBlkH(pr, outd, "rk", lists[k+IRKK]);
+      GenBlkH(pr, outd, "ip", "ge", lists[k+IGE]); 
+      GenBlkH(pr, outd, "op", "sq", lists[k+ISQ]); 
+      GenBlkH(pr, outd, "op", "ge", lists[k+IRKK]);
       pr = (pre == 'd') ? 'z' : 'c';
    }
    GenSumH(pre, outd, lists[IGE], lists[ISQ], lists[IRKK]);
@@ -31359,18 +31329,21 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
       {
          ATL_mmnode_t *ulst;  /* unordered list of only unique kernels */
          const int h = i+i+k*NMMLISTS, u=k*3+i;
+
          ulst = AddUniqueMMKernCompList(NULL, lists[h]);
          if (i < 2)
          {
+            char *ip = (i) ? "op":"ip";
             ulst = AddUniqueMMKernCompList(ulst, lists[h+1]);
-            GenKernH(pr, outd, cn[i], lists[h], lists[h+1], ulst);
+            GenKernH(pr, outd, ip, cn[i], lists[h], lists[h+1], ulst);
          }
          else
-            GenKernH(pr, outd, cn[i], lists[h], NULL, ulst);
+            GenKernH(pr, outd, i==2?"op":"tr", cn[i], lists[h], NULL, ulst);
          KillAllMMNodes(ulst);  /* done with these! */
       }
       pr = (pre == 's') ? 'c' : 'z';
    }
+@beginskip
 /*
  * [cmat2ablk_a[1,n,X]_b[0,1,n,X],ablk2cmat_a?_b?,am2cm_a[1,n,X]]
  * -> have never genned, can we?: am2rm_a[1,n,X],
@@ -31381,6 +31354,7 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
    GenAllCpyC(pre, outd, 'F', lists[IGE], lists[ISQ], lists[IRKK]);
    GenAllCpyC(pr, outd, 'F', lists[IGE+NMMLISTS], lists[ISQ+NMMLISTS], 
               lists[IRKK+NMMLISTS]);
+@endskip
 }
 
 static void AddAlpBetSuf(char *rt, int rl, int ial, int ibe)
@@ -31405,14 +31379,15 @@ static void AddAlpBetSuf(char *rt, int rl, int ial, int ibe)
       rt[rl+4] = ibe+48;
 }
 
-void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb, 
-                 ATL_cpnode_t *cpA, ATL_cpnode_t *cpC)
+void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb)
+@skip                 ATL_cpnode_t *cpA, ATL_cpnode_t *cpC)
 {
-   ATL_cpnode_t *last, *cp;
+@skip   ATL_cpnode_t *last, *cp;
    ATL_mmnode_t *mp;
-   char *sgen;
+   char *sgen=NULL;
    int i, len, dlen, mID, mU;
    char pr=pre;
+@BEGINSKIP
 /*
  * join all copy routs into one list temporarily
  */
@@ -31490,6 +31465,9 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
    }
    printf("DONE GENERATING MMCOPY FILES\n");
    last->next = NULL;  /* disconnect A/C lists */
+@ENDSKIP
+   dlen = strlen(outd);
+   len = 0;
 /*
  * Generate/copy all required kernels.  This list has files with compile-time
  * K repeated, but we'll check ID to avoid repeated copies of user-supplied, 
@@ -31519,7 +31497,8 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
             i = strlen(mp->genstr) + strlen(mp->rout) + dlen + 16;
             if (i > len)
             {
-               free(sgen);
+               if (sgen)
+                  free(sgen);
                sgen = malloc(i*sizeof(char));
                assert(sgen);
                len = i;
@@ -31546,8 +31525,8 @@ void GenAllKerns(char pre, char *outd, ATL_mmnode_t *rb,
    free(sgen);
 }
 
-void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
-             ATL_cpnode_t *cpA, ATL_cpnode_t *cpC)
+void GenMake(char pre, char *outd, ATL_mmnode_t *mb)
+@skip             ATL_cpnode_t *cpA, ATL_cpnode_t *cpC)
 /*
  * mb files have already been made at least compile-time unique (same source
  * file might occur multiple times due to need to compile with -DKB)
@@ -31555,7 +31534,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
 {
    FILE *fp;
    char *fn;
-   ATL_cpnode_t *cp;
+@skip   ATL_cpnode_t *cp;
    ATL_mmnode_t *mp;
    char *sals[3] = {"1", "N1", "X"};
    char als[3] = {'1', 'n', 'X'};
@@ -31584,6 +31563,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
       for (ib=0; ib < 3; ib++)
          fprintf(fp, " \\\n       %s_b%c.o", mp->auth, bes[ib]);
    }
+   @BEGINSKIP
    for (cp=cpC; cp; cp = cp->next)  /* C copy routs */
    {
       int ib;
@@ -31606,6 +31586,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
             fprintf(fp, " \\\n       %s_%ca%c.o", cp->rout, ctas[it], als[ia]);
       }
    }
+   @ENDSKIP
    fprintf(fp, "\n");
 /*
  * library make targets
@@ -31658,6 +31639,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
          fprintf(fp, "        %s\n", mp->rout);
       }
    }
+   @BEGINSKIP
 /*
  * Make targets for C copy routines
  */
@@ -31722,6 +31704,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb,
          }
       }
    }
+   @ENDSKIP
    fclose(fp);
 }
 
@@ -31756,6 +31739,7 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
       ib = AddUniqueMMKernCompList(ib, lists[NMMLISTS+i]);
       KillAllMMNodes(lists[NMMLISTS+i]);
    }
+@beginskip
 /*
  * Now create lists of copy routines for both real & complex
  */
@@ -31770,6 +31754,7 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
    cpC = AddMMCKernCopyFromMMNodes(pre, 'F', CPF_SYRK, lists[ISYRK], cpC);
    cpC = AddMMCKernCopyFromMMNodes(cpr, 'F', CPF_SYRK, 
                                   lists[NMMLISTS+ISYRK], cpC);
+@endskip
 /*
  * Now, kerns are compiled the same for real and complex, so reduce real
  * and complex to one unique list
@@ -31797,8 +31782,8 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t **lists)
       }
       rb = ib;
    }
-   GenAllKerns(pre, outd, rb, cpA, cpC);
-   GenMake(pre, outd, rb, cpA, cpC);
+   GenAllKerns(pre, outd, rb);
+   GenMake(pre, outd, rb);  
    KillAllMMNodes(rb);
    KillAllCopyNodes(cpA);
    KillAllCopyNodes(cpC);
