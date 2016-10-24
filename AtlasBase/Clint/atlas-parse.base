@@ -137,6 +137,7 @@ struct CPNode
 #define MMF_KUISKB     15  /* 1: only works for fully unrolled, constant K */
 #define MMF_NOBCAST    16  /* 1: use ld/splat to get B, rather than bcast */
 #define MMF_FKO        17  /* 1: compile using FKO, else [d,s]MC */
+#define MMF_KCLN       18  /* 1: cleaner for K dim is required */
 
 #define MMF_MVSET  ( (1<<MMF_MVA) | (1<<MMF_MVB) | (1<<MMF_MVC) )
 #define MMF_MVDEF  ( (1<<MMF_MVA) | (1<<MMF_MVB) )
@@ -553,6 +554,35 @@ static char *GetSingleQuoteString(char *str)
       sp[i-1] = str[i];
    sp[n-1] = '\0';
    return(sp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static FILE *OpenFileWithPath(char *path, char *file, char *perm)
+{
+   char *fn;
+   FILE *fp;
+   assert(file && perm);
+   if (path)
+   {
+      int plen, flen;
+      char *fn;
+
+      plen = strlen(path);
+      flen = strlen(file);
+      fn = malloc(plen+flen+2);
+      assert(fn);
+      memcpy(fn, path, plen);
+      fn[plen] = '/';
+      memcpy(fn+plen+1, file, flen);
+      fn[plen+flen+1] = '\0';
+      fp = fopen(fn, perm);
+      free(fn);
+   }
+   else
+      fp = fopen(file, perm);
+
+   return(fp);
 }
 
 @iexp ip @(ip) 1 +
@@ -1954,7 +1984,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
    }
 @multidef fl 
    X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
-   KUISKB NOBCAST
+   KUISKB NOBCAST FKO KCLN
 @endmultidef
 
 @ROUT cpread
@@ -2127,7 +2157,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    @define kwd @@
    @multidef kw
       X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
-      KUISKB NOBCAST
+      KUISKB NOBCAST FKO KCLN
    @endmultidef
 @ROUT cpread
 @multidef kw SYRK SYMM TRMM TRSM
@@ -2150,8 +2180,11 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @endwhile
 @ROUT mvread r1read mmread
 @whiledef kw @(kwd)
-   if (i+@len@(kw) > 72) { fprintf(fpout, " \\\n   "); i = 3; }
-   i += fprintf(fpout, "@(kw)=%d ", FLAG_IS_SET(np->flag, @up@(rt)F_@(kw)));
+   if (FLAG_IS_SET(np->flag, @up@(rt)F_@(kw)))
+   {
+      if (i+@len@(kw) > 72) { fprintf(fpout, " \\\n   "); i = 3; }
+      i += fprintf(fpout, "@(kw)=1 ");
+   }
 @endwhile
 @ROUT mvread r1read mmread cpread
 
@@ -2761,6 +2794,107 @@ static void SortByTrans
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static int MMKernsCompat(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * RETURNS: 1 if kernels have compatible storage for A,B & C, 0 otherwise
+ */
+{
+   @whiledef tv stgA stgB stgC mu nu blask
+   if (p0->@(tv) != p1->@(tv))
+      return(0);
+   @endwhile
+   if ((p0->flag | p1->flag)&(1<<MMF_KVEC)) /* KVEC routs have additional req */
+   {
+      if (p0->flag&(1<<MMF_KVEC) != p1->flag&(1<<MMF_KVEC))
+         return(0);
+      if (p0->vlen != p1->vlen)
+         return(0);
+   }
+   return(1);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMKernCleansK(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * RETURNS: 1 if p1 can provide K-cleanup for p0, else 0
+ * To do K-cleanup in our scheme, MAX(ku, kbmin) <= 4, kbmax == 0, K must
+ * by a runtime variable, and it must have the same storage for all matrices.  
+ * We could avoid requiring same  A/B storage, but this would require using
+ * different copy routs for KB0 blk, which would stress i-cache even worse, 
+ * and might force us to bring in more copy funcs overall.  Since mu/nu 
+ * present in C, this relaxation wouldn't help much anyway, so blow it off.
+ * If we wanted to support this, could occasionally use an Mvec kernel to
+ * clean a KVEC, or vice versa.
+ */
+{
+   if (!p0 || !p1)
+      return(0);
+   if (p1->kbmax != 0)
+      return(0);
+   if (!FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
+      return(0);
+   if (FLAG_IS_SET(p0->flag, MMF_KVEC)) /* K-vectorized ops on vlen muls */
+   {
+      if (p1->kbmin && p1->kbmin != p0->vlen)
+         return(0);
+      if (p1->ku != p0->vlen) /* remember, vlen's must be same p0/p1 */
+         return(0);
+   }
+   else /* M/N vectorized */
+   {
+      if (p1->kbmin && p1->kbmin > 4)
+         return(0);
+      if (p1->ku > 4)
+         return(0);
+   }
+   return(MMKernsCompat(p0, p1));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmnode_t *MMGetGenCaseKClean(ATL_mmnode_t *mp)
+/*
+ * RETURNS: generator-supported case for K-cleanup for p0
+ * genstr & filename left unset so user can specialize further
+ */
+{
+   ATL_mmnode_t *gp;
+   if (mp->stgA || mp->stgB || mp->stgC)  /* can't generate for formats */
+      return(NULL);                       /* gen doesn't understand */
+   gp = GetMMNode();
+   @whiledef vr mu nu mbB nbB kbB blask vlen
+   gp->@(vr) = mp->@(vr);
+   @endwhile
+   gp->flag = mp->flag & (MMF_MVSET | (1<<MMF_KVEC));
+   gp->flag |= 1<<MMF_KRUNTIME;
+/*
+ * May have problem if generator doesn't support VLEN!
+ */
+   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   {
+      gp->ku = mp->vlen;
+   }
+   else
+      gp->ku = 1;
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmnode_t *MMCompatKernPresent(ATL_mmnode_t *mb, ATL_mmnode_t *mt)
+/*
+ * RETURNS: ptr to mt-storage-compatible node in mb, else NULL
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=mb; mp; mp = mp->next)
+      if (MMKernsCompat(mt, mp))
+         return(mp);
+   return(NULL);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 /*
  * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
@@ -3342,6 +3476,36 @@ char *GetCopyGenStr(ATL_cpnode_t *p)
       assert(i < sz);
    }
    return(gs);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void SetAllUnsetCopyRout(ATL_cpnode_t *cb, char *rt)
+{
+   ATL_cpnode_t *cp;
+   for (cp=cb; cp; cp = cp->next)
+      if (!cp->rout)
+         cp->rout = DupString(rt);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void SetAllCopyGenStr(ATL_cpnode_t *cb)
+/*
+ * For ID=0, ", and genstr
+ */
+{
+   ATL_cpnode_t *cp;
+   for (cp=cb; cp; cp = cp->next)
+   {
+      if (!cp->ID)
+      {
+         assert(cp->rout);
+         if (cp->genstr)
+            free(cp->genstr);
+         cp->genstr = GetCopyGenStr(cp);
+      }
+   }
 }
 
 @iexp ip @(ip) 1 +
@@ -3976,6 +4140,74 @@ double TimeCPKernel
    dp = ReadResultsFile(2, 0, fnam);
    free(fnam);
    return(*dp);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int TimeNegCPKernels     /* RET: 0 if no retiming required */
+(
+   int imf,                     /* index of mflop array to check/set */
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int FRCTM,                   /* 1: ignore any prior output file */
+   ATL_cpnode_t *cb             /* queue to time */
+)
+{
+   ATL_cpnode_t *cp;
+   int ntim=0;
+   for (cp=cb; cp; cp = cp->next)
+   {
+      if (cp->mflop[imf] <= 0.0)
+      {
+         int ialp, ibet=0;
+         ntim++;
+         ialp = CopyGetAlphaI(cp->flag);
+         if (cp->flag & (1<<CPF_CBLK))
+            ibet = CopyGetBetaI(cp->flag);
+         cp->mflop[imf] = TimeCPKernel(verb, FRCTM?1:0, cp, cp->mb, cp->nb, 
+                                       ialp, ibet, 0, -1);
+      }
+   }
+   return(ntim);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_cpnode_t *TimeCPFile
+(
+   char pre,
+   char *file,
+   int imf,
+   int verb,
+   int FRCTIM   /* 1: ignore prior output file */
+)
+{
+   ATL_cpnode_t *cb;
+   cb = ReadCPFile(file);
+   if (!cb)
+      return(cb);
+   if (TimeNegCPKernels(imf, verb, FRCTIM, cb))
+      WriteCPFile(file, cb);
+   return(cb);
+}
+
+/* procedure @(ip) */
+static ATL_cpnode_t *TimeCPFileWithPath
+(
+   char pre,
+   char *path,
+   char *file,
+   int imf,
+   int verb,
+   int FRCTIM   /* 1: ignore prior output file */
+)
+{
+   ATL_cpnode_t *cb;
+   cb = ReadCPFileWithPath(pre, path, file);
+   if (!cb)
+      return(cb);
+   if (TimeNegCPKernels(imf, verb, FRCTIM, cb))
+      WriteCPFileWithPath(pre, path, file, cb);
+   return(cb);
 }
 
 @iexp ip @(ip) 1 +

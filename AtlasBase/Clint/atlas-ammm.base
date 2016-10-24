@@ -466,6 +466,13 @@ ID=49 MU=24 NU=4 KU=1 AUTH="Rakib Hasan" ROUT='ATL_damm12x4x1_aarch64-A53.S' \
 #endif
 #include "atlas_misc.h"
 
+#define ATL_AMK_NBIT 5
+#define ATL_AMK_KVEC  1
+#define ATL_AMK_KRUN  2
+#define ATL_AMK_KMIN  4
+#define ATL_AMK_KMAX  8
+#define ATL_AMK_KALL 16
+
 #ifdef TREAL
    typedef void (*cm2am_t)(const size_t, const size_t, const SCALAR,
                            const TYPE*, const size_t, TYPE*);
@@ -651,7 +658,7 @@ static int Mjoin(PATL,tGetRKInfo@(sf))
    ATL_assert(0);
 }
 @endwhile
-@whiledef vw opge opsq opmk opnk 1b_opge 1b_opsq 1b_opmk 1b_opnk
+@whiledef vw oprk opsq opmk opnk 1b_oprk 1b_opsq 1b_opmk 1b_opnk
 int Mjoin(PATL,GetInfo_@(vw))
    (rkinfo_t*, enum ATLAS_TRANS, enum ATLAS_TRANS, ATL_CSZT M, ATL_CSZT N, 
     ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc,
@@ -10678,7 +10685,7 @@ int main(int nargs, char **args)
    }
    rnkK = DoRankK(pre, verb, nregs, mmb);
    DoSquare(pre, verb, nregs, rnkK);
-   GenAllIPViews(pre, verb);
+@skip   GenAllIPViews(pre, verb);
 /*
  * Handle K-cleanup
  */
@@ -15750,7 +15757,7 @@ int Mjoin(PATL,ammm_IP)
 
    if (K > ATL_rkAMM_LASTKB || M > ATL_rkAMM_LASTMB || N > ATL_rkAMM_LASTNB)
       return(1);
-   if (Mjoin(PATL,GetInfo_1b_opge)(&mminfo, TA, TB, M, N, K, lda, ldb, ldc,
+   if (Mjoin(PATL,GetInfo_1b_oprk)(&mminfo, TA, TB, M, N, K, lda, ldb, ldc,
                                    alpha, beta) == -1)
       return(-1);  /* can't do this problem with 1b! */
 /*
@@ -15824,7 +15831,7 @@ int Mjoin(PATL,ammm_IP)
    rkinfo_t mminfo;
 
    ATL_assert(K <= ATL_rkAMM_LASTKB)
-   Mjoin(PATL,GetInfo_opge)(&mminfo, TA, TB, M, N, K, lda, ldb, ldc, 
+   Mjoin(PATL,GetInfo_oprk)(&mminfo, TA, TB, M, N, K, lda, ldb, ldc, 
                             alpha, beta);
 /*
  * These kernels all take runtime M/N, and do well with near-square, so
@@ -16058,7 +16065,6 @@ int Mjoin(PATL,ammm_IP)
  * Special case mainly for real LU, where K==4, N==4 beta=1.0, TA==AtlasNoTrans;
  * Can do a no-copy update with only one loop.
  */
-   #if 0
    #ifndef TCPLX
    if (K == 4 && N == 4 && TA==AtlasNoTrans && SCALAR_IS_ONE(beta))
    {
@@ -16067,7 +16073,6 @@ int Mjoin(PATL,ammm_IP)
       if (!Mjoin(PATL,rk4n4)(TB, M, alpha, A, lda, B, ldb, C, ldc))
          return(0);
    }
-   #endif
    #endif
 /*
  * 1-block special case code can return w/o doing op if it thinks
@@ -26378,7 +26383,7 @@ int Mjoin(PATL,ammm_rkK)
       return(0);
    }
 @skip   Mjoin(PATL,GetRKInfo)(&op, 0, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
-   Mjoin(PATL,GetInfo_opge)(&op, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+   Mjoin(PATL,GetInfo_oprk)(&op, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
    #if 0
    printf("MB=(%d,%d), mb=(%d,%d); NB=(%d,%d), nb=(%d,%d)\n",
           op.mb, (int)op.nfmblks, op.pmb, (int)op.npmblks,
@@ -31264,7 +31269,7 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
    ATL_cpnode_t *cb;
    ATL_mmnode_t *mmb;
    char *nm="perf";
-   char *cn[4]={"ge", "sq", "ge", "ts"};
+   char *cn[4]={"ge", "sq", "rk", "ts"};
    double mfMax;
    int i, k, SKSAME;
    char pr;
@@ -31274,6 +31279,7 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
  */
    pr=pre;
    DO_TYPE:
+   @BEGINSKIP
    @multidef pf dn dm mn
    @whiledef nm n   m mn
    mmb = ReadMMFileWithPath(pr, "res", "ip@(nm)PERF.sum");
@@ -31283,6 +31289,7 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
       KillAllMMNodes(mmb);  /* done with these! */
    }
    @endwhile
+   @ENDSKIP
    if (pr == pre)
    {
       pr = (pre == 'd') ? 'z' : 'c';
@@ -31308,11 +31315,11 @@ void GenAllHeaders(char pre, char *outd, ATL_mmnode_t **lists)
       GenSyrkH(pr, outd, lists[k+ISYRK], SKSAME);
 
       GenPerfH(pr, outd, "op","sq", 0.0, lists[k+ISQ], lists[k+ISQK1]);
-      GenPerfH(pr, outd, "op","ge", 0.0, lists[k+IRKK], NULL);
+      GenPerfH(pr, outd, "op","rk", 0.0, lists[k+IRKK], NULL);
 
       GenBlkH(pr, outd, "ip", "ge", lists[k+IGE]); 
       GenBlkH(pr, outd, "op", "sq", lists[k+ISQ]); 
-      GenBlkH(pr, outd, "op", "ge", lists[k+IRKK]);
+      GenBlkH(pr, outd, "op", "rk", lists[k+IRKK]);
       pr = (pre == 'd') ? 'z' : 'c';
    }
    GenSumH(pre, outd, lists[IGE], lists[ISQ], lists[IRKK]);
@@ -33785,29 +33792,51 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_CopyInfo_rkK
 #include "atlas_amm.h"
-@whiledef vw opge opsq
+@whiledef vw oprk opsq
 #ifdef ATL_@(vw)_
    #define CCPRE Mjoin(ATLAS_PRE,@(vw)_)
    #define ATL_FillInCopy Mjoin(PATL,FillInCopy_@(vw))
+   #include Mstr(Mjoin(CCPRE,FromANdecl_a1.h))
+   #ifdef SREAL
+      #ifdef ATLAS_S@(vw)_FROMANDECL_A1_H
+         #define ATL_READY 1
+      #endif
+    #elif defined(DCPLX)
+      #ifndef ATLAS_Z@(vw)_FROMANDECL_A1_H
+         #define ATL_READY 1
+      #endif
+    #elif defined(SCPLX)
+      #ifndef ATLAS_C@(vw)_FROMANDECL_A1_H
+         #define ATL_READY 1
+      #endif
+    #else
+      #ifndef ATLAS_D@(vw)_FROMANDECL_A1_H
+         #define ATL_READY 1
+      #endif
+    #endif
+#endif
+#ifndef ATL_READY
+   #define ATL_READY 0
 #endif
 @endwhile
+#if ATL_READY /* Don't try to compile until header files are genned */
 @whiledef al 1 N X
    @whiledef ta N T
-#include Mstr(Mjoin(CCPRE,FromA@(ta)decl_a@(al).h))
-#include Mstr(Mjoin(CCPRE,FromB@(ta)decl_a@(al).h))
-   @endwhile
-   @whiledef be 0 1 N X
-#include Mstr(Mjoin(CCPRE,IntoCdecl_a@(al)b@(be).h))
-   @endwhile
-@endwhile
-#ifdef TCPLX
-@whiledef al 1 N X
-   @whiledef ta H C
    #include Mstr(Mjoin(CCPRE,FromA@(ta)decl_a@(al).h))
    #include Mstr(Mjoin(CCPRE,FromB@(ta)decl_a@(al).h))
    @endwhile
+   @whiledef be 0 1 N X
+   #include Mstr(Mjoin(CCPRE,IntoCdecl_a@(al)b@(be).h))
+   @endwhile
 @endwhile
-#endif
+   #ifdef TCPLX
+@whiledef al 1 N X
+   @whiledef ta H C
+      #include Mstr(Mjoin(CCPRE,FromA@(ta)decl_a@(al).h))
+      #include Mstr(Mjoin(CCPRE,FromB@(ta)decl_a@(al).h))
+   @endwhile
+@endwhile
+   #endif
 
 void ATL_FillInCopy
    (rkinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
@@ -33902,11 +33931,351 @@ void ATL_FillInCopy
       ip->blk2C = SCALAR_IS_ZERO(beta) ? 
                   ATL_AMM_C2BLK_a1_b0[idx]:ATL_AMM_C2BLK_a1_bX[idx];
 }
+#endif  /* end test if generated file exist */
 @ROUT ATL_GetInfo_rkK
 #include "atlas_amm.h"
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 @multidef pf rk    sq
-@whiledef vw opge  opsq
+@whiledef vw oprk  opsq
+#ifdef ATL_@(vw)_
+   #define AMPRE Mjoin(ATLAS_PRE,@(vw)_)
+   #define ATL_FillInInfo Mjoin(PATL,FillInInfo_@(vw))
+   #define ATL_FillInCopy Mjoin(PATL,FillInCopy_@(vw))
+   #define ATL_GetInfo Mjoin(PATL,GetInfo_@(vw))
+   #define ATL_GetInfo_1b Mjoin(PATL,GetInfo_1b_@(vw))
+   #ifdef ATL_AMM_NCASES
+      #undef ATL_AMM_NCASES
+   #endif
+   @whiledef mn LASTKB NCASES LASTMB LASTNB MAXKVEC
+   #define ATL_AMM_@(mn) ATL_@(pf)AMM_@(mn)
+   @endwhile
+   @undef pf
+#endif
+@endwhile
+#ifdef SREAL
+   #ifdef ATLAS_SAMM_SUM_H
+      #define ATL_READY 1
+   #endif
+#elif defined(SCPLX)
+   #ifdef ATLAS_CAMM_SUM_H
+      #define ATL_READY 1
+   #endif
+#elif defined(DCPLX)
+   #ifdef ATLAS_ZAMM_SUM_H
+      #define ATL_READY 1
+   #endif
+#else
+   #ifdef ATLAS_DAMM_SUM_H
+      #define ATL_READY 1
+   #endif
+#endif
+#ifndef ATL_READY
+   #define ATL_READY 0
+#endif
+#if ATL_READY /* Don't try to compile until header files are genned */
+   #include Mstr(Mjoin(AMPRE,kern.h))
+   #include Mstr(Mjoin(AMPRE,blk.h))
+   #include Mstr(Mjoin(AMPRE,perf.h))
+void ATL_FillInCopy
+   (rkinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
+    int ALPA, const SCALAR alpha, const SCALAR beta);
+
+void ATL_FillInInfo
+   (rkinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb, 
+    ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta,
+    size_t nfmblks, size_t npmblks, int mb, int pmb,
+    size_t nfnblks, size_t npnblks, int nb, int pnb)
+{
+   #if ATL_AMM_MAXKVEC == 0
+      const unsigned int kb = K;
+   #else
+      int unsigned kb = K;
+   #endif
+   const unsigned int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx];
+   const unsigned int ku=ATL_AMM_KUs[idx], vlen=ATL_AMM_VLENs[idx];
+   unsigned int sz, nmu, nnu;
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define CONE ATL_rone
+   #endif
+
+   #if ATL_AMM_MAXKVEC > 0
+      if (ATL_AMM_KMAJOR(idx))
+         kb = ((K + ku - 1)/ku)*ku;
+   #endif
+   ip->kb = K;
+   ip->KB = kb;
+   #ifdef TCPLX
+      ip->ONE = CONE;
+   #endif
+   ip->beta = beta;
+   @multidef v mu nu ku vlen idx
+   @whiledef v nfmblks npmblks mb pmb nfnblks npnblks nb pnb lda ldb ldc
+   ip->@(v) = @(v);
+   @endwhile
+   @multidef mt B A
+   @whiledef d  n m
+   ip->n@(d)u = @(d)b / @(d)u;
+   ip->pn@(d)u = p@(d)b / @(d)u;
+   if (np@(d)blks)
+   {
+      ip->@(d)F = @up@(d) - nf@(d)blks*@(d)b - (np@(d)blks-1)*p@(d)b;
+      ip->n@(d)uF = (ip->@(d)F+@(d)u-1) / @(d)u;
+   }
+   else
+      ip->n@(d)uF = ip->@(d)F = 0;
+   ip->psz@(mt) = p@(d)b*kb;
+   ip->sz@(mt) = kb * (@(d)b ? @(d)b:p@(d)b);
+      @undef mt
+   @endwhile
+   sz = ((mu*nu+vlen-1)/vlen)*vlen;
+   sz *= (ip->nmu) ? ip->nmu : ip->pnmu;
+   sz *= (ip->nnu) ? ip->nnu : ip->pnnu;
+   ip->szC = sz;
+   ip->amm_b0 = ATL_AMM_KERN_b0[idx];
+   #ifdef TCPLX
+      ip->amm_b1 = ATL_AMM_KERN_b1[idx];
+      ip->amm_bn = ATL_AMM_KERN_bn[idx];
+   #endif
+   #ifdef TCPLX
+   if (TA == AtlasNoTrans || TA == AtlasConj)
+   #else
+   if (TA == AtlasNoTrans)
+   #endif
+   {
+      ip->incAm = mb SHIFT;
+      ip->pincAm = pmb SHIFT;
+   }
+   else
+   {
+      ip->incAm = lda*(mb SHIFT);
+      ip->pincAm = lda*(pmb SHIFT);
+   }
+   #ifdef TCPLX
+   if (TB == AtlasNoTrans || TB == AtlasConj)
+   #else
+   if (TB == AtlasNoTrans)
+   #endif
+   {
+      ip->incBn = ldb*(nb SHIFT);
+      ip->pincBn = ldb*(pnb SHIFT);
+   }
+   else
+   {
+      ip->incBn  = nb SHIFT;
+      ip->pincBn = pnb SHIFT;
+   }
+   ATL_FillInCopy(ip, idx, TA, TB, (M<=N), alpha, beta);
+}
+
+#ifdef ATL_opsq_
+static int FindKB(unsigned int K)
+/*
+ * Returns -1 if you should use rkmm instead of this case.  
+ * The smallest KB is special, because it is known to be 4 for opsq, 
+ * while it is 3 for rkmm.  We'd rather pad K to at most 1 step than
+ * possibly pad M & N to mu-1 and nu-1 respectively.  So, if our smallest
+ * kernel can do the problem, we return 0 even when K < 4.
+ * For any other case, we return only on precise match.  sqmm should always
+ * beat rkmm for MB=NB=KB, since it is tuned for this precise case, while
+ * kbmm assumes MB & NB are free variables (can be as large as we want).
+ */
+{
+   register unsigned int IH=ATL_sqAMM_NCASES-1, IL, I, kb, gap;
+   if (K >= ATL_sqAMM_LASTKB)  /* check if last KB is runtime, so can handle */
+   {
+      if (K == ATL_sqAMM_LASTKB)
+         return(IH);
+      return(-1);  /* cannot handle this K */
+   }
+   kb = *ATL_AMM_KBs;
+   if (kb >= K)
+   {
+      register unsigned int ku;
+      const int KMAJ=ATL_AMM_KMAJOR(0);
+      if (kb == K)
+         return(0);
+      ku = *ATL_AMM_KUs;
+      if (KMAJ && ((K+ku-1)/ku)*ku >= K)
+         return(0);
+      if (ATL_AMM_KRUNTIME(0)) /* possibly can decrease K to handle */
+      {
+         if (KMAJ)      /* handles K%ku by padding */
+            return(0);  /* so works wt any K */
+         else if ((K/ku)*ku == K)
+            return(0);
+      }
+      return(-1); /* smallest kernel can't handle K */
+   }
+/*
+ * Otherwise, do binary search for exact KB match, and return -1 if not found
+ */
+   IL=0;
+   gap = IH - IL - 1;
+   while (gap > 2)
+   {
+      I = IL + (gap>>1);
+      kb = ATL_AMM_KBs[I];
+      if (kb > K)
+         IH = I;
+      else if (kb < K)
+         IL = I;
+      else
+         return(I);
+      gap = IH - IL - 1;
+   }
+   if (gap)
+   {
+      if (ATL_AMM_KBs[IL+1] == K)
+         return(IL+1);
+      if (IL+1 < IH-1)
+         if (ATL_AMM_KBs[IH-1] == K)
+             return(IH-1);
+   }
+   return(-1);
+}
+#endif
+#ifdef ATL_oprk_
+static INLINE int HandleBigK(const unsigned int K)
+/*
+ * Called when K > MAXKB, will return last case if it can do that K, -1 else
+ */
+{
+   if (ATL_AMM_KRUNTIME(ATL_rkAMM_NCASES-1))
+   {
+      if (ATL_AMM_KMAJOR(ATL_rkAMM_NCASES-1))
+         return(ATL_rkAMM_NCASES-1);
+      else
+      {
+         int ku=ATL_AMM_KBs[ATL_rkAMM_NCASES-1];
+         if ((K/ku)*ku == K)
+            return(ATL_rkAMM_NCASES-1);
+      }
+   }
+   return(-1);
+}
+#endif
+@BEGINPROC findIDX dl
+   #ifdef ATL_opsq_
+      idx = FindKB(K);
+      if (idx == -1)
+         return(-1);
+   #endif
+   #ifdef ATL_oprk_
+      if (N == M && N == K)  /* try square case instead */
+      {
+         idx = Mjoin(PATL,GetInfo@(dl)opsq)
+                  (ip, TA,TB, M,N,K, lda,ldb,ldc, alpha,beta);
+         if (idx != -1)
+            return(idx);
+      }
+      #if 0   /* these views not yet supported */
+      if (N == K)
+      {
+         idx = Mjoin(PATL,GetInfo@(dl)opnk)
+                  (ip, TA,TB, M,N,K, lda,ldb,ldc, alpha,beta);
+         if (idx != -1)
+            return(idx);
+      }
+      else if (M == K)
+      {
+         idx = Mjoin(PATL,GetInfo@(dl)opmk)
+                  (ip, TA,TB, M,N,K, lda,ldb,ldc, alpha,beta);
+         if (idx != -1)
+            return(idx);
+      }
+      #endif
+      if (K > ATL_AMM_LASTKB)
+      {
+         idx = HandleBigK(K);
+         if (idx == -1)
+            return(-1);
+      }
+      else
+         idx = K-3;
+   #endif
+@ENDPROC
+int ATL_GetInfo_1b
+   (rkinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb,
+    ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta)
+{
+   int idx;
+   unsigned int mu, nu, nfmblks, npmblks, nfnblks, npnblks, mb, nb, pmb, pnb;
+   @callproc findIDX _1b_
+   mu = ATL_AMM_MUs[idx];
+   nu = ATL_AMM_NUs[idx];
+   mb = ((M+mu-1)/mu)*mu;
+   nb = ((N+nu-1)/nu)*nu;
+   if (mb == M)
+   {
+      nfmblks = 1;
+      pmb = npmblks = 0;
+   }
+   else
+   {
+      pmb = mb;
+      mb = nfmblks = 0;
+      npmblks = 1;
+   }
+   if (nb == N)
+   {
+      nfnblks = 1;
+      pnb = npnblks = 0;
+   }
+   else
+   {
+      pnb = nb;
+      nb = nfnblks = 0;
+      npnblks = 1;
+   }
+   ATL_FillInInfo(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta,
+                  nfmblks, npmblks, mb, pmb, nfnblks, npnblks, nb, pnb);
+   return(idx);
+}
+
+int ATL_GetInfo
+   (rkinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb,
+    ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta)
+{
+   int idx, mu, nu, mb, nb, pmb, pnb, nmu, nnu;
+   ATL_SZT nfmblks, npmblks, nfnblks, npnblks;
+
+   @callproc findIDX _
+
+   mu = ATL_AMM_MUs[idx];
+   nu = ATL_AMM_NUs[idx];
+
+   @whiledef d n m
+   @(d)b = ATL_AMM_@up@(d)Bs[idx];
+   if (@(d)b > @up@(d))
+   {
+      p@(d)b = ((@up@(d)+@(d)u-1)/@(d)u)*@(d)u;
+      np@(d)blks = 1;
+      @(d)b = 0;
+      nf@(d)blks = 0;
+   }
+   else
+   {
+      nf@(d)blks = @up@(d) / @(d)b;
+      p@(d)b = @up@(d) - nf@(d)blks*@(d)b;
+      np@(d)blks = (p@(d)b) ? 1 : 0;
+      p@(d)b = ((p@(d)b+@(d)u-1)/@(d)u)*@(d)u;
+   }
+   @endwhile
+   ATL_FillInInfo(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta,
+                  nfmblks, npmblks, mb, pmb, nfnblks, npnblks, nb, pnb);
+   return(idx);
+}
+#endif  /* end guard for generated header files */
+@ROUT ATL_GetInfo_ip
+#include "atlas_amm.h"
+#include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
+@multidef pf ge  
+@whiledef vw ipge
 #ifdef ATL_@(vw)_
    #define AMPRE Mjoin(ATLAS_PRE,@(vw)_)
    #define ATL_FillInInfo Mjoin(PATL,FillInInfo_@(vw))
@@ -34086,7 +34455,7 @@ static int FindKB(unsigned int K)
    return(-1);
 }
 #endif
-#ifdef ATL_opge_
+#ifdef ATL_oprk_
 static INLINE int HandleBigK(const unsigned int K)
 /*
  * Called when K > MAXKB, will return last case if it can do that K, -1 else
@@ -34112,7 +34481,7 @@ static INLINE int HandleBigK(const unsigned int K)
       if (idx == -1)
          return(-1);
    #endif
-   #ifdef ATL_opge_
+   #ifdef ATL_oprk_
       if (N == M && N == K)  /* try square case instead */
       {
          idx = Mjoin(PATL,GetInfo@(dl)opsq)
@@ -34219,323 +34588,529 @@ int ATL_GetInfo
                   nfmblks, npmblks, mb, pmb, nfnblks, npnblks, nb, pnb);
    return(idx);
 }
-@ROUT ATL_GetInfo_gemm
+@ROUT htsearch
+#include "atlas_misc.h"
+#include "atlas_mmtesttime.h"
+/*
+ * This search produces htammgood.sum, which is a list of all kernels
+ * that are within 5% of the peak performer for that region.
+ */
+int main(int nargs, char **args)
+{
+}
+@ROUT ATL_ammKernInfo
 #include "atlas_amm.h"
-#include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
-@multidef hn geamm
-@multidef pf ge
-@whiledef vw gemm
-#ifdef ATL_@(vw)_
-   #define AMPRE Mjoin(ATLAS_PRE,@(hn)_)
-   #define ATL_FillInInfo Mjoin(PATL,FillInInfo_@(vw))
-   #define ATL_FillInCopy Mjoin(PATL,FillInCopy_@(vw))
-   #define ATL_GetInfo Mjoin(PATL,GetInfo_@(vw))
-   #define ATL_GetInfo_1b Mjoin(PATL,GetInfo_1b_@(vw))
-   #ifdef ATL_AMM_NCASES
-      #undef ATL_AMM_NCASES
-   #endif
-   @whiledef mn LASTKB NCASES LASTMB LASTNB MAXKVEC
-   #define ATL_AMM_@(mn) ATL_@(pf)AMM_@(mn)
-   @endwhile
-   @undef hn
-   @undef pf
-#endif
-@endwhile
-#include Mstr(Mjoin(AMPRE,kern.h))
-#include Mstr(Mjoin(AMPRE,blk.h))
-#include Mstr(Mjoin(AMPRE,perf.h))
-void ATL_FillInCopy
-   (rkinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
-    int ALPA, const SCALAR alpha, const SCALAR beta);
+#include "atlas_ammkern_decl.h"
 
-void ATL_FillInInfo
-   (rkinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
-    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb, 
-    ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta,
-    size_t nfmblks, size_t npmblks, int mb, int pmb,
-    size_t nfnblks, size_t npnblks, int nb, int pnb)
-{
-   #if ATL_AMM_MAXKVEC == 0
-      const unsigned int kb = K;
-   #else
-      int unsigned kb = K;
-   #endif
-   const unsigned int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx];
-   const unsigned int ku=ATL_AMM_KUs[idx], vlen=ATL_AMM_VLENs[idx];
-   unsigned int sz, nmu, nnu;
-   #ifdef TCPLX
-      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
-   #else
-      #define CONE ATL_rone
-   #endif
-
-   #if ATL_AMM_MAXKVEC > 0
-      if (ATL_AMM_KMAJOR(idx))
-         kb = ((K + ku - 1)/ku)*ku;
-   #endif
-   ip->kb = K;
-   ip->KB = kb;
-   #ifdef TCPLX
-      ip->ONE = CONE;
-   #endif
-   ip->beta = beta;
-   @multidef v mu nu ku vlen idx
-   @whiledef v nfmblks npmblks mb pmb nfnblks npnblks nb pnb lda ldb ldc
-   ip->@(v) = @(v);
-   @endwhile
-   @multidef mt B A
-   @whiledef d  n m
-   ip->n@(d)u = @(d)b / @(d)u;
-   ip->pn@(d)u = p@(d)b / @(d)u;
-   if (np@(d)blks)
-   {
-      ip->@(d)F = @up@(d) - nf@(d)blks*@(d)b - (np@(d)blks-1)*p@(d)b;
-      ip->n@(d)uF = (ip->@(d)F+@(d)u-1) / @(d)u;
-   }
-   else
-      ip->n@(d)uF = ip->@(d)F = 0;
-   ip->psz@(mt) = p@(d)b*kb;
-   ip->sz@(mt) = kb * (@(d)b ? @(d)b:p@(d)b);
-      @undef mt
-   @endwhile
-   sz = ((mu*nu+vlen-1)/vlen)*vlen;
-   sz *= (ip->nmu) ? ip->nmu : ip->pnmu;
-   sz *= (ip->nnu) ? ip->nnu : ip->pnnu;
-   ip->szC = sz;
-   ip->amm_b0 = ATL_AMM_KERN_b0[idx];
-   #ifdef TCPLX
-      ip->amm_b1 = ATL_AMM_KERN_b1[idx];
-      ip->amm_bn = ATL_AMM_KERN_bn[idx];
-   #endif
-   #ifdef TCPLX
-   if (TA == AtlasNoTrans || TA == AtlasConj)
-   #else
-   if (TA == AtlasNoTrans)
-   #endif
-   {
-      ip->incAm = mb SHIFT;
-      ip->pincAm = pmb SHIFT;
-   }
-   else
-   {
-      ip->incAm = lda*(mb SHIFT);
-      ip->pincAm = lda*(pmb SHIFT);
-   }
-   #ifdef TCPLX
-   if (TB == AtlasNoTrans || TB == AtlasConj)
-   #else
-   if (TB == AtlasNoTrans)
-   #endif
-   {
-      ip->incBn = ldb*(nb SHIFT);
-      ip->pincBn = ldb*(pnb SHIFT);
-   }
-   else
-   {
-      ip->incBn  = nb SHIFT;
-      ip->pincBn = pnb SHIFT;
-   }
-   ATL_FillInCopy(ip, idx, TA, TB, (M<=N), alpha, beta);
-}
-
-#ifdef ATL_opsq_
-static int FindKB(unsigned int K)
+int Mjoin(PATL_,ammKernInfo)(int idx, int KINF, int *ia, void **va)
 /*
- * Returns -1 if you should use rkmm instead of this case.  
- * The smallest KB is special, because it is known to be 4 for opsq, 
- * while it is 3 for rkmm.  We'd rather pad K to at most 1 step than
- * possibly pad M & N to mu-1 and nu-1 respectively.  So, if our smallest
- * kernel can do the problem, we return 0 even when K < 4.
- * For any other case, we return only on precise match.  sqmm should always
- * beat rkmm for MB=NB=KB, since it is tuned for this precise case, while
- * kbmm assumes MB & NB are free variables (can be as large as we want).
+ * ATL_AMM_IHOT are blocks of [flg,mu,nu,ku]
+ * ATL_AMM_ICLD are blocks of [K1idx, vlen, kbmin, kbmax]
+ * ia: 0:mu, 1:nu, 2:ku, 3:vlen, 5:kbmin, 6:kbmax (3-6 only set if KINF true)
+ * va[0:2]: funcptrs to b0,b1,bn amm kern
+ * va[3:5]: funcptrs for K1 kerns if KINF non-zero
+ * RETURNS: flag
  */
 {
-   register unsigned int IH=ATL_sqAMM_NCASES-1, IL, I, kb, gap;
-   if (K >= ATL_sqAMM_LASTKB)  /* check if last KB is runtime, so can handle */
+   const unsigned int i4=idx<<2, i3=(idx<<1)+idx;
+
+   flg = ATL_AMM_IHOT[i4];       /* flag */
+   ia[0] = ATL_AMM_IHOT[i4+1];   /* mu */
+   ia[1] = ATL_AMM_IHOT[i4+2];   /* nu */
+   ia[2] = ATL_AMM_IHOT[i4+3];   /* ku */
+   va[0] = ATL_AMM_KERN[i3];     /* amm_b0 */
+   va[1] = ATL_AMM_KERN[i3+1];   /* amm_b1 */
+   va[2] = ATL_AMM_KERN[i3+2];   /* amm_bn */
+   if (KINF)
    {
-      if (K == ATL_sqAMM_LASTKB)
-         return(IH);
-      return(-1);  /* cannot handle this K */
+      unsigned int k1;
+
+      k1    = ATL_AMM_ICLD[i4];
+      ia[3] = ATL_AMM_ICLD[i4+1];
+      ia[4] = ATL_AMM_ICLD[i4+2];
+      ia[5] = ATL_AMM_ICLD[idx+3];
+      k1 = (k1<<1) + k1;
+      va[4] = ATL_AMM_KERN[k1];
+      va[5] = ATL_AMM_KERN[k1+1];
+      va[6] = ATL_AMM_KERN[k1+2];
    }
-   kb = *ATL_AMM_KBs;
-   if (kb >= K)
+   return(flg);
+}
+@ROUT ammvgen
+#include "atlas_mmgen.h"
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr,"USAGE: %s [flags:\n", name);
+   fprintf(stderr,"   -p [d,s,c,z]\n");
+   fprintf(stderr,"   -o /path : specify directory to generate into\n");
+   fprintf(stderr,"   -V [0:noKClean, 1:KClean] <name> mmview.sum:\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_view_t *GetFlags(int nargs, char **args, char *PRE, char **PTH)
+{
+   ATL_view_t *vb=NULL, *vp;
+   char *pth=NULL;
+   int i;
+   char pre='d';
+
+   for (i=1; i < nargs; i++)
    {
-      register unsigned int ku;
-      const int KMAJ=ATL_AMM_KMAJOR(0);
-      if (kb == K)
-         return(0);
-      ku = *ATL_AMM_KUs;
-      if (KMAJ && ((K+ku-1)/ku)*ku >= K)
-         return(0);
-      if (ATL_AMM_KRUNTIME(0)) /* possibly can decrease K to handle */
+      char *nam;
+      int k, flag;
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
       {
-         if (KMAJ)      /* handles K%ku by padding */
-            return(0);  /* so works wt any K */
-         else if ((K/ku)*ku == K)
-            return(0);
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pre = tolower(args[i][0]);
+         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 'o':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pth = DupString(args[i]);
+         break;
+      case 'V': /* -V <flag> <name> mmview.sum */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         flag = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nam = DupString(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         vp = ATL_NewView(flag, nam, DupString(args[i]));
+         vp->next = vb;
+         vb = vp;
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
       }
-      return(-1); /* smallest kernel can't handle K */
    }
+   assert(vb);
+   if (!pth)
+      pth = DupString("tmp");
+   *PTH = pth;
+   *PRE = pre;
+   return(vb);
+}
+
+void GenKernList(char pre, char *path, ATL_view_t *vb)
+{
+   ATL_mmnode_t *mb=NULL, *mp;
+   ATL_view_t *vp;
+   int nxtoff, imax=0, i, j, N;
+   char *ityp, *sp;
+
+   printf("SEARCHING VIEWS FOR UNIQUE KERNELS\n");
+   for (vp=vb; vp; vp = vp->next)
+   {
+      mp = ReadMMFile(vp->fnam);
+      assert(mp);
+      AddUniqueMMKernCompList(mb, mp);
+      KillAllMMNodes(mp);
+   }
+   PrepMMForGen(pre, outd, "amm", mb);
 /*
- * Otherwise, do binary search for exact KB match, and return -1 if not found
+ * Find integral type to use
  */
-   IL=0;
-   gap = IH - IL - 1;
-   while (gap > 2)
-   {
-      I = IL + (gap>>1);
-      kb = ATL_AMM_KBs[I];
-      if (kb > K)
-         IH = I;
-      else if (kb < K)
-         IL = I;
-      else
-         return(I);
-      gap = IH - IL - 1;
-   }
-   if (gap)
-   {
-      if (ATL_AMM_KBs[IL+1] == K)
-         return(IL+1);
-      if (IL+1 < IH-1)
-         if (ATL_AMM_KBs[IH-1] == K)
-             return(IH-1);
-   }
-   return(-1);
-}
-#endif
-#ifdef ATL_opge_
-static INLINE int HandleBigK(const unsigned int K)
-/*
- * Called when K > MAXKB, will return last case if it can do that K, -1 else
- */
-{
-   if (ATL_AMM_KRUNTIME(ATL_rkAMM_NCASES-1))
-   {
-      if (ATL_AMM_KMAJOR(ATL_rkAMM_NCASES-1))
-         return(ATL_rkAMM_NCASES-1);
-      else
-      {
-         int ku=ATL_AMM_KBs[ATL_rkAMM_NCASES-1];
-         if ((K/ku)*ku == K)
-            return(ATL_rkAMM_NCASES-1);
-      }
-   }
-   return(-1);
-}
-#endif
-@BEGINPROC findIDX dl
-   #ifdef ATL_opsq_
-      idx = FindKB(K);
-      if (idx == -1)
-         return(-1);
-   #endif
-   #ifdef ATL_opge_
-      if (N == M && N == K)  /* try square case instead */
-      {
-         idx = Mjoin(PATL,GetInfo@(dl)opsq)
-                  (ip, TA,TB, M,N,K, lda,ldb,ldc, alpha,beta);
-         if (idx != -1)
-            return(idx);
-      }
-      #if 0   /* these views not yet supported */
-      if (N == K)
-      {
-         idx = Mjoin(PATL,GetInfo@(dl)opnk)
-                  (ip, TA,TB, M,N,K, lda,ldb,ldc, alpha,beta);
-         if (idx != -1)
-            return(idx);
-      }
-      else if (M == K)
-      {
-         idx = Mjoin(PATL,GetInfo@(dl)opmk)
-                  (ip, TA,TB, M,N,K, lda,ldb,ldc, alpha,beta);
-         if (idx != -1)
-            return(idx);
-      }
-      #endif
-      if (K > ATL_AMM_LASTKB)
-      {
-         idx = HandleBigK(K);
-         if (idx == -1)
-            return(-1);
-      }
-      else
-         idx = K-3;
-   #endif
-@ENDPROC
-int ATL_GetInfo_1b
-   (rkinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
-    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb,
-    ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta)
-{
-   int idx;
-   unsigned int mu, nu, nfmblks, npmblks, nfnblks, npnblks, mb, nb, pmb, pnb;
-   @callproc findIDX _1b_
-   mu = ATL_AMM_MUs[idx];
-   nu = ATL_AMM_NUs[idx];
-   mb = ((M+mu-1)/mu)*mu;
-   nb = ((N+nu-1)/nu)*nu;
-   if (mb == M)
-   {
-      nfmblks = 1;
-      pmb = npmblks = 0;
-   }
-   else
-   {
-      pmb = mb;
-      mb = nfmblks = 0;
-      npmblks = 1;
-   }
-   if (nb == N)
-   {
-      nfnblks = 1;
-      pnb = npnblks = 0;
-   }
-   else
-   {
-      pnb = nb;
-      nb = nfnblks = 0;
-      npnblks = 1;
-   }
-   ATL_FillInInfo(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta,
-                  nfmblks, npmblks, mb, pmb, nfnblks, npnblks, nb, pnb);
-   return(idx);
-}
-
-int ATL_GetInfo
-   (rkinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
-    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb,
-    ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta)
-{
-   int idx, mu, nu, mb, nb, pmb, pnb, nmu, nnu;
-   ATL_SZT nfmblks, npmblks, nfnblks, npnblks;
-
-   @callproc findIDX _
-
-   mu = ATL_AMM_MUs[idx];
-   nu = ATL_AMM_NUs[idx];
-
-   @whiledef d n m
-   @(d)b = ATL_AMM_@up@(d)Bs[idx];
-   if (@(d)b > @up@(d))
-   {
-      p@(d)b = ((@up@(d)+@(d)u-1)/@(d)u)*@(d)u;
-      np@(d)blks = 1;
-      @(d)b = 0;
-      nf@(d)blks = 0;
-   }
-   else
-   {
-      nf@(d)blks = @up@(d) / @(d)b;
-      p@(d)b = @up@(d) - nf@(d)blks*@(d)b;
-      np@(d)blks = (p@(d)b) ? 1 : 0;
-      p@(d)b = ((p@(d)b+@(d)u-1)/@(d)u)*@(d)u;
-   }
+   nxtoff = GetOffset(&mb->next, mb);
+   N = GetIntMaxMinAtOff(mb, nxtoff, GetOffset(&mb->mu, mb), &i, &j);
+   printf("FOUND %d UNIQUE KERNELS.\n");
+   assert(j >= 0);  /* can't store negative numbers! */
+   max = Mmax(i,max);
+   @whiledef vv mu nu ku vlen
+   GetIntMaxMinAtOff(mb, nxtoff, GetOffset(&mb->@(vv), mb), &i, &j);
+   assert(j >= 0);  /* can't store negative numbers! */
+   max = Mmax(i,max);
    @endwhile
-   ATL_FillInInfo(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta,
-                  nfmblks, npmblks, mb, pmb, nfnblks, npnblks, nb, pnb);
-   return(idx);
+   if (max < (1<<8))
+      ityp = "unsigned char";
+   else
+      ityp = (max < (1<<16)) ? "unsigned short" : "unsigned int";
+   fp = OpenFileWithPath(path, "
 }
-@ROUT
+int main(int nargs, char **args)
+{
+   ATL_view_t *vb;
+   char *path;
+   char pre;
+   bv = GetFlags(nargs, args, &pre, &path);
+   GenKernList(pre, path, vb);
+   return(0);
+}
+@ROUT ammk1srch
+#include "atlas_mmtesttime.h"
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -i ammsearch.sum: repeat for multiple\n");
+   fprintf(stderr, "   -o <output file>\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
+{
+   ATL_mmnode_t *cb=NULL, *cp;
+   char *fout=NULL;
+   int i;
+   char pre='d';
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'i':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        if (!cb)
+           cb = ReadMMFile(args[i]);
+        else
+        {
+           cp = ATL_LastMMNode(cb);
+           cp->next = ReadMMFile(args[i]);
+        }
+        break;
+      case 'o':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        fout = DupString(args[i]);
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   assert(cb);
+   if (!fout)
+   {
+      fout = malloc(18);
+      assert(fout);
+      strcpy(fout, "res/");
+      fout[4] = pre;
+      strcpy(fout+5, "AMMLIST.sum");
+   }
+   *FOUT = fout;
+   *PRE = pre;
+   return(cb);
+}
+
+ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
+/*
+ * Finds all unique kernels in mb, and then takes the largest blocking factor
+ * that matches that signature.
+ */
+{
+   ATL_mmnode_t *ub=NULL, *bp, *mp;
+   int mbC, nbC;
+   double avgK=0.0;
+   if (!mb)
+      return(NULL);
+/*
+ * K cleanup can be done by any kernel with the same storage for A/B/C, so it
+ * doesn't have to be the exact same kernel implementation, assuming it can
+ * handle all the required K values.  Therefore, start by finding all storage
+ * types that require K-cleanup.
+ */
+   for (mp=mb; mp; mp = mp->next)
+   {
+      if (FLAG_IS_SET(mp->flag, MMF_KCLN))
+      {
+         if (!MMCompatKernPresent(ub, mp)) /* no storage compat kern in ub */
+         {
+            ATL_mmnode_t *p;
+            p = CloneMMNode(mp);
+            p->next = ub;
+            ub = p;
+         }
+      }
+   }
+/*
+ * We're going to use the same K-cleanup for all storage-compatible kernels,
+ * which means it can be used for wildly varying dimensions.  We will use
+ * the largest observed MB/NB, while using a small KB.  We'll set KB to roughly
+ * half the size of the average KB it'll be cleaning.
+ * For each K-clean target, examine all kernels it will clean for to find
+ * dims to use.
+ */
+   for (bp=ub; bp; bp = bp->next)
+   {
+      int nk=0;
+      mbC = nbC = 0;
+      mp = mb;
+      while (mp = MMCompatKernPresent(mp, bp))
+      {
+         mbC = Mmax(mbC, mp->mbB);
+         nbC = Mmax(mbC, mp->nbB);
+         avgK += mp->kbB;
+         nk++;
+         mp = mp->next;
+      }
+      avgK /= (nk<<1);
+      bp->mbB = mbC;
+      bp->nbB = nbC;
+      bp->kbB = avgK;
+      assert(mbC && nbC && bp->kbB);
+   }
+   return(ub);
+}
+ATL_mmnode_t *BestCompatKern
+(
+   char pre, 
+   ATL_mmnode_t *dp, /* amm kerntype & dims desiring K cleanup */
+   ATL_mmnode_t *mb  /* list of kernels to try */
+)
+/* 
+ * RETURNS: dp if it can do K cleanup on its own, else NULL if no kernel in mb
+ *          can do cleanup, otherwise a clone of the best-performing node in mb
+ *          with mflop set to cleanup performance.
+ */
+{
+   ATL_mmnode_t *mp, *mpB=NULL;
+   double mfB=0.0;
+   int mbB, nbB, kbB, cnt, cntB=0;
+
+   if (!dp) 
+      return(dp);
+   if (MMKernCleansK(dp, dp))
+   {
+      printf("   ID=%d '%s' U=(%u,%u,%u) B=(%u,%u,%u), cleans itself!\n",
+             dp->ID, dp->rout?dp->rout:"NULL", dp->mu, dp->nu, dp->ku,
+             dp->mbB, dp->nbB, dp->kbB);
+      return(dp);
+   }
+   if (!mb)
+      return(NULL);
+   mbB = dp->mbB;
+   nbB = dp->nbB;
+   kbB = dp->kbB;
+
+   printf(
+      "   SEARCHING FOR BEST K-CLEANER FOR ID=%d, U=(%u,%u,%u) B=(%u,%u,%u)\n", 
+          dp->ID, dp->mu, dp->nu, dp->ku, dp->mbB, dp->nbB, dp->kbB);
+   for (cnt=0,mp=mb; mp; mp = mp->next, cnt++)
+   {
+      if (MMKernCleansK(dp, mp))
+      {
+         double mf;
+         mf = TimeMMKernel(0, 0, mp, pre, mbB, nbB, kbB, 0, 0, -1);
+         printf("      ID=%d, IDX=%d, mf=%.0f\n", mp->ID, cnt, mf);
+         if (mf > mfB)
+         {
+            mfB = mf;
+            mpB = mp;
+            cntB = cnt;
+         }
+      }
+   }
+   if (mpB)
+   {
+      printf("   DONE, BEST: ID=%d, IDX=%d, mf=%.0f.\n\n", mpB->ID, cntB, mfB);
+      mpB = CloneMMNode(mpB);
+      mpB->mbB = mbB;
+      mpB->nbB = nbB;
+      mpB->kbB = kbB;
+      mpB->mflop[0] = mfB;
+   }
+   else
+      printf("   DONE: NO KCLEAN FOR THIS KERNEL!\n\n");
+   return(mpB);
+}
+
+ATL_mmnode_t *FindAllBestCompatKern
+(
+   char pre, 
+   ATL_mmnode_t *db, /* amm kerntype & dims desiring K cleanup */
+   ATL_mmnode_t *mb  /* list of kernels to try */
+)
+{
+   ATL_mmnode_t *kb=NULL, *dp;
+
+   for (dp=db; dp; dp = dp->next)
+   {
+      ATL_mmnode_t *mpB;
+      mpB = BestCompatKern(pre, dp, mb);
+      if (mpB == dp)
+         dp->ivar = -1;
+      else
+      {
+         if (!mpB) /* no cleaner so far found */
+         {
+            mpB = CloneMMNode(dp);  /* keep placeholder */
+            mpB->mflop[0] = -2.0;   /* and indicate no cleaner available yet */
+         }
+         mpB->next = kb;
+         kb = mpB;
+      }
+   }
+   return(ReverseMMQ(kb));  /* now in same order as db */
+}
+void FindK1Clean
+(
+   char pre, 
+   char *fout,       /* output filename */
+   ATL_mmnode_t *db, /* storage formats & NBs desiring K cleanup */
+   ATL_mmnode_t *mb  /* already-existing kernels to be scope for cleanup */
+)
+{
+   ATL_mmnode_t *dp, *kb=NULL, *gb=NULL, *nb;
+   
+   kb = FindAllBestCompatKern(pre, db, mb);
+/*
+ * Now we consider adding kernels to do K-cleanup.  kb is best found so far
+ * (-2 mflop indicates no cleanup so far, so forced new kern).
+ * We have two options for K-clean: any working user-contributed kernel, or
+ * a generated kernel. 
+ */
+/*
+ * Create generated cleaners for each kernel, for now just use as-is, but later
+ * scope best case, and see if bcast should be set to for MVEC, for instance.
+ */
+   for (dp=db; dp; dp = dp->next)
+   {
+      ATL_mmnode_t *gp;
+      gp = MMGetGenCaseKClean(dp);
+      gp->rout = DupString("ATL_tmp.c");
+      gp->genstr = MMGetGenString(pre, gp);
+      gp->next = gb;
+      gb = gp;
+   }
+   nb = FindAllBestCompatKern(pre, db, gb);
+   KillAllMMNodes(gb);
+   KillAllMMNodes(kb);
+   KillAllMMNodes(nb);
+}
+/*
+ * This routine takes as input all amm kerns to be used in building ATLAS.
+ * Any kernels with MMF_KCLN needs a K-cleaner.  We will search for cleaners
+ * for any such kernel.  A K-cleaning kernel must have MMF_KRUNTIME &
+ * ku <= X, where X is max of (mu-1,nu-1,4,KVEC?VLEN:1).
+ * The best existing kernel will be compared to a generated kernel on perf.
+ * If the genned kernel provides higher performance, then it will be added
+ * to the list of output kernels (with KCLN=0, obviously). 
+ * For a given kernel match, only one K-cleaner is generated, which means that
+ * multiple kernels may share.
+ * In the output file, those kernels not requiring K-cleanup, or who can serve
+ * as their own K-cleanup, have ivar=0, KCLN=0.  For those needing Kclean,
+ * KCLN=1, and ivar=#, where # is the position in the file of the cleaning kern.
+ *
+ * This should be run as last step before generation, and the output file
+ * will be all the output kernels to generate (more may have been added by
+ * search in order to do cleanup).  It will use ivar to express how cleanup
+ * is being done.  ivar=0 indicates that no cleanup is required.
+ * ivar >= means that kernel ivar-1 in the given kernel order cleans up this 
+ * kernel. A kernel may provide its own K-cleanup, in which ivar is its loc+1.
+ */
+int main(int nargs, char **args)
+{
+   ATL_mmnode_t *mb, *db;
+   char pre;
+   char *fout;
+
+   mb = GetFlags(nargs, args, &pre, &fout);
+
+   db = GetDesiredK1(mb);  /* get list of K cleaners to make */
+   printf("KERNELS NEEDING KCLEANERS:\n");
+   PrintMMNodes(stdout, db);
+   printf("\n\n");
+
+   FindK1Clean(pre, fout, db, mb);
+
+   free(fout);
+   KillAllMMNodes(mb);
+   KillAllMMNodes(db);
+   return(0);
+}
+@ROUT ATL_ammPad0
+#include "atlas_misc.h"
+
+void Mjoin(ATL,PadA0)(ATL_UINT K0, ATL_UINT K, ATL_UINT N, ATL_UINT U, 
+                      ATL_UINT KVEC, TYPE *b)
+/*
+ * b is a block of access-major storage for the A or B matrix for an AMM kern.
+ * This function pads the existing NxK block with zeros.  If KVEC > 1, then
+ * this is a k-vectorized kernel, and both K0 & K must be multiples of KVEC.
+ * N must be a multiple of U (i.e. it will be NB/MB, not N/M).
+ */
+{
+   
+   if (K0 > K)
+   {
+      int D = N*(K-K0);
+      int i;
+      b += N*K;
+      for (i=0; i < D; i++)
+         b[i] = ATL_rzero;
+   }
+}
+@ROUT ATL_trsm_ammLL
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_reflevel3.h"
+void Mjoin(PATL,reftrsmLLNN)
+   (const int M, const int N, const SCALAR alp, const TYPE*A, const int lda, 
+    TYPE *B, const int ldb);
+typedef void (*trsmK_t)
+   (const int M, const int N, const SCALAR alp, const TYPE*A, const int lda, 
+    TYPE *B, const int ldb);
+
+#define ATL_MU 12
+#define ATL_NU  4
+#define ATL_MUNU (ATL_MU*ATL_NU)
+
+void Mjoin(PATL,trsm_ammLL)
+   (ATL_CINT N, ATL_CSZT R, const SCALAR alpha, const TYPE *A, ATL_CSZT lda, 
+    TYPE *X, ATL_CSZT ldx)
+{
+   trsmK_t trsm=Mjoin(PATL,reftrsmLLNN);
+   #ifdef TCPLX
+      TYPE ONE[2] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   SCALAR alpT = alpha;
+   TYPE w[ATL_MUNU];
+   const TYPE *Ad = A;
+   ATL_SZT r;
+   for (r=0; r < R; r += ATL_NU, X += (ATL_NU SHIFT)*lda)
+   {
+      SCALAR alpT = alpha;
+      int i, nu = R-r;
+      nu = Mmin(nu,ATL_NU);
+      for (i=0; i < N; i += ATL_MU)
+      {
+         int mu=N-i;
+         mu = Mmin(ATL_MU, mu);
+         if (i)
+         {
+            Mjoin(PATL,refgemm)(AtlasNoTrans, AtlasNoTrans, mu, nu, i, ONE,
+                             A+(i SHIFT), lda, X, ldx, ZERO, w, mu);
+            Mjoin(PATL,geadd)(mu, nu, NONE, w, mu, alpha, X+(i SHIFT), ldx);
+         }
+         trsm(mu, nu, alpT, A+(i SHIFT)*(lda+1), lda, X+(i SHIFT), ldx);
+         alpT = ONE;
+      }
+   }
+}
+

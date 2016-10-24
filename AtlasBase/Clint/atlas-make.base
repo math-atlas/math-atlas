@@ -376,6 +376,7 @@ include/atlas_tperf.h :
 	echo "#endif" >> $@
 include:
 	mkdir include
+	mkdir include/COPY
 @whiledef pre z c d s
    @whiledef l2 syr syr2
 	touch include/atlas_@(pre)@(l2)NX.h
@@ -383,6 +384,9 @@ include:
 	touch include/atlas_@(pre)amm_sum.h
 	touch include/atlas_@(pre)ipge_perf.h
 	touch include/atlas_@(pre)opsq_perf.h
+	touch include/COPY/atlas_@(pre)ipge_FromANdecl_a1.h
+	touch include/COPY/atlas_@(pre)oprk_FromANdecl_a1.h
+	touch include/COPY/atlas_@(pre)opsq_FromANdecl_a1.h
 @endwhile
 	touch include/atlas_tsumm.h
 	touch include/atlas_taffinity.h
@@ -2613,7 +2617,7 @@ xemit_amm : $(mySRCdir)/emit_amm.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/emit_amm.c -lm
 xemit_uamm : $(mySRCdir)/emit_uamm.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/emit_uamm.c -lm
-@whiledef rt ammsearch uammsearch gmmsearch uammsrch cpysearch
+@whiledef rt ammsearch uammsearch gmmsearch uammsrch cpysearch ammk1srch
 x@(rt) : $(mySRCdir)/@(rt).c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/@(rt).c -lm
 @endwhile
@@ -2726,8 +2730,10 @@ res/@(pre)@(rt) : xgmmsearch
 	make @(pre)install_uamm_noclean ID=0
 	cp res/@(pre)uAMMFRC.sum $(BLDdir)/src/threads/lapack/amm/sumd/.
 @(pre)views=-V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1 syrk res/@(pre)gAMSYRK.sum \
-    @multidef pf ipge     opsq     opge     ipmn     ipdn    ipdm
-    @whiledef rt geAMMRES sqAMMRES rkAMMRES ipmnPERF ipnPERF ipmPERF
+    @skip pf ipmn     ipdn    ipdm
+    @skip rt ipmnPERF ipnPERF ipmPERF
+    @multidef pf ipge     opsq     oprk     
+    @whiledef rt geAMMRES sqAMMRES rkAMMRES
        -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X @(pf) res/@(pre)@(rt).sum \
        @undef pf
     @endwhile
@@ -2736,7 +2742,7 @@ $(AMMdir)/KERNEL/@up@(pre)COPY:
 	mkdir $(AMMdir)/KERNEL/@up@(pre)COPY
 @skip	ln -s $(BLDdir)/Make.inc $(AMMdir)/KERNEL/@up@(pre)COPY/Make.inc
    @declare "@(pre)install_cpy: " y n 
-   $(AMMdir)/KERNEL/@up@(pre)COPY xcpydrv
+      $(AMMdir)/KERNEL/@up@(pre)COPY xcpydrv
       @multidef rt gAMSYRK
       @whiledef rt geAMMRES sqAMMRES rkAMMRES gAMSYRK ipmnPERF ipnPERF ipmPERF
          res/@(pre)@(rt).sum
@@ -2745,7 +2751,7 @@ $(AMMdir)/KERNEL/@up@(pre)COPY:
 	- cd $(AMMdir)/KERNEL/@up@(pre)COPY ; $(MAKE) killall
 	./xcpydrv -p @(pre) -z $(minsz) $(@(pre)views) \
                   -o $(AMMdir)/KERNEL/@up@(pre)COPY
-	mv -f $(AMMdir)/KERNEL/@up@(pre)COPY/*.h $(INCAdir)/.
+	mv -f $(AMMdir)/KERNEL/@up@(pre)COPY/*.h $(INCAdir)/COPY/.
 	cd $(AMMdir)/KERNEL/@up@(pre)COPY/ ; $(PMAKE)
 
 @multidef pt c r
@@ -8086,7 +8092,7 @@ clean : dclean sclean cclean zclean
    $(INCAdir)/atlas_@(upr)ipge_blk.h 
    $(INCAdir)/atlas_@(upr)ipge_kern.h 
    $(INCAdir)/atlas_@(upr)ipge_perf.h
-   $(INCAdir)/atlas_@(pre)ipge_FromANdecl_a1.h
+   $(INCAdir)/COPY/atlas_@(pre)ipge_FromANdecl_a1.h
 @enddeclare
 @declare "@(pre)INCSQdep = " y n
    $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h
@@ -8107,7 +8113,7 @@ clean : dclean sclean cclean zclean
    ATL_@(pre)ammm_rk2.o ATL_@(pre)aliased_rkK.o ATL_@(pre)ammm_rkK.o
    ATL_@(pre)ammm_IP.o ATL_@(pre)ammm_tN.o
    ATL_@(pre)syrk_OP.o ATL_@(pre)syrk_IP.o ATL_@(pre)syrk_amm.o
-   @whiledef vw opge opsq
+   @whiledef vw oprk opsq
    ATL_@(pre)GetInfo_@(vw).o ATL_@(pre)CopyInfo_@(vw).o
    @endwhile
    @ptyp z c `ATL_@(pre)herk_OP.o ATL_@(pre)herk_IP.o ATL_@(pre)herk_amm.o`
@@ -8132,13 +8138,24 @@ ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt).c \
                     $(INCAdir)/atlas_@(pre)amm_sum.h
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt).c
 @endwhile
-@whiledef fn CopyInfo GetInfo
-   @whiledef rt opsq opge
-ATL_@(pre)@(fn)_@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(fn)_rkK.c
-	$(@(UPR)KC) -D@(typ)=1 -DATL_@(rt)_=1 -o $@ -c $(@(pre)KCFLAGS) \
+@whiledef vw opsq oprk
+   @whiledef fn CopyInfo
+ATL_@(pre)@(fn)_@(vw).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(fn)_rkK.c
+	$(@(UPR)KC) -D@(typ)=1 -DATL_@(vw)_=1 -o $@ -c $(@(pre)KCFLAGS) \
+                     -I$(INCAdir)/COPY $(mySRCdir)/ATL_@(fn)_rkK.c
+   @endwhile
+   @whiledef fn GetInfo
+ATL_@(pre)@(fn)_@(vw).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(fn)_rkK.c
+	$(@(UPR)KC) -D@(typ)=1 -DATL_@(vw)_=1 -o $@ -c $(@(pre)KCFLAGS) \
                      $(mySRCdir)/ATL_@(fn)_rkK.c
    @endwhile
 @endwhile
+@(pre)trsmK: ATL_@(pre)trsm_ammLL.o
+	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) ATL_@(pre)trsm_ammLL.o
+	$(RANLIB) $(ATLASlib)
+ATL_@(pre)trsm_ammLL.o : $(@(pre)INCdep) $(mySRCdir)/ATL_trsm_ammLL.c
+	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) \
+                     $(mySRCdir)/ATL_trsm_ammLL.c
 @ptyp z c
    @multidef rt2 syrk_OP syrk_IP syrk_amm
    @whiledef rt herk_OP herk_IP herk_amm
