@@ -34779,6 +34779,12 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
 
       switch(args[i][1])
       {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
       case 'i':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -34800,6 +34806,8 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
       }
    }
    assert(cb);
+   for (cp=cb; cp; cp = cp->next)
+      cp->ivar = FLAG_IS_SET(cp->flag, MMF_KCLN) ? -1 : 0;
    if (!fout)
    {
       fout = malloc(18);
@@ -34834,7 +34842,9 @@ ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
    {
       if (FLAG_IS_SET(mp->flag, MMF_KCLN))
       {
-         if (!MMCompatKernPresent(ub, mp)) /* no storage compat kern in ub */
+         if (MMKernCleansK(mp, mp))
+            mp->ivar = 0;
+         else if (!MMCompatKernPresent(ub, mp))/* no storg compat kern in ub */
          {
             ATL_mmnode_t *p;
             p = CloneMMNode(mp);
@@ -34872,6 +34882,7 @@ ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
    }
    return(ub);
 }
+
 ATL_mmnode_t *BestCompatKern
 (
    char pre, 
@@ -34904,8 +34915,9 @@ ATL_mmnode_t *BestCompatKern
    kbB = dp->kbB;
 
    printf(
-      "   SEARCHING FOR BEST K-CLEANER FOR ID=%d, U=(%u,%u,%u) B=(%u,%u,%u)\n", 
-          dp->ID, dp->mu, dp->nu, dp->ku, dp->mbB, dp->nbB, dp->kbB);
+"   SEARCHING FOR BEST K-CLEANER FOR ID=%d, U=(%u,%u,%u) B=(%u,%u,%u) %c%d\n", 
+          dp->ID, dp->mu, dp->nu, dp->ku, dp->mbB, dp->nbB, dp->kbB,
+          FLAG_IS_SET(dp->flag, MMF_KVEC)?'K':'M', dp->vlen);
    for (cnt=0,mp=mb; mp; mp = mp->next, cnt++)
    {
       if (MMKernCleansK(dp, mp))
@@ -34963,7 +34975,8 @@ ATL_mmnode_t *FindAllBestCompatKern
    }
    return(ReverseMMQ(kb));  /* now in same order as db */
 }
-void FindK1Clean
+
+ATL_mmnode_t *FindK1Clean
 (
    char pre, 
    char *fout,       /* output filename */
@@ -34972,7 +34985,14 @@ void FindK1Clean
 )
 {
    ATL_mmnode_t *dp, *kb=NULL, *gb=NULL, *nb, *mp;
+   unsigned int L1ELTS;
+   char upr;
    
+   if (pre == 'z')
+      upr = 'd';
+   else 
+      upr = (pre == 'c') ? 's' : pre;
+   printf("FINDING K-CLEANERS AMONGST EXISTING KERNELS\n");
    kb = FindAllBestCompatKern(pre, db, mb);
 /*
  * Now we consider adding kernels to do K-cleanup.  kb is best found so far
@@ -34981,18 +35001,37 @@ void FindK1Clean
  * a generated kernel. 
  */
 /*
- * Create generated cleaners for each kernel, for now just use as-is, but later
- * scope best case, and see if bcast should be set to for MVEC, for instance.
+ * Create generated cleaners for each kernel, using best-found flags from
+ * prior searches.  Recall that gAMMRES first three cases are best cases
+ * for (# is order in file): 0: A,B,C fit in L1, 1: B fits in L1, 2: mu*K panel
+ * fits in L1 (L2 blocked).  Since M,N,K will vary by kernel, we can't be sure
+ * of which of these to use, but since we can control only prefetch and nobcast,
+ * its no big deal if we use the wrong one.
  */
+   nb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum"); /* tuned params */
+   assert(nb); /* all 3 fit L1, ->B fits; ->->pan fits */
+   L1ELTS = GetL1CacheElts(upr);
    for (dp=db; dp; dp = dp->next)
    {
-      ATL_mmnode_t *gp;
+      ATL_mmnode_t *gp, *op;
+      const int M=dp->mbB, N=dp->nbB, K=dp->kbB;
+      int flag;
+
+      if (N*M + K*(N+M) <= L1ELTS)
+         op = nb;
+      else
+         op = (K*N <= L1ELTS) ? nb->next : nb->next->next;
+      flag = op->flag & MMF_ALLPF;
+      if (!FLAG_IS_SET(dp->flag, MMF_KVEC))
+         flag |= op->flag & (1<<MMF_NOBCAST);
       gp = MMGetGenCaseKClean(dp);
+      gp->flag |= flag;
       gp->rout = DupString("ATL_tmp.c");
       gp->genstr = MMGetGenString(pre, gp);
       gp->next = gb;
       gb = gp;
    }
+   KillAllMMNodes(nb);
 /*
  * Get all working user-contributed kernels, and grab the ones that could
  * clean for selected kerns
@@ -35006,18 +35045,86 @@ void FindK1Clean
       {
          nb = ATL_LastMMNode(mp);
          nb->next = gb;
-         gb = nb;
+         gb = mp;
       }
    }
 /*
  * Now search for best new kernel to use amongst hand-tuned & generated
  */
+   printf("FINDING K-CLEANERS AMONGST NEW KERNELS\n");
    nb = FindAllBestCompatKern(pre, db, gb);
-
    KillAllMMNodes(gb);
+/*
+ * nb (best new) & kb (best existing) are in same order, so we can compare
+ * them directly.  Require a new kernel to be 4% faster than an existing
+ * kernel before adding it, since expanding the list of supported kernels
+ * is last thing we need to do.
+ */
+   gb = NULL;
+   for (dp=kb, mp=nb; dp; dp=dp->next, mp=mp->next)
+   {
+      ATL_mmnode_t *newp;
+
+      if (dp->mflop[0]*1.04 < mp->mflop[0])
+      {
+         newp = CloneMMNode(mp);
+         newp->next = gb;
+         newp->flag &= ~(1<<MMF_KCLN);
+         newp->ivar = 0;
+         gb = newp;
+      }
+   }
+
    KillAllMMNodes(kb);
    KillAllMMNodes(nb);
+   if (gb)
+   {
+      printf("\nKERNELS ADDED TO MASTER LIST FOR KCLEAN:\n");
+      PrintMMNodes(stdout, gb);
+   }
+   else
+      printf("\nNO KERNELS ADDED TO MASTER LIST FOR KCLEAN.\n");
+   return(gb);
 }
+
+int GetIdxOfKClean(ATL_mmnode_t *kb, ATL_mmnode_t *dp)
+/*
+ * dp is kern desiring K1 cleaner, kb is queue containing such cleaners
+ */
+{
+   ATL_mmnode_t *kp;
+   int cnt;
+
+   for (cnt=0,kp=kb; kp; kp = kp->next, cnt++)
+   {
+      if (MMKernCleansK(dp, kp))
+         return(cnt);
+   }
+   return(-1);
+}
+
+void NumberKClean(ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp;
+   int cnt;
+
+   for (cnt=0,mp=mb; mp; mp = mp->next, cnt++)
+   {
+      if (mp->ivar == -1) /* need to find a K-cleaner! */
+      {
+          int idx;
+          idx = GetIdxOfKClean(mb, mp);
+          if (idx < 0)
+          {
+             fprintf(stderr, "WTF: cnt=%d\n", cnt);
+             PrintMMLine(stderr, mp);
+          }
+          assert(idx >= 0);
+          mp->ivar = idx + 1;
+      }
+   }
+}
+
 /*
  * This routine takes as input all amm kerns to be used in building ATLAS.
  * Any kernels with MMF_KCLN needs a K-cleaner.  We will search for cleaners
@@ -35035,28 +35142,43 @@ void FindK1Clean
  * This should be run as last step before generation, and the output file
  * will be all the output kernels to generate (more may have been added by
  * search in order to do cleanup).  It will use ivar to express how cleanup
- * is being done.  ivar=0 indicates that no cleanup is required.
- * ivar >= means that kernel ivar-1 in the given kernel order cleans up this 
- * kernel. A kernel may provide its own K-cleanup, in which ivar is its loc+1.
+ * is being done.  ivar=0 indicates that no cleanup is required (KCLN not
+ * set or the function can handle all K-cleanup itself).
+ * ivar > 0 means that kern@ ivar-1 in the given kernel order provided kcleanup.
  */
 int main(int nargs, char **args)
 {
-   ATL_mmnode_t *mb, *db;
+   ATL_mmnode_t *mb, *db, *kb;
    char pre;
    char *fout;
 
    mb = GetFlags(nargs, args, &pre, &fout);
 
    db = GetDesiredK1(mb);  /* get list of K cleaners to make */
-   printf("KERNELS NEEDING KCLEANERS:\n");
+   kb = AddUniqueMMKernCompList(NULL, mb); /* remove repeated comps frm lst */
+   KillAllMMNodes(mb);
+   mb = kb;
+   printf("KERNELS REQUIRING NON-SELF KCLEANERS:\n");
    PrintMMNodes(stdout, db);
    printf("\n\n");
-
-   FindK1Clean(pre, fout, db, mb);
-
+/*
+ * Find K1 cleaners and add them to the list of final kernels to build
+ */
+   kb = FindK1Clean(pre, fout, db, mb);
+   KillAllMMNodes(db);
+   if (kb)
+   {
+      mb = AddUniqueMMKernCompList(mb, kb);
+      KillAllMMNodes(kb);
+   }
+/*
+ * Number ivar with location of Kcleaners, and write out master list
+ */
+   NumberKClean(mb);
+   printf("DONE K CLEANUP SEARCH, OUTPUT IN '%s'\n", fout);
+   WriteMMFile(fout, mb);
    free(fout);
    KillAllMMNodes(mb);
-   KillAllMMNodes(db);
    return(0);
 }
 @ROUT ATL_ammPad0
