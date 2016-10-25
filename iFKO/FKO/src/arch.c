@@ -538,7 +538,8 @@ void CreateSysLocals()
          SToff[k].sa[0] = -REG_SP;
          SToff[k].sa[1] = DTnzerod;
          SToff[k].sa[2] = -DTnzerod;
-         SToff[k].sa[3] = DTnzerod;
+         /*SToff[k].sa[3] = DTnzerod;*/
+         SetDTcon(k+1, DTnzerod);
       }
    }
    if (DTabsd)
@@ -555,7 +556,8 @@ void CreateSysLocals()
          SToff[k].sa[0] = -REG_SP;
          SToff[k].sa[1] = DTabsd;
          SToff[k].sa[2] = -DTabsd;
-         SToff[k].sa[3] = DTabsd;
+         /*SToff[k].sa[3] = DTabsd;*/
+         SetDTcon(k+1, DTabsd);
       }
    }
    if (DTnzero)
@@ -572,7 +574,8 @@ void CreateSysLocals()
          SToff[k].sa[0] = -REG_SP;
          SToff[k].sa[1] = DTnzero;
          SToff[k].sa[2] = -DTnzero;
-         SToff[k].sa[3] = DTnzero;
+         /*SToff[k].sa[3] = DTnzero;*/
+         SetDTcon(k+1, DTnzero);
       }
    }
    if (DTabs)
@@ -589,7 +592,8 @@ void CreateSysLocals()
          SToff[k].sa[0] = -REG_SP;
          SToff[k].sa[1] = DTabs;
          SToff[k].sa[2] = -DTabs;
-         SToff[k].sa[3] = DTabs;
+         /*SToff[k].sa[3] = DTabs;*/
+         SetDTcon(k+1, DTabs);
       }
    }
    #ifdef X86_32
@@ -607,7 +611,8 @@ void CreateSysLocals()
          SToff[k].sa[0] = -REG_SP;
          SToff[k].sa[1] = DTx87;
          SToff[k].sa[2] = -DTx87;
-         SToff[k].sa[3] = DTx87;
+         /*SToff[k].sa[3] = DTx87;*/
+         SetDTcon(k+1, DTx87);
       }
    }
    if (DTx87d)
@@ -624,7 +629,8 @@ void CreateSysLocals()
          SToff[k].sa[0] = -REG_SP;
          SToff[k].sa[1] = DTx87d;
          SToff[k].sa[2] = -DTx87d;
-         SToff[k].sa[3] = DTx87d;
+         /*SToff[k].sa[3] = DTx87d;*/
+         SetDTcon(k+1, DTx87d);
       }
    }
    #endif
@@ -760,7 +766,7 @@ void FPConstStore(INSTQ *next, short id, short con,
       long *lp;
    #endif
    #if defined(PPC) || defined(SPARC)
-      short i;
+      INT_DTC i;
    #endif
    #ifndef X86
       short k;
@@ -782,7 +788,7 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, FZEROD, -dreg, 0, 0);
             InsNewInst(NULL, NULL, next, FSTD, SToff[id-1].sa[2], -dreg, 0);
          #else
-            i = SToff[SToff[id-1].sa[2]-1].sa[3];
+            i = GetDTcon(SToff[SToff[id-1].sa[2]-1].sa[3]);
             k = AddDerefEntry(-REG_SP, STderef, -STderef, i, con);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
@@ -823,7 +829,7 @@ void FPConstStore(INSTQ *next, short id, short con,
  */
          #elif defined(SPARC)
             ip = (int*) &d;
-            i = SToff[SToff[id-1].sa[2]-1].sa[3];
+            i = GetDTcon(SToff[SToff[id-1].sa[2]-1].sa[3]);
             k = AddDerefEntry(-REG_SP, STderef, -STderef, i, con);
             bitload(next, reg, 12, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
@@ -835,7 +841,7 @@ void FPConstStore(INSTQ *next, short id, short con,
  */
          #elif defined(PPC)
             ip = (int*) &d;
-            i = SToff[SToff[id-1].sa[2]-1].sa[3];
+            i = GetDTcon(SToff[SToff[id-1].sa[2]-1].sa[3]);
             k = AddDerefEntry(-REG_SP, STderef, -STderef, i, con);
             bitload(next, reg, 16, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
@@ -863,7 +869,7 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, FST, SToff[id-1].sa[2], -freg, 0);
          #else
             k = AddDerefEntry(-REG_SP, STderef, -STderef, 
-                              SToff[SToff[id-1].sa[2]-1].sa[3], con);
+                              GetDTcon(SToff[SToff[id-1].sa[2]-1].sa[3]), con);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             SignalSet(next, id, k, freg);
@@ -874,7 +880,7 @@ void FPConstStore(INSTQ *next, short id, short con,
          ip = (int*) &f;
          #ifndef X86
             k = AddDerefEntry(-REG_SP, STderef, -STderef, 
-                              SToff[SToff[id-1].sa[2]-1].sa[3], con);
+                              GetDTcon(SToff[SToff[id-1].sa[2]-1].sa[3]), con);
          #endif
          #ifdef X86
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
@@ -1341,7 +1347,7 @@ void Extern2Local(INSTQ *next, int rsav)
                if (USED)
                {
                   k = AddDerefEntry(-REG_SP, STderef, -STderef, 
-                                    SToff[SToff[paras[i]].sa[2]-1].sa[3],
+                                 GetDTcon(SToff[SToff[paras[i]].sa[2]-1].sa[3]),
                                     paras[i]+1);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                   SignalSet(next, paras[i]+1, k, freg);
@@ -1367,7 +1373,7 @@ void Extern2Local(INSTQ *next, int rsav)
                j++;
                if (USED)
                {
-                  kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
+                  kk = GetDTcon(SToff[SToff[paras[i]].sa[2]-1].sa[3]);
                   k = AddDerefEntry(-REG_SP, STderef, -STderef, kk, paras[i]+1);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                   nam[2] = j + '0';
@@ -1386,7 +1392,7 @@ void Extern2Local(INSTQ *next, int rsav)
                j++;
                if (USED)
                {
-                  kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
+                  kk = GetDTcon(SToff[SToff[paras[i]].sa[2]-1].sa[3]);
                   k = AddDerefEntry(-REG_SP, STderef, -STderef, kk, paras[i]+1);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
 

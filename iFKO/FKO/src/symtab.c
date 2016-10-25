@@ -22,22 +22,79 @@ char **STname;
 union valoff *SToff;
 int *STflag;
 short *STpts2;
-struct arrayinfo *STarr; /* to save information of multi-dim array*/
-
+struct arrayinfo *STarr = NULL; /* to save information of multi-dim array*/
+INT_DTC *DTcon = NULL;
 
 static int N=0, Nalloc=0; /* for Symbol table */
 static int Narr=0, TNarr=0; /* for array table */
-static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
+static int Ndc=0, TNdc=0;
 
-#if 1
+static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 static int nviloc=0;
-#endif
 
 int LOCSIZE=0, LOCALIGN=0, NPARA=0;
 
 #define STCHUNK 1024    /* increased for safety ...*/
 #define DTCHUNK 1024
+#define DCCHUNK 256
 
+static void GetNewSymtab(int chunk)
+{
+   char **nam;
+   int *flg;
+   short *pts2;
+   union valoff *off;
+   int i, n;
+   n = Nalloc + chunk;
+   nam = malloc(sizeof(char*)*n);
+   assert(nam);
+   off = malloc(n*sizeof(union valoff));
+   flg = malloc(n*sizeof(int));
+   pts2 = malloc(n*sizeof(short));
+   assert(off && flg && pts2);
+   if (Nalloc > 0)
+   {
+      for (i=0; i < N; i++)
+      {
+         nam[i] = STname[i];
+         off[i].d = SToff[i].d;
+         flg[i] = STflag[i];
+         pts2[i] = STpts2[i];
+      }
+      free(STname);
+      free(SToff);
+      free(STflag);
+      free(STpts2);
+   }
+   STname = nam;
+   SToff = off;
+   STflag = flg;
+   STpts2 = pts2;
+   Nalloc = n;
+}
+
+static short STnew(char *name, int flag, union valoff off)
+{
+   if (N == Nalloc) GetNewSymtab(STCHUNK);
+   if (name)
+   {
+      STname[N] = malloc(strlen(name)+1);
+      assert(STname[N]);
+      strcpy(STname[N], name);
+   }
+   else STname[N] = NULL;
+   STflag[N] = flag;
+   SToff[N] = off;
+   STpts2[N] = 0;
+   return(++N);
+}
+
+short STdef(char *name, int flag, int off)
+{
+   union valoff offset;
+   offset.i = off;
+   return(STnew(name, flag, offset));
+}
 
 static void NewArrTable(int chunk)
 /*
@@ -123,64 +180,79 @@ int UpdateSTarrUnroll(short id, short *ulist)
    return(1);
 }
 
-static void GetNewSymtab(int chunk)
+static void GetNewDtcTable(int chunk)
 {
-   char **nam;
-   int *flg;
-   short *pts2;
-   union valoff *off;
    int i, n;
-   n = Nalloc + chunk;
-   nam = malloc(sizeof(char*)*n);
-   assert(nam);
-   off = malloc(n*sizeof(union valoff));
-   flg = malloc(n*sizeof(int));
-   pts2 = malloc(n*sizeof(short));
-   assert(off && flg && pts2);
-   if (Nalloc > 0)
+   INT_DTC *newdtc;
+   n = TNdc + chunk;
+   newdtc = malloc(sizeof(INT_DTC)*n);
+   assert(newdtc);
+   if (TNdc > 0)
    {
-      for (i=0; i < N; i++)
-      {
-         nam[i] = STname[i];
-         off[i].d = SToff[i].d;
-         flg[i] = STflag[i];
-         pts2[i] = STpts2[i];
-      }
-      free(STname);
-      free(SToff);
-      free(STflag);
-      free(STpts2);
+      for (i=0; i < Ndc; i++)
+         newdtc[i] = DTcon[i];
+      free(DTcon);
    }
-   STname = nam;
-   SToff = off;
-   STflag = flg;
-   STpts2 = pts2;
-   Nalloc = n;
+   DTcon = newdtc;
+   TNdc = n;
 }
 
-static short STnew(char *name, int flag, union valoff off)
+static int DTCnew(INT_DTC val)
 {
-   if (N == Nalloc) GetNewSymtab(STCHUNK);
-   if (name)
+   if (Ndc == TNdc)
+      GetNewDtcTable(DCCHUNK);
+   DTcon[Ndc] = val;
+   return(++Ndc);
+}
+
+short DTClookup(INT_DTC val)
+/*
+ * Assumption: short is used to store the index of DTcon in DT table (sa[3]). 
+ * So, we return short here. the assumption here is : we won't need more than
+ * 2^15 entry of the table
+ */
+{
+   int i;   
+   for (i=0; i < Ndc; i++)
    {
-      STname[N] = malloc(strlen(name)+1);
-      assert(STname[N]);
-      strcpy(STname[N], name);
+      if (DTcon[i] == val)
+         return(i+1);
    }
-   else STname[N] = NULL;
-   STflag[N] = flag;
-   SToff[N] = off;
-   STpts2[N] = 0;
-   return(++N);
+   i = DTCnew(val);
+   assert(!((i<<1)&(1<<15))); /* <= 2^14-1*/
+   return(i);
 }
 
-short STdef(char *name, int flag, int off)
+INT_DTC GetDTcon(int val)
 {
-   union valoff offset;
-   offset.i = off;
-   return(STnew(name, flag, offset));
+   if (val & 1)
+      return(DTcon[(val>>1)-1]);
+   return(val);
 }
 
+void SetDTcon(int dt, INT_DTC con)
+{
+   int SHORT_MAX = 32767;
+   int SHORT_MIN = -32768;
+   INT_DTC val;
+/*
+ * we will save the const into a table if it is bigger than short type (16 bit)
+ * or, the const is an ood number. Normally, const can't be odd since we 
+ * multiply it with size of datatype. 
+ */
+   if ( (con > SHORT_MAX || con < SHORT_MIN)
+         || (con & 1) )
+   {
+      val = DTClookup(con); 
+      val = (val << 1) | 1;
+      SToff[dt-1].sa[3] = val;
+   }
+   else /*FIXME: most common case, make it as if-statement */
+   {
+      /*assert(!(con&1));*/
+      SToff[dt-1].sa[3] = con;
+   }
+}
 
 short STdconstlookup(double f)
 /*
@@ -1028,6 +1100,7 @@ void KillStaticData(void)
  * all of which except mul & con are indexes into the symbol table.  Mul and
  * con are simply short constants.
  * Addressing is: ptr+reg*mul+con
+ * NOTE: con now can be an index of INT_DTC table
  */
 short FindDerefEntry(short ptr, short ireg, short mul, short con)
 {
@@ -1035,16 +1108,19 @@ short FindDerefEntry(short ptr, short ireg, short mul, short con)
    for (i=0; i != N; i++)
    {
       if ( IS_DEREF(STflag[i]) && SToff[i].sa[0] == ptr && 
-           SToff[i].sa[2] == mul && SToff[i].sa[3] == con &&
+           SToff[i].sa[2] == mul && GetDTcon(SToff[i].sa[3]) == con &&
            (SToff[i].sa[1] == ireg || (!ireg && SToff[i].sa[1] > 0)) )
               return(i+1);
    }
    return(0);
 }
 
-short AddDerefEntry(short ptr, short reg, short mul, short con, short pts2)
+short AddDerefEntry(short ptr, short reg, short mul, int con, short pts2)
 {
    int i;
+   /*int icon;
+   int SHORT_MAX = 32767; 
+   int SHORT_MIN = -32768; */
 /*
  * Majedul: pts2 can be 0, see FinalizeEpilogue. 
  */
@@ -1057,8 +1133,9 @@ short AddDerefEntry(short ptr, short reg, short mul, short con, short pts2)
    SToff[i].sa[0] = ptr;
    SToff[i].sa[1] = reg;
    SToff[i].sa[2] = mul;
-   SToff[i].sa[3] = con;
    STpts2[i] = pts2;
+   SetDTcon(i+1, con);
+   
    return(i+1);
 }
 
@@ -1638,3 +1715,19 @@ void CreateArrColPtrs()
 #endif
 }
 
+void KillSTarr()
+{
+   int i;
+   for (i=0; i < Narr; i++)
+   {
+      if (STarr[i].ldas)
+         free(STarr[i].ldas);
+      if (STarr[i].urlist)
+         free(STarr[i].urlist);
+      if (STarr[i].colptrs)
+         free(STarr[i].colptrs);
+      if (STarr[i].cldas)
+         free(STarr[i].cldas);
+   }
+   if(STarr) free(STarr);
+}

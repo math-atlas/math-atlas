@@ -10883,7 +10883,7 @@ int FindPtrInfoFromDT(INSTQ *ip, short *ptr, short *lda, int *offset, int *mul)
 
    assert(ip->prev); /*ip has DT, must have a pred */
    
-   *offset = SToff[dt-1].sa[3]; // off*sizeof 
+   *offset = GetDTcon(SToff[dt-1].sa[3]); // off*sizeof 
    *mul = SToff[dt-1].sa[2];
    reg1 = SToff[dt-1].sa[0];
    reg2 = SToff[dt-1].sa[1];
@@ -10998,11 +10998,11 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
                            &imul);
                      #else
                         if (isload)
-                           ioffset = SToff[il2->inst->inst[2]-1].sa[3] /
-                                 type2len(FLAG2TYPE(STflag[ptr-1]));
+                           ioffset = GetDTcon(SToff[il2->inst->inst[2]-1].sa[3])
+                              / type2len(FLAG2TYPE(STflag[ptr-1]));
                         else
-                           ioffset = SToff[il2->inst->inst[1]-1].sa[3] /
-                                 type2len(FLAG2TYPE(STflag[ptr-1]));
+                           ioffset = GetDTcon(SToff[il2->inst->inst[1]-1].sa[3]) 
+                              / type2len(FLAG2TYPE(STflag[ptr-1]));
                      #endif
                      }
                   }
@@ -11086,10 +11086,10 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
          while (il)
          {
             if (isload)
-               ioffset = SToff[il->inst->inst[2]-1].sa[3] 
+               ioffset = GetDTcon(SToff[il->inst->inst[2]-1].sa[3])
                       / type2len(FLAG2TYPE(STflag[ptr-1]));
             else
-               ioffset = SToff[il->inst->inst[1]-1].sa[3] 
+               ioffset = GetDTcon(SToff[il->inst->inst[1]-1].sa[3])
                       / type2len(FLAG2TYPE(STflag[ptr-1]));
 
             if (ioffset == (offset + 1))
@@ -12552,7 +12552,7 @@ int IsPackInConflict(PACK *pk0)
             {
                fko_warn(__LINE__, "*****pack-%d is in conflict with %d!!!", 
                      pk0->pnum, pk->pnum);
-#if 0
+#if 1
                iv = BitVecComb(iv, iv, pk->uses, '-');
                PrintVars(stderr, "common: ", iv);
                PrintPack(stderr, pk);
@@ -12652,7 +12652,14 @@ INSTQ *ExtendPack(INSTQ *upackq, int ipk)
          if ( (pk->pktype & PK_INIT_MEM) && !(pk->pktype & PK_INIT_MEM_ACTIVE))
          {
             if (IsPackInConflict(pk))
+            {
+#if 1
+               fprintf(stderr, "*****************Killing pack: %d\n", pk->pnum);
+               PrintPack(stderr, pk);
+               //exit(0);
+#endif
                KillPack(pk);
+            }
             else
                pk->pktype |= PK_INIT_MEM_ACTIVE;
          }
@@ -13020,7 +13027,7 @@ INSTQ *SchInstQ(PACK *pk, BBLOCK *nsbp, BBLOCK *sbp, INSTQ *anchor)
             {
                k = op[i]-1;
                op[i] = AddDerefEntry(SToff[k].sa[0], SToff[k].sa[1], 
-                     SToff[k].sa[2], SToff[k].sa[3], STpts2[k]);
+                     SToff[k].sa[2], GetDTcon(SToff[k].sa[3]), STpts2[k]);
             }
          }
          InsNewInst(sbp, NULL, NULL, op[0], op[1], op[2], op[3]);
@@ -13719,7 +13726,7 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
                               ipop[j-1] = AddDerefEntry(SToff[k].sa[0], 
                                                         SToff[k].sa[1], 
                                                         SToff[k].sa[2], 
-                                                        SToff[k].sa[3], 
+                                                        GetDTcon(SToff[k].sa[3]),
                                                         STpts2[k]);
                            #if 1
 /*
@@ -14485,7 +14492,7 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
  */
             /*fko_error(__LINE__, "Dependent inst not scheduled yet!!!");*/
             fko_warn(__LINE__, "Dependent inst not scheduled yet!!!");
-#if 0
+#if 1
             PrintThisInst(stderr, 0, ip);
             PrintThisInst(stderr, 1, pk->depil->inst);
             for (i=0; i < NPACK; i++)
@@ -15584,15 +15591,30 @@ void SwapPack(int pi, int pj)
 {
    int i, j;
    PACK *pk;
-
-   i = PACKS[pi]->pnum;
-   j = PACKS[pj]->pnum; 
    
-   pk = PACKS[pi];
-   PACKS[pi] = PACKS[pj];
-   PACKS[pi]->pnum = i;
-   PACKS[pj] = pk;
-   PACKS[pj]->pnum = j;
+   if (PACKS[pi] && PACKS[pj]) 
+   {
+      i = PACKS[pi]->pnum;
+      j = PACKS[pj]->pnum; 
+   
+      pk = PACKS[pi];
+      PACKS[pi] = PACKS[pj];
+      PACKS[pi]->pnum = i;
+      PACKS[pj] = pk;
+      PACKS[pj]->pnum = j;
+   }
+   else if (PACKS[pi] && !PACKS[pj])
+   {
+      PACKS[pj] = PACKS[pi];
+      PACKS[pj]->pnum = pj;
+      PACKS[pi] = NULL;
+   }
+   else if (!PACKS[pi] && PACKS[pj])
+   {
+      PACKS[pi] = PACKS[pj];
+      PACKS[pi]->pnum = pi;
+      PACKS[pj] = NULL; 
+   }
 }
 
 void SortPackBasedOnPtr(short *pts, int inpack)
@@ -15633,9 +15655,16 @@ void SortPackBasedOnPtr(short *pts, int inpack)
          {
             SwapPack(j, k);
             j++;
+            if (j == NPACK)
+               break;
          }
       }
    }
+}
+
+int KillPackBasedOnPtr()
+{
+
 }
 
 INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
@@ -15899,13 +15928,13 @@ int FindRedVarN(BBLOCK *blk, short *svars)
       }
    }
 /*
- * check whether all value od scount is exactly 1
+ * check whether all value of scount is exactly 1
  */
    for (i=1, n=svars[0]; i <= n; i++)
    {
       if (scount[i] != 1)
       {
-         fprintf(stderr, "not 1!!!\n");
+         /*fprintf(stderr, "not 1!!!\n");*/
          free(scount);
          return(0);
       }
@@ -15934,12 +15963,12 @@ int FindRedVarLgN(BBLOCK *blk, short *svars)
  * sequence
  */
 {
-   int i, j, k, ne;
+   int i, j, k, ne, nov;
    int i1, i2, type, dest;
    enum inst inst;
    INSTQ *ip;
 #if 0
-   for (i=1, n=svars[0]; i <= n; i++)
+   for (i=1, k=svars[0]; i <= k; i++)
       fprintf(stderr, "%d:  %s\n", i-1, STname[svars[i]-1]);
    exit(0);
 #endif
@@ -15968,16 +15997,18 @@ int FindRedVarLgN(BBLOCK *blk, short *svars)
          i2 = i1 + i;
          if (i1 < ne && i2 < ne)
          {
+            nov = 1;
             while (ip)
             {
                if (IS_LOAD(ip->inst[0]) && svars[i1+1] == STpts2[ip->inst[2]-1])
                {
+                  nov = 0;
                   ip = ip->next;
                   if (IS_LOAD(ip->inst[0]) 
                         && svars[i2+1] == STpts2[ip->inst[2]-1])
                   {
                      ip = ip->next;
-                     if (ip->inst[0] = inst)
+                     if (ip->inst[0] == inst)
                      {
                         ip = ip->next;
                         break;
@@ -15989,6 +16020,11 @@ int FindRedVarLgN(BBLOCK *blk, short *svars)
                      return(0);
                }
                ip = ip->next;
+            }
+            if (nov)
+            {
+               /*fprintf(stderr, "var not found\n");*/
+               return(0);
             }
          }
       }
@@ -18263,6 +18299,7 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err,
    INSTQ *upackq, *ip, *ipv, *ipn, *ipvrsums;
    BBLOCK *nsbp, *sbp, *vbp, *rbp, *bp;
    INT_BVI livein, iv, iv1;
+   short *ptrs;
    extern INT_BVI FKO_BVTMP;
   
    inpack = NPACK;
@@ -18386,6 +18423,20 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi, int *err,
  * ========
  * extend pack using def-use chain
  */
+#if 1
+   ptrs = malloc(sizeof(short)*2);
+   assert(ptrs);
+   ptrs[0] = 1;
+   ptrs[1] = FindVarFromName("pA");
+   SortPackBasedOnPtr(ptrs, inpack);
+#endif
+#if 0
+   fprintf(stderr, "*************************After sorting: %d\n", NPACK);
+   for (i=inpack; i < NPACK; i++)
+      if(PACKS[i]) 
+         PrintPack(stderr, PACKS[i]);
+   exit(1);
+#endif
    upackq = ExtendPack(upackq, inpack);
    if (CheckDupPackError(inpack, NPACK))
    {
@@ -18867,7 +18918,7 @@ int IsSlpConsistent(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2,
 
    if (res < 3)
    {
-      fprintf(stderr, "############# SLP fails !!!!\n");
+      fprintf(stderr, "############# SLP extension fails !!!!\n");
       safe = 0;
    }
    else
@@ -19198,15 +19249,15 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
    fprintf(stderr, "Liveout vectors:\n");
    PrintVectors(stderr, v2);
 #endif
-   /*fprintf(stderr, "Applying SLP on prehead\n");
-   fprintf(stderr, "=========================\n");*/
+   fprintf(stderr, "Applying SLP on prehead\n");
+   fprintf(stderr, "=========================\n");
 
    ins = BitVecCopy(ins, lp->preheader->ins);
    FilterOutRegs(ins);
    vo1 = DoSingleBlkSLP(preblk, ins, v1, &err0, 0);
    
-   /*fprintf(stderr, "Applying SLP on posttail\n");
-   fprintf(stderr, "=========================\n");*/
+   fprintf(stderr, "Applying SLP on posttail\n");
+   fprintf(stderr, "=========================\n");
    ins = BitVecCopy(ins, lp->posttails->blk->ins);
    FilterOutRegs(ins);
    vo2 = DoSingleBlkSLP(postblk, ins, v2, &err1, 1);
@@ -19216,6 +19267,7 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
  * check consistency of SLP throughout the loop, i.e., loopi-1 + prehead 
  *    + posttail 
  */
+   fprintf(stderr, "%d %d\n", err0, err1);
    /*fprintf(stderr, "%d %d\n", err0, err1);*/
 /*
  * NOTE: can be vectorized even if prehead is not vectorizable!
@@ -19260,6 +19312,29 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
          for (vl=v2; vl; vl=vl->next)
             if (vl->flag & NSLP_ACC)
                vo2 = AddVectorInList(vo2, vl, vl->islivein, vl->islive);
+#if 0
+/*
+ *       FIXME: we want to apply vvrsum even if we can not vectorize posttails
+ *       by SLP if possible.
+ */
+         if (!vo2)
+         {
+            PrintVectors(stderr, v2);
+            if (CountRvarVect(lp->posttails->blk, v2))
+            {
+               for (vl=v2; vl; vl=vl->next)
+               {
+                  if (vl->redvar) 
+                  {
+                     vo2 = AddVectorInList(vo2, vl, vl->islivein, vl->islive);
+                     DelRedCodeFromRvars(lp->posttails->blk, vl->svars, 
+                           vl->redvar);
+                     
+                  }
+               }  
+            }
+         }
+#endif
          if (vo2)
          {
             for (vl=vo2; vl; vl=vl->next)

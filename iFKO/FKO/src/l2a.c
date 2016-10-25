@@ -53,7 +53,8 @@ static char *GetDeref(short id)
  */
 {
    static char ln[128];
-   short ptr, reg, mul, con;
+   short ptr, reg, mul; 
+   int con;
    id--;
 /*
  * NOTE: fpconst must be initialize in CONST_INIT before using in expression,
@@ -75,6 +76,7 @@ static char *GetDeref(short id)
    reg = SToff[id].sa[1];
    mul = SToff[id].sa[2];
    con = SToff[id].sa[3];
+   con = GetDTcon(con); /* it can be an index of DTcon table */
    if (reg > 0) reg = 0;
 #if 0
    fprintf(stderr, "[%d, %d, %d, %d]\n",ptr,reg,mul,con);

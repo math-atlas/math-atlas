@@ -689,8 +689,8 @@ short *UpdateDeref(INSTQ *ip, int ireg, int inc)
  */
 {
    static short inst[4];
-   int i;
-   short ST, k;
+   int i, k;
+   short ST;;
    
    inst[0] = ip->inst[0];
    for (i=1; i < 4; i++)
@@ -712,15 +712,13 @@ short *UpdateDeref(INSTQ *ip, int ireg, int inc)
          #endif
          if (SToff[ST].sa[0] == -ireg)
          {
-            k = SToff[ST].sa[3];
-/*
- *       FIXED: 
- *       in l2a, SToff[].sa[3] is used directly as the offset. Here, why we 
- *       do look in SToff entry to figure out the value???
- */
 #if 0
-            k = k ? SToff[k-1].i+inc : inc;
+            k = SToff[ST].sa[3];
+            k = k + inc;
+            if (k > 32767) /* short (16 bit) is kept to store the index! */
+               fko_error(__LINE__, "index of array overflows");
 #else
+            k = GetDTcon(SToff[ST].sa[3]);
             k = k + inc;
 #endif
             inst[i] = AddDerefEntry(-ireg, SToff[ST].sa[1], SToff[ST].sa[2], k,
@@ -8397,15 +8395,15 @@ int IsIndexRefInBody(LOOPQ *lp)
 int DelLoopControl(LOOPQ *lp)
 {
    BBLOCK *bp;
-   INSTQ *ip;
+   INSTQ *ip, *ipn;
    extern BBLOCK *bbbase;
 /*
  * Main idea: we will delete loop init and loop control (lp->I) if index
  * is never used inside the loop body, only branching otherwise
  */
 #if 0
-   fprintf(stderr, "before delloop\n");
-   PrintInst(stderr, bbbase);
+   fprintf(stdout, "before delloop\n");
+   PrintInst(stdout, bbbase);
 #endif
 /*
  * NOTE: we can't use FindIndexRef here.. it works only after killing the 
@@ -8424,8 +8422,15 @@ int DelLoopControl(LOOPQ *lp)
  *    FIXME: is it possible to be messed up with any fundamental optimizations?
  *    there shouldn't be any other inst after CF_LOOP_TEST
  */
+      ip = ip->next;
       while(ip)
+      {
+#if 0         
+         fprintf(stderr, "*************Deleted inst: \n");
+         PrintThisInst(stderr, 0, ip);
+#endif
          ip = DelInst(ip);
+      }
    }
    else /* loop index is only used to control loop*/
    {
@@ -8434,17 +8439,34 @@ int DelLoopControl(LOOPQ *lp)
  */
       ip = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
       assert(ip);
+      ipn = FindCompilerFlag(lp->preheader, CF_LOOP_BODY);
+      assert(ipn);
 /*
  *    FIXME: need a checking, it may delete some misplaced inst 
  */
-      while(ip)
+      ip = ip->next;
+      while(ip && (ip!=ipn))
+      {
+#if 0         
+         fprintf(stderr, "*************Deleted inst: \n");
+         PrintThisInst(stderr, 0, ip);
+#endif
          ip = DelInst(ip);
+      }
       
       assert(lp->tails && !lp->tails->next);
       bp = lp->tails->blk;
       ip = FindCompilerFlag(bp, CF_LOOP_UPDATE);
+      assert(ip);
+      ip = ip->next;
       while(ip)
+      {        
+#if 0         
+         fprintf(stderr, "*************Deleted inst: \n");
+         PrintThisInst(stderr, 0, ip);
+#endif
          ip = DelInst(ip);
+      }
    }
 /*
  * recompute cfg 

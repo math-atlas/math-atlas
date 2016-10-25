@@ -3,16 +3,20 @@
 
 #define uchar unsigned char
 
+
+#define ushort unsigned short
+
 /*
  * FIXED: After implementing SV and UNROLLING of SV, short are no longer 
  * enough to index bit vector 
  */
-   #define ushort unsigned short
 /*
  * custom types for bvec
  */
 #define INT_BVI unsigned int
 #define INT32  int
+
+#define INT_DTC int
 
 union valoff
 {

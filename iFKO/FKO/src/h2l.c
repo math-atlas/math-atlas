@@ -255,6 +255,11 @@ short AddArrayDeref(short array, short index, int offset)
    if (IS_DOUBLE(flag)) mul = 8;
    else if (IS_CHAR(flag)) mul = 1;
    assert(!IS_VEC(flag));
+/*
+ * FIXED: we multiply the offset with mul always... for architectures which 
+ * don't support LoadMul/ConstAndIndex, they will be fixed in FixDeref() 
+ */
+   offset *= mul;
    return(AddDerefEntry(array, index, mul, offset, array));
 }
 
@@ -305,8 +310,10 @@ static void FixDeref(short ptr)
       SToff[ptr].sa[0] = -LocalLoad(SToff[ptr].sa[0]);
 /*
  *    Multiply constant by mul
+ *    FIXED: for const index, we already multiply datasize at the beginning
+ *    ref AddArrayDeref()
  */
-      if (SToff[ptr].sa[2]) SToff[ptr].sa[3] *= SToff[ptr].sa[2];
+      /*if (SToff[ptr].sa[2]) SToff[ptr].sa[3] *= SToff[ptr].sa[2];*/
 /*
  *    Load index register if needed
  */
@@ -332,7 +339,8 @@ static void FixDeref(short ptr)
             if (SToff[ptr].sa[3])
             {
                InsNewInst(NULL, NULL, NULL, ADD, SToff[ptr].sa[1], 
-                          SToff[ptr].sa[1], STiconstlookup(SToff[ptr].sa[3]));
+                          SToff[ptr].sa[1], 
+                          STiconstlookup(GetDTcon(SToff[ptr].sa[3])));
                SToff[ptr].sa[3] = 0;
             }
          #endif
