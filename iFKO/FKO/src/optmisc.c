@@ -48,3 +48,246 @@ int DoStoreNT(BLIST *scope)
       KillBlockList(killme);
    return(nchanges);
 }
+
+int DeadDefElimination()
+/*
+ * it will delete all the useless definitions which are dead...
+ * will be moved to vars.c later 
+ */
+{
+   int i, k, n;
+   int nchanges=0;
+   INSTQ *ip, *ip0, *ipn;
+   BBLOCK *bp;
+   INT_BVI iv, ivds, ivvars;
+   ILIST **ils;
+   short *vars, *deadvars;
+   extern INT_BVI FKO_BVTMP;
+   extern BBLOCK *bbbase;
+   
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+   
+#if 0
+   fprintf(stdout, "LIL before dead code\n");
+   PrintInst(stdout, bbbase);
+   fflush(stdout);
+#endif
+   
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;
+
+   ivds = NewBitVec(128);
+   assert(ivds);
+   
+   ivvars = NewBitVec(128);
+   assert(ivds);
+
+   for (bp = bbbase; bp; bp=bp->down)
+   {
+      /*fprintf(stderr, "----blk = %d\n", bp->bnum);*/
+/*
+ *    findout all the variables we need to consider for this block first
+ */
+      SetVecAll(ivvars, 0);
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {
+         ivvars = BitVecComb(ivvars, ivvars, ip->set, '|');
+         ivvars = BitVecComb(ivvars, ivvars, ip->use, '|');
+      }
+      ivvars = FilterOutRegs(ivvars);
+      vars = BitVec2Array(ivvars, 1-TNREG);
+#if 0      
+      fprintf(stderr, "Print vars: ");
+      for (i=1; i <= vars[0]; i++)
+         fprintf(stderr, "%s ", STname[vars[i]-1]);
+      fprintf(stderr, "\n");
+#endif
+/*
+ *    setup an ILIST to keep track of ipset
+ */
+      n = vars[0];
+      if (!n)
+      {
+         free(vars);
+         continue;
+      }
+      ils = malloc(sizeof(ILIST*)*n);
+      assert(ils);
+      for (i=0; i < n; i++)
+         ils[i] = NULL;
+/*
+ *    check all inst for dead variable inside this single block
+ */
+      SetVecAll(ivds, 0);
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {
+/*
+ *       if one of the variale is set using this inst
+ */
+         if (ip->set && BitVecCheckComb(ivvars, ip->set, '&') )
+         {
+/*
+ *          check whether the var is already set and not dead, it will be a 
+ *          candidate for dead var then
+ */
+            iv = BitVecComb(iv, ivds, ip->set, '&');
+            iv = FilterOutRegs(iv); 
+            if (AnyBitsSet(iv))
+            {
+               k = FindInShortList(vars[0], vars+1, GetSetBitX(iv, 1)-TNREG);
+               assert(k);
+               fprintf(stderr, "***dead var = %s\n", STname[vars[k]-1]);
+               ip0 = FindFirstLILforHIL(ils[k-1]->inst);
+               ils[k-1]->inst = NULL;
+/*
+ *             delete the inst seqment which previously set the var
+ */
+               if (ip0)
+               {
+                  nchanges++;
+                  while (ip0)
+                  {
+                     /*PrintThisInst(stderr, 0, ip0);*/
+                     if (IS_STORE(ip0->inst[0]))
+                     {
+                        DelInst(ip0);
+                        break;
+                     }
+                     ip0 = DelInst(ip0);
+                  }
+               }
+            }
+/*
+ *          mark the var as being set in ivds and update the ilist to point 
+ *          the inst
+ */
+            ivds = BitVecComb(ivds, ivds, ip->set, '|');
+#if 0
+            if (ip->inst[1] > 0 && !NonLocalDeref(ip->inst[1]))
+            {
+               i = FindInShortList(vars[0], vars+1, STpts2[ip->inst[1]-1] );
+               assert(i);
+               assert(i<=n);
+               if (ils[i-1])
+                  ils[i-1]->inst = ip;
+               else
+                  ils[i-1] = NewIlist(ip, NULL);
+            }
+#else
+            iv = BitVecComb(iv, ivvars, ip->set, '&');
+            k = FindInShortList(vars[0], vars+1, GetSetBitX(iv, 1)-TNREG);
+            assert(k);
+            if (ils[k-1])
+               ils[k-1]->inst = ip;
+            else
+               ils[k-1] = NewIlist(ip, NULL);
+            
+#endif
+         }
+/*
+ *       check for varibale being dead by its last-use in this inst
+ *       remove it form ivds since it only keep track the live variable with
+ *       active value (being set by an inst before)
+ */
+         if (ip->deads && BitVecCheckComb(ivvars, ip->deads, '&'))
+         {
+            ivds = BitVecComb(ivds, ivds, ip->deads, '-');
+         }
+      }
+      
+/*
+ *    There may be an active value (has a set) but it's dead at the end of the
+ *    block and it doesn't have any last-use. That means, it doesn't have any 
+ *    usage at all, there would be a last-use case otherwise. So, it's safe to
+ *    delete the set of the variable.
+ */
+      iv = BitVecComb(iv, ivds, bp->outs, '-');
+      iv = FilterOutRegs(iv);
+      if (AnyBitsSet(iv))
+      {
+         k = FindInShortList(vars[0], vars+1, GetSetBitX(iv, 1)-TNREG);
+         assert(k);
+         /*fprintf(stderr, "***dead var = %s\n", STname[vars[k]-1]);*/
+         ip0 = FindFirstLILforHIL(ils[k-1]->inst);
+         if (ip0)
+         {
+            nchanges++;
+            while (ip0)
+            {
+               /*PrintThisInst(stderr, 0, ip0);*/
+               if (IS_STORE(ip0->inst[0]))
+               {
+                  DelInst(ip0);
+                  break;
+               }
+               ip0 = DelInst(ip0);
+            }
+         }
+      }
+/*
+ *    delete all temporaries for this block
+ */
+      if (vars)
+         free(vars);
+      if (ils)
+      {
+         for (i=0; i < n; i++)
+         {
+            if (ils[i])
+               free(ils[i]);
+         }
+         free(ils);
+      }
+   
+   }
+/*
+ * delete all tempories for this function
+ */
+   KillBitVec(ivds);
+   KillBitVec(ivvars);
+   if (nchanges)
+      CFUSETU2D = INDEADU2D = 0;
+   return(nchanges);
+}
+
+void DoDeadDefElim()
+{
+   int nchanges;
+   short nlab=0, labs[4];
+   extern BBLOCK *bbbase;
+/*
+ * delete all useless label to simplify the cfg
+ */
+   nlab = 2;
+   labs[0] = STlabellookup(rout_name);
+   labs[1] = STlabellookup("_IFKO_EPILOGUE");
+   DoUselessLabelElim(nlab, labs);
+   
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__,__LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+/*
+ * apply dead definition elimination repeatatively until no more def can be 
+ * deleted/eliminated
+ */
+   do
+   {
+      nchanges = DeadDefElimination(); 
+   } 
+   while(nchanges);
+   
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+}
+
+

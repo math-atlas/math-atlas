@@ -85,6 +85,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "  -RC : apply redundant computation to reduce path\n");
    fprintf(stderr, "  -MMR : apply max/min var reduction to reduce path\n");
    fprintf(stderr, "  -W <name> : use cache write-through stores\n");
+   fprintf(stderr, "  -DDE <0/1> : enable or disable dead code elimination\n");
    fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
    fprintf(stderr, 
 "  -Pa[r/w] [n,3,0] : non-temp, 3dnow, temp L1 (read/write) prefetch\n");
@@ -671,6 +672,29 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             }
 
             break;
+/*
+ *       enable or disable dead code elimination
+ */
+         case 'D':
+            if (args[i][2] && args[i][3] 
+                  && args[i][2] == 'D' && args[i][3] == 'E')
+            {
+               if (args[i+1])
+               {
+                  if (!atoi(args[i+1])) /*if no valid int, even then no DDE!! */
+                  {
+                     FKO_FLAG |= IFF_NODDE; 
+                  }
+               }
+               else
+                  PrintUsageN(args[0]);
+               i++;
+            }
+            else
+               PrintUsageN(args[0]);
+
+            break;
+
          case 'I':
             fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
             FKO_FLAG |= IFF_READINTERM;
@@ -1542,6 +1566,8 @@ void KillAllGlobalData(struct optblkq *optblks)
    if (SToff) free(SToff);
    if (STflag) free(STflag);
    if (STpts2) free(STpts2);
+   if (DTcon) free(DTcon);
+   KillSTarr();
 #if 0 
    KillAllLoopsComplete();
 #else
@@ -3403,12 +3429,20 @@ void GenAssembly(FILE *fpout)
    KillAllAssln(abase);
 }
 
-
 void FinalStage(FILE *fpout, struct optblkq *optblks)
 /*
  * final stage to generate assembly after performing repeatable optimizations
  */
 {
+/*
+ * FIXME: we need dead store elimination before applying repeatable optimization
+ * like, register assignment
+ */
+   if (!(FKO_FLAG & IFF_NODDE) )
+      DoDeadDefElim();
+/*
+ * perform dead store 
+ */
 /*
  * perform repeatable optimization
  */
@@ -4013,12 +4047,12 @@ int IsPtrMinPossible(BLIST *scope)
       {
          nbp++;
          KillAllPtrinfo(pi);
-         //return(1);
+         /*return(1);*/
       }
    }
    if (nbp)
    {
-      //fprintf(stderr, " nbp = %d\n");
+      /*fprintf(stderr, " nbp = %d\n");*/
       return(1);
    }
    return(0);
@@ -4032,10 +4066,10 @@ int MinBlkPtrUpdates(BBLOCK *blk, struct ptrinfo *pi0)
    short reg, dt;
    struct ptrinfo *pi;
    ILIST *il;
-   //fprintf(stderr, "----------blk=%d\n", blk->bnum);
+   /*fprintf(stderr, "----------blk=%d\n", blk->bnum);*/
    for (pi=pi0; pi; pi=pi->next)
    {
-      //fprintf(stderr, "%s : %d\n", STname[pi->ptr-1], pi->flag);
+      /*fprintf(stderr, "%s : %d\n", STname[pi->ptr-1], pi->flag);*/
 /*
  *    assumption: ilist in ptrinfo is correctly populated and point sequential 
  *    from up to down
@@ -4842,13 +4876,15 @@ int main(int nargs, char **args)
 /*
  * applied optloop all the way, now time to delete the optloop control 
  */
-#if 1
    if (FKO_UR == -1)
    {
       /*UnrollAllTheWay();*/
       DelLoopControl(optloop);
-   }
+#if 0
+      fprintf(stdout, "LIL after unroll all the way\n");
+      PrintInst(stdout, bbbase);
 #endif
+   }
 /*
  * FINAL STAGE: 
  *    1. Apply repeatable optimization
