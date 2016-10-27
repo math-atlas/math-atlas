@@ -39627,6 +39627,7 @@ int main(int nargs, char **args)
 #endif
 #define NOMAP 1
 #define ulong unsigned long
+int DOWRITE=1;
 volatile void *VP=NULL;
 size_t NSZP=0;
 ulong SZ0=0, SZN=0, SZINC=0;
@@ -39653,7 +39654,112 @@ static void my_barrier(int rnk)
    }
 }
 
-double doTime(int rnk, size_t mysz, int nmin, size_t nrep, volatile char *cp)
+volatile void **findNull(size_t N, volatile void **b, volatile void **pI)
+{
+   const size_t beg=(size_t)b, end = beg + N-MINLS, p=(size_t)pI;
+   size_t d;
+
+   for (d=MINLS; d < N; d += MINLS)
+   {
+      size_t ad = p + d;
+      volatile void **vp = (volatile void**)ad;
+      if (ad <= end)
+         if (*vp == NULL)
+            return(vp);
+      ad = p - d;
+      vp = (volatile void**) ad;
+      if (ad >= beg)
+         if (*vp == NULL)
+            return(vp);
+   }
+   return(NULL);
+}
+
+void initChain(size_t N, volatile char *b)
+/*
+ * Initializes b with a circular chain of pointers moving between random
+ * locations, and zeros the character next to the pointer.
+ */
+{
+   volatile void **p0, **pn;
+   volatile char *cp;
+   const size_t n = N / MINLS;
+   size_t i;
+   unsigned int seed;
+
+   assert(sizeof(char)+sizeof(void*) <= MINLS);
+   assert(n*MINLS == N);
+/* 
+ * NULL all chain ptrs, and zero char read/write var
+ */
+   cp = b + sizeof(char*);
+   for (i=0; i < N; i += MINLS)
+   {
+      *((char**)(b+i)) = NULL;
+      cp[i] = 0;
+   }
+/*
+ * Now use random jumps to create circular chain that visits all MINLS locations
+ */
+   seed = ((size_t)cp) | N;
+   p0 = (volatile void**) b;
+   for (i=0; i < n-1; i++)
+   {
+      int k;
+      k = rand_r(&seed) % n;
+      pn = (volatile void**)(b + k*MINLS);
+      if (*pn != NULL)
+      {
+         *p0 = (volatile void*) 0x1;  /* don't let findNull find this loc */
+         pn = findNull(N, (volatile void**)b, pn);
+      }
+      assert(pn != NULL);
+      assert(*pn == NULL);
+      *p0 = pn;
+      p0 = pn;
+   }
+   pn = findNull(N, (volatile void**)b, (volatile void**)b);
+   *p0 = (volatile void*)b;
+}
+
+void printChain(size_t N, char *b)
+{
+   size_t i;
+
+   printf("INDEX:");
+   for (i=0; i < N; i += MINLS)
+      printf("%5lu,", i/MINLS);
+   printf("\n");
+   printf("CHAIN:");
+   for (i=0; i < N; i += MINLS)
+   {
+      char **p = (char**) (b+i);
+      printf("%5lu,", ((unsigned long)(*p - b))/MINLS);
+   }
+   printf("\n\n");
+}
+#define takeChain(N_, p_, r_) \
+{  \
+   size_t i; \
+   void **pp=(void**)(p_); \
+   for (i=0; i < N_; i += MINLS) \
+      pp = *pp; \
+   r_ = (void*)pp; \
+}
+
+#define addChain(N_, p_) \
+{  \
+   size_t i; \
+   void **pp=(void**)(p_); \
+   for (i=0; i < N_; i += MINLS) \
+   {  char *cp=((char*)pp)+sizeof(void*);\
+      *cp += *cp; \
+      pp = *pp; \
+   } \
+}
+
+
+double doTime(int rnk, int nmin, size_t N, volatile char *cp)
 /*
  * NOTE: fact that we do writes may make it harder to detect write-thru L1,
  * but makes last-level & shared caches easier to see, and we care more about
@@ -39668,16 +39774,23 @@ double doTime(int rnk, size_t mysz, int nmin, size_t nrep, volatile char *cp)
  */
    for (m=0; m < nmin; m++)
    {
-      size_t r, i;
       double t0;
-      for (i=0; i < mysz; i += MINLS)  /* bring data into write-thru/back */
-         cp[i] += 0;                   /* cache with dirty bit set for back */
+      void *vp;
+
       my_barrier(rnk);            /* agree we are all ready for next timing */
-      t0 = ATL_walltime();
-      for (r=0; r < nrep; r++)
-         for (i=0; i < mysz; i += MINLS) /* writes max bus traffic to */
-            cp[i] += cp[i];              /* enlarge shared resource gaps */
-      t0 = ATL_walltime() - t0;
+      if (DOWRITE)
+      {
+         t0 = ATL_walltime();
+         addChain(N, cp);
+         t0 = ATL_walltime() - t0;
+      }
+      else
+      {
+         t0 = ATL_walltime();
+         takeChain(N, cp, vp);
+         t0 = ATL_walltime() - t0;
+         assert(vp);  /* use vp so takeChain not dead code */
+      }
       mintime = (mintime <= t0) ? mintime : t0;
       assert (t0 > 0.0);
    }
@@ -39690,14 +39803,13 @@ void *doWork(void *vp)
    const int rnk = tp->rank;
    float *mytim = SZTIMES + NSZP*rnk;
    volatile char *cp;
-   size_t mysz = SZN, nrep=2, cnt=0, nmin=MINREP;
+   const size_t N = ((64<<20) > SZN) ? (64<<20) : SZN;
+   size_t mysz = SZN, nrep=1, cnt=0, nmin=MINREP;
    size_t i, k;
    double gapMax=0.0, last;
 
    cp = VP;
    cp += SZN * rnk;
-   for (i=0; i < mysz; i += MINLS)  /* initialize entire space; if it fits */
-      cp[i] = 0;                    /* its in my cache wt dirty bit set */
    if (!SZINC)
    {
 /*
@@ -39705,7 +39817,8 @@ void *doWork(void *vp)
  */
       do
       {
-         mytim[cnt++] = doTime(rnk, mysz, nmin, nrep, cp);
+         initChain(mysz, cp);
+         mytim[cnt++] = doTime(rnk, nmin, N, cp);
          mysz >>= 1;
          nrep <<= 1;
       }
@@ -39718,7 +39831,7 @@ void *doWork(void *vp)
       for (k=0; k < VARCNT; k++)
       {
          double t0;
-         t0 = doTime(rnk, mysz, nmin, nrep, cp);
+         t0 = doTime(rnk, nmin, N, cp);
          if (k)
          {
             double gap;
@@ -39742,7 +39855,8 @@ void *doWork(void *vp)
          if (i == NSZP-1)
             sz = SZN;
          nrep = (64<<20) / sz;
-         t0 = doTime(rnk, sz, nmin, nrep, cp);
+         initChain(sz, cp);
+         t0 = doTime(rnk, nmin, N, cp);
          mytim[cnt++] = t0 / nrep;
       }
    }
@@ -39770,49 +39884,6 @@ ulong NumSizes(ulong sz0, ulong szN, ulong szInc)
    return(cnt);
 }
 
-int iMax(size_t N, float *time)
-{
-   double max;
-   size_t i, imax;
-
-   if (N < 2)
-      return(0);
-
-   imax = 0;
-   max = *time;
-   for (i=1; i < N; i++)
-   {
-      double gap;
-      gap = time[i];
-      if (gap > max)
-      {
-         imax = i;
-         max = gap;
-      }
-   }
-   return(imax);
-}
-
-int NumLevels(size_t N, float *time, float mul)
-{
-   size_t i=0, ilvl;
-   int nlvls=0;
-   const float thresh=mul*time[N];
-
-   do
-   {
-      float gap;
-      i += iMax(N-i, time+i);
-      gap = time[i];
-      if (gap < thresh)
-         return(nlvls);
-      nlvls++;
-      i++;
-   }
-   while (i < N-1);
-   return(nlvls);
-}
-
 void PrintUsage(char *name, int ierr, char *flag)
 {
    if (ierr > 0)
@@ -39822,7 +39893,8 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr,"USAGE: %s [flags]:\n", name);
    fprintf(stderr,"   -o <resfile> : (stdout)\n");
-   fprintf(stderr,"   -m <minrepeats> : (16)\n");
+   fprintf(stderr,"   -m <minrepeats> : (8)\n");
+   fprintf(stderr,"   -w 0/1 : don't/do write during buffer traversal\n");
    fprintf(stderr, 
       "   -S sz0 szN szINC set szINC=0 for power-of-2 search (default)\n");
    fprintf(stderr, "   -o <output file>\n");
@@ -39832,7 +39904,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 FILE *GetFlags(int nargs, char **args)
 {
    unsigned long sz0=4<<10, szn=64<<20, szinc=0;
-   int mrep=16;
+   int mrep=8;
    FILE *fpout=stdout;
    int i;
 
@@ -39848,6 +39920,11 @@ FILE *GetFlags(int nargs, char **args)
             PrintUsage(args[0], i-1, NULL);
         fpout = fopen(args[i], "w");
         assert(fpout);
+        break;
+      case 'w':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        DOWRITE = atoi(args[i]);
         break;
       case 'm':
         if (++i >= nargs)
@@ -39865,6 +39942,8 @@ FILE *GetFlags(int nargs, char **args)
             PrintUsage(args[0], i-1, NULL);
         szinc = atol(args[i]);
         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
       }
    }
    MINREP = mrep;
@@ -39888,10 +39967,16 @@ void *GetMem
    ulong nsz;
 
    nsz = NumSizes(sz0, szN, szInc);
-   if (!sz0)  /* want large power of two search */
+   if (!szInc)  /* want large power of two search */
    {
-      printf("Finding size per core I can allocate, starting at size %luMB\n",
-             (unsigned long) (szN>>20));
+      if (szN > (1<<20))
+         printf(
+            "Finding size per core I can allocate, starting at size %luMB\n",
+                (unsigned long) (szN>>20));
+      else
+         printf(
+            "Finding size per core I can allocate, starting at size %luKB\n",
+                (unsigned long) (szN>>10));
       do
       {
          szN = ((szN+pgsz-1)/pgsz)*pgsz;
@@ -39915,9 +40000,14 @@ void *GetMem
       nsz += 2;     /* put back 1, have 1 slot for saving variance timeing */
       NSZP = nsz;
       SZN = szN;
-      printf("Allocated %lu MB per core (%luMB total), NSIZES= %lu.\n", 
-             (unsigned long) (szN>>20), (unsigned long) totsz>>20,
-             (unsigned long) nsz);
+      if (szN > (1<<20))
+         printf("Allocated %lu MB per core (%luMB total), NSIZES= %lu.\n", 
+                (unsigned long) (szN>>20), (unsigned long) totsz>>20,
+                (unsigned long) nsz);
+       else
+         printf("Allocated %lu KB per core (%luKB total), NSIZES= %lu.\n", 
+                (unsigned long) (szN>>10), (unsigned long) totsz>>10,
+                (unsigned long) nsz);
    }
    else /* doing simple range search */
    {    /* max size already known to work from pwr2 search */
@@ -39948,6 +40038,11 @@ int main(int nargs, char **args)
       pgsz = 4096;
 
    vp = GetMem(SZ0, SZN, SZINC, pgsz, &totsz);
+   @BEGINSKIP
+   initChain(12*MINLS, vp);
+   printChain(12*MINLS, vp);
+   exit(0);
+   @ENDSKIP
    nsz = NSZP;
    ATL_runThreads(ATL_NTHREADS, doWork, NULL);
    if (SZINC)
