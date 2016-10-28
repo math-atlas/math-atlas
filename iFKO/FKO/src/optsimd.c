@@ -14933,7 +14933,7 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                           STiconstlookup(0x76549180));
                InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr1, 
                           STiconstlookup(0x76549810));
-               InsNewInst(blk, NULL, iph, VDST, vec, -vr0, 0);
+               InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
             }
             else
             {
@@ -14966,7 +14966,7 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                                  STiconstlookup(0x76549180));
                iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr1, 
                                  STiconstlookup(0x76549810));
-               iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0);
+               iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0);
             }
             GetReg(-1);
          #else
@@ -15034,7 +15034,7 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                           STiconstlookup(0x3240));
                InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr1, 
                           STiconstlookup(0x3254));
-               InsNewInst(blk, NULL, iph, VDST, vec, -vr0, 0);
+               InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
             }
             else
             {
@@ -15052,7 +15052,7 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                                  STiconstlookup(0x3240));
                iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr1, 
                                  STiconstlookup(0x3254));
-               iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0);
+               iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0);
             }
             GetReg(-1);
          #endif
@@ -18872,8 +18872,8 @@ int IsSlpFlowConsistent(BBLOCK *sbp1, BBLOCK *sbp2, SLP_VECTOR *v1,
       if (BitVecCheckComb(slivein, vliveout, '&'))
       {
          res = 0;
-         PrintVars(stderr, "common var: ", BitVecComb(slivein, slivein, 
-                  vliveout, '&'));
+         /*PrintVars(stderr, "common var: ", BitVecComb(slivein, slivein, 
+                  vliveout, '&'));*/
       }
    }
    KillBitVec(vliveout);
@@ -18918,7 +18918,9 @@ int IsSlpConsistent(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2,
 
    if (res < 3)
    {
-      fprintf(stderr, "############# SLP extension fails !!!!\n");
+      #if IFKO_DEBUG_LEVEL > 1
+         fprintf(stderr, "##### SLP extension on prehead/posttail fails !!!!\n");
+      #endif
       safe = 0;
    }
    else
@@ -19249,15 +19251,15 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
    fprintf(stderr, "Liveout vectors:\n");
    PrintVectors(stderr, v2);
 #endif
-   fprintf(stderr, "Applying SLP on prehead\n");
-   fprintf(stderr, "=========================\n");
+   /*fprintf(stderr, "Applying SLP on prehead\n");
+   fprintf(stderr, "=========================\n");*/
 
    ins = BitVecCopy(ins, lp->preheader->ins);
    FilterOutRegs(ins);
    vo1 = DoSingleBlkSLP(preblk, ins, v1, &err0, 0);
    
-   fprintf(stderr, "Applying SLP on posttail\n");
-   fprintf(stderr, "=========================\n");
+   /*fprintf(stderr, "Applying SLP on posttail\n");
+   fprintf(stderr, "=========================\n");*/
    ins = BitVecCopy(ins, lp->posttails->blk->ins);
    FilterOutRegs(ins);
    vo2 = DoSingleBlkSLP(postblk, ins, v2, &err1, 1);
@@ -19267,7 +19269,6 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
  * check consistency of SLP throughout the loop, i.e., loopi-1 + prehead 
  *    + posttail 
  */
-   fprintf(stderr, "%d %d\n", err0, err1);
    /*fprintf(stderr, "%d %d\n", err0, err1);*/
 /*
  * NOTE: can be vectorized even if prehead is not vectorizable!
@@ -19398,6 +19399,10 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, int *err)
       if (v1 || v2) 
          fprintf(stderr, "live in/out vectors!!!");
 #endif
+      //fprintf(stderr, "******in vectors: ");
+      //PrintVectors(stderr, v1);
+      //fprintf(stderr, "******out vectors: ");
+      //PrintVectors(stderr, v2);
       AddSlpPrologue(lp->preheader, v1, 1); 
       AddSlpEpilogue(lp->posttails->blk, v2, 0); 
       KillVlist(v1);
@@ -19514,6 +19519,7 @@ int LoopNestVec()
 #if 0
    fprintf(stdout, "vectorized code: \n");
    PrintInst(stdout, bbbase);
+   PrintSymtabStaticMember(stderr);
    exit(0);
 #endif
    return(err);
