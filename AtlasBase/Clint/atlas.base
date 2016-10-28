@@ -39661,7 +39661,8 @@ void pivFloats(int N, int *ipiv, float *f)
    }
 }
 
-void PrintAllTimes(unsigned int N, unsigned int P, long *szs, float *times)
+void PrintAllTimes(unsigned int N, unsigned int P, long *szs, float *times,
+                   float *var)
 {
    int i;
    for (i=0; i < N; i++)
@@ -39673,8 +39674,56 @@ void PrintAllTimes(unsigned int N, unsigned int P, long *szs, float *times)
          printf(" %.2e", *f);
       printf("\n");
    }
+   if (var)
+   {
+      printf("varian:");
+      for (i=0; i < P; i++)
+         printf(" %.2e", var[i]);
+      printf("\n");
+   }
 }
 
+float smoothRes(int N, float *fa, float *raw);
+/* 
+ * Logically, small-case performance must always be faster than large.  Results
+ * showing greater time for smaller buffers must be an error due to either
+ * timing variance or due to an associativity problem (which we don't want
+ * to consider here.  Before this call, raw will be sorted by size, so this
+ * routine goes thru raw, and any result that is less than a prior result gets
+ * set to the prior result.
+ * RETURNS: ratio of gretest error to its denominator.
+ */
+{
+   float errRat = 0.0, min=0;
+   if (!N)
+      return(0.0);
+   min = *raw;
+   for (i=1; i < N; i++)
+   {
+      const float rw = raw[i];
+      if (rw < min)
+      {
+         float er; 
+         assert(rw > 0.0);
+         er = (min - rw) / rw;
+         errRat = (errRat >= er) ? errRat : er;
+         min = raw[i];
+      }
+   }
+   return(errRat);
+}
+
+void RefineRes(int N, int P, long *szs, float *times, float *vars);
+{
+   int j;
+   float *fa, *f=times;
+   fa = malloc(N * sizeof(float));
+   assert(fa);
+   for (j=0; j < P; j++, f += N)
+   {
+      smoothRes(N, fa, f);
+   }
+}
 void goToTown(void)
 {
    FILE *fp;
@@ -39683,6 +39732,7 @@ void goToTown(void)
    unsigned long varsz;
    float *vars, *times, *f;
    int i, j;
+   int *ipiv;
 
    fp = fopen("res/cachespan.txt", "r");
    assert(fp);
@@ -39697,14 +39747,18 @@ void goToTown(void)
    assert(fscanf(fp, " %lu", &varsz) == 1);
    for (i=0; i < N; i++)
       assert(fscanf(fp, " %lu", szs+i) == 1);
-   for (f=times, j=0; j < P; j++, f += N);
+   ipiv  = getPivAndSort(N, szs);
+   for (f=times, j=0; j < P; j++, f += N)
    {
       assert(fscanf(fp, " %e", vars+j) == 1);
       for (i=0; i < N; i++)
          assert(fscanf(fp, " %e", f+i) == 1);
+      pivFloats(N, ipiv, f);
    }
    fclose(fp);
-   PrintAllTimes(N, P, szs, times);
+   free(ipiv);
+   PrintAllTimes(N, P, szs, times, vars);
+   RefineRes(N, P, szs, times, vars);
 
    free(szs);
    free(vars);
