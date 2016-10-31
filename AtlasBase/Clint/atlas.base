@@ -39610,6 +39610,8 @@ int main(int nargs, char **args)
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#define ulong unsigned long
+#define uint  unsigned int
 
 int *getPivAndSort(int N, long *szs)
 /*
@@ -39683,47 +39685,180 @@ void PrintAllTimes(unsigned int N, unsigned int P, long *szs, float *times,
    }
 }
 
-float smoothRes(int N, float *fa, float *raw);
+float smoothRes(unsigned int N, float *fa, float *raw)
 /* 
  * Logically, small-case performance must always be faster than large.  Results
  * showing greater time for smaller buffers must be an error due to either
  * timing variance or due to an associativity problem (which we don't want
- * to consider here.  Before this call, raw will be sorted by size, so this
+ * to consider here).  Before this call, raw will be sorted by size, so this
  * routine goes thru raw, and any result that is less than a prior result gets
  * set to the prior result.
- * RETURNS: ratio of gretest error to its denominator.
+ * RETURNS: ratio of greatest error to its denominator.
  */
 {
-   float errRat = 0.0, min=0;
-   if (!N)
+   unsigned int i;
+   float errRat = 0.0, max;
+
+   if (N < 2)
       return(0.0);
-   min = *raw;
+   max = *raw;
    for (i=1; i < N; i++)
    {
       const float rw = raw[i];
-      if (rw < min)
+      if (rw < max)  /* new result less than last */
       {
          float er; 
-         assert(rw > 0.0);
-         er = (min - rw) / rw;
+         raw[i] = max;
+         er = (max - rw) / max;
          errRat = (errRat >= er) ? errRat : er;
-         min = raw[i];
       }
+      else
+         max = rw;
    }
    return(errRat);
 }
 
-void RefineRes(int N, int P, long *szs, float *times, float *vars);
+void printRow(unsigned int N, long *szs, float *tim)
+{
+   unsigned int j;
+   if (N < 1)
+      return;
+   if (szs)
+   {
+      printf("%8lu", *szs);
+      for (j=1; j < N; j++)
+         printf(" %8lu", szs[j]);
+      printf("\n");
+   }
+   printf("%.2e", *tim);
+   for (j=1; j < N; j++)
+      printf(" %.2e", tim[j]);
+   printf("\n");
+}
+
+void printCol(unsigned int N, long *szs, float *tim)
+{
+   unsigned int j;
+   if (N < 1)
+      return;
+   assert(szs);
+   printf("%9lu %e\n", *szs, *tim);
+   for (j=1; j < N; j++)
+      printf("%9lu %e\n", szs[j], tim[j]);
+}
+
+void *printRes(unsigned int N, long *szs, float *tim)
+{
+   void *ret=tim;
+   if (8+(N-1)*9 <= 80) /* can it fit in a vt320 window? */
+   {
+      printRow(N, szs, tim);
+      ret=NULL;
+   }
+   else
+      printCol(N, szs, tim);
+   return(ret);
+}
+
+int nextLvl(unsigned int N, float tol, float *tim)
+/*
+ * Compares adjacent times, t0 (smaller size), t1 (larger).  If 
+ * t0*tol < t1, declares it to be a cache level.  We will usually set
+ * tol to something like 1.15, to indicate a less than 15% drop in
+ * performance isn't likely a cache level (associativity effects for instance).
+ * RETURNS: -1 for no detected level, else last in-cache index.
+ */
+{
+   int i;
+   for (i=0; i < N-1; i++)
+      if (tim[i]*tol < tim[i+1])
+         return(i);
+   return(-1);
+}
+
+void refineRes(int N, int P, ulong *szs, float *times, float *vars)
 {
    int j;
    float *fa, *f=times;
+   ulong *sz=szs;
    fa = malloc(N * sizeof(float));
    assert(fa);
    for (j=0; j < P; j++, f += N)
    {
-      smoothRes(N, fa, f);
+      int il1;
+      float tol, t0, v0;
+      v0 = smoothRes(N, fa, f);
+      sz = printRes(N, sz, f);
+      t0 = times[j*N];
+      tol = (t0 + vars[j])/t0;
+      printf("  --> tol=%.4f v0=%.4f", tol, v0);
+      tol = (v0 > tol) ? v0 : tol;
+      tol = (tol > 1.1) ? tol : 1.1;
+      il1 = nextLvl(N, tol, f);
+      assert(il1 >= 0 && il1 < N);
+      printf(" CacheSz=%lu\n", szs[il1]);
    }
+   free(fa);
 }
+
+ulong *readMemWalk(char *fnam, uint *N0, uint *P0, float **RES, float **VAR)
+/*
+ * Reads fnam as results of a search run.  N is the number of sizes, P # cores.
+ * All calls fill in the N*P array RES, and if VAR is set, VAR will be
+ * allocated and filled in with the observed variance in running the smallest
+ * timed case.  NOTE: VAR must be non-null for power-of-two search!
+ * RETURNS: array of sizes in bytes as ulong, NULL if file can't be read.
+ */
+{
+   unsigned long *szs;
+   float *var=NULL, *ra, *f;
+   int *ipiv;
+   FILE *fp;
+   unsigned long varsz;
+   unsigned int P, N, i, j;
+
+   fp = fopen(fnam, "r");
+   if (!fp)
+      return(NULL);
+   assert(fscanf(fp, "%u %u", &P, &N) == 2);
+   assert(N > 1 && P > 0);
+   if (VAR)
+   {
+      var = malloc(P*sizeof(float));
+      assert(var);
+      N--;
+   }
+   ra = malloc(N*P*sizeof(float));
+   szs = malloc(N*sizeof(long));
+   assert(ra && szs);
+
+   if (VAR)
+      assert(fscanf(fp, " %lu", &varsz) == 1);
+   for (i=0; i < N; i++)
+      assert(fscanf(fp, " %lu", szs+i) == 1);
+   ipiv  = getPivAndSort(N, szs);
+   if (VAR)
+      assert(varsz == szs[0]);
+
+   for (f=ra, j=0; j < P; j++, f += N)
+   {
+      if (VAR)
+         assert(fscanf(fp, " %e", var+j) == 1);
+      for (i=0; i < N; i++)
+         assert(fscanf(fp, " %e", f+i) == 1);
+      pivFloats(N, ipiv, f);
+   }
+   fclose(fp);
+   free(ipiv);
+
+   if (VAR)
+      *VAR = var;
+   *P0 = P;
+   *N0 = N;
+   *RES = ra;
+   return(szs);
+}
+
 void goToTown(void)
 {
    FILE *fp;
@@ -39732,36 +39867,14 @@ void goToTown(void)
    unsigned long varsz;
    float *vars, *times, *f;
    int i, j;
-   int *ipiv;
 
-   fp = fopen("res/cachespan.txt", "r");
-   assert(fp);
-   assert(fscanf(fp, "%u %u", &P, &N) == 2);
-   assert(N > 1 && P > 0);
-   N--;
-   szs = malloc(N*sizeof(long));
-   vars = malloc((N+1)*P*sizeof(float));
-   assert(vars && szs);
-   times = vars + P;
-
-   assert(fscanf(fp, " %lu", &varsz) == 1);
-   for (i=0; i < N; i++)
-      assert(fscanf(fp, " %lu", szs+i) == 1);
-   ipiv  = getPivAndSort(N, szs);
-   for (f=times, j=0; j < P; j++, f += N)
-   {
-      assert(fscanf(fp, " %e", vars+j) == 1);
-      for (i=0; i < N; i++)
-         assert(fscanf(fp, " %e", f+i) == 1);
-      pivFloats(N, ipiv, f);
-   }
-   fclose(fp);
-   free(ipiv);
+   szs = readMemWalk("res/l1tim.txt", &N, &P, &times, &vars);
    PrintAllTimes(N, P, szs, times, vars);
-   RefineRes(N, P, szs, times, vars);
+   refineRes(N, P, szs, times, vars);
 
    free(szs);
    free(vars);
+   free(times);
 }
 int main(int nargs, char **args)
 {
@@ -39780,9 +39893,6 @@ int main(int nargs, char **args)
 #endif
 #ifndef MAXSZ
    #define MAXSZ (1<<30)   /* allow at most 2GB total allocation */
-#endif
-#ifndef MINSZ
-   #define MINSZ 4096  /* 4K smallest cache size looked for */
 #endif
 #ifndef VARCNT
    #define VARCNT 8
@@ -39984,7 +40094,7 @@ void *doWork(void *vp)
          mysz >>= 1;
          nrep <<= 1;
       }
-      while (mysz >= MINSZ);
+      while (mysz >= SZ0);
 /*
  *    Now, measure the variance on in-L1 by retiming the last size VARCNT times
  */
@@ -40034,7 +40144,7 @@ ulong NumSizes(ulong sz0, ulong szN, ulong szInc)
          szN >>= 1;
          cnt++;
       }
-      while(szN >= MINSZ);
+      while(szN >= sz0);
    }
    else
    {
@@ -40216,7 +40326,7 @@ int main(int nargs, char **args)
          sz = (i != nsz-1) ? sz : SZN;
          printf("%6u ", sz>>10);
          for (j=0; j < ATL_NTHREADS; j++)
-               printf(" %.3e", SZTIMES[i+j*nsz]/sz);
+               printf(" %.2e", SZTIMES[i+j*nsz]/sz);
          printf("\n");
       }
    }
@@ -40229,12 +40339,12 @@ int main(int nargs, char **args)
          int j;
          printf("%6u ", sz>>10);
          for (j=0; j < ATL_NTHREADS; j++)
-               printf(" %.3e", SZTIMES[i+j*nsz]);
+               printf(" %.2e", SZTIMES[i+j*nsz]);
          printf("\n");
       }
       printf("varien:");
       for (i=0; i < ATL_NTHREADS; i++)
-         printf(" %.3e", SZTIMES[nsz-1+i*nsz]);
+         printf(" %.2e", SZTIMES[nsz-1+i*nsz]);
    }
    printf("\n");
    if (fp != stderr && fp != stdout)
