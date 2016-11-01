@@ -39606,12 +39606,15 @@ int main(int nargs, char **args)
    printf(" = %d\n", lcm);
    return(0);
 }
-@rout cachesrch
+@ROUT cachesrch
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include "atlas_genparse.h"
 #define ulong unsigned long
 #define uint  unsigned int
+#define KSH 10 /* kilo-byte (1024) shift */
+#define MSH 20 /* mega-byte (104857) shift */
 
 int *getPivAndSort(int N, long *szs)
 /*
@@ -39671,7 +39674,7 @@ void PrintAllTimes(unsigned int N, unsigned int P, long *szs, float *times,
    {
       int j;
       float *f = times + i;;
-      printf("%7d", szs[i]>>10);
+      printf("%7d", szs[i]>>KSH);
       for (j=0; j < P; j++, f += N)
          printf(" %.2e", *f);
       printf("\n");
@@ -39701,19 +39704,22 @@ float smoothRes(unsigned int N, float *fa, float *raw)
 
    if (N < 2)
       return(0.0);
-   max = *raw;
+   *fa = max = *raw;
    for (i=1; i < N; i++)
    {
       const float rw = raw[i];
       if (rw < max)  /* new result less than last */
       {
          float er; 
-         raw[i] = max;
+         fa[i] = max;
          er = (max - rw) / max;
          errRat = (errRat >= er) ? errRat : er;
       }
       else
+      {
+         fa[i] = raw[i];
          max = rw;
+      }
    }
    return(errRat);
 }
@@ -39741,16 +39747,25 @@ void printCol(unsigned int N, long *szs, float *tim)
    unsigned int j;
    if (N < 1)
       return;
-   assert(szs);
-   printf("%9lu %e\n", *szs, *tim);
-   for (j=1; j < N; j++)
-      printf("%9lu %e\n", szs[j], tim[j]);
+   if (szs)
+   {
+      printf("%9lu %e\n", *szs, *tim);
+      for (j=1; j < N; j++)
+         printf("%9lu %e\n", szs[j], tim[j]);
+   }
+   else
+   {
+      for (j=0; j < N; j++)
+         printf(" %e\n", tim[j]);
+   }
 }
 
 void *printRes(unsigned int N, long *szs, float *tim)
 {
-   void *ret=tim;
-   if (8+(N-1)*9 <= 80) /* can it fit in a vt320 window? */
+   void *ret=szs;
+   unsigned long len;
+   len = (szs) ? 8+(N-1)*9 : N*9;
+   if (len <= 80) /* can it fit in a vt320 window? */
    {
       printRow(N, szs, tim);
       ret=NULL;
@@ -39774,31 +39789,6 @@ int nextLvl(unsigned int N, float tol, float *tim)
       if (tim[i]*tol < tim[i+1])
          return(i);
    return(-1);
-}
-
-void refineRes(int N, int P, ulong *szs, float *times, float *vars)
-{
-   int j;
-   float *fa, *f=times;
-   ulong *sz=szs;
-   fa = malloc(N * sizeof(float));
-   assert(fa);
-   for (j=0; j < P; j++, f += N)
-   {
-      int il1;
-      float tol, t0, v0;
-      v0 = smoothRes(N, fa, f);
-      sz = printRes(N, sz, f);
-      t0 = times[j*N];
-      tol = (t0 + vars[j])/t0;
-      printf("  --> tol=%.4f v0=%.4f", tol, v0);
-      tol = (v0 > tol) ? v0 : tol;
-      tol = (tol > 1.1) ? tol : 1.1;
-      il1 = nextLvl(N, tol, f);
-      assert(il1 >= 0 && il1 < N);
-      printf(" CacheSz=%lu\n", szs[il1]);
-   }
-   free(fa);
 }
 
 ulong *readMemWalk(char *fnam, uint *N0, uint *P0, float **RES, float **VAR)
@@ -39859,15 +39849,287 @@ ulong *readMemWalk(char *fnam, uint *N0, uint *P0, float **RES, float **VAR)
    return(szs);
 }
 
+ulong *doMemWalk(int flg, uint N0, uint NN, uint incN, uint *P0, 
+                 uint *Nt, float **RES, float **VAR)
+/* 
+ * Calls xtmemwalk, doing writes if WRT is set, in range [N0,NN].
+ * Sets:  *P0: # of cores;  *Nt: # of times; *RES: Nt*P timings;
+ *   VAR is NULL if non-power2 search, else variance for smallest size.
+ * RETURNS: all sizes timed.
+ */
+{
+   char *fnam, *cmnd;
+   unsigned long *szs=NULL;
+   unsigned int dlen=2, flen, clen, tlen, i;
+   const int WRT=flg&1, FRC=(flg>>1)&1;
+
+   if (incN)
+      dlen = NumDecDigits(incN) + 1;
+   dlen += NumDecDigits(N0);
+   dlen += NumDecDigits(NN);
+   flen = 15;
+   clen = 25;
+   tlen = flen + clen + (dlen<<1) + 1;
+   cmnd = malloc(tlen*sizeof(char));
+   assert(cmnd);
+   i = sprintf(cmnd, 
+           "./xtmemwalk -w %u -S %lu %lu %lu -o res/cachetim%u_%lu_%lu_%lu", 
+               WRT, N0, NN, incN, WRT, N0, NN, incN);
+   assert(i < tlen);
+   fnam = cmnd + clen + dlen;
+   printf("fnam='%s' cmnd='%s\n", fnam, cmnd);
+   if (FRC)
+      i = system(cmnd);
+   else
+   {
+      i = 0;
+      szs = readMemWalk(fnam, Nt, P0, RES, VAR);
+      if (!szs)
+         i = system(cmnd);
+   }
+   if (!szs)
+      szs = readMemWalk(fnam, Nt, P0, RES, VAR);
+   if (i || !szs)
+      fprintf(stderr, "\nERROR: cmnd='%s'\n\n", cmnd);
+   assert(!i);
+   free(cmnd);
+   return(szs);
+}
+
+ulong findL1(void)
+/*
+ * This routine assumes that the maximum L1 data cache size is 128KB.  Since
+ * bandwidth issues should not affect missing the L1 (assuming at least an L2),
+ * we use reads rather than writes so that write-through caches show strong
+ * performance loss when the L1 is exceeded.  In theory, L1 detection could
+ * be as hard as further levels, because it could have pseudo-random
+ * replacement that resists perfection.  Traditionally, L1 caches are
+ * low associativity, and do a good approximiation of LRU, which means we
+ * can find them on most architectures.  Even on modern intel, with high
+ * associativity, the L1 cache is highly perfectable, and so this usually
+ * works even when the larger caches defy precise preciction.  We declare the
+ * first substantial drop in performance to be the L1; in the worst case,
+ * this might be only some part of the L1 due to random replacement, but if
+ * this algorithm sees a drop, so will our gemm, so its still a good enough
+ * guess as long as the drop is repeatable.
+ *
+ * RETURNS: size of detected L1 on all cores in bytes.  If cores had different
+ *          detected L1 sizes, returns 0.
+ */
+{
+   unsigned long *szs, *sz;
+   float *tim, *var, *fa, *f;
+   unsigned long l1sz=0;
+   int P, Nt, j;
+
+   sz = szs = doMemWalk(0, 2<<KSH, 256<<KSH, 0, &P, &Nt, &tim, &var);
+   fa = malloc(Nt * sizeof(float));
+   assert(fa);
+   f = tim;
+   for (j=0; j < P; j++, f += Nt)
+   {
+      int il1;
+      float tol, t0, v0;
+      v0 = 1.0 + smoothRes(Nt, fa, f);
+      sz = printRes(Nt, sz, fa);
+      t0 = tim[j*Nt];
+      tol = (t0 + var[j])/t0;
+      printf(" --> %u: tol=%.4f v0=%.4f", j, tol*100.0, v0*100.0);
+      tol = (v0 > tol) ? v0 : tol;
+      tol = (tol > 1.1) ? tol : 1.1;
+      il1 = nextLvl(Nt, tol, fa);
+      assert(il1 >= 0 && il1 < Nt);
+      printf(" CacheSz=%lu\n", szs[il1]);
+      if (!l1sz)
+         l1sz = il1;
+      else if (il1 != l1sz)
+      {
+         free(szs);
+         free(fa);
+         free(tim);
+         free(var);
+         return(0);
+      }
+   }
+   l1sz = szs[l1sz];
+   free(szs);
+   free(fa);
+   free(tim);
+   free(var);
+   return(l1sz);
+}
+
+int FindLargestDrop(int P, int Nt, float *tim, uint ldt, float *var)
+{
+   float *fa, *f;
+   int idx=(-1), MISMATCH=0, j;
+
+   fa = malloc(Nt * sizeof(float));
+   assert(fa);
+   f = tim;
+   for (j=0; j < P; j++, f += ldt)
+   {
+      unsigned int i, ix;
+      float tol, t0, v0, maxgap;
+      v0 = 1.0 + smoothRes(Nt, fa, f);
+      printRes(Nt, NULL, fa);
+      t0 = tim[j*Nt];
+      tol = (t0 + var[j])/t0;
+      printf(" --> %u: tol=%.4f v0=%.4f", j, tol*100.0, v0*100.0);
+      tol = (v0 > tol) ? v0 : tol;
+      tol = (tol > 1.1) ? tol : 1.1;
+
+      ix = 0;
+      maxgap = fa[1] - fa[0];
+      for (i=1; i < Nt-1; i++)
+      {
+         const float gap = fa[i+1] - fa[i];
+         if (gap > maxgap)
+         {
+            maxgap = gap;
+            ix = i;
+         }
+      }
+      if (fa[ix]*tol >= fa[ix+1]) /* Is gap meaningful? */
+         ix = -2;                 /* no real cache edge found */
+      printf(" idx=%u\n", ix);
+      if (idx == -1)
+         idx = ix;
+      else if (ix != idx)  /* see if LLC is close enough */
+         MISMATCH = 1;
+   }
+   free(fa);
+   if (MISMATCH)  /* need to see if times are close enough */
+      return(-1); /* for now, freak out */
+   return(idx);
+}
+
+/*
+ * Finding the edge of an LRU cache is easy and precise: you should get constant
+ * performance until the size is reached, at which point you see the perf
+ * of the next level of the heirarchy.  If you plot a series of runs with
+ * chain size on X axis & time/elt on Y, you will see a sharp step, where
+ * each step up corresponds to a memory heirarchy level.
+ *
+ * FIFO replacement will also cleanly miss all lines once it begins missing
+ * in the cache, providing you have doubled the CS between timings, since
+ * we have no reuse in the chain following (LRU & FIFO same w/o reuse).
+ * If the actual cache size is not a power of two (eg, NWAYS=3), then FIFO
+ * will behave differently from LRU, since there was some reuse in one, 
+ * and possibly both, size timings.
+ *
+ * In caches with multiple ways and random replacement, the situation is worse.
+ * You begin to miss in the cache even before you reach the cache size,
+ * because some of your lines randomly conflict even prior to hitting the
+ * cache edge.  Once the size is exceeded, the fact that you throw lines
+ * randomly away means that some lines missing in LRU will be retained.
+ * This results in a steadily declining performance once CS / nways is exceeded.
+ * In this scenario, you should see a series of slopes to new maximums, where
+ * new maxes come from exceeding CS/NWAYS (bringing in more interference),
+ * while the slope comes from an increasing number of conflicts (i.e. in 1st
+ * CS/NWAYS, no conflicts possible, then 2 conflicts poss for first set,
+ * then two for 2nd set, etc., then 3 conflicts possible, etc.).
+ *
+ * For truly random replacement, the cache should be *perfectable*.  The idea
+ * is that you take some data set that does fit in the cache, and you repeatedly
+ * access it.  On the second access, you have unnecessary misses due to random
+ * replacement, and some lines go into the unused ways, but others go into
+ * the used ways, causing some more misses for 3rd access.  If repeated 
+ * enough times, you should eventually get all ways used in the cache just
+ * by random chance, and since you aren't accessing any data outside it,
+ * you stop doing replacement, and now the line between in- and out-of-cache
+ * is sharp.  In practice, this does not seem to work, particularly around
+ * the boundary (trying to distinguish between aggregate cache size of
+ * 2MB+256KB vs 2MB, for instance).  At a guess, OS and other processes
+ * get swapped in, polluting both the instruction & data caches (further
+ * levels are shared, remember), and this is enough to prevent perfecting in
+ * practice.  However, increasing the reps does tend to improve the accuracy,
+ * so tmemwalk takes the -m # arg, which says do the timing # times, and take
+ * the minimum walk time as the result.
+ *
+ * It is therefore pretty much impossible to reliably detect the exact cache
+ * size w/o knowing the number of ways and replacement policy.  We therefore
+ * accept innaccuracy, and time a region between twice the L1 size up to 
+ * 64MB / core, which we assume should be completely out-of-cache.  
+ * We time all powers of 2, using writes during the chain in order to 
+ * maximize bandwidth requirements and thus magnify the gap when the LLC
+ * (last level cache) is exceeded.  We will then take the largest drop in
+ * performance in absolute terms as the effective LLC.  We will then examine
+ * the region between the detected LLC and the L1 to see if there is a 
+ * LLPC (last level private cache).
+ *
+ * Since size refinement doesn't work reliably, we just accept the power-of-two
+ * estimate, which may be correct for pure power-of-two sizes.  On modern
+ * Intel, for instance, caches are exclusive, so it'll miss some stuff.
+ * I.e. on a system with 2MB LLC, and 256 private L2, the real size is
+ * roughly 2MB+246KB, but we'll declare it as 2MB.
+ *
+ * We won't blindly use these cache numbers, but rather tune using them as
+ * bound estimates, so this should be close enough for our needs.
+ */
+ulong findLLC(ulong L1sz, ulong *LLPsz)
+/*
+ * *LLPsz is set to the last level of private cache found, or 0 if we can't find
+ * RETURNS: last-level cache discovered on all cores, or 0 if they disagree
+ */
+{
+   unsigned long *szs;
+   unsigned long LLsz;
+   float *tim, *var;
+   int ilast, ipriv, P, Nt;
+
+   printf("SEARCHING FOR LAST LEVEL OF CACHE\n");
+   szs = doMemWalk(1, L1sz<<1, 64<<MSH, 0, &P, &Nt, &tim, &var);
+   ilast = FindLargestDrop(P, Nt, tim, Nt, var);
+   assert(ilast < Nt-1);
+   if (ilast >= 0)
+      LLsz = szs[ilast];
+   else
+      LLsz = 0;
+   if (LLsz)
+      printf("LLC ESTIMATED AS %luKB (%luMB).\n", LLsz>>KSH, LLsz>>MSH);
+   else
+      printf("LLC CANNOT BE FOUND.\n");
+   if (LLPsz)
+   {
+      if (ilast > 1 && ilast < Nt-1)
+         ipriv = FindLargestDrop(P, ilast+1, tim, Nt, var);
+      else
+         ipriv = -1;
+
+      if (ipriv >= 0 && ipriv < ilast)
+         *LLPsz = szs[ipriv];
+      else
+         *LLPsz = 0;
+      if (ipriv < ilast && ipriv >= 0)
+         printf("LAST LEVEL OF PRIVATE CACHE ESTIMATED AS: %luKB.\n", 
+                (*LLPsz)>>KSH);
+      else
+         printf("LAST LEVEL OF PRIVATE CACHE CANNOT BE FOUND\n");
+   }
+   free(tim);
+   free(var);
+   free(szs);
+   return(LLsz);
+}
+
 void goToTown(void)
 {
+   unsigned long l1sz, LLsz, LLPsz;
+
+   printf("FINDING THE SIZE OF YOUR L1 DATACACHE:\n");
+   l1sz = findL1();
+   assert(l1sz);
+   printf("L1 SIZE DETECTED AS %lu for all cores.\n", l1sz);
+   LLsz = findLLC(l1sz, &LLPsz);
+   assert(LLsz);
+@beginskip
    FILE *fp;
    unsigned int P, N;
    unsigned long *szs;
    unsigned long varsz;
    float *vars, *times, *f;
    int i, j;
-
    szs = readMemWalk("res/l1tim.txt", &N, &P, &times, &vars);
    PrintAllTimes(N, P, szs, times, vars);
    refineRes(N, P, szs, times, vars);
@@ -39875,6 +40137,7 @@ void goToTown(void)
    free(szs);
    free(vars);
    free(times);
+@endskip
 }
 int main(int nargs, char **args)
 {
@@ -39897,8 +40160,17 @@ int main(int nargs, char **args)
 #ifndef VARCNT
    #define VARCNT 8
 #endif
+/*
+ * large mmap calls never succeed for me, unless I allow 0 return, which
+ * doesn't work, obviously.
+ */
 #define NOMAP 1
+#ifndef NOMAP
+   #include <sys/mman.h>
+#endif
 #define ulong unsigned long
+#define KSH 10 /* kilo-byte (1024) shift */
+#define MSH 20 /* mega-byte (104857) shift */
 int DOWRITE=1;
 volatile void *VP=NULL;
 size_t NSZP=0;
@@ -40075,7 +40347,7 @@ void *doWork(void *vp)
    const int rnk = tp->rank;
    float *mytim = SZTIMES + NSZP*rnk;
    volatile char *cp;
-   const size_t N = ((64<<20) > SZN) ? (64<<20) : SZN;
+   const size_t N = ((64<<MSH) > SZN) ? (64<<MSH) : SZN;
    size_t mysz = SZN, nrep=1, cnt=0, nmin=MINREP;
    size_t i, k;
    double gapMax=0.0, last;
@@ -40126,7 +40398,7 @@ void *doWork(void *vp)
       {
          if (i == NSZP-1)
             sz = SZN;
-         nrep = (64<<20) / sz;
+         nrep = (64<<MSH) / sz;
          initChain(sz, cp);
          t0 = doTime(rnk, nmin, N, cp);
          mytim[cnt++] = t0 / nrep;
@@ -40175,7 +40447,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 
 FILE *GetFlags(int nargs, char **args)
 {
-   unsigned long sz0=4<<10, szn=64<<20, szinc=0;
+   unsigned long sz0=4<<KSH, szn=64<<MSH, szinc=0;
    int mrep=8;
    FILE *fpout=stdout;
    int i;
@@ -40241,14 +40513,14 @@ void *GetMem
    nsz = NumSizes(sz0, szN, szInc);
    if (!szInc)  /* want large power of two search */
    {
-      if (szN > (1<<20))
+      if (szN > (1<<MSH))
          printf(
             "Finding size per core I can allocate, starting at size %luMB\n",
-                (unsigned long) (szN>>20));
+                (unsigned long) (szN>>MSH));
       else
          printf(
             "Finding size per core I can allocate, starting at size %luKB\n",
-                (unsigned long) (szN>>10));
+                (unsigned long) (szN>>KSH));
       do
       {
          szN = ((szN+pgsz-1)/pgsz)*pgsz;
@@ -40267,18 +40539,22 @@ void *GetMem
          szN >>= 1;
          nsz--;
       }
+      #ifdef NOMAP
       while(!vp);
+      #else
+      while (vp == NULL || vp == MAP_FAILED);
+      #endif
       szN <<= 1;
       nsz += 2;     /* put back 1, have 1 slot for saving variance timeing */
       NSZP = nsz;
       SZN = szN;
-      if (szN > (1<<20))
+      if (szN > (1<<MSH))
          printf("Allocated %lu MB per core (%luMB total), NSIZES= %lu.\n", 
-                (unsigned long) (szN>>20), (unsigned long) totsz>>20,
+                (unsigned long) (szN>>MSH), (unsigned long) totsz>>MSH,
                 (unsigned long) nsz);
        else
          printf("Allocated %lu KB per core (%luKB total), NSIZES= %lu.\n", 
-                (unsigned long) (szN>>10), (unsigned long) totsz>>10,
+                (unsigned long) (szN>>KSH), (unsigned long) totsz>>KSH,
                 (unsigned long) nsz);
    }
    else /* doing simple range search */
@@ -40324,7 +40600,7 @@ int main(int nargs, char **args)
       {
          int j;
          sz = (i != nsz-1) ? sz : SZN;
-         printf("%6u ", sz>>10);
+         printf("%6u ", sz>>KSH);
          for (j=0; j < ATL_NTHREADS; j++)
                printf(" %.2e", SZTIMES[i+j*nsz]/sz);
          printf("\n");
@@ -40337,7 +40613,7 @@ int main(int nargs, char **args)
       for (sz=SZN, i=0; i < nsz-1; sz>>=1, i++)
       {
          int j;
-         printf("%6u ", sz>>10);
+         printf("%6u ", sz>>KSH);
          for (j=0; j < ATL_NTHREADS; j++)
                printf(" %.2e", SZTIMES[i+j*nsz]);
          printf("\n");
@@ -40392,7 +40668,7 @@ int main(int nargs, char **args)
    #ifdef NOMAP
       free(vp);
    #else
-      munmap(vp, 
+      munmap(vp, totsz);
    #endif
    return(0);
 }
