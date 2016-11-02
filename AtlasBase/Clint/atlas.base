@@ -39674,7 +39674,7 @@ void PrintAllTimes(unsigned int N, unsigned int P, long *szs, float *times,
    {
       int j;
       float *f = times + i;;
-      printf("%7d", szs[i]>>KSH);
+      printf("%7lu", szs[i]>>KSH);
       for (j=0; j < P; j++, f += N)
          printf(" %.2e", *f);
       printf("\n");
@@ -39849,7 +39849,7 @@ ulong *readMemWalk(char *fnam, uint *N0, uint *P0, float **RES, float **VAR)
    return(szs);
 }
 
-ulong *doMemWalk(int flg, uint N0, uint NN, uint incN, uint *P0, 
+ulong *doMemWalk(int flg, uint nrep, uint N0, uint NN, uint incN, uint *P0, 
                  uint *Nt, float **RES, float **VAR)
 /* 
  * Calls xtmemwalk, doing writes if WRT is set, in range [N0,NN].
@@ -39867,14 +39867,15 @@ ulong *doMemWalk(int flg, uint N0, uint NN, uint incN, uint *P0,
       dlen = NumDecDigits(incN) + 1;
    dlen += NumDecDigits(N0);
    dlen += NumDecDigits(NN);
-   flen = 15;
-   clen = 25;
+   dlen += NumDecDigits(nrep);
+   flen = 16;
+   clen = 29;
    tlen = flen + clen + (dlen<<1) + 1;
    cmnd = malloc(tlen*sizeof(char));
    assert(cmnd);
    i = sprintf(cmnd, 
-           "./xtmemwalk -w %u -S %lu %lu %lu -o res/cachetim%u_%lu_%lu_%lu", 
-               WRT, N0, NN, incN, WRT, N0, NN, incN);
+       "./xtmemwalk -w %u -m %u -S %u %u %u -o res/cachetim%u_%u_%u_%ux%u", 
+               WRT, nrep, N0, NN, incN, WRT, N0, NN, incN, nrep);
    assert(i < tlen);
    fnam = cmnd + clen + dlen;
    printf("fnam='%s' cmnd='%s\n", fnam, cmnd);
@@ -39896,7 +39897,7 @@ ulong *doMemWalk(int flg, uint N0, uint NN, uint incN, uint *P0,
    return(szs);
 }
 
-ulong findL1(void)
+ulong findL1(unsigned int nrep)
 /*
  * This routine assumes that the maximum L1 data cache size is 128KB.  Since
  * bandwidth issues should not affect missing the L1 (assuming at least an L2),
@@ -39922,7 +39923,7 @@ ulong findL1(void)
    unsigned long l1sz=0;
    int P, Nt, j;
 
-   sz = szs = doMemWalk(0, 2<<KSH, 256<<KSH, 0, &P, &Nt, &tim, &var);
+   sz = szs = doMemWalk(0, nrep, 2<<KSH, 256<<KSH, 0, &P, &Nt, &tim, &var);
    fa = malloc(Nt * sizeof(float));
    assert(fa);
    f = tim;
@@ -39959,10 +39960,11 @@ ulong findL1(void)
    return(l1sz);
 }
 
-int FindLargestDrop(int P, int Nt, float *tim, uint ldt, float *var)
+int FindLargestDrop(int P, int Nt, ulong *szs, float *tim, uint ldt, float *var)
 {
    float *fa, *f;
    int idx=(-1), MISMATCH=0, j;
+   unsigned long *sz=szs;
 
    fa = malloc(Nt * sizeof(float));
    assert(fa);
@@ -39972,7 +39974,7 @@ int FindLargestDrop(int P, int Nt, float *tim, uint ldt, float *var)
       unsigned int i, ix;
       float tol, t0, v0, maxgap;
       v0 = 1.0 + smoothRes(Nt, fa, f);
-      printRes(Nt, NULL, fa);
+      sz = printRes(Nt, sz, fa);
       t0 = tim[j*Nt];
       tol = (t0 + var[j])/t0;
       printf(" --> %u: tol=%.4f v0=%.4f", j, tol*100.0, v0*100.0);
@@ -40067,7 +40069,7 @@ int FindLargestDrop(int P, int Nt, float *tim, uint ldt, float *var)
  * We won't blindly use these cache numbers, but rather tune using them as
  * bound estimates, so this should be close enough for our needs.
  */
-ulong findLLC(ulong L1sz, ulong *LLPsz)
+ulong findLLC(uint nrep, ulong L1sz, ulong *LLPsz)
 /*
  * *LLPsz is set to the last level of private cache found, or 0 if we can't find
  * RETURNS: last-level cache discovered on all cores, or 0 if they disagree
@@ -40079,8 +40081,8 @@ ulong findLLC(ulong L1sz, ulong *LLPsz)
    int ilast, ipriv, P, Nt;
 
    printf("SEARCHING FOR LAST LEVEL OF CACHE\n");
-   szs = doMemWalk(1, L1sz<<1, 64<<MSH, 0, &P, &Nt, &tim, &var);
-   ilast = FindLargestDrop(P, Nt, tim, Nt, var);
+   szs = doMemWalk(1, nrep, L1sz<<1, 64<<MSH, 0, &P, &Nt, &tim, &var);
+   ilast = FindLargestDrop(P, Nt, szs, tim, Nt, var);
    assert(ilast < Nt-1);
    if (ilast >= 0)
       LLsz = szs[ilast];
@@ -40093,7 +40095,7 @@ ulong findLLC(ulong L1sz, ulong *LLPsz)
    if (LLPsz)
    {
       if (ilast > 1 && ilast < Nt-1)
-         ipriv = FindLargestDrop(P, ilast+1, tim, Nt, var);
+         ipriv = FindLargestDrop(P, ilast+1, szs, tim, Nt, var);
       else
          ipriv = -1;
 
@@ -40118,10 +40120,14 @@ void goToTown(void)
    unsigned long l1sz, LLsz, LLPsz;
 
    printf("FINDING THE SIZE OF YOUR L1 DATACACHE:\n");
-   l1sz = findL1();
+   l1sz = findL1(16);
+   if (!l1sz)
+      l1sz = findL1(64);
    assert(l1sz);
    printf("L1 SIZE DETECTED AS %lu for all cores.\n", l1sz);
-   LLsz = findLLC(l1sz, &LLPsz);
+   LLsz = findLLC(16, l1sz, &LLPsz);
+   if (!LLsz)
+      LLsz = findLLC(64, l1sz, &LLPsz);
    assert(LLsz);
 @beginskip
    FILE *fp;
@@ -40198,7 +40204,34 @@ static void my_barrier(int rnk)
    }
 }
 
+volatile void **findAnyNull(size_t N, volatile char *cb)
+{
+   size_t i;
+   for (i=0; i < N; i += MINLS)
+   {
+      volatile void **vp = (volatile void **)(cb+i);
+      if (*vp == NULL)
+         return(vp);
+   }
+   return(NULL);
+}
+unsigned long countNulls(size_t N, volatile char *cb)
+{
+   size_t i;
+   unsigned long cnt=0;
+   for (i=0; i < N; i += MINLS)
+   {
+      volatile void **vp = (volatile void **)(cb+i);
+      if (*vp == NULL)
+         cnt++;
+   }
+   return(cnt);
+}
+
 volatile void **findNull(size_t N, volatile void **b, volatile void **pI)
+/*
+ * Tries to find a NULL ptr near location pI in buffer b
+ */
 {
    const size_t beg=(size_t)b, end = beg + N-MINLS, p=(size_t)pI;
    size_t d;
@@ -40208,13 +40241,27 @@ volatile void **findNull(size_t N, volatile void **b, volatile void **pI)
       size_t ad = p + d;
       volatile void **vp = (volatile void**)ad;
       if (ad <= end)
+      {
          if (*vp == NULL)
             return(vp);
-      ad = p - d;
-      vp = (volatile void**) ad;
-      if (ad >= beg)
-         if (*vp == NULL)
-            return(vp);
+      }
+      else /* we are past end of array */
+      {
+         size_t ad;
+         if (p <= d)  /* we are past valid memory on low end! */
+            break;    /* and end of array, stop looking */
+         ad = p - d;
+         if (ad < beg)  /* we are past beginning & end of array */
+            break;      /* so stop looking */
+      }
+      if (p > d)
+      {
+         ad = p - d;
+         vp = (volatile void**) ad;
+         if (ad >= beg)
+            if (*vp == NULL)
+               return(vp);
+      }
    }
    return(NULL);
 }
@@ -40222,7 +40269,8 @@ volatile void **findNull(size_t N, volatile void **b, volatile void **pI)
 void initChain(size_t N, volatile char *b)
 /*
  * Initializes b with a circular chain of pointers moving between random
- * locations, and zeros the character next to the pointer.
+ * locations, and zeros the character next to the pointer.  N is length of b,
+ * and must evenly divide by MINLS.
  */
 {
    volatile void **p0, **pn;
@@ -40251,19 +40299,28 @@ void initChain(size_t N, volatile char *b)
    {
       int k;
       k = rand_r(&seed) % n;
-      pn = (volatile void**)(b + k*MINLS);
-      if (*pn != NULL)
-      {
-         *p0 = (volatile void*) 0x1;  /* don't let findNull find this loc */
-         pn = findNull(N, (volatile void**)b, pn);
-      }
+      *p0 = (volatile void*) 0x1;  /* don't let pn be this loc */
+      pn = (volatile void**)(b + k*MINLS); /* srch pt for next link in chain */
+      if (*pn != NULL) /* can't use this exact spot, find nearby NULL */
+         pn = findNull(N, (volatile void**)b, pn); /* find next link in chain */
       assert(pn != NULL);
       assert(*pn == NULL);
       *p0 = pn;
       p0 = pn;
    }
-   pn = findNull(N, (volatile void**)b, (volatile void**)b);
    *p0 = (volatile void*)b;
+
+   i = countNulls(N, b);
+   if (i)
+   {
+      size_t idx;
+      idx = (size_t) findAnyNull(N, b);
+      idx -= (size_t) b;
+      idx /= MINLS;
+      fprintf(stderr, "FOUND %lu NULLS, first one at %lu out of %lu!\n",
+              (unsigned long)i, (unsigned long)idx, (unsigned long)n);
+      assert(0);
+   }
 }
 
 void printChain(size_t N, char *b)
@@ -40361,7 +40418,32 @@ void *doWork(void *vp)
  */
       do
       {
+/* 
+ *       Reassure auditor we haven't hung; flush i/o before barrier so it
+ *       doesn't affect timings, also so auditor can see it real-time.
+ */
+         if (!rnk)
+         {
+            printf("   attempting to populate the ways . . .\n");
+            fflush(stdout);
+         }
+/*
+ *       In case this fits into some level of high-associativity cache, minimize
+ *       random replacement conflicts by repeatedly reading cache before timing.
+ *       Random replacement can only occur on a miss, and with enough reads you
+ *       could therefore have no misses.  In practice, its a shared i/d cache,
+ *       and other processes are running, so this can't work perfectly.
+ */
          initChain(mysz, cp);
+         for (k=0; k < VARCNT; k++)
+            assert(!countNulls(mysz, cp));
+         if (!rnk)
+         {
+            printf("   timing %lu KB (%lu MB) with %lu trials.\n", 
+                   (unsigned long)(mysz>>KSH), (unsigned long)(mysz>>MSH), 
+                   (unsigned long) nmin);
+            fflush(stdout);
+         }
          mytim[cnt++] = doTime(rnk, nmin, N, cp);
          mysz >>= 1;
          nrep <<= 1;
@@ -40369,6 +40451,7 @@ void *doWork(void *vp)
       while (mysz >= SZ0);
 /*
  *    Now, measure the variance on in-L1 by retiming the last size VARCNT times
+ *    Ways should already be populated by prior calls.
  */
       mysz <<= 1;
       nrep >>= 1;
@@ -40396,10 +40479,13 @@ void *doWork(void *vp)
 
       for (i=0; i < NSZP; i++, sz += SZINC)
       {
+         int m;
          if (i == NSZP-1)
             sz = SZN;
          nrep = (64<<MSH) / sz;
          initChain(sz, cp);
+         for (k=0; k < VARCNT; k++)
+            assert(!countNulls(sz, cp));
          t0 = doTime(rnk, nmin, N, cp);
          mytim[cnt++] = t0 / nrep;
       }
@@ -40600,7 +40686,7 @@ int main(int nargs, char **args)
       {
          int j;
          sz = (i != nsz-1) ? sz : SZN;
-         printf("%6u ", sz>>KSH);
+         printf("%6lu ", (unsigned long)(sz>>KSH));
          for (j=0; j < ATL_NTHREADS; j++)
                printf(" %.2e", SZTIMES[i+j*nsz]/sz);
          printf("\n");
@@ -40613,7 +40699,7 @@ int main(int nargs, char **args)
       for (sz=SZN, i=0; i < nsz-1; sz>>=1, i++)
       {
          int j;
-         printf("%6u ", sz>>KSH);
+         printf("%6lu ", (unsigned long)(sz>>KSH));
          for (j=0; j < ATL_NTHREADS; j++)
                printf(" %.2e", SZTIMES[i+j*nsz]);
          printf("\n");
@@ -40631,7 +40717,7 @@ int main(int nargs, char **args)
       if (!SZINC)
       {
          int j;
-         fprintf(fp, "%lu %lu\n", ATL_NTHREADS, nsz);
+         fprintf(fp, "%u %lu\n", ATL_NTHREADS, nsz);
          fprintf(fp, "%lu\n", SZ0);
          for (sz=SZN; sz >= SZ0; sz >>= 1)
             fprintf(fp, "%lu\n", sz);
@@ -40649,7 +40735,7 @@ int main(int nargs, char **args)
       else
       {
          int j;
-         fprintf(fp, "%lu %lu\n", ATL_NTHREADS, nsz);
+         fprintf(fp, "%u %lu\n", ATL_NTHREADS, nsz);
          fprintf(fp, "%lu\n", SZ0);
          for (j=0; j < nsz; j++)
             fprintf(fp, "%lu\n", (j != nsz-1) ? (SZ0+j*SZINC) : SZN);
@@ -40670,6 +40756,71 @@ int main(int nargs, char **args)
    #else
       munmap(vp, totsz);
    #endif
+   return(0);
+}
+@ROUT cacheInfo_x86
+/*
+ * Wrote this from gcc manual + http://www.sandpile.org/x86/cpuid.htm
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#define do_cpuid(lvl_, o1_, o2_, o3_, o4_)  __asm__("cpuid" \
+           :"=a"(o1_), "=b"(o2_), "=c"(o3_), "=d"(o4_) \
+           :"a"(0x00000004), "c"(lvl_) \
+           : )
+
+#define uint unsigned int
+uint cacheInfo(uint lvl, uint *NSET, uint *NWAY, uint *WB, uint *INCL, 
+               uint *NCOR)
+/*
+ * RETURNS: 0 for no such level, else line size
+ */
+{
+   unsigned int eax, ebx, ecx, edx, LS, lv;
+
+   do_cpuid(lvl, eax, ebx, ecx, edx);
+/*
+ * If we are past the number of cache levels, return 0
+ */
+   if ((eax&0xF) == 0)
+      return(0);
+/*
+ * On some systems, lvl=1 is L1 instruction cache, so check if the level 
+ * returned (starting from 0) doesn't match the query, and if so query next
+ * level, and then assert it matches
+ */
+   lv = (eax>>5)&7;
+   if (lv != lvl+1)  /* lvl=1 is i-cache, meaning we must ask for next lvl */
+   {
+      do_cpuid(lvl+1, eax, ebx, ecx, edx);
+      if ((eax&0xF) == 0)
+         return(0);
+      lv = (eax>>5)&7;
+   }
+   assert(lv == lvl+1);
+
+   *NSET = ecx + 1;
+   *NWAY = (ebx>>22) + 1;
+   *WB = edx & 1;
+   *INCL = (edx>>1)&1;
+   *NCOR = ((eax>>14)&0xFFF) + 1;
+   LS = (ebx & 0xFFF) + 1;
+   return(LS);
+}
+int main(int nargs, char **args)
+{
+   unsigned int nset, nway, LS, WB, INCL, ncores, nlvl=0;
+
+   while ( (LS = cacheInfo(nlvl, &nset, &nway, &WB,& INCL, &ncores)) )
+   {
+      nlvl++;
+      printf("LVL=%u: wback=%d, INCL=%d nsets=%u, nway=%u LS=%u sz=%u"
+             ", ncores=%d\n", 
+             nlvl, WB, INCL, nset, nway, LS, nset*nway*LS, ncores);
+      if (nlvl > 8)
+         return(-1);
+   }
    return(0);
 }
 @ROUT GetInfoPos
