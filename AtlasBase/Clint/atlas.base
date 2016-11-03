@@ -40774,6 +40774,7 @@ int main(int nargs, char **args)
 @ROUT cacheInfo_x86
 /*
  * Wrote this from gcc manual + http://www.sandpile.org/x86/cpuid.htm
+ * as well as AMD's 25481.pdf (CPUID Specification), and some Intel docs.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -40844,6 +40845,33 @@ int IsPow2(uint N)
    return(((1<<i)^N == 0) ? i : 0);
 }
 
+unsigned int GetNumPhysCore_amd(void)
+/* 
+ * Returns the number of physical cores on AMD machines supporting 0x80000008.
+ * Will be double the number of FPUs on later archs, unfortunately.
+ * NOTE: already tested 0x80000008 supported before calling.
+ */
+{
+   unsigned int eax, ebx, ecx, edx;
+   eax = 0x80000008;
+   do_cpuid(eax, ebx, ecx, edx);
+   return((ecx&0XFF)+1);
+}
+
+unsigned int SafeGetNumPhysCore_amd(void)
+{
+   unsigned int eax, ebx, ecx, edx;
+   eax = 0x80000000;
+   do_cpuid(eax, ebx, ecx, edx);
+   if (eax >= 0x80000008)
+   {
+      eax = 0x80000008;
+      do_cpuid(eax, ebx, ecx, edx);
+      return((ecx&0XFF)+1);
+   }
+   return(0);
+}
+
 uint cacheInfo_amd(uint lvl, uint *NSET, uint *NWAY, uint *INCL, 
                    uint *NTHR, uint *NCOR)
 {
@@ -40854,21 +40882,11 @@ uint cacheInfo_amd(uint lvl, uint *NSET, uint *NWAY, uint *INCL,
  */
    if (lvl > 2)  /* AMD CPUID presently only allows up to 3 lvls cache */
       return(0);
-/*
- * AFAIK, L1&L2 always private, L3 public for AMD, with all caches except L1
- * essentially being victim caches (i.e., not inclusive, though not truly
- * exclusive either).
- */
-   *INCL = (lvl == 0) ? 1:0;
-   *NTHR = (lvl == 2) ? 2 : 1; /* AFAIK, L1 & L2 private, L3 shared for AMD */
-   if (lvl != 2)
-   *NCOR = NONE;  /* figure out later */
    ecx = 0;
    eax = 0x80000005 + (lvl != 0);
    do_cpuid(eax, ebx, ecx, edx);
    if (!lvl)  /* hard to overstate the madness of AMD's cpuid: */
    {          /* they've hardwired the # of cache lvls in! */
-      // no way to find NTHR, NCOR in this inst, check other inst.
       *INCL = 1;
       LS = ecx & 0x7F;
       LPT = (ecx>>8)&0xFF;
@@ -40887,6 +40905,8 @@ uint cacheInfo_amd(uint lvl, uint *NSET, uint *NWAY, uint *INCL,
    {
       t = (lvl == 1) ? ecx : edx;
       nway = nways_amd((t>>12)&0xF);
+      if (nway == NONE)  /* if this level of cache not there/disabled */
+         return(0);      /* let caller know */
       LS = t & 0xFF;
       LPT = (t>>8)&0xF;
       if (lvl == 1)           /* L2 deterministic unlike L3 on cache size */
@@ -40930,9 +40950,71 @@ uint cacheInfo_amd(uint lvl, uint *NSET, uint *NWAY, uint *INCL,
    assert(LPT == 0 || LPT == 1);
    *NWAY = nway;
    *NSET = nset;
+/*
+ * AFAIK, L1&L2 always private, L3 public for AMD, with all caches except L1
+ * essentially being victim caches (i.e., not inclusive, though not truly
+ * exclusive either).
+ */
+   *INCL = (lvl == 0) ? 1:0;
+   *NTHR = (lvl == 2) ? 2 : 1; /* AFAIK, L1 & L2 private, L3 shared for AMD */
+   *NCOR = SafeGetNumPhysCore_amd();
    return(LS);
 }
 
+int do_cpuid2Lvl_amd(uint lvl, int *EAX, int *EBX, int *ECX, int *EDX)
+/*
+ * Loops over AMD's levels, until lvl=lvl in data cache is achieved (L1->lvl=0)
+ * RETURNS: -1 for no such level, else the actual lvl needed by cpuid
+ */
+{
+   int icnt;
+   icnt = ++lvl;  /* AMD numbers from 1, not 0 */
+   while(1)
+   {
+      int id, il, eax, ebx, ecx, edx;
+      eax = 0x8000001D;
+      ecx = icnt;
+      do_cpuid(eax, ebx, ecx, edx);
+      id = eax&0xF;       /* cache type info returned about */
+      if (!id)            /* if required level doesn't exist */
+         return(-1);      /* say so */
+      il = (eax>>5)&0x7;  /* the level info returned is about */
+      if (il==lvl && (id == 1 || id == 3))
+      {
+         *EAX = eax;
+         *EBX = ebx;
+         *ECX = ecx;
+         *EDX = edx;
+         return(icnt);
+      }
+   }
+   return(-1);
+}
+
+uint cacheInfo_amdD(uint lvl, uint *NSET, uint *NWAY, uint *INCL, 
+                    uint *NTHR, uint *NCOR)
+/*
+ * This is AMD's more intel-like cache interface, works on newer procs.
+ * RETURNS: 0 for no such level, else line size
+ */
+{
+   unsigned int eax, ebx, ecx, edx, LS, lv;
+   int i;
+
+/*
+ * If we are past the number of cache levels, return 0
+ */
+   if (do_cpuid2Lvl_amd(lvl, &eax, &ebx, &ecx, &edx) == -1)
+      return(0);
+
+   *NCOR = GetNumPhysCore_amd();
+   *NTHR = ((eax>>14)&0xFFF) + 1;
+   *NWAY = (ebx>>22) + 1;
+   *NSET = ecx + 1;
+   *INCL = (edx>>1)&1;
+   LS = (ebx & 0xFFF) + 1;
+   return(LS);
+}
 #define do_cpuid_int(lvl_, o1_, o2_, o3_, o4_)  __asm__("cpuid" \
            :"=a"(o1_), "=b"(o2_), "=c"(o3_), "=d"(o4_) \
            :"a"(0x00000004), "c"(lvl_) \
@@ -41024,11 +41106,21 @@ void *getInf(void)
    int eax, ebx, ecx, edx;
    eax=0;
    do_cpuid(eax, ebx, ecx, edx);
-   printf("cpu0: %x %x %x\n", ebx,edx,ecx);
-   if (ebx == 0x756e6547 && edx == 0x49656e69 && ecx == 0x6c65746e)
-      return(cacheInfo);
+   printf("cpu0: %x %x %x %x\n", eax, ebx,edx,ecx);  
+   
+   if (ebx == 0x756e6547 && edx == 0x49656e69 && ecx == 0x6c65746e &&
+       eax >= 4)
+      return(cacheInfo);  /* Spells out GenuineIntel in little endian hex */
    if (ebx == 0x68747541 && edx == 0x69746e65 && ecx == 0x444d4163)
-      return(cacheInfo_amd);
+   {  /* Spells out AuthenticAMD in little endian hex */
+      eax = 0x80000000;
+      do_cpuid(eax, ebx, ecx, edx);
+      printf("eax=%x want=%x, gap=%d\n", eax, 0x8000001D, eax-0x8000001D);
+      if (eax >= 0x8000001D)
+         return(cacheInfo_amdD);
+      else if (eax >= 0x80000006)
+         return(cacheInfo_amd);
+   }
    return(NULL);
 }
 /*
@@ -41039,7 +41131,7 @@ int main(int nargs, char **args)
 {
    unsigned int nset, nway, LS, INCL, nthr, ncor=0, nlvl=1;
    unsigned int nhyp=1, safeLS, LLP, i;
-   unsigned long cs, llp_cs;
+   unsigned long cs, llp_cs, llp_prev_cs;
    FILE *fp;
    char *cn[2]={"LLPC", "LLC"};
    int lvls[2];
@@ -41059,7 +41151,7 @@ int main(int nargs, char **args)
  */
    LS = cacheInf(0, &nset, &nway, &INCL, &nhyp, &ncor);
    assert(LS);
-   llp_cs = cs = nset*nway*LS;
+   llp_prev_cs = llp_cs = cs = nset*nway*LS;
    printf("L1: INCL=%d nsets=%u, nway=%u LS=%u sz=%u"
           ", hypthr=%u, ncores=%u\n", 
           INCL, nset, nway, LS, nset*nway*LS, nhyp, ncor);
@@ -41084,8 +41176,10 @@ int main(int nargs, char **args)
       nlvl++;
       nthr /= nhyp;
       cs = nset*nway*LS;
-      printf("L%u: INCL=%d nsets=%u, nway=%u LS=%u sz=%u nshar=%u\n",
-             nlvl, INCL, nset, nway, LS, nset*nway*LS, nthr);
+      printf("L%u: INCL=%d nsets=%u, nway=%u LS=%u sz=%u (%u) nshar=%u\n",
+             nlvl, INCL, nset, nway, LS, cs, cs/nthr, nthr);
+      if (nthr > 1)  /* we want per-node size */
+         cs /= nthr;
       fprintf(fp, "#define L%uC_SZ %luL\n", nlvl, cs);
       fprintf(fp, "#define L%uC_LS %u\n", nlvl, LS);
       fprintf(fp, "#define L%uC_NSET %u\n", nlvl, nset);
@@ -41096,6 +41190,7 @@ int main(int nargs, char **args)
       safeLS = (LS > safeLS) ? LS : safeLS;
       if (nthr == 1)
       {
+         llp_prev_cs = llp_cs;
          LLP = nlvl;
          llp_cs = cs;
       }
@@ -41105,7 +41200,9 @@ int main(int nargs, char **args)
    fprintf(fp, "#define LLC_LVL %u\n", nlvl);
    if (INCL)
       fprintf(fp, "#define LLC_SZ  L%uC_SZ\n", nlvl);
-   else
+   else if (LLP == nlvl)  /* private cache was last level */
+      fprintf(fp, "#define LLC_SZ %luL\n", cs+llp_prev_cs);
+   else 
       fprintf(fp, "#define LLC_SZ %luL\n", cs+llp_cs);
    fprintf(fp, "#define ATL_SAFELS %u\n", safeLS);
 
