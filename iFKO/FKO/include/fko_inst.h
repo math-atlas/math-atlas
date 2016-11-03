@@ -1037,6 +1037,8 @@ void WriteLILToBinFile(char *fname, BBLOCK *bbase);
 void ReadLILFromBinFile(char *fname);
 void PrintInst(FILE *fpout, BBLOCK *bbase);
 void PrintThisInst(FILE *fpout, int i, INSTQ *ip);
+void PrintThisInstQ(FILE *fpout, INSTQ *ip);
 INSTQ *InsertInstBeforeQEntry(INSTQ *list, INSTQ *add);
 int FindInstNum(BBLOCK *blk, INSTQ *inst);
+INSTQ *FindFirstLILforHIL(INSTQ *ipX);
 #endif

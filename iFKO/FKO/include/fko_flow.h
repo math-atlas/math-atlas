@@ -43,5 +43,7 @@ BBLOCK *KillBlock(BBLOCK *base, BBLOCK *killme);
 #else
    #define CheckFlow(arg1_, arg2_, arg3)
 #endif
+int IsLoopUnswitchable(LPLIST *ll);
+void LoopUnswitch(LPLIST *ll);
 
 #endif
