@@ -141,7 +141,7 @@ int DeadDefElimination()
             {
                k = FindInShortList(vars[0], vars+1, GetSetBitX(iv, 1)-TNREG);
                assert(k);
-               fprintf(stderr, "***dead var = %s\n", STname[vars[k]-1]);
+               /*fprintf(stderr, "***dead var = %s\n", STname[vars[k]-1]);*/
                ip0 = FindFirstLILforHIL(ils[k-1]->inst);
                ils[k-1]->inst = NULL;
 /*
@@ -290,4 +290,219 @@ void DoDeadDefElim()
    }
 }
 
+int MinBlkPtrUpdates(BBLOCK *blk, struct ptrinfo *pi0)
+{
+   int k, inc;
+   INSTQ *ip, *ip0, *ipn;
+   short *sp;
+   short reg, dt;
+   struct ptrinfo *pi;
+   ILIST *il;
+   /*fprintf(stderr, "----------blk=%d\n", blk->bnum);*/
+   for (pi=pi0; pi; pi=pi->next)
+   {
+      /*fprintf(stderr, "%s : %d\n", STname[pi->ptr-1], pi->flag);*/
+/*
+ *    assumption: ilist in ptrinfo is correctly populated and point sequential 
+ *    from up to down
+ */
+#if 0      
+      assert(pi->ilist);
+      ip0 = pi->ilist->inst;
+      assert(ip0->inst[2] == ip0->prev->inst[2]); 
+      assert(IS_CONST(STflag[ip0->prev->inst[3]-1]));
+      pi->upst = SToff[ip0->prev->inst[3]-1].i;
+      
+      fprintf(stderr, "init inc=%d\n", pi->upst);
+      
+      inc = pi->upst;
+#endif
+      assert(pi->ilist);
+      reg = -(pi->ilist->inst->inst[2]);
+      inc = 0;
+      for (il=pi->ilist; il; il=il->next)
+      {
+         ip0 = il->inst;
+         assert(ip0->inst[2] == ip0->prev->inst[2]); 
+         assert(IS_CONST(STflag[ip0->prev->inst[3]-1]));
+         inc += SToff[ip0->prev->inst[3]-1].i;
+         
+         if (il->next)
+            ipn = il->next->inst;
+         ipn = NULL;
+/*
+ *       we assume only const inc of ptr
+ */
+         for (ip = ip0; ip != ipn; ip=ip->next)
+         {
+            dt = 0;
+            if (IS_LOAD(ip->inst[0]) && NonLocalDeref(ip->inst[2]))
+               dt = ip->inst[2];
+            else if (IS_STORE(ip->inst[0]) && NonLocalDeref(ip->inst[1]))
+               dt = ip->inst[1];
+            
+            if (dt && STpts2[dt-1] == pi->ptr)
+            {
+/*
+ *             NOTE: since we are considering only const inc now, we won't have 
+ *             any load of index. this assertion is to protect this assumption 
+ */
+               assert( (ip->prev->inst[0] == LD)
+                     && (STpts2[ip->prev->inst[2]-1])==pi->ptr );
+               k = -ip->prev->inst[1];
+               sp = UpdateDeref(ip, k, inc);
+               if (sp)
+               {
+                  for (k=0; k < 4; k++)
+                     ip->inst[k] = sp[k];
+               }
+               else
+               {
+#if 1
+                  fprintf(stderr, "DT: <%d, %d, %d, %d>\n", 
+                        SToff[dt-1].sa[0],
+                        SToff[dt-1].sa[1],
+                        SToff[dt-1].sa[2],
+                        SToff[dt-1].sa[3] );
+                  assert(0);
+#else
+                  InsNewInst(blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
+#endif
+               }
+            }
+#if 0                   
+            if (IS_LOAD(ip->inst[0]) && NonLocalDeref(ip->inst[2])) 
+            {
+               k = STpts2[ip->inst[2]-1];
+               if (k != pi->ptr)
+                  continue;
+/*
+ *             since it's const inc, there is no load of index.. so, ip->prev 
+ *             should be load of ptr
+ */
+               assert( (ip->prev->inst[0] == LD)
+                     && (k==STpts2[ip->prev->inst[2]-1]) );
+               k = -ip->prev->inst[1];
+               sp = UpdateDeref(ip, k, inc);
+               if (sp)
+               {
+                  for (k=0; k < 4; k++)
+                     ip->inst[k] = sp[k];
+               }
+               else
+               {
+#if 1
+                  fprintf(stderr, "DT: <%d, %d, %d, %d>\n", 
+                        SToff[ip->inst[2]-1].sa[0],
+                        SToff[ip->inst[2]-1].sa[1],
+                        SToff[ip->inst[2]-1].sa[2],
+                        SToff[ip->inst[2]-1].sa[3] );
+                  assert(0);
+#else
+                  InsNewInst(blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
+#endif
+               }
+            }
+            else if (IS_STORE(ip->inst[0]) && NonLocalDeref(ip->inst[1]))
+            {
+               k = STpts2[ip->inst[1]-1];
+               if (k != pi->ptr)
+                  continue;
+               assert( (ip->prev->inst[0] == LD)
+                     && (k==STpts2[ip->prev->inst[2]-1]) );
+               k = -ip->prev->inst[1];
+               sp = UpdateDeref(ip, k, inc);
+               if (sp)
+               {
+                  for (k=0; k < 4; k++)
+                     ip->inst[k] = sp[k];
+               }
+               else
+               {
+#if 1
+                  fprintf(stderr, "DT: <%d, %d, %d, %d>\n", 
+                        SToff[ip->inst[1]-1].sa[0],
+                        SToff[ip->inst[1]-1].sa[1],
+                        SToff[ip->inst[1]-1].sa[2],
+                        SToff[ip->inst[1]-1].sa[3] );
+                  assert(0);
+#else
+                  InsNewInst(blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
+#endif
+               }
+            }
+#endif
+         }
+/*
+ *       delete pointer update... 
+ */
+         ip = ip0->prev->prev;
+         ip = DelInst(ip);
+         ip = DelInst(ip);
+         ip = DelInst(ip);
+         il->inst = NULL;
+      }
+/*
+ *    add pointer update at the end of the block before branch unless we have 
+ *    loop cmpflags 
+ */
+      ip = FindCompilerFlag(blk, CF_LOOP_PTRUPDATE );
+      if (!ip)
+      {
+         ip = FindCompilerFlag(blk, CF_LOOP_UPDATE);
+         if (!ip)
+         {
+            ip = FindCompilerFlag(blk, CF_LOOP_INIT);
+            if (!ip)
+            {
+               ip = blk->instN;
+               if (IS_BRANCH(ip->inst[0]))
+                  ip = ip->prev;
+               while (ip && !IS_STORE(ip->inst[0]) && !IS_BRANCH(ip->inst[0])
+                      && ip->inst[0] != LABEL)
+               {
+                  ip = ip->prev;
+               }
+               ip = ip->next;
+            }
+         }
+         else
+         {
+            ip = InsNewInst(blk, NULL, ip, CMPFLAG, CF_LOOP_PTRUPDATE, 0, 0 );
+            ip = ip->next;
+         }
+      }
+      else
+      {
+         ip = ip->next;
+      }
+/*
+ *    inst shouldn't have any access of ptr after this point
+ *    FIXME: do we need to place a checking in case CMPFLAG got displaced???
+ */
+      InsNewInst(blk, NULL, ip, LD, -reg, SToff[pi->ptr-1].sa[2], 0 );
+      if (pi->flag & PTRF_INC)
+         InsNewInst(blk, NULL, ip, ADD, -reg, -reg, STiconstlookup(inc));
+      else assert(0);
+      InsNewInst(blk, NULL, ip, ST, SToff[pi->ptr-1].sa[2], -reg,  0 );
+   }
+}
+
+int LocalMinPtrUpdate(BLIST *scope)
+{
+   BLIST *bl, *bscope;
+   struct ptrinfo *pi;
+
+   bscope = NewReverseBlockList(scope); /* to reverse the order, not needed! */
+   for (bl=bscope; bl; bl=bl->next)
+   {
+      pi = FindConstMovingPtr(bl->blk);
+      if (pi)
+      {
+         MinBlkPtrUpdates(bl->blk, pi);
+         KillAllPtrinfo(pi);
+      }
+   }
+   KillBlockList(bscope);
+}
 

@@ -1,5 +1,6 @@
 #ifndef FKO_OPTMISC_H
    #define FKO_OPTMISC_H
    int DoStoreNT(BLIST *scope);
-   int DeadDefElimination();
+   void DoDeadDefElim();
+   int LocalMinPtrUpdate(BLIST *scope);
 #endif

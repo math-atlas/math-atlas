@@ -31,4 +31,5 @@ void FindPaths(BBLOCK *head, BLIST *loopblocks, LOOPQ *lp, BLIST *blkstack);
 void KillPathTable();
 int PathVectorizable(int pnum);
 int FindNumPaths(LOOPQ *lp);
+int LoopNestVec();
 #endif

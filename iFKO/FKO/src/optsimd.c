@@ -11311,17 +11311,6 @@ ILIST **FindAdjMem(INSTQ *ipscope, int *npt)
    return(ilb);
 }
 
-INT_BVI FilterOutRegs(INT_BVI iv)
-{
-   int i;
-   extern short STderef;
-   for (i=0; i < TNREG; i++)
-      SetVecBit(iv, i, 0);
-   SetVecBit(iv, STderef+TNREG-1, 0);
-   /*SetVecBit(iv, TNREG-1, 0);*/ // skip STderef... which is used for mem
-   return(iv);
-}
-
 int IsSameInst(INSTQ *ip0, INSTQ *ip1)
 {
    int i;
@@ -12093,49 +12082,6 @@ int IsIsomorphicInst(INSTQ *ip1, INSTQ *ip2)
    }
    return(1);
 }
-
-INSTQ *FindFirstLILforHIL(INSTQ *ipX)
-/* Assumptions: 
- * 1. applied before repeatable inst, so, the initial LIL structure prevails
- * 2. ip is an active instq (not consists of comment or cmpflag)
- * returns the instq pointer of starting of LIL inst of a block 
- *    (converted from HIL)
- */
-{
-   INSTQ *ip, *ip0;
-/*
- * return same ip if jmp/ret. They consist one LIL inst 
- */
-   if (IS_BRANCH(ipX->inst[0]) && !IS_COND_BRANCH(ipX->inst[0])) /* JMP, RET */
-      return(ipX);
-   if (ipX->inst[0] == LABEL)
-      return(ipX);
-/*
- * last inst of a block would always be the store or branch 
- * so, check for the active inst which is successor of a store/branch/LABEL/NULL
- */
-   if (IS_STORE(ipX->inst[0]) || IS_COND_BRANCH(ipX->inst[0]) 
-         || IS_PREF(ipX->inst[0]))
-      ip = ipX->prev;
-   else 
-      ip = ipX;
-   ip0 = ip;
-   while (ip && !IS_BRANCH(ip->inst[0]) && ip->inst[0] != LABEL 
-         && !IS_STORE(ip->inst[0]) && !IS_PREF(ip->inst[0]))
-   {
-      if (ACTIVE_INST(ip->inst[0]))
-         ip0 = ip;
-      ip = ip->prev;
-   }
-/*
- * FIXME: for some specific compiler generated instructions, 1st inst may not be
- * the load of vars, like: 
- *    FZEROD reg0;
- *    FSTD v0, reg0;
- */
-   //assert(IS_LOAD(ip0->inst[0]));
-   return(ip0);
-}
  
 INSTQ *InstdefsVar(INT_BVI bvvar, INSTQ *upackq)
 {
@@ -12147,10 +12093,9 @@ INSTQ *InstdefsVar(INT_BVI bvvar, INSTQ *upackq)
    ip = upackq;
    while (ip)
    {
-      //PrintThisInst(stderr, 777, ip);
       if (BitVecCheckComb(bvvar, ip->set, '&'))
       {
-         //PrintThisInst(stderr, 1, ip);
+         /*PrintThisInst(stderr, 1, ip);*/
          return(FindFirstLILforHIL(ip));
       }
       ip = ip->next;
@@ -13743,7 +13688,11 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
                               }
                               if (pk->pktype & PK_MEM_BROADCAST)
                               {
-                                 #if defined(ArchHasMemBroadcast)
+/*
+ *                               NOTE: we always try to apply vbroastcast... 
+ *                               implemeented in l2a for underlying arch
+ */
+                                 #if defined(ArchHasMemBroadcast) || 1 //always
                                     assert(k <= 2);
                                     inst = vbroadcast[k];
                                     /*fprintf(stderr, 
@@ -15022,36 +14971,32 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             {
                PrintComment(blk, NULL, iph, "Vector init: %s", 
                             STname[vl->vec-1]);
-               InsNewInst(blk, NULL, iph, VFLDS, -vr0, s2, 0);
-               InsNewInst(blk, NULL, iph, VFLDS, -vr1, s3, 0);
-               InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr1, 
-                          STiconstlookup(0x3240));
-               InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr0, 
-                          STiconstlookup(0x3254));
-               InsNewInst(blk, NULL, iph, VFLDS, -vr1, s0, 0);
+               InsNewInst(blk, NULL, iph, VFLDS, -vr1, s2, 0);
+               InsNewInst(blk, NULL, iph, VFLDS, -vr0, s3, 0);
+               InsNewInst(blk, NULL, iph, VFSHUF, -vr1, -vr0, 
+                          STiconstlookup(0x5140));
+               InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
                InsNewInst(blk, NULL, iph, VFLDS, -vr2, s1, 0);
-               InsNewInst(blk, NULL, iph, VFSHUF, -vr1, -vr2, 
-                          STiconstlookup(0x3240));
+               InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr2, 
+                          STiconstlookup(0x5140));
                InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr1, 
-                          STiconstlookup(0x3254));
+                          STiconstlookup(0x5410));
                InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
             }
             else
             {
                iptp = PrintComment(blk, iptp, iptn, "Vector init: %s", 
                                    STname[vl->vec-1]);
-               iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s2, 0);
-               iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr1, s3, 0);
-               iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr1, 
-                                 STiconstlookup(0x3240));
-               iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr0, 
-                                 STiconstlookup(0x3254));
-               iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr1, s0, 0);
+               iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr1, s2, 0);
+               iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s3, 0);
+               iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr1, -vr0, 
+                                 STiconstlookup(0x5140));
+               iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s0, 0);
                iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr2, s1, 0);
-               iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr1, -vr2, 
-                                 STiconstlookup(0x3240));
+               iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr2, 
+                                 STiconstlookup(0x5140));
                iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr1, 
-                                 STiconstlookup(0x3254));
+                                 STiconstlookup(0x5410));
                iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0);
             }
             GetReg(-1);
@@ -18073,7 +18018,7 @@ int PreSlpAccumExpans(LOOPQ *lp)
    n = sp[0];
    if (!n)
    {
-      free(n);
+      free(sp);
       return(0);
    }
 #if 0
@@ -18150,41 +18095,6 @@ int PreSlpAccumExpans(LOOPQ *lp)
  *    Loop Nest vectorization
  *
  *============================================================================*/
-
-/*
- * to manage the loopq list, will move to misc.h later   
- * Add a loop at the beginning of the list
- */
-LPLIST *NewLPlist(LPLIST *next, LOOPQ *loop)
-{
-   LPLIST *lp;
-   lp = malloc(sizeof(LPLIST));
-   assert(lp);
-   lp->loop = loop;
-   lp->next = next;
-   return(lp);
-}
-
-LPLIST *KillLPlist(LPLIST *del)
-{
-   LPLIST *lp;
-   if (del)
-   {
-      lp = del->next;
-      free(del);
-   }
-   else
-      lp = NULL;
-   
-   return(lp);
-}
-
-void KillAllLPlist(LPLIST *lp)
-{
-   while(lp)
-      lp = KillLPlist(lp);
-}
-
 INSTQ *InitPackFromAdjMem(INSTQ *upackq)
 {  
    int i, nptr;

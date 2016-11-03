@@ -226,7 +226,9 @@ short DTClookup(INT_DTC val)
 INT_DTC GetDTcon(int val)
 {
    if (val & 1)
+   {
       return(DTcon[(val>>1)-1]);
+   }
    return(val);
 }
 
@@ -237,7 +239,7 @@ void SetDTcon(int dt, INT_DTC con)
    INT_DTC val;
 /*
  * we will save the const into a table if it is bigger than short type (16 bit)
- * or, the const is an ood number. Normally, const can't be odd since we 
+ * or, the const is an odd number. Normally, const can't be odd since we 
  * multiply it with size of datatype. 
  */
    if ( (con > SHORT_MAX || con < SHORT_MIN)
@@ -246,6 +248,7 @@ void SetDTcon(int dt, INT_DTC con)
       val = DTClookup(con); 
       val = (val << 1) | 1;
       SToff[dt-1].sa[3] = val;
+      /*fprintf(stderr, "***********con=%d, val=%d\n");*/
    }
    else /*FIXME: most common case, make it as if-statement */
    {
@@ -1353,6 +1356,10 @@ void PrintSymtabStaticMember(FILE *fpout)
    fprintf(fpout, "ndloc = %d\n", ndloc);
    fprintf(fpout, "nvfloc = %d\n", nvfloc);
    fprintf(fpout, "nvdloc = %d\n", nvdloc);
+   fprintf(fpout, "Narr = %d\n", Narr);
+   fprintf(fpout, "TNarr = %d\n", TNarr);
+   fprintf(fpout, "Ndc = %d\n", Ndc);
+   fprintf(fpout, "TNdc = %d\n", TNdc);
    fprintf(fpout, "-------------------------\n");
 }
 
