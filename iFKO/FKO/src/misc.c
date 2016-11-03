@@ -226,6 +226,67 @@ void KillAllLI(struct locinit *die)
       die = next;
    }
 }
+
+LPLIST *NewLPlist(LPLIST *next, LOOPQ *loop)
+{
+   LPLIST *lp;
+   lp = malloc(sizeof(LPLIST));
+   assert(lp);
+   lp->loop = loop;
+   lp->next = next;
+   return(lp);
+}
+
+LPLIST *KillLPlist(LPLIST *del)
+{
+   LPLIST *lp;
+   if (del)
+   {
+      lp = del->next;
+      free(del);
+   }
+   else
+      lp = NULL;
+   
+   return(lp);
+}
+
+void KillAllLPlist(LPLIST *lp)
+{
+   while(lp)
+      lp = KillLPlist(lp);
+}
+
+int IsUpperLoop(LPLIST *l0, LOOPQ *loop)
+{
+   LPLIST *ll;
+   BLIST *bl;
+
+   for (ll=l0; ll; ll=ll->next)
+   {
+      for (bl=ll->loop->blocks; bl; bl=bl->next)
+         if (!FindBlockInList(loop->blocks, bl->blk))
+            return(0);
+   }
+   return(1);
+}
+
+LPLIST *FindLoopNest(LOOPQ *lp0)
+{
+   LPLIST *ll, *l;
+   LOOPQ *lp;
+   extern LOOPQ *loopq; /* already sorted by decreasing depth */
+   
+   ll = NULL;
+   ll = NewLPlist(ll, optloop);
+   for (lp=loopq->next; lp; lp=lp->next) /* 1st loop is optloop, skip it*/
+   {
+      if (IsUpperLoop(ll, lp))
+         ll = NewLPlist(ll, lp);
+   }
+   return(ll);
+}
+
 int const2shift(int c)
 {
    int i;

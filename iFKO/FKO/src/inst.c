@@ -214,6 +214,49 @@ INSTQ *DelInst(INSTQ *del)
    return(ip);
 }
 
+INSTQ *FindFirstLILforHIL(INSTQ *ipX)
+/* Assumptions: 
+ * 1. applied before repeatable inst, so, the initial LIL structure prevails
+ * 2. ip is an active instq (not consists of comment or cmpflag)
+ * returns the instq pointer of starting of LIL inst of a block 
+ *    (converted from HIL)
+ */
+{
+   INSTQ *ip, *ip0;
+/*
+ * return same ip if jmp/ret. They consist one LIL inst 
+ */
+   if (IS_BRANCH(ipX->inst[0]) && !IS_COND_BRANCH(ipX->inst[0])) /* JMP, RET */
+      return(ipX);
+   if (ipX->inst[0] == LABEL)
+      return(ipX);
+/*
+ * last inst of a block would always be the store or branch 
+ * so, check for the active inst which is successor of a store/branch/LABEL/NULL
+ */
+   if (IS_STORE(ipX->inst[0]) || IS_COND_BRANCH(ipX->inst[0]) 
+         || IS_PREF(ipX->inst[0]))
+      ip = ipX->prev;
+   else 
+      ip = ipX;
+   ip0 = ip;
+   while (ip && !IS_BRANCH(ip->inst[0]) && ip->inst[0] != LABEL 
+         && !IS_STORE(ip->inst[0]) && !IS_PREF(ip->inst[0]))
+   {
+      if (ACTIVE_INST(ip->inst[0]))
+         ip0 = ip;
+      ip = ip->prev;
+   }
+/*
+ * FIXME: for some specific compiler generated instructions, 1st inst may not be
+ * the load of vars, like: 
+ *    FZEROD reg0;
+ *    FSTD v0, reg0;
+ */
+   /*assert(IS_LOAD(ip0->inst[0]));*/
+   return(ip0);
+}
+
 /*
  * Following routines translate LIL to human-readable form
  */

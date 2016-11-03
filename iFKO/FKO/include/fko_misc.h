@@ -24,5 +24,7 @@ struct locinit *NewLI(short id, short con, struct locinit *next);
 void KillAllLI(struct locinit *die);
 int FindInShortList(int n, short *sp, short val);
 int AddToShortList(int n, short *sp, short val);
-
+LPLIST *NewLPlist(LPLIST *next, LOOPQ *loop);
+void KillAllLPlist(LPLIST *lp);
+LPLIST *FindLoopNest(LOOPQ *lp0);
 #endif

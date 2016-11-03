@@ -102,11 +102,12 @@
    extern union valoff *SToff;
    extern int          *STflag;
    extern short        *STpts2;
-   extern  struct arrayinfo *STarr; 
+   extern  struct arrayinfo *STarr;
+   extern INT_DTC *DTcon;
 #endif
 
 short FindDerefEntry(short ptr, short ireg, short mul, short con);
-short AddDerefEntry(short ptr, short reg, short mul, short con, short pts2);
+short AddDerefEntry(short ptr, short reg, short mul, int con, short pts2);
 short STdef(char *name, int flag, int off);
 short STdconstlookup(double f);
 short STfconstlookup(float f);
@@ -142,4 +143,7 @@ int UpdateSTarrUnroll(short id, short *ulist);
 void STsetArray(short ptr, short ndim, short *ldas);
 void PrintST(FILE *fpout);
 void PrintSTarr(FILE *fpout);
+void KillSTarr();
+void SetDTcon(int dt, INT_DTC con);
+INT_DTC GetDTcon(int val);
 #endif

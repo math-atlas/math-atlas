@@ -53,7 +53,8 @@ static char *GetDeref(short id)
  */
 {
    static char ln[128];
-   short ptr, reg, mul, con;
+   short ptr, reg, mul; 
+   int con;
    id--;
 /*
  * NOTE: fpconst must be initialize in CONST_INIT before using in expression,
@@ -75,6 +76,7 @@ static char *GetDeref(short id)
    reg = SToff[id].sa[1];
    mul = SToff[id].sa[2];
    con = SToff[id].sa[3];
+   con = GetDTcon(con); /* it can be an index of DTcon table */
    if (reg > 0) reg = 0;
 #if 0
    fprintf(stderr, "[%d, %d, %d, %d]\n",ptr,reg,mul,con);
@@ -3118,7 +3120,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*          Not defined in AVX  */
             ap->next = PrintAssln("ERROR:\t%d %d %d %d\n", 
                                   ip->inst[0], op1, op2, op3);
-            fko_warn(__LINE__, "Need to redefine for AVX when necessary");
+            fko_error(__LINE__, "Need to redefine for AVX when necessary");
          #else
             ap->next = PrintAssln("\tmovlpd\t%s, %s\n", GetDeref(op2),
                                   archvdregs[-VDREGBEG-op1]);  
@@ -3129,7 +3131,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*          Not defined in AVX */
             ap->next = PrintAssln("ERROR:\t%d %d %d %d\n", 
                                   ip->inst[0], op1, op2, op3);
-            fko_warn(__LINE__, "Need to redefine for AVX");
+            fko_error(__LINE__, "Need to redefine for AVX");
          #else
             ap->next = PrintAssln("\tmovhpd\t%s, %s\n", GetDeref(op2),
                                   archvdregs[-VDREGBEG-op1]);
@@ -3260,8 +3262,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          
             op1 = -op1;
             op2 = -op2;
-            //fprintf(stderr, "********* VDMOVS %d %d %d\n", -VDREGBEG-op1, 
-            //      -VDREGBEG-op2, op3);
+            /*fprintf(stderr, "********* VDMOVS %d %d %d\n", -VDREGBEG-op1, 
+                  -VDREGBEG-op2, op3);*/
             #ifdef AVX
 /*
  *             vmovsd is expensive. as dreg and vdreg are aliased, we use VDMOV
@@ -3713,7 +3715,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             {
                ap->next = PrintAssln("ERROR:\t%s %d %d %d\n", 
                                      instmnem[ip->inst[0]], op1, op2, op3);
-               fko_warn(__LINE__, "Not implemented this VDSHUF for AVX yet!");         
+               fko_error(__LINE__, "Not implemented this VDSHUF for AVX yet!");         
             }
             else if (cp[3] == 3 && cp[2] == 7 && cp[1] == 1 && cp[0] == 5)
                /*ap->next = PrintAssln("\tvshufpd\t$0x0F,%s,%s,%s\n",
@@ -3765,7 +3767,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                            archxmmregs[-VDREGBEG-op1], 
                                            archxmmregs[-VDREGBEG-op1]);
                   else
-                     fko_warn(__LINE__, "Useless VDSHUF");
+                     fko_error(__LINE__, "Useless VDSHUF");
                }
                else /* cp[0] == 1*/
                {
@@ -3798,7 +3800,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tunpcklpd\t%s,%s\n", 
                archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          else if (cp[0] == 0 && cp[1] == 1)
-            fko_warn(__LINE__, "Useless VDSHUF");
+            fko_error(__LINE__, "Useless VDSHUF");
          else if (cp[0] == 2 && cp[1] == 3)
             ap->next = PrintAssln("\tmovapd\t%s,%s\n", 
                archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
@@ -3825,7 +3827,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                      ap->next = PrintAssln("\tunpcklpd\t%s,%s\n", 
                         archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
                   else
-                     fko_warn(__LINE__, "Useless VDSHUF");
+                     fko_error(__LINE__, "Useless VDSHUF");
                }
                else /* cp[0] == 1 */
                {
@@ -4055,9 +4057,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
             assert(op3); 
             assert(op2 >= FREGBEG && op2 < FREGEND);
             op2 = op2 - FREGBEG + VFREGBEG;
-            
-            if (op1 == op2 == op3) /* nothing to do */
-               continue; 
+           
+            if ( (op1 == op2) && (op2 == op3) ) /* nothing to do */
+               continue;
          
             op1 = -op1;
             op2 = -op2;
@@ -4105,77 +4107,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvfregs[-VFREGBEG-op1]);
             #endif
          }
-#if 0         
-         assert (op1 < 0 && op2 < 0);
-         op1 = -op1;
-         op2 = -op2;
-         if (op1 >= FREGBEG && op1 < FREGEND)
-            op1 = op1 - FREGBEG + VFREGBEG;
-         if (op2 >= FREGBEG && op2 < FREGEND)
-            op2 = op2 - FREGBEG + VFREGBEG;
-         op1 = -op1;
-         op2 = -op2;
-/*         
-         if (op1 != op2)
-            #ifdef AVX
-               sptr = "vmovss";
-            #else
-               sptr = "movss";
-            #endif
          else
-            #ifdef AVX
-               sptr = "vmovaps";
-            #else
-               sptr = "movaps";
-            #endif       
-         ap->next = PrintAssln("\t%s\t%s, %s\n", sptr, 
-                               archvfregs[-VFREGBEG-op2],
-                               archvfregs[-VFREGBEG-op1]);
-*/             
-         if (op1 != op2)
-         {
-            #ifdef AVX
-#if 0           
-/*
- *             Majedul: although vmovss is expensive, need to use this
- *             3 operand inst
- */
-               ap->next = PrintAssln("\tvmovss\t%s, %s,%s\n", 
-                                     archxmmregs[-VFREGBEG-op2],
-                                     archxmmregs[-VFREGBEG-op1],
-                                     archxmmregs[-VFREGBEG-op1]);
-#else
-               ap->next = PrintAssln("\tvmovaps\t%s, %s\n", 
-                                     archvfregs[-VFREGBEG-op2],
-                                     archvfregs[-VFREGBEG-op1]);
-#endif
-            #else
-               ap->next = PrintAssln("\tmovss\t%s, %s\n",  
-                                     archvfregs[-VFREGBEG-op2],
-                                     archvfregs[-VFREGBEG-op1]);
-            #endif
-         }
-/*
- *          In X86, scalar and vector registers are aliased. 
- *          So, we don't need to emit the move instruction with same
- *          source and destination.
- */
-         else
-#if 0               
-            #ifdef AVX
-               ap->next = PrintAssln("\tvmovaps\t%s, %s\n", 
-                                     archvfregs[-VFREGBEG-op2],
-                                     archvfregs[-VFREGBEG-op1]);
-            #else
-               ap->next = PrintAssln("\tmovaps\t%s, %s\n", 
-                                     archvfregs[-VFREGBEG-op2],
-                                     archvfregs[-VFREGBEG-op1]);
-            #endif
-#else
-            continue;
-#endif
-#endif
+            assert(0); /* unknown case !! */
          break;
+      
       case VFMUL:
          #ifdef AVX
             ap->next = PrintAssln("\tvmulps\t%s, %s, %s\n", 
@@ -4339,6 +4274,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
       case VFZERO:
+         assert(ap);
          #ifdef AVX
             ap->next = PrintAssln("\tvxorps\t%s,%s, %s\n", 
                                   archvfregs[-VFREGBEG-op1],
@@ -4748,8 +4684,74 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *       value of cp can be 0~15: 0~7 represents float of rd; 
  *       8~15 represents float of rs.
  *       Right now we need following combination:
- */      
+ */     
          #ifdef AVX
+#if 1         
+/*
+ *          Optimizing following specific combination as a special case...
+ *          when ever we find 7654xxxx we can use sse instruction
+ *          7654 7654
+ *          7654 9180
+ *          7654 9810
+ *          7654 3211
+ *          7654 3322
+ *          7654 3232
+ */
+            /* 7654 7654 */
+            if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4 &&
+                cp[3] == 7 && cp[2] == 6 && cp[1] == 5 && cp[0] == 4 )
+               ap->next = PrintAssln("\tvextractf128\t$1,%s,%s\n",
+                                     archvfregs[-VFREGBEG-op1], 
+                                     archxmmregs[-VFREGBEG-op1]);
+            /* 7654 9180 */
+            else if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4 &&
+                     cp[3] == 9 && cp[2] == 1 && cp[1] == 8 && cp[0] == 0)
+               ap->next = PrintAssln("\tunpcklps\t%s,%s\n",
+                                     archxmmregs[-VFREGBEG-op2], 
+                                     archxmmregs[-VFREGBEG-op1]);
+            /* 7654 9810 */
+            else if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4 &&
+                     cp[3] == 9 && cp[2] == 8 && cp[1] == 1 && cp[0] == 0)
+               ap->next = PrintAssln("\tmovlhps\t%s,%s\n",
+                                     archxmmregs[-VFREGBEG-op2], 
+                                     archxmmregs[-VFREGBEG-op1]);
+            /* 7654 3211 */
+            else if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4 &&
+                     cp[3] == 3 && cp[2] == 2 && cp[1] == 1 && cp[0] == 1)
+            {
+               assert(op1 == op2);
+               ap->next = PrintAssln("\tshufps\t$%d,%s,%s\n", 0xe5,
+                                     archxmmregs[-VFREGBEG-op1], 
+                                     archxmmregs[-VFREGBEG-op1]);
+            }
+            /* 7654 3322 */
+            else if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4 &&
+                     cp[3] == 3 && cp[2] == 3 && cp[1] == 2 && cp[0] == 2)
+            {
+               assert(op1 == op2);
+               ap->next = PrintAssln("\tunpckhps\t%s,%s\n",
+                                     archxmmregs[-VFREGBEG-op1], 
+                                     archxmmregs[-VFREGBEG-op1]);
+            }
+            /* 7654 3232 */
+            else if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4 &&
+                     cp[3] == 3 && cp[2] == 2 && cp[1] == 3 && cp[0] == 2)
+            {
+               assert(op1 == op2);
+               ap->next = PrintAssln("\tmovhlps\t%s,%s\n",
+                                     archxmmregs[-VFREGBEG-op1], 
+                                     archxmmregs[-VFREGBEG-op1]);
+
+            }
+            /* BA983210*/
+            else if (cp[7] == 11 && cp[6] == 10 && cp[5] == 9 && cp[4] == 8 &&
+                     cp[3] == 3 && cp[2] == 2 && cp[1] == 1 && cp[0] == 0)
+               ap->next = PrintAssln("\tvperm2f128\t$0x02,%s,%s,%s\n",
+                                     archvfregs[-VFREGBEG-op1], /* src2*/ 
+                                     archvfregs[-VFREGBEG-op2], 
+                                     archvfregs[-VFREGBEG-op1]);
+            else
+#endif
             if (op1 == op2)
             {
                j=0;
@@ -4774,12 +4776,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                         archvfregs[-VFREGBEG-op1], 
                                         archvfregs[-VFREGBEG-op1]);
                }
-#if 1               
                else if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4)
                {
                   if (cp[3] > 3 && cp[2] > 3 && cp[1] > 3 && cp[0] > 3)  
                   {
-                     ap->next = PrintAssln("\tvperm2f128\t$%d,%s,%s,%s\n", 0x11,
+                     ap->next = PrintAssln("\tvperm2f128\t$%d,%s,%s,%s\n", 
+                                           0x11,
                                            archvfregs[-VFREGBEG-op1], 
                                            archvfregs[-VFREGBEG-op1], 
                                            archvfregs[-VFREGBEG-op1]);
@@ -4791,19 +4793,23 @@ struct assmln *lil2ass(BBLOCK *bbase)
                   }
                   if (cp[3] > 3 || cp[2] > 3 || cp[1] > 3 || cp[0] > 3) 
                      fko_error(__LINE__, "not implemented VFSHUF: %x", 
-                               SToff[op3-1].i);
-
+                                  SToff[op3-1].i);
+                     
+                  assert(cp[0]>=0 && cp[1]>=0 && cp[2]>=0 && cp[3] >=0);
                   i = cp[0] | (cp[1]<<2) | (cp[2]<<4) | (cp[3]<<6); 
                   ap->next = PrintAssln("\tshufps\t$%d,%s,%s\n", i,
                                         archxmmregs[-VFREGBEG-op1], 
                                         archxmmregs[-VFREGBEG-op1]);
-
                }
-#endif
+               else
+               {
+                  fko_error(__LINE__, "not implemented VFSHUF (op1==op2): %x", 
+                            SToff[op3-1].i);
+               }
             }
-            else
+            else /* op1 != op2 */
             {
-/*           
+/*            NOTE: we have only implemented those combination which we need! 
  *            Implemented combination:
  *                7654FEDC
  *                765432BA
@@ -4816,35 +4822,47 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                            archvfregs[-VFREGBEG-op1], /* src2*/ 
                                            archvfregs[-VFREGBEG-op2], 
                                            archvfregs[-VFREGBEG-op1]);
+                  else if (cp[3] == 9 && cp[2] == 1 && cp[1] == 8 && cp[0] == 0)
+                     ap->next = PrintAssln("\tunpcklps\t%s,%s\n",
+                                           archxmmregs[-VFREGBEG-op2], 
+                                           archxmmregs[-VFREGBEG-op1]);
+                  else if (cp[3] == 9 && cp[2] == 8 && cp[1] == 1 && cp[0] == 0)
+                     ap->next = PrintAssln("\tmovlhps\t%s,%s\n",
+                                           archxmmregs[-VFREGBEG-op2], 
+                                           archxmmregs[-VFREGBEG-op1]);
 /*
- *                FIXME: op1[255:128] may become zero using vmovhlps. 
+ *                FIXED: op1[255:128] may become zero using vmovhlps. 
  *                use movhlps to keep the upper value unchanged!
  */
                   else if (cp[3] == 3 && cp[2] == 2 && cp[1] == 11 
                            && cp[0] == 10)  
-                     ap->next = PrintAssln("\tvmovhlps\t%s,%s,%s\n",
+                     /*ap->next = PrintAssln("\tvmovhlps\t%s,%s,%s\n",
                                            archxmmregs[-VFREGBEG-op2], 
                                            archxmmregs[-VFREGBEG-op1], 
+                                           archxmmregs[-VFREGBEG-op1]);*/
+                     ap->next = PrintAssln("\tmovhlps\t%s,%s\n",
+                                           archxmmregs[-VFREGBEG-op2], 
                                            archxmmregs[-VFREGBEG-op1]);
                   else
-                     fko_warn(__LINE__, "Not implemented this VFSHUF yet");
+                     fko_error(__LINE__, "Not implemented this VFSHUF yet: %x",
+                               SToff[op3-1].i);
                }
 /*             Implementing 3210BA98*/
-               else if (cp[7] == 3 && cp[6] == 2 && cp[3] == 1 && cp[2] == 0 &&
-                        cp[5] == 11 && cp[4] == 10 && cp[1] == 9 && cp[0] == 8)
+               else if (cp[7] == 3 && cp[6] == 2 && cp[5] == 1 && cp[4] == 0 &&
+                        cp[3] == 11 && cp[2] == 10 && cp[1] == 9 && cp[0] == 8)
                      ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
                                            archvfregs[-VFREGBEG-op1], /* src2*/ 
                                            archvfregs[-VFREGBEG-op2], 
                                            archvfregs[-VFREGBEG-op1]);
 /*             Implementing 76CD3289*/
-               else if (cp[7] == 7 && cp[6] == 6 && cp[3] == 3 && cp[2] == 2 &&
-                        cp[5] == 12 && cp[4] == 13 && cp[1] == 8 && cp[0] == 9)
+               else if (cp[7] == 7 && cp[6] == 6 && cp[5] == 12 && cp[4] == 13 &&
+                        cp[3] == 3 && cp[2] == 2 && cp[1] == 8 && cp[0] == 9)
                   ap->next = PrintAssln("\tvshufps\t$0xE1,%s,%s,%s\n",
                                          archvfregs[-VFREGBEG-op1], /* src2*/
                                          archvfregs[-VFREGBEG-op2],
                                          archvfregs[-VFREGBEG-op1]);
                else
-                fko_warn(__LINE__, "Not implemented this VFSHUF yet");
+                fko_error(__LINE__, "Not implemented this VFSHUF yet");
             }
          #else
             if (op1 == op2)  /* any shuffling legal if they are the same reg */
@@ -4864,7 +4882,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                   ap->next = PrintAssln("\tmovhlps\t%s,%s\n", 
                      archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
                else if (cp[0] == 0 && cp[1] == 1 && cp[2] == 2 && cp[3] == 3)
-                  fko_warn(__LINE__, "Useless VFSHUF");
+                  fko_error(__LINE__, "Useless VFSHUF");
                else
                {
                   i = cp[0] | ((cp[1])<<2) | (cp[2]<<4) | (cp[3]<<6);

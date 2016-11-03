@@ -760,4 +760,5 @@ void FeedbackArchInfo(FILE *fpout);
 int RevealArchMemUses(void);
 short vtype2elem(int type);
 short iName2Reg(char *rname);
+short GetVecAlignByte();
 #endif

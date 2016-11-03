@@ -498,3 +498,14 @@ void CheckUseSet()
    KillBitVec(use);
    KillBitVec(set);
 }
+
+INT_BVI FilterOutRegs(INT_BVI iv)
+{
+   int i;
+   extern short STderef;
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+   /*SetVecBit(iv, TNREG-1, 0);*/ // skip STderef... which is used for mem
+   return(iv);
+}
