@@ -40758,6 +40758,19 @@ int main(int nargs, char **args)
    #endif
    return(0);
 }
+@ROUT atlas_cpuid.h
+#ifndef ATLAS_CPUID_H
+   #define  ATLAS_CPUID_H 1
+/*
+ * works like cpuid with these reg names.  Note that some inst take eax|ecx
+ * as input, while others take only eax as input.  The number of output regs
+ * also varies by query.
+ */
+#define do_cpuid(eax_, ebx_, ecx_, edx_)  __asm__("cpuid" \
+           :"=a"(eax_), "=b"(ebx_), "=c"(ecx_), "=d"(edx_) \
+           :"a"(eax_), "c"(ecx_) \
+           : )
+#endif
 @ROUT cacheInfo_x86
 /*
  * Wrote this from gcc manual + http://www.sandpile.org/x86/cpuid.htm
@@ -40765,21 +40778,174 @@ int main(int nargs, char **args)
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
-#define do_cpuid(lvl_, o1_, o2_, o3_, o4_)  __asm__("cpuid" \
-           :"=a"(o1_), "=b"(o2_), "=c"(o3_), "=d"(o4_) \
-           :"a"(0x00000004), "c"(lvl_) \
+
+#define do_cpuid(eax_, ebx_, ecx_, edx_)  __asm__("cpuid" \
+           :"=a"(eax_), "=b"(ebx_), "=c"(ecx_), "=d"(edx_) \
+           :"a"(eax_), "c"(ecx_) \
            : )
 
 #define uint unsigned int
-uint cacheInfo(uint lvl, uint *NSET, uint *NWAY, uint *WB, uint *INCL, 
-               uint *NCOR)
+#define NONE 0xFFFFFFFF
+unsigned int nways_amd(unsigned int t)
+/*
+ * AMD trolling hard by hardwiring in partial lookup table for associativity
+ * and doing it differently for every level.  This is the L3 lookup.
+ * RETURNS: nways, or 0 if fully associative
+ */
+{
+   unsigned int nway;
+   switch (t)     /* AMD asks: why not hardwire assoc in lookup table? */
+   {
+   case 0:        /* no such level */
+      return(NONE);  /* return 0 from caller, don't set any ptrs */
+   case 0x1:
+   case 0x2:
+   case 0x4:
+      nway = t;
+      break;
+   case 0x6:
+      nway = 8;
+      break;
+   case 0x8:
+      nway = 16;
+      break;
+   case 0xA:
+      nway = 32;
+      break;
+   case 0xB:
+      nway = 48;
+      break;
+   case 0xC:
+      nway = 64;
+      break;
+   case 0xD:
+      nway = 96;
+      break;
+   case 0xE:
+      nway = 128;
+      break;
+   case 0xF:
+      nway = 0;
+      break;
+   default:
+      assert(0);
+   }
+   return(nway);
+}
+int IsPow2(uint N)
+/*
+ * returns 1<<i for power of two, or 0 zero or non-power-of-two
+ */
+{
+   int i;
+   if (N == 0)
+      return(0);
+   for (i=0; i & (1<<i); i++); /* find first nonzero */
+   return(((1<<i)^N == 0) ? i : 0);
+}
+
+uint cacheInfo_amd(uint lvl, uint *NSET, uint *NWAY, uint *INCL, 
+                   uint *NTHR, uint *NCOR)
+{
+   unsigned int eax, ebx, ecx, edx, LS, nway, nset, t, LPT;
+   unsigned long cs;
+/*
+ * AFAIK, L1 & L2 always private, L3 shared for AMD
+ */
+   if (lvl > 2)  /* AMD CPUID presently only allows up to 3 lvls cache */
+      return(0);
+/*
+ * AFAIK, L1&L2 always private, L3 public for AMD, with all caches except L1
+ * essentially being victim caches (i.e., not inclusive, though not truly
+ * exclusive either).
+ */
+   *INCL = (lvl == 0) ? 1:0;
+   *NTHR = (lvl == 2) ? 2 : 1; /* AFAIK, L1 & L2 private, L3 shared for AMD */
+   if (lvl != 2)
+   *NCOR = NONE;  /* figure out later */
+   ecx = 0;
+   eax = 0x80000005 + (lvl != 0);
+   do_cpuid(eax, ebx, ecx, edx);
+   if (!lvl)  /* hard to overstate the madness of AMD's cpuid: */
+   {          /* they've hardwired the # of cache lvls in! */
+      // no way to find NTHR, NCOR in this inst, check other inst.
+      *INCL = 1;
+      LS = ecx & 0x7F;
+      LPT = (ecx>>8)&0xFF;
+      t = (edx>>16)&0xFF;  /* way encoding */
+      nway = (t == 0x01) ? 1 : (t>>1); /* will fix fully assoc later */
+      cs = (ecx>>24)*1024;
+      if (t == 0xFF)   /* fully associative */
+      {
+         nway = cs / LS;
+         nset = 1;
+      }
+      else
+         nset = cs / (LS*nway);
+   }
+   else /* L2:ecx, L3:edx */
+   {
+      t = (lvl == 1) ? ecx : edx;
+      nway = nways_amd((t>>12)&0xF);
+      LS = t & 0xFF;
+      LPT = (t>>8)&0xF;
+      if (lvl == 1)           /* L2 deterministic unlike L3 on cache size */
+         cs = (ecx>>16)*1024;
+/*
+ *    For L3, we get i*512KB <= CS <= (i+1)*512KB.  For fully-associative,
+ *    just declare it as the smaller size.  For a given associativity, we
+ *    know nset is a power of two, which can further constrain CS.
+ */
+      else                    /* L3 doesn't fully specify cache size */
+      {                       /* guess low bound unless it doesn't work */
+         cs = (edx>>18)*512*1024; /* minCS is i*512KB, max (i+1)*512KB */
+         if (nway)  /* we can determine nsets */
+         {
+            nset = cs / nway;
+            if (nset*nway != cs) /* if nway not mul of cs, cs not right! */
+               cs += 512*1024;
+            else if (!IsPow2(nset)) /* if nsets not pow2, CS not right! */
+               cs += 512*1024;
+         }
+      }
+      if (!nway)              /* full assoc */
+      {
+         nset = 1;
+         nway = cs / LS;
+      }
+      else                    /* cache with nway-associativity */
+         nset = cs / (LS*nway);
+   }
+/*
+ * AMD has "lines per tag" field, and they never explain what it is beyond
+ * the phrase itself.  AFAIK, lines per tag is 1 in every cache ever made.
+ * only way >1 makes sense to me is if you treat cache like a invalidating
+ * write buffer, where you can load only part of the cacheline, and indicate
+ * some bytes in the line are invalid.  Then, this would represent the number
+ * of valid bits you use.  However, I've never heard of a cache working like
+ * that, and all the AMD docs I see say have this as 0 (invalid cache) or 1.
+ * so, I'm going to assert these cases, and force a probe if this isn't true,
+ * since I'm not sure I understand what LPT really is.
+ */
+   assert(LPT == 0 || LPT == 1);
+   *NWAY = nway;
+   *NSET = nset;
+   return(LS);
+}
+
+#define do_cpuid_int(lvl_, o1_, o2_, o3_, o4_)  __asm__("cpuid" \
+           :"=a"(o1_), "=b"(o2_), "=c"(o3_), "=d"(o4_) \
+           :"a"(0x00000004), "c"(lvl_) \
+           : )
+uint cacheInfo(uint lvl, uint *NSET, uint *NWAY, uint *INCL, 
+               uint *NTHR, uint *NCOR)
 /*
  * RETURNS: 0 for no such level, else line size
  */
 {
    unsigned int eax, ebx, ecx, edx, LS, lv;
 
-   do_cpuid(lvl, eax, ebx, ecx, edx);
+   do_cpuid_int(lvl, eax, ebx, ecx, edx);
 /*
  * If we are past the number of cache levels, return 0
  */
@@ -40793,34 +40959,158 @@ uint cacheInfo(uint lvl, uint *NSET, uint *NWAY, uint *WB, uint *INCL,
    lv = (eax>>5)&7;
    if (lv != lvl+1)  /* lvl=1 is i-cache, meaning we must ask for next lvl */
    {
-      do_cpuid(lvl+1, eax, ebx, ecx, edx);
+      do_cpuid_int(lvl+1, eax, ebx, ecx, edx);
       if ((eax&0xF) == 0)
          return(0);
       lv = (eax>>5)&7;
    }
    assert(lv == lvl+1);
 
+   *NCOR = ((eax>>26)&0x3F) + 1;
+   *NTHR = ((eax>>14)&0xFFF) + 1;
    *NSET = ecx + 1;
    *NWAY = (ebx>>22) + 1;
-   *WB = edx & 1;
    *INCL = (edx>>1)&1;
-   *NCOR = ((eax>>14)&0xFFF) + 1;
    LS = (ebx & 0xFFF) + 1;
    return(LS);
 }
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr,"USAGE: %s [flags]:\n", name);
+   fprintf(stderr,"   -o </path/cacheheader.h> : (res/atlas_cache.h)\n");
+   exit(ierr ? ierr : -1);
+}
+
+FILE *GetFlags(int nargs, char **args)
+{
+   FILE *fpout=NULL;
+   int i;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'o':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        fpout = fopen(args[i], "w");
+        assert(fpout);
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!fpout)
+   {
+      fpout = fopen("res/atlas_cache.h", "w");
+      assert(fpout);
+   }
+   return(fpout);
+}
+void *getInf(void)
+/*
+ * Determines whether to use AMD or Intel method to determine caches
+ */
+{
+   int eax, ebx, ecx, edx;
+   eax=0;
+   do_cpuid(eax, ebx, ecx, edx);
+   printf("cpu0: %x %x %x\n", ebx,edx,ecx);
+   if (ebx == 0x756e6547 && edx == 0x49656e69 && ecx == 0x6c65746e)
+      return(cacheInfo);
+   if (ebx == 0x68747541 && edx == 0x69746e65 && ecx == 0x444d4163)
+      return(cacheInfo_amd);
+   return(NULL);
+}
+/*
+ * Note I don't check what CPUID features I've got.  If this rout fails,
+ * I just run the search, so illegal instruction is OK.
+ */
 int main(int nargs, char **args)
 {
-   unsigned int nset, nway, LS, WB, INCL, ncores, nlvl=0;
+   unsigned int nset, nway, LS, INCL, nthr, ncor=0, nlvl=1;
+   unsigned int nhyp=1, safeLS, LLP, i;
+   unsigned long cs, llp_cs;
+   FILE *fp;
+   char *cn[2]={"LLPC", "LLC"};
+   int lvls[2];
+   uint (*cacheInf)(uint lvl, uint *NSET, uint *NWAY, uint *INCL,
+                   uint *NTHR, uint *NCOR);
 
-   while ( (LS = cacheInfo(nlvl, &nset, &nway, &WB,& INCL, &ncores)) )
+   cacheInf = getInf();
+   assert(cacheInf != NULL);
+/*
+ * See if we are using Intel or AMD-style cacheInfo, or giving up
+ */
+   fp = GetFlags(nargs, args);
+   fprintf(fp, "/* generated by ATLAS/tune/sysinfo/cacheInfo_x86.c */\n");
+   fprintf(fp, "#ifndef ATLAS_CACHE_H\n   #define ATLAS_CACHE_H 1\n");
+/*
+ * For L1Size, figure out number of cores that are really hyperthreading
+ */
+   LS = cacheInf(0, &nset, &nway, &INCL, &nhyp, &ncor);
+   assert(LS);
+   llp_cs = cs = nset*nway*LS;
+   printf("L1: INCL=%d nsets=%u, nway=%u LS=%u sz=%u"
+          ", hypthr=%u, ncores=%u\n", 
+          INCL, nset, nway, LS, nset*nway*LS, nhyp, ncor);
+   fprintf(fp, "#define x86_NHYPTHR %u /* hyperthreading number */\n", nhyp);
+   fprintf(fp, "#define x86_NCORPAK %u /* ncores per package */\n\n", ncor);
+   fprintf(fp, "#define L1C_SZ %luL\n", cs);
+   fprintf(fp, "#define L1C_LS %u\n", LS);
+   fprintf(fp, "#define L1C_NSET %u\n", nset);
+   fprintf(fp, "#define L1C_NWAY %u\n", nway);
+   fprintf(fp, "#define L1C_INCLUSIVE 1\n");
+   fprintf(fp, "#define L1C_NSHARE 1\n");
+   fprintf(fp, "#define L1C_SURE 1\n\n");
+   safeLS = LS;
+   LLP = 0;
+
+/*
+ * First find the number of levels, and whether there is a hyperthreading
+ * multiplier on the ncores sharing cache or not
+ */
+   while ( (LS = cacheInf(nlvl, &nset, &nway, &INCL, &nthr, &ncor)) )
    {
       nlvl++;
-      printf("LVL=%u: wback=%d, INCL=%d nsets=%u, nway=%u LS=%u sz=%u"
-             ", ncores=%d\n", 
-             nlvl, WB, INCL, nset, nway, LS, nset*nway*LS, ncores);
-      if (nlvl > 8)
-         return(-1);
+      nthr /= nhyp;
+      cs = nset*nway*LS;
+      printf("L%u: INCL=%d nsets=%u, nway=%u LS=%u sz=%u nshar=%u\n",
+             nlvl, INCL, nset, nway, LS, nset*nway*LS, nthr);
+      fprintf(fp, "#define L%uC_SZ %luL\n", nlvl, cs);
+      fprintf(fp, "#define L%uC_LS %u\n", nlvl, LS);
+      fprintf(fp, "#define L%uC_NSET %u\n", nlvl, nset);
+      fprintf(fp, "#define L%uC_NWAY %u\n", nlvl, nway);
+      fprintf(fp, "#define L%uC_INCLUSIVE %u\n", nlvl, INCL);
+      fprintf(fp, "#define L%uC_NSHARE %u\n", nlvl, nthr);
+      fprintf(fp, "#define L%uC_SURE 1\n\n", nlvl);
+      safeLS = (LS > safeLS) ? LS : safeLS;
+      if (nthr == 1)
+      {
+         LLP = nlvl;
+         llp_cs = cs;
+      }
    }
+   fprintf(fp, "#define LLPC_LVL %u\n", LLP);
+   fprintf(fp, "#define LLPC_SZ  L%uC_SZ\n", LLP);
+   fprintf(fp, "#define LLC_LVL %u\n", nlvl);
+   if (INCL)
+      fprintf(fp, "#define LLC_SZ  L%uC_SZ\n", nlvl);
+   else
+      fprintf(fp, "#define LLC_SZ %luL\n", cs+llp_cs);
+   fprintf(fp, "#define ATL_SAFELS %u\n", safeLS);
+
+   fprintf(fp, "\n#endif /* done multiple inclusion guard */\n");
+   fclose(fp);
    return(0);
 }
 @ROUT GetInfoPos
