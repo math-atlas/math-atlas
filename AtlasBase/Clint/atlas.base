@@ -36655,9 +36655,14 @@ int main(int nargs, char **args)
 #endif
 
 struct kmm_struct{
+   #ifdef PUTC
+      TYPE *C;
+      size_t nmblks, ldc;
+   #endif
    #ifdef TIME_COPY
       TYPE *A;
-      size_t nmblks, nnblks, lda;
+      size_t lda;
+      size_t nmblks, nnblk;
       int COLWISE, BM, BN;
    #endif
    int mb, nb, kb;                      /* C: mbxnb, At: kbxmb, B: kbXnb */
@@ -36673,6 +36678,45 @@ struct kmm_struct{
    volatile unsigned char *chkin;       /* P-len array to signal start/done */
 };
 
+/*
+ * Generic copy used to generate bus traffic for outer-product timings
+ * It won't actually copy things in right order, but we don't care.
+ * It will also not be exact same speed as final copy, but the only way
+ * to know that speed is to time all copies for all kerns, which is too expens.
+ * Copy time should only matter for small problems, and should normally be
+ * dominated by cache affects, which are only minorly affected by
+ * implementation details.  This copies best-possible-ordering should make
+ * it look like a fast copy despite lack of vectorization.
+ */
+#ifdef PUTC
+   #ifdef TCPLX
+static void gecpy(const int M, const int N, const TYPE *rC, const TYPE *iC, 
+                  TYPE *C, size_t ldc)
+{
+   register int j;
+
+   ldc += ldc;
+   for (j=0; j < N; j++, C += ldc, iC += M, rC += M)
+   {
+      register int i;
+      for (i=0; i < M; i++)
+      {
+         const register int i2=i+i;
+         C[i2] = rC[i];
+         C[i2+1] = iC[i];
+      }
+   }
+}
+   #else
+static void gecpy(const int M, const int N, const TYPE *bC, TYPE *C, size_t ldc)
+{
+   register int i, j;
+   for (j=0; j < N; j++, C += ldc, bC += M)
+      for (i=0; i < M; i++)
+         C[i] = bC[i];
+}
+   #endif
+#endif
 #ifdef TIME_COPY
 static double getMflops(double m, double n)
 #else
@@ -36728,6 +36772,11 @@ double GetKmmMflop
    TYPE *ep, *sp;  /* extra & set ptrs */
    double t0, t1, mf;
    size_t szA, szB, szC, extra, setsz, nsets, tsz, i, j, incA, incB, incC, n;
+   #ifdef PUTC
+      const size_t ldc=pd->ldc, NMB=pd->nmblks; 
+      size_t mbcnt=0;
+      TYPE *CC=pd->C+(pd->ldc SHIFT)*pd->iam, *cc=CC;
+   #endif
    #ifdef TIME_COPY
       const size_t lda=pd->lda;
       size_t INCBLK, INCPAN, II, JJ, NN, MM;
@@ -36902,6 +36951,20 @@ double GetKmmMflop
          }
       #else
          KMM(mblks, nblks, kb, a, b, c, an, bn, cn);
+         #ifdef PUTC
+            #ifdef TCPLX
+               gecpy(mb, nb, c+szC, c, cc, ldc);
+            #else
+               gecpy(mb, nb, c, cc, ldc);
+            #endif
+            if (++mbcnt == NMB)
+            {
+               cc = CC;
+               mbcnt = 0;
+            }
+            else
+               cc += mb SHIFT;
+         #endif
       #endif
       a = an;
       b = bn;
@@ -37335,6 +37398,15 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    #ifdef TIME_SYRKK
       kp->movB = 0;
    #endif
+   #ifdef PUTC
+      i = 2000 / kp->mb;
+      i = (i > 1) ? i : 2;
+      kp->nmblks = i;
+      kp->ldc = (i*kp->mb)|1;
+      i = kp->p * kp->nb;
+      kp->C = malloc(sizeof(TYPE)*kp->ldc*(i SHIFT));
+      assert(kp->C);
+   #endif
    return(kp);
 }
 
@@ -37366,6 +37438,9 @@ int main(int nargs, char **args)
    }
    #endif
    dp = TimeOnCores(kp);
+   #ifdef PUTC
+      free(kp->C);
+   #endif
    free(kp);
    GetStat(p, dp, &min, &max, &avg);
    printf("PER-CORE: %le", dp[0]);
@@ -41006,30 +41081,30 @@ int do_cpuid2Lvl_amd(uint lvl, int *EAX, int *EBX, int *ECX, int *EDX)
  * RETURNS: -1 for no such level, else the actual lvl needed by cpuid
  */
 {
-   int icnt, i;
-   icnt = lvl;
-//   while(1)
-   for (i=0; i < 8; i++)
+   int i;
+   int id, il, eax, ebx, ecx, edx;
+   eax = 0x8000001D;
+   ecx = lvl | (1<<3);               /* first try a data cache at this level */
+   do_cpuid(eax, ebx, ecx, edx);
+   id = eax&0x1F;                    /* cache type info returned about */
+   if (!id)                          /* no data cache, how about unified? */
    {
-      int id, il, eax, ebx, ecx, edx;
       eax = 0x8000001D;
-      ecx = icnt;
+      ecx = lvl | (3<<3);            /* unified cache query for level */
       do_cpuid(eax, ebx, ecx, edx);
-      id = eax&0x1F;      /* cache type info returned about */
-      if (!id)            /* if required level doesn't exist */
-         return(-1);      /* say so */
-      il = (eax>>5)&0x7;  /* the level info returned is about */
-      printf("id=%u, lvlret=%u, lvlwnt=%u, icnt=%u\n", id, il, lvl, icnt);
-      if (il==lvl && (id == 1 || id == 3))
-      {
-         *EAX = eax;
-         *EBX = ebx;
-         *ECX = ecx;
-         *EDX = edx;
-         return(icnt);
-      }
-      icnt++;
+      id = eax&0x1F;                 /* cache type info returned about */
    }
+   il = (eax>>5)&0x7;                /* the level info returned is about */
+   if (id && il==lvl && (id == 1 || id == 3))
+   {
+      *EAX = eax;
+      *EBX = ebx;
+      *ECX = ecx;
+      *EDX = edx;
+   printf("OK! :id=%u, lvlret=%u, lvlwnt=%u\n", id, il, lvl);
+      return(lvl);
+   }
+   printf("FAIL:id=%u, lvlret=%u, lvlwnt=%u\n", id, il, lvl);
    return(-1);
 }
 
