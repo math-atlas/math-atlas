@@ -1630,6 +1630,21 @@ static ATL_@(rt)node_t *ATL_Last@up@(rt)Node(ATL_@(rt)node_t *bp)
    return(p);
 }
 
+@iexp ip @(ip) 1 +
+/* procedure @(ip): adds q1 to end of q0 */
+static ATL_@(rt)node_t *ATL_Join@up@(rt)Qs(ATL_@(rt)node_t *q0, ATL_@(rt)node_t *q1)
+{
+   ATL_mmnode_t *mp;
+   if (!q1)
+      return(q0);
+   if (!q0)
+      return(q1);
+   mp = ATL_Last@up@(rt)Node(q0);
+   mp->next = q1;
+   return(q0);
+}
+
+@iexp ip @(ip) 1 +
 /* procedure @(ip): finds node with max mflop[imf]  */
 static ATL_@(rt)node_t *FindMaxMflop@up@(rt)Q
 (
@@ -5889,9 +5904,10 @@ double TimeMMKernel
    int cflush                   /* >=0: size of cache flush, else ignored */
 )
 /*
- * flag - take actions the following actions if bit location is set:
+ * flag - take actions the following actions if specified bit position is set:
  *    0 : ignore any prior output file on output
  *    1 : time in serial rather than parallel
+ *    2 : add a copy to col-major storage from block C to gemm timing
  */
 {
    char fnam[128], ln[4096];  /* security from 1991 */
@@ -6534,7 +6550,7 @@ int TimeNegMMKernels            /* RET: 0 if no retiming required */
 (
    int imf,                     /* index of mflop array to check/set */
    int verb,                    /* 0: no output, 1 min output, 2: full output */
-   int FORCETIME,               /* 1: ignore any prior output file */
+   int flag,                    /* 1: ignore any prior output file */
    ATL_mmnode_t *mmb,           /* ptr to mmkern struct queue */
    char pre,                    /* type/prec prefix: z,c,d,s */
    int beta,                    /* beta to time */
@@ -6549,7 +6565,7 @@ int TimeNegMMKernels            /* RET: 0 if no retiming required */
       if (mp->mflop[imf] <= 0.0)
       {
          RETIME++;
-         mp->mflop[imf] = TimeMMKernel(verb, FORCETIME ? 1:0, mp, pre, 
+         mp->mflop[imf] = TimeMMKernel(verb, flag, mp, pre, 
                                        mp->mbB, mp->nbB, mp->kbB,
                                        beta, mflop, cflush);
       }
@@ -6596,6 +6612,30 @@ static char *GetVecStrMM(char pre, int vlen)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static ATL_mmnode_t *TimeMMFile
+(
+   char pre, 
+   char *file, 
+   int imf,                    /* index of mflop array to check/set */
+   int verb,                   /* 0: no output, 1 min output, 2: full output */
+   int flag,                   /* flag for TimeMMKernel */
+   int beta,                   /* beta to time */
+   int mflop,                  /* >0: force mflop MFLOPs in each time interv */
+   int cflush                  /* >0: size of cache flush, else ignored */
+)
+{
+   ATL_mmnode_t *mmb;
+   mmb = ReadMMFile(file);
+   if (!mmb)
+      return(NULL);
+   MMFillInGenStrings(pre, mmb);
+   if (TimeNegMMKernels(imf, verb, flag, mmb, pre, beta, mflop, cflush))
+      WriteMMFile(file, mmb);
+   return(mmb);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static ATL_mmnode_t *TimeMMFileWithPath
 (
    char pre, 
@@ -6609,12 +6649,14 @@ static ATL_mmnode_t *TimeMMFileWithPath
    int cflush                  /* >0: size of cache flush, else ignored */
 )
 {
-   ATL_mmnode_t *mmb;
-   mmb = ReadMMFileWithPath(pre, path, file);
-   if (!mmb)
+   ATL_mmnode_t *mb;
+   int CHNG=0;
+
+   mb = ReadMMFileWithPath(pre, path, file);
+   if (!mb)
       return(NULL);
-   MMFillInGenStrings(pre, mmb);
-   if (TimeNegMMKernels(imf, verb, FORCETIME, mmb, pre, beta, mflop, cflush))
+   MMFillInGenStrings(pre, mb);
+   if (TimeNegMMKernels(imf, verb, flag, mb, pre, beta, mflop, cflush))
       WriteMMFileWithPath(pre, path, file, mmb);
    return(mmb);
 }

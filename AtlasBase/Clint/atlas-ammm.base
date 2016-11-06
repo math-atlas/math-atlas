@@ -35367,13 +35367,14 @@ void PrintUsage(char *name, int ierr, char *flag)
  * of well-performing small-case kernels.
  */
 @ROUT opsrch
+#include "atlas_cache.h"
 /*
  * This search forms the backbone of ATLAS outer-product support.  It will
  * find all the kernels needed to support 3 categories of degenerate dims:
- *    opkPERF.sum : K is degenerate, M&N can be varied for performance
- *    opmkPERF.sum: M&K are degenerate, N can be varied for performance
- *    opnkPERF.sum: N&K are degenerate, M can be varied for performance
- *    opsqPERF.sum: all dims degenerate, force true square, does not cover all K
+ *    opk.sum : K is degenerate, M&N can be varied for performance
+ *    opmk.sum: M&K are degenerate, N can be varied for performance
+ *    opnk.sum: N&K are degenerate, M can be varied for performance
+ *    opsq.sum: all dims degenerate, force true square, does not cover all K
  *
  * For mn/nk, increasing the other dim will not improve performance, because
  * any intra-kernel reuse is already being achieved via inter-kernel reuse.
@@ -35389,3 +35390,236 @@ void PrintUsage(char *name, int ierr, char *flag)
  * always be set to near-square with K.  Increasing N, however, will allow
  * more reuse of A, and so will be fully searched.
  */
+void do_opk(char *fnam, int maxK)
+{
+}
+
+/* 
+ * For small sizes, want to just try all kernels because there can be
+ * unpredictable effects due to cleanup and related.  For larger problems,
+ * we'd like to restrict the number of kernels searched a bit, based on the
+ * idea that once FLOPS dominate, only raw performance should matter, and
+ * so we can take a rough size in the middle of a "region" and only retain
+ * kernels that are competitive at that size for all timings within the
+ * region.  We have several regions of interest (greatest-to-least):
+ * (1) Outer product working set fits in LLC, b <= (sqrt(1+LLC_elts/4) - 1)/2
+ * (2) B fits in LLC: b <= sqrt(LLPC_elts) -> N <= LLPC_elts/K
+ * (2) Outer produce wrk set fits in LLPC, b <= (sqrt(1+LLPC_elts/4) - 1)/2
+ * we can eliminate kernels wt inadequate performance on a certain szi
+ */
+int main(int nargs, char **args)
+{
+   unsigned long llc_elts;
+   int maxK;
+/*
+ * For outer product, K is fixed, and you can vary at most 2 dimensions.
+ * in practice, as long as M is large, you want to increase only NB so that
+ * you can reuse A the maximum number of times within a amm call.  We need
+ * to fit various combinations of A/B/C into regions (cache reuse states).
+ * To solve for NB, therefore, all KB will be searched (so we have kernels
+ * for each possible outer-product user may call with).  For a given KB, we
+ * can set MB to an arbitrary value and not change performance much (if we
+ * reduce MB, we reduce B reuse within one kernel call, but increase its reuse
+ * across all M/MB amm calls).  During the search, we can therefore fix M as
+ * some value that minimizes function call overhead for small problems.
+ * We can then tune NB for maximal performance
+ *
+ * When M and K are both restricted, but N is large, we can just essentially
+ * pick N to minimize loop overhead.
+ */
+/*
+ * Biggest outer-produce case that makes sense is: 2MN + K*(MU+M+N) == LLC_elts
+ * In this way, we should be able to resuse both Cb (C in block form) and
+ * Bb from cache, despite moving both C & A ptrs, and copying Cb->Cc.  In
+ * practice, the copy to col-major C will knock stuff out due to cache 
+ * conflicts, which may cause unpredictable affects.  If we set b=M=N=K, and
+ * assume the best case of MU=1, the above becomes:
+ *    4b^2 + b - (LLC_elts/4), or b = (sqrt(1+LLC_elts/4) - 1)/2 frm quad equ.
+ */
+   maxK = (sqrt(1 + ((LLC_ELTS / sizeof(TYPE))>>2)) - 3.0)/2.0;
+   maxK = Mmin(480, maxK);
+   return(0);
+}
+@ROUT bfisrch
+#define ATL_GETFLAGS
+#include "atlas_genparse.h"
+#include "atlas_mmtesttime.h"
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -o <resfile>: (stdout) fastest kernels found\n");
+   fprintf(stderr, "   -b[m,n,k] # b1 ... b#: specify desired blocking for"
+                   " given dim as list\n")
+   fprintf(stderr, "   -B[m,n,k] B0 BN incB: specify desired blocking for\n"
+                   "                         given dim as inclusive range\n")
+   fprintf(stderr, "   -s [f,p] [O,o,i]: specify search type:\n");
+   fprintf(stderr, "      f: fuzzy search, storage may exceed dims\n");
+   fprintf(stderr, "      p: precise search, performance may be reduced"
+                   " by dims\n");
+   fprintf(stderr, "      O: outer product including C copy\n");
+   fprintf(stderr, "      o: outer product gemm-time only\n");
+   fprintf(stderr, "      i: inner product gemm-time only\n");
+   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
+   fprintf(stderr, "   -R [restrict] : restrict kern choice\n");
+   fprintf(stderr, "      no restrictions currently supported\n");
+   exit(ierr ? ierr : -1);
+}
+
+#define FLG_FUZZY  2  /* 1st two bit pos are for verb */ 
+#define FLG_OPCPY  3  /* outer-product search including C put time */
+#define FLG_OP     4  /* if these two not set, use inner-prod search */
+#define FLG_DEGM   5  /* M dimension degenerate */
+#define FLG_DEGN   6  /* N dimension degenerate */
+#define FLG_NOKVEC 7  /* don't use k-vectorized kernels */
+#define FLG_NOMVEC 8  /* don't use m-vectorized kernels */
+#define FLG_MISMU  9  /* MB must be MU */
+#define FLG_NISNU 10  /* NB must be NU */
+char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, 
+               int **MBS, **NBS, **KBS)
+/*
+ * RETURNS: name of output file as malloced string
+ */
+{
+   char *fout=NULL;
+   int *mbs=NULL, nbs=NULL, kbs=NULL;
+   int i, verb=0, FUZZY=1, OPCPY=1, OP=0, DEGM=0, DEGN=0;
+   char pre='d';
+
+   for (i=1; i < nargs; i++)
+   {
+      int wch, *ip, **ipp, TST=0;
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'o':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        fout = args[i];
+        break;
+      case 'v':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        verb = atoi(args[i]);
+        verb = (verb > 3) ? 3 : verb;
+        break;
+      case 'B':                                 /* -B[m,n,k] B0, BN, incB */
+         TST=1;
+      case 'b':                                 /* -b[m,n,k] # b1 ... b# */
+         wch = tolower(args[i][2]);
+         if (wch == 'm')
+            *ipp = &mbs;
+         else if (wch == 'n')
+            *ipp = &nbs;
+         else if (wch == 'k')
+            *ipp = &kbs;
+         else
+         {
+            fprintf(stderr, "Expecting dim of m n or k!");
+            PrintUsage(args[0], i, args[i]);
+         }
+         if (TST)
+         {
+            int B0, BN, incB;
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            B0 = atoi(args[i]);
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            BN = atoi(args[i]);
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            incB = atoi(args[i]);
+            ip = GF_IntRange2IntList(int N0, int NN, int incN)
+         }
+         else
+         {
+            ip = GF_GetIntList(nargs, args, i, 1);
+            i += *ip + 1;
+         }
+         if (*ipp)
+            free(*ipp);
+         *ipp = ip;
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   flag = 0;
+@whiledef flg FUZZY OPCPY OP DEGM DEGN
+   flag |= @(flg)<<FLG_@(flg);
+@endwhile
+   *FLAG = flag;
+   if (fout)
+      fout = DupString(fout);
+   *PRE = pre;
+   *MBS = mbs;
+   *NBS = nbs;
+   *KBS = kbs;
+   return(fout);
+}
+/*
+ * This search used for outer-product.  A kernel is found for each listed KB.
+ * MB can be be forced to roughly match KB, or freely chosen, in which case
+ * we will usually make it roughly match KB unless KB is small, and then
+ * we may enlarge it to help with loop overhead.
+ */
+void fzyop(char pre, int flag, char *outnm, int *KBs)
+{
+   ATL_mmnode_t *tb=NULL, *bb=NULL;  /* try and best base ptrs */
+   ATL_mmnode_t *mp;
+   int flg;  /* flag for TimeMMKernel */
+   flg = ((flag>>FLG_OPCPY)&1)<<2;
+   if (outnm)  /* if outnm exists, just time negative mflop and return */
+   {
+      ATL_mmnode_t *mb;
+      mb = TimeMMFile(pre, outnm, 0, 1, flg, 0, 0, -1);
+      if (mb)
+      {
+         KillAllMMNodes(mb);
+         return;
+      }
+   }
+
+   WriteMMFile(outnm, mb);
+   KillAllMMNodes(mb);
+}
+/*
+ * Brute-fource and ignorance search just tries every kernel for every 
+ * candidate size.  It is primarily used for small sizes where things like
+ * cleanup or doing strange things like targeting multiple operands to the L1
+ * cache can have unpredictable performance affects.
+ *
+ * BFI supports two types of searches:
+ *  fuzzy: finds kernel that performs best for given size, with non-matching
+ *         unrolling flops not counted in the flop rate.  It often requires
+ *         over-allocating for A/B/C workspace.
+ *  exact: finds kernel performs best for precise size, but bad sizes may
+ *         have terrible performance (eg., prime sizes eliminating almost
+ *         all non-generated kernels, and forcing generated kernels to use
+ *         terrible register blockings).
+ */
+int main(int nargs, char **args)
+{
+   int *MBs, *NBs, *KBs;
+   int flag;
+   char pre;
+   GetFlags(nargs, args, &pre, &flag, &MBs, &NBs, &KBs);
+   assert(flag & (1<<FLG_FUZZY)); /* currently only supporte srch type */
+   assert(!MBs && !NBs);          /* currently, unsupported */
+   return(0);
+}
