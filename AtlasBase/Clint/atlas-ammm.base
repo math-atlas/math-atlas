@@ -6801,7 +6801,7 @@ void GetFlags(int nargs, char **args, char *PRE, int *verb, int *NREG,
       *CS = GetL1CacheElts(pre);
 }
 @ROUT ammsearch uammsearch
-static INLINE void ApplyMoves2Flag
+static void ApplyMoves2Flag
 (
    ATL_mmnode_t *mmp,  /* kernel to set MMF_MV[A,B,C] flag bits */
    int mvBits          /* last 3 bits: MOVE_[CBA] */
@@ -7335,43 +7335,6 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
 }
 @endskip
 
-
-ATL_mmnode_t *GetWorkingUserCases(int verb, char pre)
-{
-   ATL_mmnode_t *mmb, *mmp;
-@ROUT ammsearch00
-   mmb = ReadMMFileWithPath(pre, "res", "AMMFRCLST.sum");
-   if (mmb)
-      return(mmb);
-@ROUT ammsearch uammsearch
-   mmb = ReadMMFileWithPath(pre, "res", "WORKING.sum");
-   if (mmb)
-      return(mmb);
-   mmb = ReadMMFileWithPath(pre, "AMMCASES", "amcases.idx");
-   if (!mmb)
-      return(mmb);
-/*
- * Eliminate those kernels that can't work for any block size
- */
-   for (mmp=mmb; mmp; mmp = mmp->next)
-   {
-      if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
-         mmp->kbmin = mmp->kbmax = mmp->mbB = mmp->nbB = mmp->kbB = mmp->ku;
-      else
-      {
-         int m = Mylcm(mmp->mu, mmp->nu);
-         m = ((60+m-1)/m)*m;
-         mmp->mbB = mmp->nbB = mmp->kbB = m;
-         if (mmp->kbmin)
-            mmp->kbB = Mmax(mmp->kbB, mmp->kbmin);
-         if (mmp->kbmax)
-            mmp->kbB = Mmin(mmp->kbB, mmp->kbmax);
-      }
-   }
-   mmb = DelBadMMKernels(pre, verb, mmb);
-   WriteMMFileWithPath(pre, "res", "WORKING.sum", mmb);
-   return(mmb);
-}
 
 @ROUT uammsearch
 ATL_mmnode_t *FindBestUserCases(int verb, char pre, int *nbs, ATL_mmnode_t *mmb)
@@ -35456,9 +35419,9 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
    fprintf(stderr, "   -o <resfile>: (stdout) fastest kernels found\n");
    fprintf(stderr, "   -b[m,n,k] # b1 ... b#: specify desired blocking for"
-                   " given dim as list\n")
+                   " given dim as list\n");
    fprintf(stderr, "   -B[m,n,k] B0 BN incB: specify desired blocking for\n"
-                   "                         given dim as inclusive range\n")
+                   "                         given dim as inclusive range\n");
    fprintf(stderr, "   -s [f,p] [O,o,i]: specify search type:\n");
    fprintf(stderr, "      f: fuzzy search, storage may exceed dims\n");
    fprintf(stderr, "      p: precise search, performance may be reduced"
@@ -35482,14 +35445,14 @@ void PrintUsage(char *name, int ierr, char *flag)
 #define FLG_MISMU  9  /* MB must be MU */
 #define FLG_NISNU 10  /* NB must be NU */
 char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, 
-               int **MBS, **NBS, **KBS)
+               int **MBS, int **NBS, int **KBS)
 /*
  * RETURNS: name of output file as malloced string
  */
 {
    char *fout=NULL;
-   int *mbs=NULL, nbs=NULL, kbs=NULL;
-   int i, verb=0, FUZZY=1, OPCPY=1, OP=0, DEGM=0, DEGN=0;
+   int *mbs=NULL, *nbs=NULL, *kbs=NULL;
+   int i, flag, verb=0, FUZZY=1, OPCPY=1, OP=0, DEGM=0, DEGN=0;
    char pre='d';
 
    for (i=1; i < nargs; i++)
@@ -35522,11 +35485,11 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG,
       case 'b':                                 /* -b[m,n,k] # b1 ... b# */
          wch = tolower(args[i][2]);
          if (wch == 'm')
-            *ipp = &mbs;
+            ipp = &mbs;
          else if (wch == 'n')
-            *ipp = &nbs;
+            ipp = &nbs;
          else if (wch == 'k')
-            *ipp = &kbs;
+            ipp = &kbs;
          else
          {
             fprintf(stderr, "Expecting dim of m n or k!");
@@ -35544,7 +35507,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG,
             if (++i >= nargs)
                PrintUsage(args[0], i-1, NULL);
             incB = atoi(args[i]);
-            ip = GF_IntRange2IntList(int N0, int NN, int incN)
+            ip = GF_IntRange2IntList(B0, BN, incB);
          }
          else
          {
@@ -35582,7 +35545,11 @@ void fzyop(char pre, int flag, char *outnm, int *KBs)
 {
    ATL_mmnode_t *tb=NULL, *bb=NULL;  /* try and best base ptrs */
    ATL_mmnode_t *mp;
-   int flg;  /* flag for TimeMMKernel */
+   const int verb = flag&3;
+   int i;  
+   const unsigned int nKB=(*KBs);
+   unsigned int maxKB, maxD, flg;  /* flag for TimeMMKernel */
+
    flg = ((flag>>FLG_OPCPY)&1)<<2;
    if (outnm)  /* if outnm exists, just time negative mflop and return */
    {
@@ -35594,9 +35561,45 @@ void fzyop(char pre, int flag, char *outnm, int *KBs)
          return;
       }
    }
+   KBs++;
+   for (maxKB=i=0; i < nKB; i++)
+      maxKB = (maxKB >= KBs[i]) ? maxKB:KBs[i];
+   maxD = Mmax(maxKB, 120);
 
-   WriteMMFile(outnm, mb);
-   KillAllMMNodes(mb);
+   tb = GetWorkingUserCases(verb, pre);
+/*
+ * Our normal list is all user kerns + best generated kerns.  We may add
+ * special generated kerns later.
+ */
+   mp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   tb = ATL_JoinMMQs(tb, mp);
+   for (mp=tb; mp; mp = mp->next)
+      mp->flag = (mp->flag & ~MMF_MVSET)|((1<<MMF_MVA)|(1<<MMF_MVC));
+   printf("SEARCHING FOR BEST KERNEL AMONGST %u KERNELS AND %u KBs:\n",
+          ATL_CountNumberOfMMNodes(tb), nKB);
+   for (i=0; i < nKB; i++)
+   {
+      const int kb=KBs[i];
+      double mf, mfB;
+
+      printf("   SEARCHINGS KERNS FOR KB=%u\n", kb);
+      mp = bestNearSquare(pre, verb, tb, kb, flg, 0);
+      assert(mp);  /* for now, later gen a case */
+      mf = mp->mflop[0];
+      printf("   BEST KERN KB=%u: ID=%d '%s' mf=%.2f\n", kb, mp->ID, 
+             GetMMLabelName(pre, mp), mf);
+      printf("   TUNING NB FOR BEST KERN, PRESENT NB=%d:\n", mp->nbB);
+      mp->nbB = MMVaryDim(verb, pre, flg, 0, maxD, 0, mp);
+      mp->mflop[0] = mfB = mp->mflop[1];
+      printf("   NB=%d GIVES SPEEDUP: %.2f\n", mp->nbB, mfB/mf);
+      mp->next = bb;
+      bb = mp;
+   }
+   printf("DONE.\n\n");
+
+   GetMMLabelName(pre, NULL);
+   WriteMMFile(outnm, bb);
+   KillAllMMNodes(bb);
 }
 /*
  * Brute-fource and ignorance search just tries every kernel for every 
@@ -35615,11 +35618,24 @@ void fzyop(char pre, int flag, char *outnm, int *KBs)
  */
 int main(int nargs, char **args)
 {
+   char *fnout;
    int *MBs, *NBs, *KBs;
    int flag;
    char pre;
-   GetFlags(nargs, args, &pre, &flag, &MBs, &NBs, &KBs);
+
+   fnout = GetFlags(nargs, args, &pre, &flag, &MBs, &NBs, &KBs);
    assert(flag & (1<<FLG_FUZZY)); /* currently only supporte srch type */
    assert(!MBs && !NBs);          /* currently, unsupported */
+   assert(KBs);
+
+   fzyop(pre, flag, fnout, KBs);
+
+   free(fnout);
+   if (MBs)
+      free(MBs);
+   if (NBs)
+      free(NBs);
+   if (KBs)
+      free(KBs);
    return(0);
 }

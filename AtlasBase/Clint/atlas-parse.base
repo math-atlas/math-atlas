@@ -3170,6 +3170,39 @@ static char *GetMMKernName(char pre, char *nm, ATL_mmnode_t *mp)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+char *GetMMLabelName(char pre, ATL_mmnode_t *mp)
+/*
+ * This func used to get a decent filename during search for printing.  A given search
+ * doesn't have to worry about malloc/dealloc, can just call wt NULL when done
+ */
+{
+   static char *nm=NULL;
+   static int L=0;
+   int nL;
+   if (!mp)
+   {
+      free(nm);
+      nm = NULL;
+      L = 0;
+      return(NULL);
+   }
+   if (mp->ID && mp->rout)
+      return(mp->rout);
+   nL = MMNamelen(pre, "amm", mp, mp->kbB);
+   if (nL > L)
+   {
+      free(nm);
+      nm = GetMMKernName(pre, "amm", mp);
+   }
+   else
+   {
+      nL = SprintMMName(nm, pre, "amm", mp, mp->kbB);
+      assert(nL <= L);
+   }
+   return(nm);
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
 /*
  * Get a string of form ATL_<pre><nm>suff, where suff encodes all info
@@ -4832,6 +4865,8 @@ static void FillIn@up@(rt)ExtractGenStrings(char pre, ATL_@(ru)node_t *kb)
 @ROUT atlas_r1testtime.h atlas_r2testtime.h atlas_mvtesttime.h
 #endif  /* end guard around atlas_@(rt)testtime.h */
 @ROUT atlas_mmtesttime.h
+#define ATL_WANT_ILCM 1
+#include "atlas_iopt.h"
 #ifndef Mmax
    #define Mmax(x_, y_) ( ((x_) >= (y_)) ? (x_):(y_) )
 #endif
@@ -5456,7 +5491,42 @@ static ATL_mmnode_t *DelBadMMKernels(char pre, int verb, ATL_mmnode_t *bp)
    printf("DONE BASIC KERNEL TESTS.\n\n");
    return(bp);
 }
-
+ATL_mmnode_t *GetWorkingUserCases(int verb, char pre)
+/*
+ * Reads/writes <pre>WORKING.sum, list of kernels that work on this machine.
+ * RETURNS: all kernels that pass sanity check on this architecture
+ */
+{
+   ATL_mmnode_t *mmb, *mmp;
+   mmb = ReadMMFileWithPath(pre, "res", "WORKING.sum");
+   if (mmb)
+      return(mmb);
+   mmb = ReadMMFileWithPath(pre, "AMMCASES", "amcases.idx");
+   if (!mmb)
+      return(mmb);
+/*
+ * Eliminate those kernels that can't work for any block size
+ */
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
+         mmp->kbmin = mmp->kbmax = mmp->mbB = mmp->nbB = mmp->kbB = mmp->ku;
+      else
+      {
+         int m;
+         m = ATL_iLCM(mmp->mu, mmp->nu);
+         m = ((60+m-1)/m)*m;
+         mmp->mbB = mmp->nbB = mmp->kbB = m;
+         if (mmp->kbmin)
+            mmp->kbB = Mmax(mmp->kbB, mmp->kbmin);
+         if (mmp->kbmax)
+            mmp->kbB = Mmin(mmp->kbB, mmp->kbmax);
+      }
+   }
+   mmb = DelBadMMKernels(pre, verb, mmb);
+   WriteMMFileWithPath(pre, "res", "WORKING.sum", mmb);
+   return(mmb);
+}
 @beginskip
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -5913,8 +5983,8 @@ double TimeMMKernel
    char fnam[128], ln[4096];  /* security from 1991 */
    const char *LO = FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "IJK": "JIK";
    const int vl=mmp->vlen;
-   const int ku=mmp->ku;
-   const int KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+vl-1)/vl)*vl;
+   const int mu=mmp->mu, nu=mmp->nu, ku=mmp->ku;
+   int MB, NB, KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+vl-1)/vl)*vl;
    const int FORCETIME = flag&1, SERIAL=flag&2, PUTC=flag&4;
    int KU=mmp->ku;
    int DOTIME=1;
@@ -5922,6 +5992,23 @@ double TimeMMKernel
    int i, j;
    char ch;
    double *dp;
+   double mfmul;
+/*
+ * This routine can time any kernel legal from usage rules, so mb,nb,kb may
+ * not be multiples of the unrolling factors, so choose nearest MB,NB,KB,
+ * and then compute the percentage of useless flops. mfmul can just be multiplied
+ * by the return value to compute the useful flop rate.
+ */
+   MB = ((mb+mu-1)/mu)*mu;
+   NB = ((nb+nu-1)/nu)*nu;
+   KB = ((kb+ku-1)/ku)*ku;
+   if (FLAG_IS_SET(mmp->flag,MMF_KVEC) && vl > ku)
+      KB = ((kb+vl-1)/vl)*vl;
+   mfmul = kb;
+   mfmul = mfmul / KB;  /* ratio of useful to useless flops in K loop */
+   mfmul *= ((double)mb)*nb / (((double)MB)*NB);
+   if (mmp->blask >= ATL_KGECPFA && mmp->blask <= ATL_KSKCP2C)
+      mfmul = 1.0;  /* don't use mfmul for copy routines */
 /*
  * If it's a emit_mm generated file with a missing or bad genstring, make it
  */
@@ -5971,7 +6058,7 @@ double TimeMMKernel
 
       sprintf(fnam, 
       "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
-              pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, KU, 
+              pre, mmp->ID, MB, NB, KB, mmp->mu, mmp->nu, KU, 
               mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
       switch(mmp->blask)
       {
@@ -6077,7 +6164,7 @@ double TimeMMKernel
       else
       {
          i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
-                     pre, nm, mb, nb, KB);
+                     pre, nm, MB, NB, KB);
          if (mmp->genstr)
             i += sprintf(ln+i, " mmrout=%s", mmp->rout);
          else
@@ -6159,14 +6246,7 @@ double TimeMMKernel
       sprintf(ln, "rm %s\n", mmp->rout);
       i = system(ln);  /* return value unused, just to shut gcc up */
    }
-   if (kb != KB)
-   {
-      double mf;
-      mf = *((double*)ReadResultsFile(RESACT, 0, fnam));
-      mf = (mf / KB)*kb;
-      return(mf);
-   }
-   return(*((double*)ReadResultsFile(RESACT, 0, fnam)));
+   return(mfmul*(*((double*)ReadResultsFile(RESACT, 0, fnam))));
    #undef RESACT
 }  /* end TimeMMKernel */
 
@@ -6412,6 +6492,122 @@ int MMTimeAllVecGen
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+int kernWorksThisCaseK(ATL_mmnode_t *mp, int kb)
+/*
+ * RETURNS: KB if mp can be used according to standard rules, else 0.
+ */
+{
+   const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku, vlen=mp->vlen;
+   unsigned int kgap=4, KB;
+
+   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      kgap = Mmax(kgap, mp->vlen);
+
+   if (mp->kbmin && kb < mp->kbmin)
+      return(0);
+   if (mp->kbmax && kb > mp->kbmax )
+      return(0);
+   KB = ((kb+ku-1)/ku)*ku;
+   if (KB-kb > kgap)
+      return(0);
+   return(KB);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmnode_t *bestNearSquare(char pre, int verb, ATL_mmnode_t *tb, 
+                             int kb, int tmflag, int beta)
+/*
+ * Tries all mm in tb (try base), at near-square sizes around kb.
+ * RETURNS: clone of best kernel's MMNODE
+ */
+{
+   ATL_mmnode_t *mp, *mpB=NULL;
+   double mfB=0.0;
+   int MU=kb, NU=kb;
+/*
+ * Despite name, will use M/N B at least the size of largest unrolling, otherwise large
+ * unrollings get huge MFLOP advantage in head-to-head timings for small problems.
+ */
+   for (mp=tb; mp; mp = mp->next)
+   {
+      MU = Mmax(mp->mu, MU);
+      NU = Mmax(mp->nu, NU);
+   }
+   for (mp=tb; mp; mp = mp->next)
+   {
+      double mf;
+      const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
+      int MB, NB, KB;
+      char *nm;
+
+      if (!kernWorksThisCaseK(mp, kb))  /* don't try illegal kerns */
+         continue;
+      MB = ((MU+mu-1)/mu)*mu;
+      NB = ((NU+nu-1)/nu)*nu;
+      KB = ((kb+ku-1)/ku)*ku;
+      mf = TimeMMKernel(verb, tmflag, mp, pre, MB, NB, kb, beta, 0, -1);
+      printf("      ID=%d '%s': B=(%d,%d,%d) mf=%.2f\n", mp->ID, 
+             GetMMLabelName(pre, mp), MB, NB, KB, mf);
+      if (mf > mfB)
+      {
+         mfB = mf;
+         mpB = mp;
+      }
+   }
+   if (mpB)
+   {
+      const unsigned int mu=mpB->mu, nu=mpB->nu, ku=mpB->ku;
+      mpB = CloneMMNode(mpB);
+      mpB->kbB = kb;
+      mpB->mbB = ((MU+mu-1)/mu)*mu;
+      mpB->nbB = ((NU+nu-1)/nu)*nu;
+      mpB->mflop[0] = mfB;
+   }
+   GetMMLabelName(pre, NULL);
+   return(mpB);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta, 
+                ATL_mmnode_t *mp)
+/*
+ * Tries improving performance by increasing a M or N dimension up to MD.
+ * UPDATES: mflop[0] with time ([0] not overwritten in case needed).
+ * RETURNS: best blocking for dimension.
+ */
+{
+   int mb = mp->mbB, nb=mp->nbB, kb=mp->kbB;
+   int U=(MDIM)?mp->mu:mp->nu, dB, d;
+   double mfB=0.0;
+   if (U == 3)
+      U = 6;
+   else if (U < 4)
+      U = 4;
+   dB = U;
+   for (d=U; d <= MD; d += U)
+   {
+      double mf;
+      if (MDIM)
+         mb = d;
+      else
+         nb = d;
+      mf = TimeMMKernel(verb, tflag, mp, pre, mb, nb, kb, beta, 0, -1);
+      printf("      ID=%d '%s': B=(%d,%d,%d) mf=%.2f\n", mp->ID, 
+             GetMMLabelName(pre, mp), mb, nb, kb, mf);
+      if (mf > mfB)
+      {
+         mfB = mf;
+         dB = d;
+      }
+   }
+   mp->mflop[1] = mfB;
+   return(dB);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 int MMKernCanHandleCase(ATL_mmnode_t *mp, int mb, int nb, int kb)
 /* 
  * RETURNS: 0 if mp cannot handle GEMM of size mbxnbxkb
@@ -6643,7 +6839,7 @@ static ATL_mmnode_t *TimeMMFileWithPath
    char *file, 
    int imf,                    /* index of mflop array to check/set */
    int verb,                   /* 0: no output, 1 min output, 2: full output */
-   int FORCETIME,              /* 1: ignore any prior output file */
+   int flag,                  
    int beta,                   /* beta to time */
    int mflop,                  /* >0: force mflop MFLOPs in each time interv */
    int cflush                  /* >0: size of cache flush, else ignored */
@@ -6657,8 +6853,8 @@ static ATL_mmnode_t *TimeMMFileWithPath
       return(NULL);
    MMFillInGenStrings(pre, mb);
    if (TimeNegMMKernels(imf, verb, flag, mb, pre, beta, mflop, cflush))
-      WriteMMFileWithPath(pre, path, file, mmb);
-   return(mmb);
+      WriteMMFileWithPath(pre, path, file, mb);
+   return(mb);
 }
 
 @iexp ip @(ip) 1 +
