@@ -6076,13 +6076,13 @@ double TimeMMKernel
          break;
       case ATL_KTRSM:
          fnam[5] = 't';
-         fnam[6] = 'r';
-         fnam[7] = 's';
+         fnam[6] = 's';
+         fnam[7] = 'm';
          fnam[8] = 'm';
          break;
       case ATL_KTRMM:
          fnam[5] = 't';
-         fnam[6] = 'r';
+         fnam[6] = 'm';
          fnam[7] = 'm';
          fnam[8] = 'm';
          break;
@@ -6110,7 +6110,15 @@ double TimeMMKernel
          fnam[7] = 'F';
          fnam[8] = 'C';
          break;
-      default: ;
+      default:; 
+      }
+      if (PUTC)  /* need a diff name if we incl cost of copy */
+      {
+         if (fnam[5] != 'c' || fnam[6] != 'p')
+         {
+            fnam[7]='c';
+            fnam[8]='p';
+         }
       }
    }
 /* 
@@ -6604,6 +6612,88 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
    }
    mp->mflop[1] = mfB;
    return(dB);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
+/*
+ * Assume U=LCM(MU,NU), this search startes at MB=NB=U, and then tries increasing
+ * M and N, and picks whichever provides the greatest speedup.  It continues
+ * expanding MB,NB in this way until we stop getting performance improvements
+ * from the expansion for at least two consecutive searches in both directions.
+ * Once we have stopped expanding each by U, consider all MU,NU < U as well.
+ * KB is not tuned: all timings use KB=mp->kbB.
+ * RETURNS: mflop for best MB,NB, which is given in mp->mbB, mp->nbB.
+ */
+{
+   const unsigned int mu=mp->mu, nu=mp->nu;
+   unsigned int U;
+   int kb=mp->kbB, mbB, nbB, mb, nb;
+   int FASTER2;
+   double mfB;
+
+   mb = nb = mbB = nbB = U = ATL_iLCM(mu, nu);
+   mfB = TimeMMKernel(verb, tflag, mp, pre, mbB, nbB, kb, beta, 0, -1);
+   printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, 
+          GetMMLabelName(pre, mp), mbB, nbB, kb, mfB);
+
+   do      /* loop to check that getting bigger loses twice in a row */
+   {
+      int FASTER1=0;
+      do   /* loop to check that best of M/N expansion improved performance */
+      {
+         double mfM, mfN, mf=0.0;
+         int mbN=mb+U, nbN=nb+U;
+
+         mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
+         printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mb, nbN, kb, mfN);
+         mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kb, beta, 0, -1);
+         printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f", mp->ID, mbN, nb, kb, mfM);
+
+         FASTER1 = 0;
+         if (mfN >= mfM)
+         {
+            mf = mfN;
+            nb = nbN;
+            if (mfN > mfB)
+            {
+               printf(" --> INC NB TO %u!\n", nbN);
+               nbB = nbN;
+               mfB = mfN;
+               FASTER1 = 1;
+            }
+         }
+         else
+         {
+            mf = mfM;
+            mb = mbN;
+            if (mfM >= mfB)
+            {
+               printf(" --> INC MB TO %u!\n", mbN);
+               mbB = mbN;
+               mfB = mfM;
+               FASTER1 = 1;
+            }
+         }
+         if (!FASTER1)
+         {
+            FASTER1 = (mf*1.03 > mfB);
+            printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
+         }
+      }
+      while (FASTER1);
+/*
+ *    Now we try another step in both dir before giving up expanding by U
+ *    Add this code once we debug first loop.
+ */
+   }
+   while (FASTER2);
+
+   mp->mbB = mbB;
+   mp->nbB = nbB;
+   mp->mflop[0] = mfB;
+   return(mfB);
 }
 
 @iexp ip @(ip) 1 +
