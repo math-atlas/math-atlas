@@ -41184,6 +41184,8 @@ int main(int nargs, char **args)
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#define KSH 10 /* kilo-byte (1024) shift */
+#define MSH 20 /* mega-byte (104857) shift */
 
 #define do_cpuid(eax_, ebx_, ecx_, edx_)  __asm__("cpuid" \
            :"=a"(eax_), "=b"(ebx_), "=c"(ecx_), "=d"(edx_) \
@@ -41422,6 +41424,142 @@ uint cacheInfo_amdD(uint lvl, uint *NSET, uint *NWAY, uint *INCL,
            :"=a"(o1_), "=b"(o2_), "=c"(o3_), "=d"(o4_) \
            :"a"(0x00000004), "c"(lvl_) \
            : )
+int tlbLookup(unsigned char ch, int *N, long *SZ)
+{
+   unsigned lv=0;  /* 0 means not about TLB, else lvl of data TLB described */
+   switch(ch)
+   {
+   case 0x3:
+      *N = 64;
+      *SZ = 4<<KSH;
+      return(1);
+   case 0x4:
+      *N = 8;
+      *SZ = 4<<MSH;
+      return(1);
+   case 0x5:
+      *N = 32;
+      *SZ = 4<<MSH;
+      return(2);
+   case 0x56:
+      *N=16;
+      *SZ = 4<<MSH;
+      return(1);
+   case 0x57:
+   case 0x59:
+      *N=16;
+      *SZ = 4<<KSH;
+      return(1);
+   case 0x5A:
+      *N=32;
+      *SZ = 4<<MSH;
+      return(1);
+   case 0x5B:
+      *N=64;
+      *SZ = 4<<MSH;
+      return(1);
+   case 0x5C:
+      *N=128;
+      *SZ = 4<<MSH;
+      return(1);
+   case 0x5D:
+      *N=256;
+      *SZ = 4<<MSH;
+      return(1);
+   case 0x63:
+      *N=32+4;
+      *SZ = 4<<MSH;
+      return(1);
+   case 0x64:
+      *N=512;
+      *SZ = 4<<KSH;
+      return(1);
+   case 0xa0:
+      *N=32;
+      *SZ = 4<<KSH;
+      return(1);
+   case 0xb3:
+      *N=128;
+      *SZ = 4<<KSH;
+      return(1);
+   case 0xb4:
+      *N=256;
+      *SZ = 4<<KSH;
+      return(2);
+   case 0xba:
+      *N=64;
+      *SZ = 4<<KSH;
+      return(2);
+   case 0xc0:
+      *N=8;
+      *SZ = 4<<MSH;
+      return(1);
+   case 0xc1:
+      *N=1024;
+      *SZ = 2<<MSH;
+      return(-2);  /* shared L2 TLB */
+   case 0xc2:
+      *N=16;
+      *SZ = 2<<MSH;
+      return(0);
+   case 0xc3:
+      *N=1536+16;
+      *SZ = 2<<MSH;
+      return(-2);  /* shared L2 TLB */
+   case 0xc4:
+      *N=32;
+      *SZ = 2<<MSH;
+      return(1);
+   case 0xca:
+      *N=512;
+      *SZ = 4<<KSH;
+      return(-3);  /* shared L3 TLB */
+   default:
+      return(0);
+   }
+   return(0);
+}
+uint tlbInfo_int(uint *NPRV, uint **NTLBs)
+/* 
+ * *NPRIV: number of private levels: *NPRIV <= return
+ * *NTLB : ptr to array of TLB entry counts for all levels
+ * RETURNS: ntlb levels, and thus number of entries in *NTLB
+ */
+{
+   unsigned int i=0, nprv=0, nlvl=0;
+   static int Ns[3] = {0,0,0};
+   unsigned int regs[4];
+   unsigned char *byts=(unsigned char*)regs;
+
+   do
+   {
+      unsigned int k;
+
+      regs[0] = 2;
+      do_cpuid(regs[0], regs[1], regs[2], regs[3]);
+      for (k=1; k < 16; k++)
+      {
+         int lv, ntlb;
+         long pgsz;   /* value unused for now */
+         lv = tlbLookup(byts[k], &ntlb, &pgsz); 
+         if (!lv)
+            continue;
+         if (lv > 0)
+            nprv = (lv > nprv) ? lv:nprv;
+         else
+            lv = -lv;
+         assert(lv < 4);
+         nlvl = (lv > nlvl) ? lv:nlvl;
+         Ns[lv-1] += ntlb;
+      }
+   }
+   while (++i < byts[0]);
+
+   *NTLBs = Ns;
+   *NPRV = nprv;
+   return(nlvl);
+}
+
 uint cacheInfo(uint lvl, uint *NSET, uint *NWAY, uint *INCL, 
                uint *NTHR, uint *NCOR)
 /*
@@ -41643,6 +41781,21 @@ int main(int nargs, char **args)
       fprintf(fp, "#endif\n\n");
    }
    fprintf(fp, "#define ATL_SAFELS %u\n", safeLS);
+   {
+      unsigned int *tlbs, ntlbL, nprv, ttlb=0, tptlb=0;
+
+      ntlbL = tlbInfo_int(&nprv, &tlbs);
+      fprintf(fp, "\nTLB_PLVLS %u\n", nprv);
+      fprintf(fp, "TLB_LVLS %u\n", ntlbL);
+      for (i=0; i < ntlbL; i++)
+      {
+         fprintf(fp, "NTLB%u %u\n", i, tlbs[i]);
+         tptlb += (i < nprv) ? tlbs[i] : 0;
+         ttlb += tlbs[i];
+      }
+      fprintf(fp, "TOTPTLB %u\n", tptlb);
+      fprintf(fp, "TOTTLB %u\n", ttlb);
+   }
 
    fprintf(fp, "\n#endif /* done multiple inclusion guard */\n");
    fclose(fp);

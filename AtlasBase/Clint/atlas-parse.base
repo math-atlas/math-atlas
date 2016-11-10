@@ -6616,43 +6616,55 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
+double MMExpandMNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
 /*
- * Assume U=LCM(MU,NU), this search startes at MB=NB=U, and then tries increasing
- * M and N, and picks whichever provides the greatest speedup.  It continues
- * expanding MB,NB in this way until we stop getting performance improvements
- * from the expansion for at least two consecutive searches in both directions.
+ * Assume U=LCM(MU,NU), this search startes at MB=NB=U, and then tries
+ * increasing M and N, and picks whichever provides the greatest speedup.  
+ * Continues expanding MB,NB in this way until performance drops by around 3%.
  * Once we have stopped expanding each by U, consider all MU,NU < U as well.
  * KB is not tuned: all timings use KB=mp->kbB.
  * RETURNS: mflop for best MB,NB, which is given in mp->mbB, mp->nbB.
  */
 {
-   const unsigned int mu=mp->mu, nu=mp->nu;
-   unsigned int U;
-   int kb=mp->kbB, mbB, nbB, mb, nb;
-   int FASTER2;
+   const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
+   unsigned int MU, NU, KU;
+   int mbB, nbB, kbB, mb, nb, kb;
+   int FASTER=0;
    double mfB;
 
-   mb = nb = mbB = nbB = U = ATL_iLCM(mu, nu);
+   NU = ATL_iLCM(mu, nu);
+   NU = ATL_iLCM(NU, ku);
+   kb = mb = nb = kbB = mbB = nbB = MU = KU = NU;
    mfB = TimeMMKernel(verb, tflag, mp, pre, mbB, nbB, kb, beta, 0, -1);
-   printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, 
-          GetMMLabelName(pre, mp), mbB, nbB, kb, mfB);
+   printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mbB, nbB, kbB, mfB);
 
-   do      /* loop to check that getting bigger loses twice in a row */
-   {
-      int FASTER1=0;
+   AGAIN:
       do   /* loop to check that best of M/N expansion improved performance */
       {
-         double mfM, mfN, mf=0.0;
-         int mbN=mb+U, nbN=nb+U;
+         double mfM, mfN, mfK, mf=0.0;
+         int mbN=mb+MU, nbN=nb+NU, kbN=kb+KU;
 
+         mfK = TimeMMKernel(verb, tflag, mp, pre, mb, nb, kbN, beta, 0, -1);
+         printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nb,kbN,mfK);
          mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
-         printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mb, nbN, kb, mfN);
+         printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kb, mfN);
          mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kb, beta, 0, -1);
-         printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f", mp->ID, mbN, nb, kb, mfM);
+         printf("      ID=%d : B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kb, mfM);
 
-         FASTER1 = 0;
-         if (mfN >= mfM)
+         FASTER = 0;
+         if (mfK >= mfM && mfK >= mfN)
+         {
+            mf = mfK;
+            kb = kbN;
+            if (mfK > mfB)
+            {
+               printf(" --> INC KB TO %u!\n", kbN);
+               kbB = kbN;
+               mfB = mfK;
+               FASTER = 1;
+            }
+         }
+         else if (mfN >= mfM)
          {
             mf = mfN;
             nb = nbN;
@@ -6661,7 +6673,7 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
                mfB = mfN;
-               FASTER1 = 1;
+               FASTER = 1;
             }
          }
          else
@@ -6673,22 +6685,109 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
                mfB = mfM;
-               FASTER1 = 1;
+               FASTER = 1;
             }
          }
-         if (!FASTER1)
+         if (!FASTER)
          {
-            FASTER1 = (mf*1.03 > mfB);
+            FASTER = (mf*1.03 > mfB);
             printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
          }
       }
-      while (FASTER1);
-/*
- *    Now we try another step in both dir before giving up expanding by U
- *    Add this code once we debug first loop.
- */
+      while (FASTER);
+   if (MU != mu || NU != nu || KU != ku)
+   {
+      printf("\n");
+      mb = mbB;
+      nb = nbB;
+      kb = kbB;
+      MU = mu;
+      NU = nu;
+      KU = ku;
+      goto AGAIN;
    }
-   while (FASTER2);
+
+   mp->mbB = mbB;
+   mp->nbB = nbB;
+   mp->kbB = kbB;
+   mp->mflop[0] = mfB;
+   return(mfB);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
+/*
+ * Assume U=LCM(MU,NU), this search startes at MB=NB=U, and then tries
+ * increasing M and N, and picks whichever provides the greatest speedup.  
+ * Continues expanding MB,NB in this way until performance drops by around 3%.
+ * Once we have stopped expanding each by U, consider all MU,NU < U as well.
+ * KB is not tuned: all timings use KB=mp->kbB.
+ * RETURNS: mflop for best MB,NB, which is given in mp->mbB, mp->nbB.
+ */
+{
+   const unsigned int mu=mp->mu, nu=mp->nu;
+   unsigned int MU, NU;;
+   int kb=mp->kbB, mbB, nbB, mb, nb;
+   int FASTER=0;
+   double mfB;
+
+   mb = nb = mbB = nbB = MU = NU = ATL_iLCM(mu, nu);
+   mfB = TimeMMKernel(verb, tflag, mp, pre, mbB, nbB, kb, beta, 0, -1);
+   printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mbB, nbB, kb, mfB);
+
+   AGAIN:
+      do   /* loop to check that best of M/N expansion improved performance */
+      {
+         double mfM, mfN, mf=0.0;
+         int mbN=mb+MU, nbN=nb+NU;
+
+         mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
+         printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kb,mfN);
+         mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kb, beta, 0, -1);
+         printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kb,mfM);
+
+         FASTER = 0;
+         if (mfN >= mfM)
+         {
+            mf = mfN;
+            nb = nbN;
+            if (mfN > mfB)
+            {
+               printf(" --> INC NB TO %u!\n", nbN);
+               nbB = nbN;
+               mfB = mfN;
+               FASTER = 1;
+            }
+         }
+         else
+         {
+            mf = mfM;
+            mb = mbN;
+            if (mfM >= mfB)
+            {
+               printf(" --> INC MB TO %u!\n", mbN);
+               mbB = mbN;
+               mfB = mfM;
+               FASTER = 1;
+            }
+         }
+         if (!FASTER)
+         {
+            FASTER = (mf*1.03 > mfB);
+            printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
+         }
+      }
+      while (FASTER);
+   if (MU != mu || NU != nu)
+   {
+      printf("\n");
+      mb = mbB;
+      nb = nbB;
+      MU = mu;
+      NU = nu;
+      goto AGAIN;
+   }
 
    mp->mbB = mbB;
    mp->nbB = nbB;

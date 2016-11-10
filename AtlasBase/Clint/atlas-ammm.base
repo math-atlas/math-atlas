@@ -35446,7 +35446,7 @@ void do_bfi(char pre, int K0, int KN, int iK, char *fnam)
 void do_opk(char pre, char *fnam, int maxK)
 {
    long i, nelt=L1C_SZ>>3;
-   unsigned int b0=60;
+   unsigned int b0=60, maxMU;
    double mf;
 
 /*
@@ -35477,17 +35477,42 @@ void do_opk(char pre, char *fnam, int maxK)
  * force the search in the beginning region where perf is so unpredictable.
  */
    #else
+      b0 = 32;
    #endif
 /*
- * Up to around KB=24, try every possible K dimension, and choose the best
- * performing kernel.  All regions with KB>24 only search every 4th KB, and
- * when a size is exceeded, the next kernel up must be used with max useless
- * flops of 3*M*N.
+ * Next, we are going to try to find the best kernel to use for very
+ * large rank-K.  In general, we will want large NB & KB, and small MB,
+ * but to make it easy we'll pick MB=KB=NB=b, and use this block factor
+ * rule particular kernels in or out of consideration.
+ *   2MN + K*(MU+M+N) - LLCelts = 0 -> 4b^2 + MU*b - LLCelts = 0
+ *   b ~= sqrt(MU^2 + 16*LLCelts)/8 - MU
  */
-
+   bN = 0.125*sqrt(maxMU*((double)maxMU) + 16.0*LLCelts) - maxMU;
 /*
+ * Next we attempt to find a decent kernel to explore large blocking factors,
+ * and to find the effective NTLB to use.  We want to bound N by the number 
+ * of private TLBs (TOTPTLB) for our large-kernel exploration, since we
+ * will be writing that many cols back to C between calls.  If we can't
+ * detect TOTPTLB, or if it is tiny, we'll use 64 for TOTPTLB to keep
+ * N from being too small to be of use.  We subtract off 4 TLB entries
+ * for pC, pA, pB, and instruction (though this is usually seperate TLB).
+ */
+   #ifdef TOTPTLB && TOTPTLB > 64
+      NB = TOTPTLB - 4;  /* leave 2 for pA,pB, 1 for inst */
+   #else
+      NB = 64 - 4;
+   #endif
 /*
- * Next region of interest is between [24,L1a], 
+ * Usual asymptotic case fits both wC/C blks + A,B and next A in LLC.
+ * Theoretically, we want to maximize both NB and KB, and want MB=Mu
+ * (since B will be reused between amm calls).  NB is also constrained
+ * by the number of TLBs, which for safety we are using private TLBs.  So:
+ *   2Mu*NB + K(2MU+NB) = LLCelts --> K = (LLCelts- 2Mu*NB) / (2Mu+NB)
+ * should be largest K for which the rank-K produces good results while
+ * not exceeding the private TLB.
+ * --> does not work because K is gigantic (2600).  Instead need a BFI
+ * srch that looks at expands all dims, in order K,N,M.
+ */
 /*
  * The first region of interest goes up to a minimum of L1 cache full of 1
  * block or 60.  In this region, we assume sharp dicontinuities in performance
@@ -35591,10 +35616,14 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "      f: fuzzy search, storage may exceed dims\n");
    fprintf(stderr, "      p: precise search, performance may be reduced"
                    " by dims\n");
-   fprintf(stderr, "   -N <fnin> <idx> <KB> <MB> <maxN>\n");
    fprintf(stderr, "      O: outer product including C copy\n");
    fprintf(stderr, "      o: outer product gemm-time only\n");
    fprintf(stderr, "      i: inner product gemm-time only\n");
+   fprintf(stderr, "   -MNK <fnin> <idx>: take kern idx frm file fnin &"
+                   " tune all dims\n");
+   fprintf(stderr, "   -MN <fnin> <idx> <KB>: take kern idx frm fnin &"
+                   " tune MB&NB\n");
+   fprintf(stderr, "   -N <fnin> <idx> <KB> <MB> <maxN>\n");
    fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    fprintf(stderr, "   -R [restrict] : restrict kern choice\n");
    fprintf(stderr, "      no restrictions currently supported\n");
@@ -35650,7 +35679,32 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG,
         verb = atoi(args[i]);
         verb = (verb > 3) ? 3 : verb;
         break;
-   fprintf(stderr, "   -N <fnin> <idx> <KB> <MB> <maxN>\n");
+      case 'M':  /* -MN fnin idx KB or -MNK fnin idx */
+         if (args[i][2] != 'N')
+            PrintUsage(args[0], i, args[i]);
+         if (args[i][3] == 'K')
+            TST=1;
+         else if (args[i][3] == '\0')
+            TST=2;
+         else
+            PrintUsage(args[0], i, args[i]);
+         if (++i >= nargs)
+             PrintUsage(args[0], i-1, NULL);
+         fout = args[i];
+         nbs = malloc(TST*sizeof(int));
+         assert(nbs);
+         for (wch=0; wch < TST; wch++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            nbs[wch] = atoi(args[i]);
+         }
+         if (TST == 1) /* for full search, put info in MBs not NBs */
+         {
+            mbs = nbs;
+            nbs = NULL;
+         }
+         break;
       case 'N':
          if (++i >= nargs)
              PrintUsage(args[0], i-1, NULL);
@@ -35732,7 +35786,7 @@ void prepOP(ATL_mmnode_t *mb)
  * This search takes a kernel mp, sets MB=MB, KB=KB, and finds the best
  * performing NB, which is restricted only by maxN
  */
-void DoSrchMN(char pre, int flag, int MB, int KB, int maxN, char *fnin, int idx)
+void DoSrchD(char pre, int flag, int KB, char *fnin, int idx)
 {
    ATL_mmnode_t *cb, *mp;
    double mf;
@@ -35749,17 +35803,22 @@ void DoSrchMN(char pre, int flag, int MB, int KB, int maxN, char *fnin, int idx)
    cb = RemoveMMNodeFromQ(cb, mp);
    KillAllMMNodes(cb);
 
-   mp->kbB = KB;
    prepOP(mp);
 
-   printf("   TUNING M/NB FOR %s, PRESENT B=(%u,%u), mf=%.2f:\n", 
-          GetMMLabelName(pre, mp), mp->mbB, mp->nbB, 
+   if (KB)
+      mp->kbB = KB;
+   printf("   TUNING B FOR %s, PRESENT B=(%u,%u,%u), mf=%.2f:\n", 
+          GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB,
           mp->mflop ? mp->mflop[0]:0.0);
    GetMMLabelName(pre, NULL);
-   mf = MMExpandMN(verb, pre, flg, 0, mp);
-   printf("   BEST M/NB=(%u,%u), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mf);
+   if (KB)
+      mf = MMExpandMN(verb, pre, flg, 0, mp);
+   else
+      mf = MMExpandMNK(verb, pre, flg, 0, mp);
+   printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mp->kbB, mf);
    PrintMMLine(stdout, mp);
-   printf("\nB=(%d,%d,%d), MFLOPS=%.2f\n", MB, KB, NB, mf);
+   printf("\nB=(%d,%d,%d), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mp->kbB, mf);
+   KillMMNode(mp);
 }
 /*
  * This search takes a kernel mp, sets MB=MB, KB=KB, and finds the best
@@ -35906,14 +35965,16 @@ int main(int nargs, char **args)
    fnout = GetFlags(nargs, args, &pre, &flag, &MBs, &NBs, &KBs);
    assert(flag & (1<<FLG_FUZZY)); /* currently only supporte srch type */
 
-   if (!KBs && NBs)
-      DoSrchMN(pre, 1<<FLG_OPCPY, NBs[2], NBs[1], NBs[3], fnout, NBs[0]);
-   else
+   if (KBs)
    {
       assert(!MBs && !NBs);          /* currently, unsupported */
       assert(KBs);
       opsrch(pre, flag, fnout, KBs);
    }
+   else if (NBs)
+      DoSrchD(pre, 1<<FLG_OPCPY, NBs[1], fnout, NBs[0]);
+   else if (MBs)
+      DoSrchD(pre, 1<<FLG_OPCPY, 0, fnout, MBs[0]);
 
    free(fnout);
    if (MBs)
