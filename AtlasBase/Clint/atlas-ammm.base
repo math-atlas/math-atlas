@@ -35608,17 +35608,24 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -o <resfile>: (stdout) fastest kernels found\n");
    fprintf(stderr, 
    "   -O : same as -o, but deletes any existing file with <resfile> name\n");
+   fprintf(stderr, "   -i <input file>: list of kernel to consider\n");
    fprintf(stderr, "   -b[m,n,k] # b1 ... b#: specify desired blocking for"
                    " given dim as list\n");
    fprintf(stderr, "   -B[m,n,k] B0 BN incB: specify desired blocking for\n"
                    "                         given dim as inclusive range\n");
-   fprintf(stderr, "   -s [f,p] [O,o,i]: specify search type:\n");
-   fprintf(stderr, "      f: fuzzy search, storage may exceed dims\n");
+   fprintf(stderr, "   -s [f,p] [O,o,i] [C,R]: specify search type:\n");
    fprintf(stderr, "      p: precise search, performance may be reduced"
                    " by dims\n");
+   fprintf(stderr, "      f: fuzzy search, storage may exceed dims\n");
    fprintf(stderr, "      O: outer product including C copy\n");
    fprintf(stderr, "      o: outer product gemm-time only\n");
    fprintf(stderr, "      i: inner product gemm-time only\n");
+   fprintf(stderr, "      C: try timing runtime-K C files as compile-time K\n");
+   fprintf(stderr, "      R: only time runtime-K as runtime\n");
+   fprintf(stderr, "   -e exclusion clauses : exclude kernels from search:\n");
+   fprintf(stderr, "      V=k,m : exclude K- or M-vectorized kernels\n");
+   fprintf(stderr, "      V=# : exclude all kerns whose vlen != #\n");
+   fprintf(stderr, "      K=C : exclude all compile-time K kernels\n");
    fprintf(stderr, "   -MNK <fnin> <idx>: take kern idx frm file fnin &"
                    " tune all dims\n");
    fprintf(stderr, "   -MN <fnin> <idx> <KB>: take kern idx frm fnin &"
@@ -35630,16 +35637,19 @@ void PrintUsage(char *name, int ierr, char *flag)
    exit(ierr ? ierr : -1);
 }
 
-#define FLG_FUZZY  2  /* 1st two bit pos are for verb */ 
-#define FLG_OPCPY  3  /* outer-product search including C put time */
-#define FLG_OP     4  /* if these two not set, use inner-prod search */
-#define FLG_DEGM   5  /* M dimension degenerate */
-#define FLG_DEGN   6  /* N dimension degenerate */
-#define FLG_NOKVEC 7  /* don't use k-vectorized kernels */
-#define FLG_NOMVEC 8  /* don't use m-vectorized kernels */
-#define FLG_MISMU  9  /* MB must be MU */
-#define FLG_NISNU 10  /* NB must be NU */
-char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, 
+#define FLG_FUZZY   2  /* 1st two bit pos are for verb */ 
+#define FLG_OPCPY   3  /* outer-product search including C put time */
+#define FLG_OP      4  /* if these two not set, use inner-prod search */
+#define FLG_NOKVEC  7  /* don't use k-vectorized kernels */
+#define FLG_NOMVEC  8  /* don't use m-vectorized kernels */
+#define FLG_NOKCOMP 9  /* don't use kernels needing compile-time K */
+#define FLG_MKCOMP 10  /* try compiling runtime-K as compile-time */
+
+#define FLG_EXPMN  30  /* do ExpandMN search on 1 kern */
+#define FLG_EXPMNK 31  /* do ExpandMNK search on 1 kern */
+
+#define ALLSRCH ( (1<<FLG_EXPMN)|(1<<FLG_EXPMNK) )
+char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
                int **MBS, int **NBS, int **KBS)
 /*
  * RETURNS: name of output file as malloced string
@@ -35650,6 +35660,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG,
    int i, flag, verb=0, FUZZY=1, OPCPY=1, OP=0, DEGM=0, DEGN=0;
    char pre='d';
 
+   *FNIN = NULL;
    for (i=1; i < nargs; i++)
    {
       int wch, *ip, **ipp, TST=0;
@@ -35672,6 +35683,11 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG,
         fout = args[i];
         if (TST)
         remove(fout);
+        break;
+      case 'i':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *FNIN = args[i];
         break;
       case 'v':
         if (++i >= nargs)
@@ -35957,12 +35973,12 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
  */
 int main(int nargs, char **args)
 {
-   char *fnout;
+   char *fnout, char *fnin;
    int *MBs, *NBs, *KBs;
    int flag;
    char pre;
 
-   fnout = GetFlags(nargs, args, &pre, &flag, &MBs, &NBs, &KBs);
+   fnout = GetFlags(nargs, args, &pre, &flag, &fnin, &MBs, &NBs, &KBs);
    assert(flag & (1<<FLG_FUZZY)); /* currently only supporte srch type */
 
    if (KBs)
