@@ -35333,17 +35333,28 @@ void PrintUsage(char *name, int ierr, char *flag)
 #include "atlas_cache.h"
 #include "atlas_genparse.h"
 #include "atlas_mmtesttime.h"
+#include <math.h>
 
-void do_bfi(char pre, int K0, int KN, int iK, char *fnam)
+void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout)
 {
-   int L;
-   L = strlen(fnam) + 27;
+   int L, i;
+   char *ln;
+   L = strlen(fout) + 31;
+   L += strlen(fin);
    L += NumDecDigits(K0);
    L += NumDecDigits(KN);
    L += NumDecDigits(iK);
-   assert(sprintf(ln, "./xbfisrch -Bk %u %u %u -o res/%c%s", K0, KN, iK, pre, 
-                  fnam) < L);
+   ln = malloc(L*sizeof(char));
+   assert(ln);
+   i = sprintf(ln, "./xbfisrch -i %s -o res/%c%s", fin, pre, fout);
+   assert(i < L);
+   if (K0 && KN && iK)
+   {
+      i += sprintf(ln+i, " -Bk %u %u %u", K0, KN, iK);
+      assert(i < L);
+   }
    assert(!system(ln));
+   free(ln);
 }
 /*
  * This search forms the backbone of ATLAS outer-product support.  It will
@@ -35442,13 +35453,33 @@ void do_bfi(char pre, int K0, int KN, int iK, char *fnam)
  * kernels will then be used to complete the kernels
  * greatest to least by KB (other dims are chosen near KB, but do not have
  * to be exactly KB; this means
- *
-void do_opk(char pre, char *fnam, int maxK)
+ */
+void do_opk(int verb, char pre, char *fnam, int maxK)
 {
    long i, nelt=L1C_SZ>>3;
    unsigned int b0=60, maxMU;
    double mf;
+   ATL_mmnode_t *mb, *mp, *tb;
 
+   tb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   assert(tb);
+/*
+ * Get best-performing kernel, and add it and a kruntime-enabled copy of it
+ * to list
+ */
+   mp = FindMaxMflopMMQ(tb, 0);
+   mb = CloneMMNode(mp);
+   if (!FLAG_IS_SET(mb->flag, MMF_KRUNTIME))
+   {
+      mp = CloneMMNode(mb);
+      mp->flag ^= 1<<MMF_KRUNTIME;
+      mb->next = mp;
+   }
+   mb = AddUniqueMMKernCompList(mb, tb);
+   KillAllMMNodes(tb);
+   mp = ATL_LastMMNode(mb);
+   mp->next = GetWorkingUserCases(verb, pre);
+   WriteMMFile("res/tmp.sum", mb);
 /*
  * If the L1 is the last level of private cache, fitting all blocks necessary
  * to generate no traffic to non-private busses beyond the forced movement
@@ -35479,6 +35510,9 @@ void do_opk(char pre, char *fnam, int maxK)
    #else
       b0 = 32;
    #endif
+   do_bfi(pre, 3, b0, 1, "res/tmp.sum", "rkAMM0.sum");
+   KillAllMMNodes(mb);
+   return;
 /*
  * Next, we are going to try to find the best kernel to use for very
  * large rank-K.  In general, we will want large NB & KB, and small MB,
@@ -35487,7 +35521,7 @@ void do_opk(char pre, char *fnam, int maxK)
  *   2MN + K*(MU+M+N) - LLCelts = 0 -> 4b^2 + MU*b - LLCelts = 0
  *   b ~= sqrt(MU^2 + 16*LLCelts)/8 - MU
  */
-   bN = 0.125*sqrt(maxMU*((double)maxMU) + 16.0*LLCelts) - maxMU;
+//   bN = 0.125*sqrt(maxMU*((double)maxMU) + 16.0*LLCelts) - maxMU;
 /*
  * Next we attempt to find a decent kernel to explore large blocking factors,
  * and to find the effective NTLB to use.  We want to bound N by the number 
@@ -35497,11 +35531,13 @@ void do_opk(char pre, char *fnam, int maxK)
  * N from being too small to be of use.  We subtract off 4 TLB entries
  * for pC, pA, pB, and instruction (though this is usually seperate TLB).
  */
+@beginskip
    #ifdef TOTPTLB && TOTPTLB > 64
       NB = TOTPTLB - 4;  /* leave 2 for pA,pB, 1 for inst */
    #else
       NB = 64 - 4;
    #endif
+@endskip
 /*
  * Usual asymptotic case fits both wC/C blks + A,B and next A in LLC.
  * Theoretically, we want to maximize both NB and KB, and want MB=Mu
@@ -35513,14 +35549,6 @@ void do_opk(char pre, char *fnam, int maxK)
  * --> does not work because K is gigantic (2600).  Instead need a BFI
  * srch that looks at expands all dims, in order K,N,M.
  */
-/*
- * The first region of interest goes up to a minimum of L1 cache full of 1
- * block or 60.  In this region, we assume sharp dicontinuities in performance
- * may be found, and so we search each size indiviually, using the bfisrch.
- */
-   if (pre == 's' || pre == 'c')
-      nelt <<= 1;
-   for (b0=60; b0*b0 > nelt; b0 -= 4);
 /*
  * The largest L1-centric block factor is keeping the kernel working set
  * in the L1.  Assuming square block factor b, this is: 
@@ -35539,10 +35567,12 @@ void do_opk(char pre, char *fnam, int maxK)
  * Applying quadratic equations give: b = (-MU + sqrt(MU*MU+4*4*LLCelts))/8
  * --> b = (-MU + sqrt(MU^2 + 16*LLCelts))/8 ~= -1 + sqrt(1+16*LLCelts))/8
  */
+@beginskip
    mf = (pre == 'c' || pre == 's') ? 0.25 : 0.5;
    mf *= LLC_SZ;
    mf = sqrt(mf+1.0)/8.0;
    bL = mf - 1;
+@endskip
 }
 
 /* 
@@ -35561,22 +35591,29 @@ void do_opk(char pre, char *fnam, int maxK)
 int main(int nargs, char **args)
 {
    unsigned long llc_elts;
-   int maxK;
+   unsigned eltsz = 8;
+   int maxK, verb=0;
+   char pre='d';
 /*
  * For outer product, K is fixed, and you can vary at most 2 dimensions.
- * in practice, as long as M is large, you want to increase only NB so that
- * you can reuse A the maximum number of times within a amm call.  We need
- * to fit various combinations of A/B/C into regions (cache reuse states).
- * To solve for NB, therefore, all KB will be searched (so we have kernels
- * for each possible outer-product user may call with).  For a given KB, we
- * can set MB to an arbitrary value and not change performance much (if we
- * reduce MB, we reduce B reuse within one kernel call, but increase its reuse
- * across all M/MB amm calls).  During the search, we can therefore fix M as
- * some value that minimizes function call overhead for small problems.
- * We can then tune NB for maximal performance
+ * in practice, wt K fixed, you mainly want to increase NB to maximize
+ * A reuse within a amm call.  Changing MB has smaller affects on performance,
+ * because if we reduce MB, we reduce B reuse within one kernel, but increase
+ * its's reuse over the M/MB amm calls that compute a colpan of C.  These
+ * timings not needed for for degenerate M, which forces you to compute a 
+ * row-panel of C instead (and thus potentially have TLB problems).
  *
- * When M and K are both restricted, but N is large, we can just essentially
- * pick N to minimize loop overhead.
+ * For this search, we break the possible block factors into several regions.
+ * Minimally, consider a small region where operands fit in the L1, and
+ * one where operands fit in the last-level of cache.  Another important
+ * region last level private cache (cache that cores don't share).  Caches
+ * that are shared between cores may be much more strongly bandwidth-limited
+ * than private caches when all cores are running at maixmal rates, and so
+ * this region may provide the best performance on some systems.
+ *
+ * In practice, since caches are often high associativity and random replacement
+ * the boundaries between regions will not be distinct, and best performance
+ * may be found when operands exceed the cache.
  */
 /*
  * Biggest outer-produce case that makes sense is: 2MN + K*(MU+M+N) == LLC_elts
@@ -35587,8 +35624,13 @@ int main(int nargs, char **args)
  * assume the best case of MU=1, the above becomes:
  *    4b^2 + b - (LLC_elts/4), or b = (sqrt(1+LLC_elts/4) - 1)/2 frm quad equ.
  */
-   maxK = (sqrt(1 + ((LLC_ELTS / sizeof(TYPE))>>2)) - 3.0)/2.0;
+   if (pre == 's')
+      eltsz = 4;
+   else if (pre == 'z')
+      eltsz = 16;
+   maxK = (sqrt(1 + ((LLC_SZ / eltsz)>>2)) - 3.0)/2.0;
    maxK = Mmin(480, maxK);
+   do_opk(verb, pre, NULL, maxK);
    return(0);
 }
 @ROUT bfisrch
@@ -35626,11 +35668,11 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "      V=k,m : exclude K- or M-vectorized kernels\n");
    fprintf(stderr, "      V=# : exclude all kerns whose vlen != #\n");
    fprintf(stderr, "      K=C : exclude all compile-time K kernels\n");
-   fprintf(stderr, "   -MNK <fnin> <idx>: take kern idx frm file fnin &"
+   fprintf(stderr, "   -MNK <idx>: take kern idx frm file fnin &"
                    " tune all dims\n");
-   fprintf(stderr, "   -MN <fnin> <idx> <KB>: take kern idx frm fnin &"
+   fprintf(stderr, "   -MN <idx> <KB>: take kern idx frm fnin &"
                    " tune MB&NB\n");
-   fprintf(stderr, "   -N <fnin> <idx> <KB> <MB> <maxN>\n");
+   fprintf(stderr, "   -N <idx> <KB> <MB> <maxN>\n");
    fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    fprintf(stderr, "   -R [restrict] : restrict kern choice\n");
    fprintf(stderr, "      no restrictions currently supported\n");
@@ -35657,7 +35699,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
 {
    char *fout=NULL;
    int *mbs=NULL, *nbs=NULL, *kbs=NULL;
-   int i, flag, verb=0, FUZZY=1, OPCPY=1, OP=0, DEGM=0, DEGN=0;
+   int i, flag, verb=0, FUZZY=1, OPCPY=1, OP=0;  
    char pre='d';
 
    *FNIN = NULL;
@@ -35695,7 +35737,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
         verb = atoi(args[i]);
         verb = (verb > 3) ? 3 : verb;
         break;
-      case 'M':  /* -MN fnin idx KB or -MNK fnin idx */
+      case 'M':  /* -MN idx KB or -MNK idx */
          if (args[i][2] != 'N')
             PrintUsage(args[0], i, args[i]);
          if (args[i][3] == 'K')
@@ -35704,9 +35746,6 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
             TST=2;
          else
             PrintUsage(args[0], i, args[i]);
-         if (++i >= nargs)
-             PrintUsage(args[0], i-1, NULL);
-         fout = args[i];
          nbs = malloc(TST*sizeof(int));
          assert(nbs);
          for (wch=0; wch < TST; wch++)
@@ -35722,9 +35761,6 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
          }
          break;
       case 'N':
-         if (++i >= nargs)
-             PrintUsage(args[0], i-1, NULL);
-         fout = args[i];
          nbs = malloc(4*sizeof(int));
          assert(nbs);
          for (wch=0; wch < 4; wch++)
@@ -35777,7 +35813,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
       }
    }
    flag = 0;
-@whiledef flg FUZZY OPCPY OP DEGM DEGN
+@whiledef flg FUZZY OPCPY OP
    flag |= @(flg)<<FLG_@(flg);
 @endwhile
    *FLAG = flag;
@@ -35799,10 +35835,11 @@ void prepOP(ATL_mmnode_t *mb)
       mp->flag = (mp->flag&(~MMF_MVSET))|((1<<MMF_MVA)|(1<<MMF_MVC));
 }
 /*
- * This search takes a kernel mp, sets MB=MB, KB=KB, and finds the best
- * performing NB, which is restricted only by maxN
+ * This search takes idx kern from fnin, and then finds the best performing
+ * dimensions.  If KB==0, all three dims are tuned, else KB is fixed, and 
+ * only MB&NB are varied.
  */
-void DoSrchD(char pre, int flag, int KB, char *fnin, int idx)
+void DoSrchD(char pre, int flag, int KB, char *fnin, int idx, char *fnout)
 {
    ATL_mmnode_t *cb, *mp;
    double mf;
@@ -35833,6 +35870,8 @@ void DoSrchD(char pre, int flag, int KB, char *fnin, int idx)
       mf = MMExpandMNK(verb, pre, flg, 0, mp);
    printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mp->kbB, mf);
    PrintMMLine(stdout, mp);
+   if (fnout)
+      WriteMMFile(fnout, mp);
    printf("\nB=(%d,%d,%d), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mp->kbB, mf);
    KillMMNode(mp);
 }
@@ -35942,10 +35981,13 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
       mf = mp->mflop[0];
       printf("   BEST KERN KB=%u: ID=%d '%s' mf=%.2f\n", kb, mp->ID, 
              GetMMLabelName(pre, mp), mf);
-      printf("   TUNING NB FOR BEST KERN, PRESENT NB=%d:\n", mp->nbB);
-      mp->nbB = MMVaryDim(verb, pre, flg, 0, maxD, 0, mp);
-      mp->mflop[0] = mfB = mp->mflop[1];
-      printf("   NB=%d GIVES SPEEDUP: %.2f\n", mp->nbB, mfB/mf);
+      printf("   TUNING M/NB FOR BEST KERN, PRESENT B=(%u,%u):\n", 
+             mp->mbB, mp->nbB);
+      mfB = MMExpandMN(verb, pre, flg, 0, mp);
+@skip      mp->nbB = MMVaryDim(verb, pre, flg, 0, maxD, 0, mp);
+@skip      mp->mflop[0] = mfB = mp->mflop[1];
+      printf("   B=(%u,%u,%u) GIVES SPEEDUP: %.2f\n", mp->mbB, mp->nbB, mp->kbB,
+             mfB/mf);
       mp->next = bb;
       bb = mp;
    }
@@ -35973,7 +36015,7 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
  */
 int main(int nargs, char **args)
 {
-   char *fnout, char *fnin;
+   char *fnin, *fnout;
    int *MBs, *NBs, *KBs;
    int flag;
    char pre;
@@ -35988,11 +36030,12 @@ int main(int nargs, char **args)
       opsrch(pre, flag, fnout, KBs);
    }
    else if (NBs)
-      DoSrchD(pre, 1<<FLG_OPCPY, NBs[1], fnout, NBs[0]);
+      DoSrchD(pre, 1<<FLG_OPCPY, NBs[1], fnin, NBs[0], fnout);
    else if (MBs)
-      DoSrchD(pre, 1<<FLG_OPCPY, 0, fnout, MBs[0]);
+      DoSrchD(pre, 1<<FLG_OPCPY, 0, fnin, MBs[0], fnout);
 
-   free(fnout);
+   if (fnout)
+      free(fnout);
    if (MBs)
       free(MBs);
    if (NBs)
