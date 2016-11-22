@@ -135,6 +135,11 @@ struct CPNode
 #define MMF_KUISKB     15  /* 1: only works for fully unrolled, constant K */
 #define MMF_NOBCAST    16  /* 1: use ld/splat to get B, rather than bcast */
 #define MMF_FKO        17  /* 1: compile using FKO, else [d,s]MC */
+/*
+ * Right now, NOBCAST overrides BREG1.  Could eventually make it so 
+ * BREG1+NOBCAST means we do splat wt 0 dep distance, but not supported now
+ */
+#define MMF_BREG1      18  /* 1: use only 1 reg for B, else use NU */
 
 #define MMF_MVSET  ( (1<<MMF_MVA) | (1<<MMF_MVB) | (1<<MMF_MVC) )
 #define MMF_MVDEF  ( (1<<MMF_MVA) | (1<<MMF_MVB) )
@@ -1809,7 +1814,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
    }
 @multidef fl 
    X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
-   KUISKB NOBCAST
+   KUISKB NOBCAST BREG1
 @endmultidef
 
 @ROUT cpread
@@ -1973,7 +1978,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    @define kwd @@
    @multidef kw
       X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
-      KUISKB NOBCAST
+      KUISKB NOBCAST BREG1
    @endmultidef
 @ROUT cpread
 @multidef kw SYRK SYMM TRMM TRSM
@@ -4023,7 +4028,7 @@ char *MMGetGenString
    char *gs, *sp;
    int len;
    int ku=mp->ku;
-   int kb;
+   int kb, bc;
 
    if (FLAG_IS_SET(mp->flag, MMF_FKO))
       return(MMGetFkoGenString(pre, mp));
@@ -4098,6 +4103,10 @@ char *MMGetGenString
    default:
       sp = "amm";
    }
+   if (FLAG_IS_SET(mp->flag, MMF_NOBCAST))
+      bc = 0;
+   else
+      bc = FLAG_IS_SET(mp->flag, MMF_BREG1) ? 2 : 1;
 
    if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
       kb = 0;
@@ -4106,7 +4115,7 @@ char *MMGetGenString
    else
       kb = mp->kbB;
    sprintf(gs, frm, sp, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, ku, kb,
-           !FLAG_IS_SET(mp->flag, MMF_NOBCAST), mp->pref, mp->pfLS);
+           bc, mp->pref, mp->pfLS);
    return(gs);
 }
 
@@ -4202,6 +4211,8 @@ ATL_mmnode_t *MMGetNodeGEN(char pre, int flag, int kb, int mu, int nu, int ku,
    mp->pfLS = pfLS;
    if (flag&1)
       mp->flag |= (1<<MMF_NOBCAST);
+   else if (flag&2)
+      mp->flag |= (1<<MMF_BREG1);
 @beginskip
 // These guys presently unused, and setting them here causes flags not to 
 // match when nodes are read in from file (type info not presently saved!)

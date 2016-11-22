@@ -24,6 +24,13 @@
    @endiif
 @endiif
 @ROUT amm
+@iexp B1R 0
+@ifdef bc
+   @iif bc = 2
+      @iexp B1R 1
+      @undef bc
+   @endiif
+@endifdef
 @beginskip
 Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
 following defines:
@@ -72,6 +79,9 @@ During tuning, think about several regions for prefetch:
 4. pref only one of nA/B to L2
 5. No prefetch of next blocks (maybe internal prefetch)
 @endskip
+@iif B1R ! 0
+   @print MU=@(mu) NU=@(nu), B1R=@(B1R)
+@endiif
 @SKIP KVEC & UNVEC can't use splat, so define bcast!
 @VEC KDIM NO
 @ifdef bc
@@ -358,10 +368,20 @@ During tuning, think about several regions for prefetch:
       @beginindent 1 @(spc)
          @iexp mo 2 @(vmu) ! 2 @(nu) ! | @(i_) 1 @(nu) - = 1 * @(mo) +
          @iif ib < 0
+            @iif i_ ! 0
    ATL_vbcast(@(d), pB+@(i_));
+            @endiif
+            @iif i_ = 0
+   ATL_vbcast(@(d), pB);
+            @endiif
          @endiif
          @iif ib > -1
+            @iif ib ! 0
    ATL_vbcast(@(d), pB+@(ib));
+             @endiif
+            @iif ib = 0
+   ATL_vbcast(@(d), pB);
+             @endiif
             @iexp ib @(ib) 1 +
          @endiif
       @endindent
@@ -413,10 +433,20 @@ ASSUMES: mu, nu, exreg
       @iexp i_ @(vl) @(i_) *
       @iexp mo 2 @(vmu) ! 2 @(nu) ! | @(i_) 1 @(nu) - = 1 * @(mo) +
       @iif ib < 0
+         @iif i_ ! 0
    ATL_vld(@(d), pB+@(i_));
+         @endiif
+         @iif i_ = 0
+   ATL_vld(@(d), pB);
+         @endiif
       @endiif
       @iif ib > -1 
+         @iif ib ! 0
    ATL_vld(@(d), pB+@(ib));
+         @endiif
+         @iif ib = 0
+   ATL_vld(@(d), pB);
+         @endiif
          @iexp ib @(ib) @(vl) +
       @endiif
    @endindent
@@ -703,7 +733,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @endiwhile
       @endiif
    @endiif
-@SKIP 2-D case assumes all but last rB already loaded
+@SKIP 2-D case assumes all but last rB already loaded unless B1R is set
    @iif DN = 0
          ATL_vld(rA0, pA);
       @iexp ia @(ia) @(vl) +
@@ -721,6 +751,9 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
       @endifdef
       @iexp j 0 0 +
       @iwhile j < @(vnu)
+         @iif B1R ! 0
+            @callproc ldB 9 rB0 @(j)
+         @endiif
          @iexp i 0 0 +
          @iwhile i < @(vmu)
          ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
@@ -738,10 +771,9 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                   @iexp ib @(ib) @(vl) +
                @endifdef
             @endiif
-            @iif i = il
-               @iif j ! jl
-            @callproc ldB 9 rB@(j) @(j)
-               @endiif
+            @skip if (i == il && j != jl && !B1R)
+            @iif @iexp @(i) @(il) = @(j) @(jl) ! & @(B1R) 0 = &
+               @callproc ldB 9 rB@(j) @(j)
             @endiif
             @callproc DoPref
             @iexp i @(i) 1 +
@@ -800,17 +832,20 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @endiwhile
       @endiif
    @endiif
-@SKIP 2-D case assumes all but last rB already loaded
+@SKIP 2-D case assumes all but last rB already loaded unless B1R true
    @iif DN = 0
       @iexp j 0 0 +
       @iwhile j < @(vnu)
+         @iif B1R ! 0
+            @callproc ldB 12 rB0 @(jl)
+         @endiif
          @iexp i 0 0 +
          @iwhile i < @(vmu)
             @iexp mo 0 0 +
             ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
-            @iif i = 0
-               @iif j = 0
-                  @iexp kk @(jl) @(bmul) *
+            @skip if ((i|j) == 0 && !B1R)
+            @iif @iexp @(i) @(j) | 0 = @(B1R) 0 = &
+               @iexp kk @(jl) @(bmul) *
                @callproc ldB 12 rB@(jl) @(jl)
                   @ifdef lb
                ATL_vld(vB@(lb), pB+@(ib)); // 02
@@ -818,17 +853,15 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                      @iexp ib @(ib) @(vl) +
                      @iexp mo 1 0 +
                   @endifdef
-               @endiif
             @endiif
             @iif j = jl
                ATL_vld(rA@(i), pA+@(ia));
                @iexp ia @(ia) @(vl) +
                @iexp mo 1 0 +
             @endiif
-            @iif j ! jl
-               @iif i = il
+            @skip if (j != jl && i == il && !B1R
+            @iif @iexp @(j) @(jl) ! @(i) @(il) = & @(B1R) 0 = &
                @callproc ldB 12 rB@(j) @(j)
-               @endiif
             @endiif
             @iif mo = 0
                @ifdef lb
@@ -900,8 +933,9 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          pB += @(incBk);
       @endiif
    @endiif
-@SKIP 2-D case assumes all but last rB already loaded
+@SKIP 2-D case assumes all but last rB already loaded unless B1R is true
    @iif DN = 0
+      @define jb @0@
          ATL_vld(rA0, pA);
       @iexp i 0 1 +
       @iwhile i < @(vmu)
@@ -909,19 +943,30 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          ATL_vld(rA@(i), pA+@(kk));
          @iexp i @(i) 1 +
       @endiwhile
+      @iif B1R = 0
          @callproc ldB 6 rB@(jl) @(jl)
+      @endiif
          pA += @(incAk);
       @ifdef lb
          @iexp jj @(vl) @(lb) *
          ATL_vld(vB@(lb), pB+@(jj)); // di0_00
          @undef lb
       @endifdef
+      @iif B1R = 0
          pB += @(incBk);
+      @endiif
       @iexp j 0 0 +
       @iwhile j < @(vnu)
+         @iif B1R ! 0
+            @callproc ldB 6 rB0 @(j)
+            @iif @iexp @(vnu) -1 + @(j) =
+               pB += @(incBk); // di0_02
+            @endiif
+         @endiif
+         @iexp jb 0 @(B1R) = @(j) *
          @iexp i 0 0 +
          @iwhile i < @(vmu)
-         ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
+         ATL_vmul(rC@(i)_@(j), rA@(i), rB@(jb));
             @iexp mo 0 0 +
             @iif j = jl
                @iexp kk @(i) @(vl) *
@@ -943,10 +988,12 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                   @iexp mo @(mo) 1 +
                @endifdef
             @endiif
-            @iif i = il
-               @iif j ! jl
-                  @iexp kk @(j) @(bmul) *
+            @iif B1R = 0
+               @iif i = il
+                  @iif j ! jl
+                     @iexp kk @(j) @(bmul) *
             @callproc ldB 9 rB@(j) @(j)
+                  @endiif
                @endiif
             @endiif
             @callproc DoPref
@@ -954,6 +1001,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @endiwhile
          @iexp j @(j) 1 +
       @endiwhile
+      @undef jb
    @endiif
 @SKIP pop our defs so caller's macros of same name aren't changed
    @undef DN
@@ -1011,14 +1059,22 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
    @endiif
 @SKIP 2-D case assumes all but last rB already loaded
    @iif DN = 0
+      @define jb @0@
       @iexp j 0 0 +
       @iwhile j < @(vnu)
+         @iexp jb 0 @(B1R) = @(j) *
+         @iif B1R ! 0
+            @callproc ldB 12 rB0 @(j)
+            @iif jl = j
+               pB += @(incBk);
+            @endiif
+         @endiif
          @iexp i 0 0 +
          @iwhile i < @(vmu)
             @iexp mo 0 0 +
-            ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
-            @iif i = 0
-               @iif j = 0
+            ATL_vmac(rC@(i)_@(j), rA@(i), rB@(jb));
+            @skip if ((i|j|B1R) == 0)
+            @iif @iexp @(i) @(j) | @(B1R) | 0 =
                   @iexp kk @(jl) @(bmul) *
                @callproc ldB 12 rB@(jl) @(jl)
                   @ifdef lb
@@ -1028,7 +1084,6 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                      @iexp mo 1 0 +
                   @endifdef
                pB += @(incBk);
-               @endiif
             @endiif
             @iif j = jl
                @iexp kk @(i) @(vl) *
@@ -1038,11 +1093,10 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                pA += @(incAk);
                @endiif
             @endiif
-            @iif j ! jl
-               @iif i = il
-                  @iexp kk @(j) @(bmul) *
+            @skip if (j != jl && i == il && !B1R)
+            @iif @iexp @(j) @(jl) ! @(i) @(il) = & @(B1R) 0 = &
+               @iexp kk @(j) @(bmul) *
                @callproc ldB 12 rB@(j) @(j)
-               @endiif
             @endiif
             @iif mo = 0
                @ifdef lb
@@ -1057,6 +1111,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @endiwhile
          @iexp j @(j) 1 +
       @endiwhile
+      @undef jb
    @endiif
 @SKIP pop our defs so caller's macros of same name aren't changed
    @undef DN
@@ -1095,9 +1150,12 @@ void ATL_USERMM
             @iexp j @(j) 1 +
          @endiwhile
       @endiif
+      @iif B1R ! 0
+         rB0
+      @endiif
       @iexp j 0 0 +
       @iwhile j < @(vnu)
-         @iif TWOD ! 0
+         @iif @iexp 0 @(TWOD) ! 0 @(B1R) = &
             rB@(j)
          @endiif
          @iexp i 0 0 +
@@ -1108,7 +1166,10 @@ void ATL_USERMM
          @iexp j @(j) 1 +
       @endiwhile
       @iif TWOD = 0
-         rA0 rB0
+         rA0 
+         @iif B1R = 0
+            rB0
+         @endiif
       @endiif
       @iif TWOD ! 0
          @iexp i 0 0 +
@@ -1195,7 +1256,7 @@ void ATL_USERMM
       pB += @(incBk);
       @endiif
    @endiif
-   @iif vmu > 1
+   @iif @iexp 1 @(vmu) > 0 @(B1R) = &
       @iexp j 0 0 +
       @iwhile j < @(jl)
          @callproc ldB 3 rB@(j) @(j)
