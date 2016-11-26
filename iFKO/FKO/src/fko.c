@@ -3935,6 +3935,7 @@ int main(int nargs, char **args)
  *===========================================================================
  */
 {
+   int ur;
    FILE *fpin, *fpout;
    char *fin;
    struct optblkq *optblks;
@@ -4389,11 +4390,12 @@ int main(int nargs, char **args)
  */
    else if (FKO_UR == -1)
    {
-      int ur;
       ur = CountUnrollFactor(optloop);
-      assert(ur);
       if(ur > 1) 
-         UnrollLoop(optloop, ur); /* with modified cleanup */ 
+         UnrollLoop(optloop, ur); /* with modified cleanup */
+      else 
+         FKO_UR = 0;
+      
    }
    /* neither vectorize nor unrolled ! */
    else if (!DO_VECT(FKO_FLAG) && !(VECT_FLAG & VECT_INTRINSIC) ) 
