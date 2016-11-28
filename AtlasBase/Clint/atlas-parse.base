@@ -3292,21 +3292,21 @@ static char *GetMMFilename(char pre, char *nm, ATL_mmnode_t *mp)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static int RemoveMMRuntimeK
+static int MMSplitByFlagAny
 (
+   const int mask,      /* if any flags in mask are present, kern->KFLG */
    ATL_mmnode_t **MMB,  /* IN/OUT: original base ptr */
-   ATL_mmnode_t **KRUN  /* IN/OUT: base ptr for all runtime-K kerns  */
+   ATL_mmnode_t **KFLG  /* IN/OUT: base ptr for all runtime-K kerns  */
 )
 /*
- * Splits original list MMB into runtime-K kerns, which are added to KRUN,
- * and compile-time fixed K loops, which remain in MMB.  This possibly
- * changes both lists, though no node is lost.
- * RETURNS: number of runtime constant nodes removed from MMB added to KRUN
+ * Splits original list MMB wt kerns wt any bit in mask set moved to KFLG,
+ * while rest emain in MMB.  This possibly changes both lists, though no node
+ * is lost.
+ * RETURNS: number of nodes removed from MMB and added to KFLG
  */
 {
-   ATL_mmnode_t *mb=(*MMB), *kb=(*KRUN), *mp;
+   ATL_mmnode_t *mb=(*MMB), *kb=(*KFLG), *mp;
    int nk=0, nxtoff, bvoff;
-   const int mask = (1<<MMF_KRUNTIME);
 
    nxtoff = GetOffset(&mb->next, mb);
    bvoff =  GetOffset(&mb->flag, mb);
@@ -3318,9 +3318,10 @@ static int RemoveMMRuntimeK
       nk++;
    }
    *MMB = mb;
-   *KRUN = kb;
+   *KFLG = kb;
    return(nk);
 }
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 static void MMApplyMoves2Flags
@@ -6565,32 +6566,40 @@ int kernWorksThisCaseK(ATL_mmnode_t *mp, int kb)
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 ATL_mmnode_t *bestNearMNK(char pre, int verb, ATL_mmnode_t *tb, 
-                          int mb, int nb, int kb, int tmflag, int beta)
+                          int mb, int nb, int kb, int tmflag, int beta, 
+                          double runbon)
 /*
  * Tries all mm in tb (try base), at sizes near mb, nb, wt close to kb.
  * RETURNS: clone of best kernel's MMNODE
  */
 {
    ATL_mmnode_t *mp, *mpB=NULL;
+   int KRUNB=0;
+   const double cmppen=1.0 / runbon;
    double mfB=0.0;
 
    for (mp=tb; mp; mp = mp->next)
    {
-      double mf;
+      double mf, mfmul;
       const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
       int MB, NB, KB;
       char *nm;
 
       if (!kernWorksThisCaseK(mp, kb))  /* don't try illegal kerns */
          continue;
+      if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME)) /* get runtime bonus */
+         mfmul = (KRUNB) ? 1.0 : runbon;
+      else
+         mfmul = (KRUNB) ? cmppen : 1.0;
       MB = (mb > mu) ? (mb/mu)*mu : mu;
       NB = (nb > nu) ? (nb/nu)*nu : nu;
       KB = ((kb+ku-1)/ku)*ku;
       mf = TimeMMKernel(verb, tmflag, mp, pre, MB, NB, kb, beta, 0, -1);
       printf("      ID=%d '%s': B=(%d,%d,%d) mf=%.2f\n", mp->ID, 
              GetMMLabelName(pre, mp), MB, NB, KB, mf);
-      if (mf > mfB)
+      if (mf*mfmul > mfB)
       {
+         KRUNB = FLAG_IS_SET(mp->flag, MMF_KRUNTIME);
          mfB = mf;
          mpB = mp;
       }
@@ -6611,15 +6620,16 @@ ATL_mmnode_t *bestNearMNK(char pre, int verb, ATL_mmnode_t *tb,
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 ATL_mmnode_t *bestNearSquare(char pre, int verb, ATL_mmnode_t *tb, 
-                             int kb, int tmflag, int beta)
+                             int kb, int tmflag, int beta, double runbon)
 /*
  * Tries all mm in tb (try base), at near-square sizes around kb.
  * RETURNS: clone of best kernel's MMNODE
  */
 {
    ATL_mmnode_t *mp, *mpB=NULL;
+   const double cmppen=1.0 / runbon;
    double mfB=0.0;
-   int MU=kb, NU=kb;
+   int MU=kb, NU=kb, KRUNB=0;
 /*
  * Despite name, will use M/N B at least the size of largest unrolling, 
  * otherwise large unrollings get huge MFLOP advantage in head-to-head 
@@ -6632,21 +6642,26 @@ ATL_mmnode_t *bestNearSquare(char pre, int verb, ATL_mmnode_t *tb,
    }
    for (mp=tb; mp; mp = mp->next)
    {
-      double mf;
+      double mf, mfmul;
       const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
       int MB, NB, KB;
       char *nm;
 
       if (!kernWorksThisCaseK(mp, kb))  /* don't try illegal kerns */
          continue;
+      if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME)) /* get runtime bonus */
+         mfmul = (KRUNB) ? 1.0 : runbon;
+      else
+         mfmul = (KRUNB) ? cmppen : 1.0;
       MB = ((MU+mu-1)/mu)*mu;
       NB = ((NU+nu-1)/nu)*nu;
       KB = ((kb+ku-1)/ku)*ku;
       mf = TimeMMKernel(verb, tmflag, mp, pre, MB, NB, kb, beta, 0, -1);
       printf("      ID=%d '%s': B=(%d,%d,%d) mf=%.2f\n", mp->ID, 
              GetMMLabelName(pre, mp), MB, NB, KB, mf);
-      if (mf > mfB)
+      if (mf*mfmul > mfB)
       {
+         KRUNB = FLAG_IS_SET(mp->flag, MMF_KRUNTIME);
          mfB = mf;
          mpB = mp;
       }

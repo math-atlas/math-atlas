@@ -35350,7 +35350,8 @@ void PrintUsage(char *name, int ierr, char *flag)
 #include "atlas_mmtesttime.h"
 #include <math.h>
 
-void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout)
+void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout, 
+            double runBon)
 {
    int L, i;
    char *ln;
@@ -35359,15 +35360,17 @@ void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout)
    L += NumDecDigits(K0);
    L += NumDecDigits(KN);
    L += NumDecDigits(iK);
+   if (runBon > 0.0)
+      L += 16;
    ln = malloc(L*sizeof(char));
    assert(ln);
    i = sprintf(ln, "./xbfisrch -i %s -o res/%c%s", fin, pre, fout);
    assert(i < L);
    if (K0 && KN && iK)
-   {
       i += sprintf(ln+i, " -Bk %u %u %u", K0, KN, iK);
-      assert(i < L);
-   }
+   if (runBon > 0.0)
+      i += sprintf(ln+i, " -r %e", runBon);
+   assert(i < L);
    assert(!system(ln));
    free(ln);
 }
@@ -35472,7 +35475,10 @@ void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout)
 void do_opk(int verb, char pre, char *fnam, int maxK)
 {
    long i, nelt=L1C_SZ>>3;
-   unsigned int b0=60, maxMU;
+   unsigned int b0=60;   /* largest kb where we brute-force search */
+   unsigned int bP;      /* largest square block fitting in LLPC */
+   unsigned int bL;      /* largest square block fitting in LLC */
+   unsigned int maxMU;
    double mf;
    ATL_mmnode_t *mb, *mp, *tb;
 
@@ -35516,7 +35522,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    #if !defined(LLPC_LVL) || LLPC_LVL == 1
       nelt=L1C_SZ;
       for (i=12; i*i <= L1elts; i += 4);
-      b0 = (i-4)>>1;
+      bP = b0 = (i-4)>>1;
 /*
  * If there is another private cache above L1, then this region is mainly
  * of interest for tiny problems, and is less critical overall, so just brute
@@ -35525,9 +35531,18 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    #else
       b0 = 32;
    #endif
-   do_bfi(pre, 3, b0, 1, "res/tmp.sum", "rkAMM0.sum");
-   KillAllMMNodes(mb);
-   return;
+   do_bfi(pre, 3, b0, 1, "res/tmp.sum", "rkAMM0.sum", -1.0);
+/*
+ * For large problems, fully unrolling K may result in i-cache thrashing,
+ * so we want to explore very large problems using loops with KU < KB.
+ * tb will contain all fully-unrolled kernels, while mb will be those with
+ * fixed KU.  We will use mb to explore large blocking factors, but will
+ * then need to time fully-unrolled to find best-performing case once rough
+ * blocking is established.
+ */
+   tb = NULL;            
+   MMSplitByFlagAny((1<<MMF_KUISKB), &mb, &tb); /* tb gets fully unrolled K */
+@beginskip
 /*
  * Next, we are going to try to find the best kernel to use for very
  * large rank-K.  In general, we will want large NB & KB, and small MB,
@@ -35546,13 +35561,11 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
  * N from being too small to be of use.  We subtract off 4 TLB entries
  * for pC, pA, pB, and instruction (though this is usually seperate TLB).
  */
-@beginskip
    #ifdef TOTPTLB && TOTPTLB > 64
       NB = TOTPTLB - 4;  /* leave 2 for pA,pB, 1 for inst */
    #else
       NB = 64 - 4;
    #endif
-@endskip
 /*
  * Usual asymptotic case fits both wC/C blks + A,B and next A in LLC.
  * Theoretically, we want to maximize both NB and KB, and want MB=Mu
@@ -35582,7 +35595,6 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
  * Applying quadratic equations give: b = (-MU + sqrt(MU*MU+4*4*LLCelts))/8
  * --> b = (-MU + sqrt(MU^2 + 16*LLCelts))/8 ~= -1 + sqrt(1+16*LLCelts))/8
  */
-@beginskip
    mf = (pre == 'c' || pre == 's') ? 0.25 : 0.5;
    mf *= LLC_SZ;
    mf = sqrt(mf+1.0)/8.0;
@@ -35666,6 +35678,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, 
    "   -O : same as -o, but deletes any existing file with <resfile> name\n");
    fprintf(stderr, "   -i <input file>: list of kernel to consider\n");
+   fprintf(stderr, "   -r <runBonus> : (1.0) timing bonus to give runtime-K\n");
    fprintf(stderr, "   -b[m,n,k] # b1 ... b#: specify desired blocking for"
                    " given dim as list\n");
    fprintf(stderr, "   -B[m,n,k] B0 BN incB: specify desired blocking for\n"
@@ -35707,7 +35720,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 
 #define ALLSRCH ( (1<<FLG_EXPMN)|(1<<FLG_EXPMNK) )
 char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
-               int **MBS, int **NBS, int **KBS)
+               int **MBS, int **NBS, int **KBS, double *runBon)
 /*
  * RETURNS: name of output file as malloced string
  */
@@ -35718,6 +35731,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
    char pre='d';
 
    *FNIN = NULL;
+   *runBon = 1.0;
    for (i=1; i < nargs; i++)
    {
       int wch, *ip, **ipp, TST=0;
@@ -35731,6 +35745,11 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
             PrintUsage(args[0], i-1, NULL);
         pre = tolower(args[i][0]);
         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'r':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *runBon = atof(args[i]);
         break;
       case 'O':
         TST=1;
@@ -35840,6 +35859,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, char **FNIN,
    *KBS = kbs;
    return(fout);
 }
+
 void prepOP(ATL_mmnode_t *mb)
 /*
  * Modifies MOV bits for rank-K timings
@@ -35949,7 +35969,7 @@ void DoSrchN(char pre, int flag, int MB, int KB, int maxN, char *fnin, int idx)
  * we will usually make it roughly match KB unless KB is small, and then
  * we may enlarge it to help with loop overhead.
  */
-void opsrch(char pre, int flag, char *outnm, int *KBs)
+void opsrch(char pre, int flag, char *outnm, int *KBs, double runBon)
 {
    ATL_mmnode_t *tb=NULL, *bb=NULL;  /* try and best base ptrs */
    ATL_mmnode_t *mp;
@@ -35991,7 +36011,7 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
           ATL_CountNumberOfMMNodes(tb), nKB);
 
    printf("   SEARCHINGS KERNS FOR MAXKB=%u\n", maxKB);
-   mp = bestNearSquare(pre, verb, tb, maxKB, flg, 0);
+   mp = bestNearSquare(pre, verb, tb, maxKB, flg, 0, runBon);
    assert(mp);  /* for now, later gen a case */
    mf = mp->mflop[0];
    printf("   BEST KERN KB=%u: ID=%d '%s' mf=%.2f\n", maxKB, mp->ID, 
@@ -36014,7 +36034,7 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
       const int kb=KBs[i];
 
       printf("   SEARCHINGS KERNS FOR KB=%u\n", kb);
-      mp = bestNearMNK(pre, verb, tb, MB, NB, kb, flg, 0);
+      mp = bestNearMNK(pre, verb, tb, MB, NB, kb, flg, 0, runBon);
       assert(mp);  /* for now, later gen a case */
       mf = mp->mflop[0];
       printf("   BEST KERN KB=%u: ID=%d '%s' mf=%.2f\n", kb, mp->ID, 
@@ -36053,17 +36073,18 @@ int main(int nargs, char **args)
 {
    char *fnin, *fnout;
    int *MBs, *NBs, *KBs;
+   double runBon;
    int flag;
    char pre;
 
-   fnout = GetFlags(nargs, args, &pre, &flag, &fnin, &MBs, &NBs, &KBs);
+   fnout = GetFlags(nargs, args, &pre, &flag, &fnin, &MBs, &NBs, &KBs, &runBon);
    assert(flag & (1<<FLG_FUZZY)); /* currently only supporte srch type */
 
    if (KBs)
    {
       assert(!MBs && !NBs);          /* currently, unsupported */
       assert(KBs);
-      opsrch(pre, flag, fnout, KBs);
+      opsrch(pre, flag, fnout, KBs, runBon);
    }
    else if (NBs)
       DoSrchD(pre, 1<<FLG_OPCPY, NBs[1], fnin, NBs[0], fnout);
