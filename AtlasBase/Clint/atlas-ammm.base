@@ -35953,10 +35953,11 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
 {
    ATL_mmnode_t *tb=NULL, *bb=NULL;  /* try and best base ptrs */
    ATL_mmnode_t *mp;
+   double mf, mfB;
    const int verb = flag&3;
    int i;  
    const unsigned int nKB=(*KBs);
-   unsigned int maxKB, maxD, flg;  /* flag for TimeMMKernel */
+   unsigned int maxKB, maxD, flg, MB, NB;  /* flag for TimeMMKernel */
 
    flg = ((flag>>FLG_OPCPY)&1)<<2;
    if (outnm)  /* if outnm exists, just time negative mflop and return */
@@ -35969,9 +35970,12 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
          return;
       }
    }
-   KBs++;
-   for (maxKB=i=0; i < nKB; i++)
-      maxKB = (maxKB >= KBs[i]) ? maxKB:KBs[i];
+/*
+ * Sort KBs greatest-to-least, then peel largest block factor in order to
+ * find good initial MB/NB
+ */
+   ATL_isortG2L(nKB, ++KBs);
+   maxKB = *KBs;
    maxD = Mmax(maxKB, 120);
 
    tb = GetWorkingUserCases(verb, pre);
@@ -35985,13 +35989,32 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
       mp->flag = (mp->flag & ~MMF_MVSET)|((1<<MMF_MVA)|(1<<MMF_MVC));
    printf("SEARCHING FOR BEST KERNEL AMONGST %u KERNELS AND %u KBs:\n",
           ATL_CountNumberOfMMNodes(tb), nKB);
+
+   printf("   SEARCHINGS KERNS FOR MAXKB=%u\n", maxKB);
+   mp = bestNearSquare(pre, verb, tb, maxKB, flg, 0);
+   assert(mp);  /* for now, later gen a case */
+   mf = mp->mflop[0];
+   printf("   BEST KERN KB=%u: ID=%d '%s' mf=%.2f\n", maxKB, mp->ID, 
+          GetMMLabelName(pre, mp), mf);
+   printf("   TUNING M/NB FOR BEST KERN, PRESENT B=(%u,%u):\n", 
+          mp->mbB, mp->nbB);
+   mfB = MMExpandMN(verb, pre, flg, 0, mp);
+   printf("   B=(%u,%u,%u) GIVES SPEEDUP: %.2f\n", mp->mbB, mp->nbB, mp->kbB,
+          mfB/mf);
+   mp->next = bb;
+   bb = mp;
+   MB = mp->mbB;
+   NB = mp->nbB;
+/*
+ * We purposely re-search maxKB, because enlarged MB/NB often picks higher
+ * performing kernel
+ */
    for (i=0; i < nKB; i++)
    {
       const int kb=KBs[i];
-      double mf, mfB;
 
       printf("   SEARCHINGS KERNS FOR KB=%u\n", kb);
-      mp = bestNearSquare(pre, verb, tb, kb, flg, 0);
+      mp = bestNearMNK(pre, verb, tb, MB, NB, kb, flg, 0);
       assert(mp);  /* for now, later gen a case */
       mf = mp->mflop[0];
       printf("   BEST KERN KB=%u: ID=%d '%s' mf=%.2f\n", kb, mp->ID, 
@@ -35999,8 +36022,6 @@ void opsrch(char pre, int flag, char *outnm, int *KBs)
       printf("   TUNING M/NB FOR BEST KERN, PRESENT B=(%u,%u):\n", 
              mp->mbB, mp->nbB);
       mfB = MMExpandMN(verb, pre, flg, 0, mp);
-@skip      mp->nbB = MMVaryDim(verb, pre, flg, 0, maxD, 0, mp);
-@skip      mp->mflop[0] = mfB = mp->mflop[1];
       printf("   B=(%u,%u,%u) GIVES SPEEDUP: %.2f\n", mp->mbB, mp->nbB, mp->kbB,
              mfB/mf);
       mp->next = bb;

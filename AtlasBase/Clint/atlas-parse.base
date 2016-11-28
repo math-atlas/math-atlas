@@ -764,6 +764,36 @@ static char *GetJoinedLines(FILE *fpin)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static void ATL_isortG2L(int N, int *X)
+/*
+ * Sort X from greatest-to-least via selection sort (O(N^2))
+ */
+{
+   int i;
+   if (N < 2)
+      return;
+   for (i=0; i < N-1; i++)
+   {
+      int imax=X[i], idx=i, j;
+      for (j=i+1; j < N; j++)
+      {
+         const int xj=X[j];
+         if (xj > imax)
+         {
+            imax = xj;
+            idx = j;
+         }
+      }
+      if (idx != i)
+      {
+         X[idx] = X[i];
+         X[i] = imax;
+      }
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static char *GetGoodGcc()
 /*
  * Gets gcc path and name along with mandatory flags (-g/-m64/-pg,etc) by
@@ -6534,6 +6564,52 @@ int kernWorksThisCaseK(ATL_mmnode_t *mp, int kb)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+ATL_mmnode_t *bestNearMNK(char pre, int verb, ATL_mmnode_t *tb, 
+                          int mb, int nb, int kb, int tmflag, int beta)
+/*
+ * Tries all mm in tb (try base), at sizes near mb, nb, wt close to kb.
+ * RETURNS: clone of best kernel's MMNODE
+ */
+{
+   ATL_mmnode_t *mp, *mpB=NULL;
+   double mfB=0.0;
+
+   for (mp=tb; mp; mp = mp->next)
+   {
+      double mf;
+      const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
+      int MB, NB, KB;
+      char *nm;
+
+      if (!kernWorksThisCaseK(mp, kb))  /* don't try illegal kerns */
+         continue;
+      MB = (mb > mu) ? (mb/mu)*mu : mu;
+      NB = (nb > nu) ? (nb/nu)*nu : nu;
+      KB = ((kb+ku-1)/ku)*ku;
+      mf = TimeMMKernel(verb, tmflag, mp, pre, MB, NB, kb, beta, 0, -1);
+      printf("      ID=%d '%s': B=(%d,%d,%d) mf=%.2f\n", mp->ID, 
+             GetMMLabelName(pre, mp), MB, NB, KB, mf);
+      if (mf > mfB)
+      {
+         mfB = mf;
+         mpB = mp;
+      }
+   }
+   if (mpB)
+   {
+      const unsigned int mu=mpB->mu, nu=mpB->nu, ku=mpB->ku;
+      mpB = CloneMMNode(mpB);
+      mpB->kbB = kb;
+      mpB->mbB = (mb > mu) ? ((mb/mu)*mu) : mu;
+      mpB->nbB = (nb > nu) ? ((nb/nu)*nu) : nu;
+      mpB->mflop[0] = mfB;
+   }
+   GetMMLabelName(pre, NULL);
+   return(mpB);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 ATL_mmnode_t *bestNearSquare(char pre, int verb, ATL_mmnode_t *tb, 
                              int kb, int tmflag, int beta)
 /*
@@ -6738,8 +6814,8 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
  * RETURNS: mflop for best MB,NB, which is given in mp->mbB, mp->nbB.
  */
 {
-   const unsigned int mu=mp->mu, nu=mp->nu;
-   unsigned int MU, NU;;
+   const unsigned int mu=mp->mu, nu=mp->nu, MB0=mp->mbB, NB0=mp->nbB;
+   unsigned int MU, NU;
    int kb=mp->kbB, mbB, nbB, mb, nb;
    int FASTER=0;
    double mfB;
@@ -6800,7 +6876,21 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
       NU = nu;
       goto AGAIN;
    }
-
+/*
+ * Now retime original MB/NB if they make sense
+ */
+   if ((MB0/mu)*mu == MB0 && (NB0/nu)*nu == NB0)
+   {
+      double mf;
+      mf = TimeMMKernel(verb, tflag|1, mp, pre, MB0, NB0, kb, beta, 0, -1);
+      printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,MB0,NB0,kb,mf);
+      if (mf > mfB)
+      {
+         mfB = mf;
+         mbB = MB0;
+         nbB = NB0;
+      }
+   }
    mp->mbB = mbB;
    mp->nbB = nbB;
    mp->mflop[0] = mfB;
