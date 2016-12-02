@@ -3336,6 +3336,62 @@ static void MMApplyMoves2Flags
       mmp->flag = ((mmp->flag) & mvMSK) | mvSET;
 }
 
+static ATL_mmnode_t *MMWinnowByKU(ATL_mmnode_t *mb, int minKB, double tol)
+/*
+ * Successively does following:
+ *  (1) Move highest performing kernel from mmb to retained list
+ *  (2) Get rid of all kernels that don't provide speedup over retained KUs
+ * ASSUMES: timings in mflop[0] correct for this range 
+ */
+{
+   ATL_mmnode_t *rb=NULL;
+   while (mb)
+   {
+      ATL_mmnode_t *mp;
+      int KEEP=1;                  /* assume this kernel useful */
+      mp = FindMaxMflopMMQ(mb, 0);
+      if (rb)                      /* are there kerns that might do same job? */
+      {
+         ATL_mmnode_t *kp;
+         const unsigned int ku=mb->ku;
+/*
+ *       See if this guy can handle a KU case better than existing kernels
+ */
+         for (kp=rb; kp; kp = kp->next)
+         {
+            const unsigned int rku=kp->ku;
+            if (rku == ku)
+            {
+               KEEP = mp->mflop[0]*tol >= kp->mflop[0];
+               if (!KEEP)
+                  break;
+            }
+            else
+            {
+               const unsigned int gap = (rku > ku) ? rku-ku : ku-rku;
+               if (gap <= 4) /* retained kern handles all cases */
+               {
+                  const unsigned int kb = ((minKB+ku-1)/ku) * ku;
+                  double pen=(kb-3.0);
+                  pen /= kb;
+                  KEEP = mp->mflop[0]*tol >= pen*kp->mflop[0];
+                  if (!KEEP)
+                     break;
+               }
+            }
+         }
+      }
+      mb = RemoveMMNodeFromQ(mb, mp);
+      if (KEEP)
+      {
+         mp->next = rb;
+         rb = mp;
+      }
+      else
+         KillMMNode(mp);
+   }
+   return(rb);
+}
 @ROUT cpread
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -6569,7 +6625,8 @@ ATL_mmnode_t *bestNearMNK(char pre, int verb, ATL_mmnode_t *tb,
                           int mb, int nb, int kb, int tmflag, int beta, 
                           double runbon)
 /*
- * Tries all mm in tb (try base), at sizes near mb, nb, wt close to kb.
+ * Tries all mm in tb (try base), at sizes near mb,nb,kb.
+ * OVERWRITES: mbB,nbB,kbB,mflop[0] for all kerns!
  * RETURNS: clone of best kernel's MMNODE
  */
 {
@@ -6591,10 +6648,11 @@ ATL_mmnode_t *bestNearMNK(char pre, int verb, ATL_mmnode_t *tb,
          mfmul = (KRUNB) ? 1.0 : runbon;
       else
          mfmul = (KRUNB) ? cmppen : 1.0;
-      MB = (mb > mu) ? (mb/mu)*mu : mu;
-      NB = (nb > nu) ? (nb/nu)*nu : nu;
-      KB = ((kb+ku-1)/ku)*ku;
-      mf = TimeMMKernel(verb, tmflag, mp, pre, MB, NB, kb, beta, 0, -1);
+      mp->mbB = MB = (mb > mu) ? (mb/mu)*mu : mu;
+      mp->nbB = NB = (nb > nu) ? (nb/nu)*nu : nu;
+      mp->kbB = KB = ((kb+ku-1)/ku)*ku;
+      mf = TimeMMKernel(verb, tmflag, mp, pre, MB, NB, KB, beta, 0, -1);
+      mp->mflop[0] = mf;
       printf("      ID=%d '%s': B=(%d,%d,%d) mf=%.2f\n", mp->ID, 
              GetMMLabelName(pre, mp), MB, NB, KB, mf);
       if (mf*mfmul > mfB)
@@ -6721,12 +6779,11 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 /* procedure @(ip) */
 double MMExpandMNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
 /*
- * Assume U=LCM(MU,NU), this search startes at MB=NB=U, and then tries
- * increasing M and N, and picks whichever provides the greatest speedup.  
- * Continues expanding MB,NB in this way until performance drops by around 3%.
- * Once we have stopped expanding each by U, consider all MU,NU < U as well.
- * KB is not tuned: all timings use KB=mp->kbB.
- * RETURNS: mflop for best MB,NB, which is given in mp->mbB, mp->nbB.
+ * Assume U=LCM(MU,NU,KU), this search startes at KB=MB=NB=U, and then tries
+ * increasing M,N,K and picks whichever provides the greatest speedup.  
+ * Continues expanding MB,NB,KB in this way until perf drops by around 3%.
+ * Once we have stopped expanding each by U, consider all MU,NU,KU < U as well.
+ * RETURNS: mflop for best MB,NB,KB which is given in mp->(mbB,nbB,kbB).
  */
 {
    const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
@@ -6744,7 +6801,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    AGAIN:
       do   /* loop to check that best of M/N expansion improved performance */
       {
-         double mfM, mfN, mfK, mf=0.0;
+         double mfM, mfN, mfK, mf;
          int mbN=mb+MU, nbN=nb+NU, kbN=kb+KU;
 
          mfK = TimeMMKernel(verb, tflag, mp, pre, mb, nb, kbN, beta, 0, -1);
@@ -6800,7 +6857,8 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
       while (FASTER);
    if (MU != mu || NU != nu || KU != ku)
    {
-      printf("\n");
+      printf("\n   REFINEMENT SEARCH B=(%d,%d,%d), mf=%.2f\n", mbB, nbB, kbB, 
+             mfB);
       mb = mbB;
       nb = nbB;
       kb = kbB;
