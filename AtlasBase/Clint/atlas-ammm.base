@@ -35371,7 +35371,12 @@ void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout,
    if (runBon > 0.0)
       i += sprintf(ln+i, " -r %e", runBon);
    assert(i < L);
-   assert(!system(ln));
+   i = system(ln);
+   if (i)
+   {
+      fprintf(stderr, "'%s' RET: %d!\n", ln, i);
+      assert(0);
+   }
    free(ln);
 }
 /*
@@ -35792,7 +35797,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "      C: try timing runtime-K C files as compile-time K\n");
    fprintf(stderr, "      R: only time runtime-K as runtime\n");
    fprintf(stderr, "   -e [exclusion clause]: exclude kernels from search:\n");
-   fprintf(stderr, "      V=[k,m] : exclude K- or M-vectorized kernels\n");
+   fprintf(stderr, "      V=[K,M] : exclude K- or M-vectorized kernels\n");
    fprintf(stderr, "      V=# : exclude all kerns whose vlen != #\n");
    fprintf(stderr, "      K=C : exclude all compile-time K kernels\n");
    fprintf(stderr, "      K=F : exclude fully unrolled K-loop kernels\n");
@@ -35810,13 +35815,13 @@ void PrintUsage(char *name, int ierr, char *flag)
 #define FLG_FUZZY   2  /* 1st two bit pos are for verb */ 
 #define FLG_OPCPY   3  /* outer-product search including C put time */
 #define FLG_OP      4  /* if these two not set, use inner-prod search */
-#define FLG_NOKVEC  7  /* don't use k-vectorized kernels */
-#define FLG_NOMVEC  8  /* don't use m-vectorized kernels */
-#define FLG_NOKCOMP 9  /* don't use kernels needing compile-time K */
-#define FLG_NOKFULL 10 /* don't use fully-unrolled K kernels */
-#define FLG_NOBIGKU  11 /* exclude kernels with KU > III */
+#define FLG_NOKVEC  5  /* don't use k-vectorized kernels */
+#define FLG_NOMVEC  6  /* don't use m-vectorized kernels */
+#define FLG_NOKCOMP 7  /* don't use kernels needing compile-time K */
+#define FLG_NOKFULL 8  /* don't use fully-unrolled K kernels */
+#define FLG_NOBIGKU 9  /* exclude kernels with KU > III */
+#define FLG_MKCOMP  10 /* try compiling runtime-K as compile-time */
 
-#define FLG_MKCOMP 29  /* try compiling runtime-K as compile-time */
 #define FLG_EXPMN  30  /* do ExpandMN search on 1 kern */
 #define FLG_EXPMNK 31  /* do ExpandMNK search on 1 kern */
 
@@ -35859,9 +35864,9 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
             if (wch == 'K')
                NOKVEC = 1;
             else if (wch == 'M')
-               NOKCOMP = 1;
+               NOMVEC = 1;
             else if (isdigit(wch))
-               *MAXKU = atoi(args[i]+2);
+               *REQVL = atoi(args[i]+2);
             else
                PrintUsage(args[0], i-1, "expecting M,K,# after -e V=");
          }
@@ -35871,7 +35876,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
             if (wch == 'F')
                NOKFULL = 1;
             else if (wch == 'C')
-               NOMVEC = 1;
+               NOKCOMP = 1;
             else if (isdigit(wch))
                *MAXKU = atoi(args[i]+2);
             else
@@ -36058,7 +36063,7 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             KILL = 0;
             if (FLAG_IS_SET(ob->flag, MMF_KVEC))
             {
-               ob->ku = op->vlen;
+               ob->ku = ob->vlen;
                ob->flag ^= 1<<MMF_KUISKB;
             }
             else
@@ -36076,7 +36081,7 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             KILL = 0;
             if (FLAG_IS_SET(ob->flag, MMF_KVEC))
             {
-               ob->ku = op->vlen;
+               ob->ku = ob->vlen;
                ob->flag |= 1<<MMF_KRUNTIME;
             }
             else
@@ -36094,9 +36099,9 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
          ob = KillMMNode(ob);
       else /* add to queue, and set it to use selected search type */
       {
+         ATL_mmnode_t *nxt=ob->next;
          if (!ob->ID)
          {
-            ATL_mmnode_t *nxt=ob->next;
             if (ob->genstr)
             {
                free(ob->genstr);
@@ -36110,22 +36115,19 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
                ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVC);
             else
                ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVB);
-            ob->next = nb;
-            nb = ob;
-            ob = nxt;
             if (flag&(1<<FLG_MKCOMP)) /* want to try run- & compile-time K */
             {
                ATL_mmnode_t *np=NULL;
                if (FLAG_IS_SET(ob->flag, MMF_KVEC))
                {
-                  if (ob->ku == op->vlen)
+                  if (ob->ku == ob->vlen)
                      np = CloneMMNode(ob);
                }
                else if (ob->ku == 1)
                   np = CloneMMNode(ob);
                if (np)
                {
-                  if (FLAG_IS_SET(ob->flag, MMF_KRUNTIME)
+                  if (FLAG_IS_SET(ob->flag, MMF_KRUNTIME))
                      np->flag ^= 1<<MMF_KRUNTIME;
                   else
                      np->flag |= 1<<MMF_KRUNTIME;
@@ -36133,9 +36135,13 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
                   nb = np;
                }
             }
-         }
-      }
-   }
+         }     /* end if this is generated kern */
+         ob->next = nb;
+         nb = ob;
+         ob = nxt;
+      }     /* end else for keeper case */
+   }        /* end while(ob); */
+   return(nb);
 }
 
 void prepOP(ATL_mmnode_t *mb)
@@ -36283,8 +36289,12 @@ void opsrch(char pre, int flag, char *outnm, int *KBs, double runBon)
  */
    mp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
    tb = ATL_JoinMMQs(tb, mp);
+   #if 0
    for (mp=tb; mp; mp = mp->next)
       mp->flag = (mp->flag & ~MMF_MVSET)|((1<<MMF_MVA)|(1<<MMF_MVC));
+   #else
+      tb = ApplyRules(tb, flag, 0, 0);
+   #endif
    printf("SEARCHING FOR BEST KERNEL AMONGST %u KERNELS AND %u KBs:\n",
           ATL_CountNumberOfMMNodes(tb), nKB);
 
