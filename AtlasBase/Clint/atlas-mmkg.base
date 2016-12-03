@@ -24,13 +24,6 @@
    @endiif
 @endiif
 @ROUT amm
-@iexp B1R 0
-@ifdef bc
-   @iif bc = 2
-      @iexp B1R 1
-      @undef bc
-   @endiif
-@endifdef
 @beginskip
 Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
 following defines:
@@ -44,6 +37,12 @@ The following can be optionally defined:
    bc : don't define or set to 1 to use ATL_vbcast, 0 to use vld/vsplat
    pf : bit vec describing prefetch strategy
    pfLS : line size to assume for prefetch (64 bytes by default)
+   bc : now used a bitvector, default 1, with following meanings:
+    BPOS: SET MEANING
+      0 : use bcast (else use splat) for B load (ignored for K-vec)
+      1 : use only 1 register for B loads (ignored if using splat)
+      2 : nnu=1 (else need N-loop)
+      3 : nmu=1 (else need M-loop)
 
 pf bit location meanings:
    prefC always done as just next mu*nu block
@@ -79,9 +78,15 @@ During tuning, think about several regions for prefetch:
 4. pref only one of nA/B to L2
 5. No prefetch of next blocks (maybe internal prefetch)
 @endskip
-@iif B1R ! 0
-   @print MU=@(mu) NU=@(nu), B1R=@(B1R)
-@endiif
+@SKIP extract info from bc, then set it to bcast value
+@ifdef ! bc
+   @iexp bc 1
+@endifdef
+@iexp B1R @(bc) 2 & 0 !
+@iexp DONLOOP @(bc) 4 & 0 =
+@iexp DOMLOOP @(bc) 8 & 0 =
+@iexp bc @(bc) 1 &
+@print bc=@(bc) B1R=@(B1R) DO_N,M=@(DONLOOP),@(DONLOOP)
 @SKIP KVEC & UNVEC can't use splat, so define bcast!
 @VEC KDIM NO
 @ifdef bc
@@ -550,8 +555,8 @@ ASSUMES: mu, nu, exreg
       @undef vl2
    @ENDPROC
 @VEC KDIM
-   @iexp incAk @(mu) @(ku) *
-   @iexp incBk @(nu) @(ku) *
+   @iexp incAk @(mu) @(vl) *
+   @iexp incBk @(nu) @(vl) *
 @VEC MDIM NO
    @iexp incAk @(mu)
    @iexp incBk @(nu)
@@ -1247,8 +1252,10 @@ void ATL_USERMM
       @iexp jpf 0 -1 +
    @endiif
    @iexp jpf 0 -1 +
+@iif @iexp @(DOMLOOP)
    for (i=0; i < nmus; i++)
    {
+@endiif
 @print NOK=@(NOKLOOP) ib=@(ib) ia=@(ia)
    @iif bc = 0
       @iexp j 0 0 +
@@ -1282,13 +1289,15 @@ void ATL_USERMM
          @iexp j @(j) 1 +
       @endiwhile
    @endiif
-   @iif TRI = 0
+   @iif @iexp @(DONLOOP)
+      @iif TRI = 0
       for (j=0; j < nnus; j++)
-   @endiif
-   @iif TRI = 1
+      @endiif
+      @iif TRI = 1
       for (j=0; j <= i; j++)
-   @endiif
+      @endiif
       {
+   @endiif
          /* Peel K=0 iteration to avoid zero of rCxx and extra add  */
    @iif NOKLOOP ! 0
       @iexp IN_K 0 0 +
@@ -1311,24 +1320,48 @@ void ATL_USERMM
    @iif NOKLOOP = 0
       @iexp IN_K 0 0 +
       @iexp npeel 1 0 +
+      @VEC KDIM `@iexp kmul @(vl)`
+      @VEC ! KDIM `@iexp kmul 1`
       @CALLPROC DoIter0
       @iwhile ipf < npf
 /*
- *       Peel K=@(npeel) it to allow prefetch of C or next blocks of A&B
+ *       Peel K=@(npeel) iter to allow prefetch of C or next blocks of A&B
  */
-         @VEC KDIM `@iexp kk @(npeel) @(vl) *`
-         @VEC ! KDIM `@iexp kk @(npeel) 0 +`
+         @iexp kk @(kmul) @(npeel) *
          if (K == @(kk))
             goto KDONE;
             @CALLPROC DoIter
          @iexp npeel @(npeel) 1 +
       @endiwhile
-         @VEC KDIM `@iexp kk @(npeel) @(vl) *`
-         @VEC ! KDIM `@iexp kk @(npeel) 0 +`
+      @SKIP peel until npeel%vku == 0
+      @iif @iexp @(vku) @(npeel) % 0 !
+         @iexp nep @(vku) @(npeel) % @(vku) -
+/*
+ *       Peeled @(npeel) iters, peel another @(nep) to make mul of vku=@(vku)
+ */
+         @iexp ipf 0
+         @iwhile ipf < nep
+         /* ku mulpeel @(ipf) */
+         @iexp kk @(kmul) @(npeel) *
+         if (K == @(kk))
+            goto KDONE;
+            @CALLPROC DoIter
+            @iexp npeel @(npeel) 1 +
+            @iexp ipf @(ipf) 1 +
+         @endiwhile
+      @endiif
+         @iexp kk @(kmul) @(npeel) *
          for (k=@(kk); k < ATL_MM_KB; k += @(ku))
          {
             @iexp IN_K 0 1 +
+            @iexp kk 0
+            @iwhile kk < @(vku)
+            @iif kk > 0
+
+            @endiif
             @CALLPROC DoIter
+               @iexp kk @(kk) 1 +
+            @endiwhile
          }
       @iif npeel > 1
 KDONE:
@@ -1337,18 +1370,24 @@ KDONE:
          @CALLPROC storeC 6
          @VEC KDIM   `@iexp kk @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *`
          @VEC ! KDIM `@iexp kk @(mu) @(nu) *`
+   @iif @iexp @(DOMLOOP) @(DONLOOP) |
          pC += @(kk);
-   @iif NOKLOOP ! 0
+      @iif NOKLOOP ! 0
          pB += incBn;
-   @endiif
-   @iif ku ! kb
+      @endiif
+      @iif ku ! kb
          pA = pA0;
+      @endiif
    @endiif
+   @iif @iexp @(DONLOOP)
       }  /* end of loop over N */
+   @endiif
+   @iif @iexp @(DOMLOOP)
       pB = pB0;
       pA0 += incAm;
       pA = pA0;
    }  /* end of loop over M */
+   @endiif
 }
 @ROUT blk2C C2blk
 #include <stddef.h>
