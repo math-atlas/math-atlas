@@ -35764,7 +35764,7 @@ int main(int nargs, char **args)
    do_opk(verb, pre, NULL, maxK);
    return(0);
 }
-@ROUT bfisrch
+@ROUT bfisrch trsmsrch
 #define ATL_GETFLAGS
 #include "atlas_genparse.h"
 #include "atlas_mmtesttime.h"
@@ -35782,6 +35782,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, 
    "   -O : same as -o, but deletes any existing file with <resfile> name\n");
    fprintf(stderr, "   -i <input file>: list of kernel to consider\n");
+@ROUT bfisrch
    fprintf(stderr, "   -r <runBonus> : (1.0) timing bonus to give runtime-K\n");
    fprintf(stderr, "   -b[m,n,k] # b1 ... b#: specify desired blocking for"
                    " given dim as list\n");
@@ -35796,6 +35797,14 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "      i: inner product gemm-time only\n");
    fprintf(stderr, "      C: try timing runtime-K C files as compile-time K\n");
    fprintf(stderr, "      R: only time runtime-K as runtime\n");
+   fprintf(stderr, "   -MNK <idx>: take kern idx frm file fnin &"
+                   " tune all dims\n");
+   fprintf(stderr, "   -MN <idx> <KB>: take kern idx frm fnin &"
+                   " tune MB&NB\n");
+@ROUT trsmsrch
+   fprintf(stderr, "   -n <NB>: search all kerns for NoTrans & Trans at NB\n");
+@ROUT bfisrch trsmsrch
+   fprintf(stderr, "   -N <idx> <KB> <MB> <maxN>\n");
    fprintf(stderr, "   -e [exclusion clause]: exclude kernels from search:\n");
    fprintf(stderr, "      V=[K,M] : exclude K- or M-vectorized kernels\n");
    fprintf(stderr, "      V=# : exclude all kerns whose vlen != #\n");
@@ -35803,11 +35812,6 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "      K=F : exclude fully unrolled K-loop kernels\n");
    fprintf(stderr, "      K=# : exclude all kernels with KU >= #\n");
    fprintf(stderr, "      repeat -e to exclude multiple kern types\n");
-   fprintf(stderr, "   -MNK <idx>: take kern idx frm file fnin &"
-                   " tune all dims\n");
-   fprintf(stderr, "   -MN <idx> <KB>: take kern idx frm fnin &"
-                   " tune MB&NB\n");
-   fprintf(stderr, "   -N <idx> <KB> <MB> <maxN>\n");
    fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    exit(ierr ? ierr : -1);
 }
@@ -35822,13 +35826,18 @@ void PrintUsage(char *name, int ierr, char *flag)
 #define FLG_NOBIGKU 9  /* exclude kernels with KU > III */
 #define FLG_MKCOMP  10 /* try compiling runtime-K as compile-time */
 
+@ROUT trsmsrch
 #define FLG_EXPMN  30  /* do ExpandMN search on 1 kern */
 #define FLG_EXPMNK 31  /* do ExpandMNK search on 1 kern */
 
 #define ALLSRCH ( (1<<FLG_EXPMN)|(1<<FLG_EXPMNK) )
 char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
+               int *REQVL, char **FNIN, int *KB)
+@ROUT bfisrch
+char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
                int *REQVL, char **FNIN, int **MBS, int **NBS, int **KBS, 
                double *runBon)
+@ROUT bfisrch trsmsrch
 /*
  * RETURNS: name of output file as malloced string
  */
@@ -35841,7 +35850,11 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
 
    *REQVL = *MAXKU = 0;
    *FNIN = NULL;
+@ROUT trsmsrch
+   *KB = 120;
+@ROUT bfisrch
    *runBon = 1.0;
+@ROUT bfisrch trsmsrch
    for (i=1; i < nargs; i++)
    {
       int wch, *ip, **ipp, TST=0;
@@ -35850,6 +35863,12 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
 
       switch(args[i][1])
       {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
       case 'e': /* -e V=[K,M,#] or  K=[C,F,#] */
          if (++i >= nargs)
              PrintUsage(args[0], i-1, NULL);
@@ -35883,6 +35902,13 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
                PrintUsage(args[0], i-1, "expecting F,C,# after -e K=");
          }
          break;
+@ROUT trsmsrch
+      case 'n': /* -n <NB> */
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *KB = atoi(args[i]);
+         break;
+@ROUT bfisrch
       case 's': /* -s [f,p] [O,o,i] [C,R] */
          if (++i >= nargs)
              PrintUsage(args[0], i-1, NULL);
@@ -35905,12 +35931,6 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
              PrintUsage(args[0], i-1, "bad runcomp to -s");
          MKCOMP = (wch == 'C' || wch == 'c');
          break;
-      case 'p':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        pre = tolower(args[i][0]);
-        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
-        break;
       case 'r':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -36007,6 +36027,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
             free(*ipp);
          *ipp = ip;
          break;
+@ROUT bfisrch trsmsrch
       default:
          PrintUsage(args[0], i, args[i]);
       }
@@ -36020,9 +36041,11 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
    if (fout)
       fout = DupString(fout);
    *PRE = pre;
+@ROUT bfisrch
    *MBS = mbs;
    *NBS = nbs;
    *KBS = kbs;
+@ROUT bfisrch trsmsrch
    return(fout);
 }
 
@@ -36081,14 +36104,28 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             KILL = 0;
             if (FLAG_IS_SET(ob->flag, MMF_KVEC))
             {
-               ob->ku = ob->vlen;
-               ob->flag |= 1<<MMF_KRUNTIME;
+               if (ob->ku < ob->vlen)
+                  ob->ku = ob->vlen;
+               else
+                  while (ob->ku % ob->vlen)
+                     ob->ku--;
+@ROUT bfisrch
             }
+@ROUT trsmsrch
+               if (ob->mu % ob->vlen == 0 || ob->nu % ob->vlen == 0)
+               {
+                  while ((ob->mu % ob->ku != 0)&&(ob->nu % ob->ku != 0))
+                     ob->ku -= ob->vlen;
+               }
+            }
+@ROUT trsmsrch
             else
             {
-               ob->ku = 1;
-               ob->flag |= 1<<MMF_KRUNTIME;
+               while (ob->mu % ob->ku && ob->nu % ob->ku)
+                  ob->ku--;
             }
+@ROUT bfisrch trsmsrch
+            ob->flag |= 1<<MMF_KRUNTIME;
          }
       }
       if ((flag&(1<<FLG_NOKVEC)) && FLAG_IS_SET(ob->flag, MMF_KVEC))
@@ -36144,6 +36181,7 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
    return(nb);
 }
 
+@ROUT bfisrch
 void prepOP(ATL_mmnode_t *mb)
 /*
  * Modifies MOV bits for rank-K timings
@@ -36387,5 +36425,93 @@ int main(int nargs, char **args)
       free(NBs);
    if (KBs)
       free(KBs);
+   return(0);
+}
+@ROUT trsmsrch
+void smsrch(char pre, int flag, char *fnin, char *outnm, int NB, 
+            int maxKU, int reqVL)
+{
+   ATL_mmnode_t *mb, *mp, *tb=NULL;
+   const int verb=flag&3;
+   if (!fnin)
+   {
+      mb = GetWorkingUserCases(verb, pre);
+      mp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+      mb = ATL_JoinMMQs(mb, mp);
+   }
+   else
+      mb = ReadMMFile(fnin);
+   assert(mb);
+   mb = ApplyRules(mb, flag|(1<<FLG_NOKCOMP)|(1<<FLG_NOKFULL), maxKU, reqVL);
+   assert(mb);
+/*
+ * Get rid of all kerns where MU,NU are not multiples of KU
+ */
+   mp = mb;
+   while (mp)
+   {
+      if ((mp->mu % mp->ku) && (mp->nu % mp->ku))
+      {
+         mb = (mp == mb) ? mb->next : mb;
+         mp->next = KillMMNode(mp);
+      }
+      else
+         mp = mp->next;
+   }
+   assert(mb);
+   printf("SEARCHING %u KERNELS FOR GEMM-BASED TRSM KERNEL\n", 
+          ATL_CountNumberOfMMNodes(mb));
+   for (mp=mb; mp; mp = mp->next)
+   {
+      unsigned int U = mp->mu, UMAX;
+      ATL_mmnode_t *tp;
+      if (U % mp->ku == 0) /* can try notrans case */
+      {
+         tp = CloneMMNode(mp);
+         tp->TA = AtlasNoTrans;
+         if (U > NB)
+            UMAX = U;
+         else
+            UMAX = (NB/U)*U - U;
+         tp->mflop[0] = MMTimeRangeK(verb, 0, tp, pre, tp->mu, tp->nu,
+                                     U, UMAX, U, 0, 0, -1);
+         printf("   %s, B=(%u,%u), K=[%u,%u] mf=%.2f\n", 
+                GetMMLabelName(pre, mp), tp->mu, tp->nu, U, UMAX, tp->mflop[0]);
+         tp->next = tb;
+         tb = tp;
+      }
+      U = mp->nu;
+      if (U % mp->ku == 0 && U != mp->mu) /* can try trans case, diff notrans */
+      {
+         tp = CloneMMNode(mp);
+         tp->TA = AtlasTrans;
+         tp->flag |= 1<<MMF_ALLTRANS;
+         if (U > NB)
+            UMAX = U;
+         else
+            UMAX = (NB/U)*U - U;
+         tp->mflop[0] = MMTimeRangeK(verb, 0, tp, pre, tp->mu, tp->nu, 
+                                     U, UMAX, U, 0, 0, -1);
+         printf("   %s, B=(%u,%u), K=[%u,%u] mf=%.2f\n", 
+                GetMMLabelName(pre, mp), tp->nu, tp->mu, U, UMAX, tp->mflop[0]);
+         tp->next = tb;
+         tb = tp;
+      }
+   }
+   assert(tb);
+   GetMMLabelName(pre, NULL);
+   KillAllMMNodes(mb);
+   WriteMMFile(outnm, tb);
+   KillAllMMNodes(tb);
+}
+
+int main(int nargs, char **args)
+{
+   char *fnin, *fnout;
+   unsigned int NB, flag, maxKU, reqVL;
+   char pre;
+
+   fnout = GetFlags(nargs, args, &pre, &flag, &maxKU, &reqVL, &fnin, &NB);
+   smsrch(pre, flag, fnin, fnout, NB, maxKU, reqVL);
    return(0);
 }

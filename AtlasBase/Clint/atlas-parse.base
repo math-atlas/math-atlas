@@ -143,6 +143,7 @@ struct CPNode
  */
 #define MMF_BREG1      18  /* 1: use only 1 reg for B, else use NU */
 #define MMF_KCLN       19  /* 1: cleaner for K dim is required */
+#define MMF_ALLTRANS   20  /* 1: do C^T = B^T * A^T, not C=A*B */
 
 #define MMF_ALLPF ( (1<<MMF_PFACOLS)|(1<<MMF_PFABLK)|(1<<MMF_PFBCOLS) \
                     |(1<<MMF_PFCELTS) )
@@ -6276,7 +6277,16 @@ double TimeMMKernel
          else
             i += sprintf(ln+i, " mmrout=AMMCASES/%s", mmp->rout);
          if (PUTC)
-            i += sprintf(ln+i, " extdefs=\"-DPUTC=1\"");
+         {
+            if (FLAG_IS_SET(mmp->flag,MMF_ALLTRANS))
+               i += sprintf(ln+i, " extdefs=\"-DALLTRANS_=1 -DPUTC=1\"");
+            else
+               i += sprintf(ln+i, " extdefs=\"-DPUTC=1\"");
+         }
+         else if (FLAG_IS_SET(mmp->flag,MMF_ALLTRANS))
+         {
+            i += sprintf(ln+i, " extdefs=\"-DALLTRANS_=1\"");
+         }
          if (mmp->comp)
             i += sprintf(ln+i, " %cMC=\"%s\"", ch, mmp->comp);
          if (mmp->cflags)
@@ -6355,6 +6365,31 @@ double TimeMMKernel
    return(mfmul*(*((double*)ReadResultsFile(RESACT, 0, fnam))));
    #undef RESACT
 }  /* end TimeMMKernel */
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip), times all 3 vectorization schemes */
+double MMTimeRangeK
+(
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int flag,                    /* 1: ignore any prior output file */
+   ATL_mmnode_t *mmp,           /* ptr to mmkern struct */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int mb, int nb,              /* dimensions to time */
+   int K0, int KN, int incK,    /* inclusive range of K's to average */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >=0: size of cache flush, else ignored */
+)
+{
+   double mfA=0.0;
+   int k, n=0;
+   assert(KN >= K0);
+   for (k=K0; k <= KN; k += incK, n++)
+   {
+      mfA += TimeMMKernel(verb, flag, mmp, pre, mb, nb, k, beta, mflop, cflush);
+   }
+   return(mfA/n);
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip), times all 3 vectorization schemes */
