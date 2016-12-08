@@ -35344,7 +35344,7 @@ void PrintUsage(char *name, int ierr, char *flag)
  * For both op&ip, first search all problems in range 3-sqrt(L1) to get a list
  * of well-performing small-case kernels.
  */
-@ROUT opsrch
+@ROUT opsrch ipsrch
 #include "atlas_cache.h"
 #include "atlas_genparse.h"
 #include "atlas_mmtesttime.h"
@@ -35379,6 +35379,158 @@ void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout,
    }
    free(ln);
 }
+@ROUT ipsrch
+/*
+ * This routine suggests the largest square block that will fit the working
+ * set of the computation in the cache of CS (bytes).  It first translates
+ * CS to NELT (bytes -> elements).  The working set of one iteration is
+ * mu*nu + kb*(mu+nu).  Our typical kernel used loop order MNK, which means
+ * both C and B will move in inner loop, so for safety double these sizes:
+ *   2*mu*nu + kb*(mu+2*nu) <= NELT ==> KB = (NELT - 2*mu*nu)/(mu+2*nu)
+ * We will solve this equation for all kernels, and return the smallest kb.
+ */
+int maxSquareNB(char pre, size_t CS, ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mp;
+   unsigned int eltsh = (pre == 'd') ? 3 : 2, kbB=8000;
+   const size_t NELT = CS >> eltsh;
+   assert(pre == 'd' || pre == 's');
+   assert(mmb);
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      const unsigned int mu=mp->mu, nu=mp->nu;
+      const unsigned kb = (NELT-((mu+mu)*nu))/(mu+nu+nu);
+      if (kb < kbB)
+         kbB = kb;
+   }
+   return(kbB);
+}
+
+int minSquareNB(char pre, size_t CS, ATL_mmnode_t *mmb)
+/* 
+ * This routine returns largest NB that will be able to fully reuse all 
+ * operands between calls assuming LRU cache. We will therefore want to
+ * contain all three blocks in the cache, plus the working set of next
+ * call for safety.  This is: M*N + K*(M+N+MU+NU) <= NELT, now if D=M=N=K:
+ *    D^2 + D^2 + D^2 + D(MU+NU) = NELT --->  3D^2 + D(MU+NU) - NELT = 0
+ * so quadratic equation gives: D = -(MU+NU) + sqrt((MU+NU)^2 + 12*NELT)/6
+ */
+{
+   ATL_mmnode_t *mp;
+   unsigned int eltsh = (pre == 'd') ? 3 : 2, mupnu, D;
+   const size_t NELT = CS >> eltsh;
+   assert(pre == 'd' || pre == 's');
+   assert(mmb);
+   mupnu = mmb->mu + mmb->nu;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      unsigned int mn=mp->mu + mp->nu;
+      mupnu = (mn > mupnu) ? mn : mupnu;
+   }
+   D = sqrt(mupnu*mupnu + 3.0*(NELT<<2)) / 6.0;
+   D -= mupnu;
+   return(D);
+}
+
+void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
+/*
+ * This search simply finds best performing kernel, produces ip.sum
+ * with best found kernel and blocking parameter
+ */
+{
+   ATL_mmnode_t *tb, *mp, *mpB;
+   double mfB;
+   unsigned int mbB, nbB, kbB;
+
+   printf("LOOKING FOR BEST ASYMPTOTIC INNER-PRODUCT KERNEL:\n");
+   mpB = mp = FindMaxMflopMMQ(mmb, 0);
+   mfB = mp->mflop[0];
+   mbB = mp->mbB;
+   nbB = mp->nbB;
+   kbB = mp->kbB;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      double mf = mp->mflop[0];
+      if (mf*1.2 >= mfB)  /* try all competitive kerns */
+      {
+         double mfN;
+         unsigned int maxD;
+         tb = mp->next;
+         mp->next = NULL;
+         maxD = minSquareNB(pre, LLC_SZ, mp);
+         mp->next = tb;
+         printf("   TUNE BLK for %s, current=(%u,%u,%u), mf=%.2f\n",
+                GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB, 
+                mp->mflop[0]);
+         mfN = MMExpandMNK(verb, pre, 0, 0, maxD, mp);
+         if (mfN > mfB)
+         {
+            printf(
+               "   BEST SO FAR: (%u,%u,%u), mf=%.2f, spup=%.2f, spupB=%.2f\n",
+                   mp->mbB, mp->nbB, mp->kbB, mfN, mfN/mf, mfN/mfB);
+            mpB = mp;
+            mfB = mp->mflop[0];
+            mbB = mp->mbB;
+            nbB = mp->nbB;
+            kbB = mp->kbB;
+         }
+         else
+            printf("   NOT BEST: (%u,%u,%u), mf=%.2f, spdup=%.2f\n",
+                   mp->mbB, mp->nbB, mp->kbB, mfN, mfN/mf);
+      }
+   }
+   printf("CHOSEN: ID=%d %s (%u,%u,%u), mf=%.2f\n", mpB->ID, 
+           GetMMLabelName(pre, mpB), mbB, nbB, kbB, mfB);
+   mp = mpB->next;
+   mpB->next = NULL;
+   WriteMMFileWithPath(pre, "res", "ipASYM.sum", mpB);
+   mpB->next = mp;
+
+@skip   tb = NULL;
+@skip   MMSplitByFlagAny((1<<MMF_KUISKB), &mmb, &tb); /* tb gets fully unrolled K */
+   KillAllMMNodes(mmb);
+}
+
+int main(int nargs, char **args)
+{
+   ATL_mmnode_t *mmb, *mp;
+   int verb=0, nkern0, nkern, flag;
+   unsigned int bLLC;
+   char pre='d';
+/*
+ * Get user & gen cases, and try compile- and run-time versions
+ */
+   mmb = GetWorkingUserCases(verb, pre);
+   mp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   assert(mp);
+   mmb = AddUniqueMMKernCompList(mmb, mp);
+   flag = (verb > 3) ? 3:(verb&3);
+   flag |= 3 << 2;
+   mp = MMApplyRules(mmb, flag|(1<<MMR_MKCOMP), 0, 0);
+   mmb = NULL;
+   mmb = AddUniqueMMKernCompList(mmb, mp);
+
+   bLLC = minSquareNB(pre, LLC_SZ, mmb);
+   printf("bLLC = %u\n", bLLC);
+   if (bLLC >= 132)
+      bLLC -= 12;
+/*
+ * Get rid of all kernels that aren't within 60% of max performance
+ */
+   for (mp=mmb; mp; mp = mp->next)
+      mp->flag = ((mp->flag) & (~MMF_MVSET)) | ((1<<MMF_MVA) | (1<<MMF_MVB));
+   nkern0 = ATL_CountNumberOfMMNodes(mmb);
+   printf("ELIMINATING UNCOMPETITIVE KERNELS out of %u:\n", nkern0);
+   mmb = ElimSlowKern(pre, verb, mmb, bLLC, bLLC, bLLC, 0, 0, 0.60);
+   nkern = ATL_CountNumberOfMMNodes(mmb);
+   printf("DONE: ELIMINATED %u UNCOMPETITIVE KERNELS, %u LEFT.\n", 
+          nkern0-nkern, nkern);
+   PrintMMNodes(stdout, mmb);
+   findBestIP(pre, verb, mmb, NULL);
+
+   return(0);
+}
+@ROUT opsrch
 /*
  * This search forms the backbone of ATLAS outer-product support.  It will
  * find all the kernels needed to support 3 categories of degenerate dims:
@@ -35580,7 +35732,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
  */
    printf("   FINDING BEST MAX BLOCK FACTORS, current=(%d,%d,%d):\n", 
           mp->mbB, mp->nbB, mp->kbB);
-   MMExpandMNK(verb, pre, 4, 0, mp);
+   MMExpandMNK(verb, pre, 4, 0, 512, mp);
    MB = mp->mbB; NB = mp->nbB; KB = mp->kbB;
    printf("   BEST B=(%d,%d,%d), mf=%.2f, speedup=%.2f\n", MB, NB, KB, 
           mp->mflop[0], mp->mflop[0] / mf);
@@ -35601,7 +35753,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       mp = mpB;
       printf("   FINDING BEST MAX BLOCK FACTORS, current=(%d,%d,%d):\n", 
              mp->mbB, mp->nbB, mp->kbB);
-      MMExpandMNK(verb, pre, 4, 0, mp);
+      MMExpandMNK(verb, pre, 4, 0, 512, mp);
       MB = mp->mbB; NB = mp->nbB; KB = mp->kbB;
       printf("   BEST B=(%d,%d,%d), mf=%.2f, speedup=%.2f\n", MB, NB, KB, 
              mp->mflop[0], mp->mflop[0] / mf);
@@ -35768,6 +35920,7 @@ int main(int nargs, char **args)
 #define ATL_GETFLAGS
 #include "atlas_genparse.h"
 #include "atlas_mmtesttime.h"
+@ROUT trsmsrch `#include "atlas_cache.h"`
 
 void PrintUsage(char *name, int ierr, char *flag)
 {
@@ -35802,7 +35955,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -MN <idx> <KB>: take kern idx frm fnin &"
                    " tune MB&NB\n");
 @ROUT trsmsrch
-   fprintf(stderr, "   -n <NB>: search all kerns for NoTrans & Trans at NB\n");
+   fprintf(stderr, "   -n 0/1 <NB>: quick/full trsmsrch at N=NB\n");
 @ROUT bfisrch trsmsrch
    fprintf(stderr, "   -N <idx> <KB> <MB> <maxN>\n");
    fprintf(stderr, "   -e [exclusion clause]: exclude kernels from search:\n");
@@ -35825,15 +35978,15 @@ void PrintUsage(char *name, int ierr, char *flag)
 #define FLG_NOKFULL 8  /* don't use fully-unrolled K kernels */
 #define FLG_NOBIGKU 9  /* exclude kernels with KU > III */
 #define FLG_MKCOMP  10 /* try compiling runtime-K as compile-time */
-
 @ROUT trsmsrch
-#define FLG_EXPMN  30  /* do ExpandMN search on 1 kern */
-#define FLG_EXPMNK 31  /* do ExpandMNK search on 1 kern */
+#define FLG_FULLSRCH 11 /* do not prune; time all kerns directly */
 
-#define ALLSRCH ( (1<<FLG_EXPMN)|(1<<FLG_EXPMNK) )
 char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
                int *REQVL, char **FNIN, int *KB)
 @ROUT bfisrch
+#define ALLSRCH ( (1<<FLG_EXPMN)|(1<<FLG_EXPMNK) )
+#define FLG_EXPMN  30  /* do ExpandMN search on 1 kern */
+#define FLG_EXPMNK 31  /* do ExpandMNK search on 1 kern */
 char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
                int *REQVL, char **FNIN, int **MBS, int **NBS, int **KBS, 
                double *runBon)
@@ -35902,10 +36055,35 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
                PrintUsage(args[0], i-1, "expecting F,C,# after -e K=");
          }
          break;
-@ROUT trsmsrch
-      case 'n': /* -n <NB> */
+      case 'i':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
+        *FNIN = args[i];
+        break;
+      case 'v':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        verb = atoi(args[i]);
+        verb = (verb > 3) ? 3 : verb;
+        break;
+      case 'O':
+        TST=1;
+      case 'o':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        fout = args[i];
+        if (TST)
+           remove(fout);
+        break;
+@ROUT trsmsrch
+      case 'n': /* -n <NB> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         TST = atoi(args[i]);
+         if (TST)
+            flag |= 1<<FLG_FULLSRCH;
+         if (++i >= nargs)
+             PrintUsage(args[0], i-1, NULL);
          *KB = atoi(args[i]);
          break;
 @ROUT bfisrch
@@ -35935,26 +36113,6 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FLAG, int *MAXKU,
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
         *runBon = atof(args[i]);
-        break;
-      case 'O':
-        TST=1;
-      case 'o':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        fout = args[i];
-        if (TST)
-        remove(fout);
-        break;
-      case 'i':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        *FNIN = args[i];
-        break;
-      case 'v':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        verb = atoi(args[i]);
-        verb = (verb > 3) ? 3 : verb;
         break;
       case 'M':  /* -MN idx KB or -MNK idx */
          if (args[i][2] != 'N')
@@ -36078,7 +36236,7 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             }
          }
       }
-      if (!KILL&&(flag&(1<<FLG_NOKFULL))&&!FLAG_IS_SET(ob->flag, MMF_KUISKB))
+      if (!KILL&&(flag&(1<<FLG_NOKFULL))&&FLAG_IS_SET(ob->flag, MMF_KUISKB))
       {
          REGEN = KILL = 1;
          if (!ob->ID) /* genned codes poss changed to runtime */
@@ -36148,10 +36306,14 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
                free(ob->rout);
             ob->rout = DupString("ATL_tmp.c");
             ob->flag &= ~MMF_MVSET;
+@ROUT trsmsrch
+            ob->flag |= (1<<MMF_MVC) | (1<<MMF_MVA);
+@ROUT bfisrch
             if (flag&((1<<FLG_OPCPY)|(1<<FLG_OP)))
                ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVC);
             else
                ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVB);
+@ROUT bfisrch trsmsrch
             if (flag&(1<<FLG_MKCOMP)) /* want to try run- & compile-time K */
             {
                ATL_mmnode_t *np=NULL;
@@ -36224,7 +36386,7 @@ void DoSrchD(char pre, int flag, int KB, char *fnin, int idx, char *fnout)
    if (KB)
       mf = MMExpandMN(verb, pre, flg, 0, mp);
    else
-      mf = MMExpandMNK(verb, pre, flg, 0, mp);
+      mf = MMExpandMNK(verb, pre, flg, 0, 512, mp);
    printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mp->kbB, mf);
    PrintMMLine(stdout, mp);
    if (fnout)
@@ -36432,6 +36594,7 @@ void smsrch(char pre, int flag, char *fnin, char *outnm, int NB,
             int maxKU, int reqVL)
 {
    ATL_mmnode_t *mb, *mp, *tb=NULL;
+   double mfB;
    const int verb=flag&3;
    if (!fnin)
    {
@@ -36459,13 +36622,34 @@ void smsrch(char pre, int flag, char *fnin, char *outnm, int NB,
          mp = mp->next;
    }
    assert(mb);
+   if (!(flag&(1<<FLG_FULLSRCH)))
+   {
+      printf("REDUCING %u KERNELS FOR GEMM-BASED TRSM KERNEL\n", 
+             ATL_CountNumberOfMMNodes(mb));
+      mp = bestNearMNK(pre, verb, mb, 1, 1, NB>>1, 0, 0, 1.0);
+      mfB = mp->mflop[0];
+      KillMMNode(mp);
+      while (mb->mflop[0]*1.25 < mfB)
+         mb = KillMMNode(mb);
+      mp = mb;
+      while (mp)
+      {
+         ATL_mmnode_t *nxt = mp->next;
+         if (mp->mflop[0]*1.25 < mfB)
+         {
+            RemoveMMNodeFromQ(mb, mp);
+            KillMMNode(mp);
+         }
+         mp = nxt;
+      }
+   }
    printf("SEARCHING %u KERNELS FOR GEMM-BASED TRSM KERNEL\n", 
           ATL_CountNumberOfMMNodes(mb));
    for (mp=mb; mp; mp = mp->next)
    {
       unsigned int U = mp->mu, UMAX;
       ATL_mmnode_t *tp;
-      if (U % mp->ku == 0) /* can try notrans case */
+      if (mp->mu % mp->ku == 0 || mp->nu % mp->ku == 0)
       {
          tp = CloneMMNode(mp);
          tp->TA = AtlasNoTrans;
@@ -36473,8 +36657,8 @@ void smsrch(char pre, int flag, char *fnin, char *outnm, int NB,
             UMAX = U;
          else
             UMAX = (NB/U)*U - U;
-         tp->mflop[0] = MMTimeRangeK(verb, 0, tp, pre, tp->mu, tp->nu,
-                                     U, UMAX, U, 0, 0, -1);
+         tp->mflop[0] = MMTimeRangeK(verb, 4, tp, pre, tp->mu, tp->nu,
+                                     U, UMAX, U, 0, 0, L1C_SZ);
          printf("   %s, B=(%u,%u), K=[%u,%u] mf=%.2f\n", 
                 GetMMLabelName(pre, mp), tp->mu, tp->nu, U, UMAX, tp->mflop[0]);
          tp->next = tb;
@@ -36490,10 +36674,10 @@ void smsrch(char pre, int flag, char *fnin, char *outnm, int NB,
             UMAX = U;
          else
             UMAX = (NB/U)*U - U;
-         tp->mflop[0] = MMTimeRangeK(verb, 0, tp, pre, tp->mu, tp->nu, 
+         tp->mflop[0] = MMTimeRangeK(verb, 4, tp, pre, tp->mu, tp->nu, 
                                      U, UMAX, U, 0, 0, -1);
          printf("   %s, B=(%u,%u), K=[%u,%u] mf=%.2f\n", 
-                GetMMLabelName(pre, mp), tp->nu, tp->mu, U, UMAX, tp->mflop[0]);
+                GetMMLabelName(pre, mp), tp->mu, tp->nu, U, UMAX, tp->mflop[0]);
          tp->next = tb;
          tb = tp;
       }
