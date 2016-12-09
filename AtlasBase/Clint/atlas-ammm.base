@@ -35438,9 +35438,9 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
  * with best found kernel and blocking parameter
  */
 {
-   ATL_mmnode_t *tb, *mp, *mpB;
-   double mfB;
-   unsigned int mbB, nbB, kbB;
+   ATL_mmnode_t *tb, *mp, *mpB, *mpU, *mpD;
+   double mfB, mf;
+   unsigned int mbB, nbB, kbB, maxD=240, D;
 
    printf("LOOKING FOR BEST ASYMPTOTIC INNER-PRODUCT KERNEL:\n");
    mpB = mp = FindMaxMflopMMQ(mmb, 0);
@@ -35450,15 +35450,11 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    kbB = mp->kbB;
    for (mp=mmb; mp; mp = mp->next)
    {
-      double mf = mp->mflop[0];
+      mf = mp->mflop[0];
       if (mf*1.2 >= mfB)  /* try all competitive kerns */
       {
          double mfN;
-         unsigned int maxD;
          tb = mp->next;
-         mp->next = NULL;
-         maxD = minSquareNB(pre, LLC_SZ, mp);
-         mp->next = tb;
          printf("   TUNE BLK for %s, current=(%u,%u,%u), mf=%.2f\n",
                 GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB, 
                 mp->mflop[0]);
@@ -35481,10 +35477,37 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    }
    printf("CHOSEN: ID=%d %s (%u,%u,%u), mf=%.2f\n", mpB->ID, 
            GetMMLabelName(pre, mpB), mbB, nbB, kbB, mfB);
-   mp = mpB->next;
-   mpB->next = NULL;
-   WriteMMFileWithPath(pre, "res", "ipASYM.sum", mpB);
-   mpB->next = mp;
+   mpD = CloneMMNode(mpB);
+   KillAllMMNodes(mmb);
+   mpU = CloneMMNode(mpD);
+   mf = MMExpandMNK(verb, pre, 0, 0, 0, mpU);
+   if (mf < mfB)
+   {
+      KillMMNode(mpU);
+      mpU = NULL;
+   }
+   mmb = NULL;
+   for (D=32; D < 512; D += D)
+   {
+      if (D >= maxD)
+      {
+         mpD->next = mmb;
+         mmb = mpD;
+         if (D == maxD)
+            continue;
+      }
+      mp = CloneMMNode(mpD);
+      mf = MMExpandMNK(verb, pre, 0, 0, D, mp);
+      mp->next = mmb;
+      mmb = mp;
+   }
+   if (mpU)
+   {
+      mpU->next = mmb;
+      mmb = mpU;
+   }
+   mmb = ReverseMMQ(mmb);
+   WriteMMFileWithPath(pre, "res", "ipASYM.sum", mmb);
 
 @skip   tb = NULL;
 @skip   MMSplitByFlagAny((1<<MMF_KUISKB), &mmb, &tb); /* tb gets fully unrolled K */
@@ -35504,11 +35527,13 @@ int main(int nargs, char **args)
    mp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
    assert(mp);
    mmb = AddUniqueMMKernCompList(mmb, mp);
+   KillAllMMNodes(mp);
    flag = (verb > 3) ? 3:(verb&3);
    flag |= 3 << 2;
    mp = MMApplyRules(mmb, flag|(1<<MMR_MKCOMP), 0, 0);
    mmb = NULL;
    mmb = AddUniqueMMKernCompList(mmb, mp);
+   KillAllMMNodes(mp);
 
    bLLC = minSquareNB(pre, LLC_SZ, mmb);
    printf("bLLC = %u\n", bLLC);
