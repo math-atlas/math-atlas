@@ -7121,6 +7121,72 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta,
    mp->mflop[0] = mfB;
    return(mfB);
 }
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int MMExpandK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp, 
+              unsigned int maxK)
+/*
+ * Times expanding K until perf drops off by around 2%.  If maxK != 0, also
+ * stops expanding once K is reached.
+ */
+{
+   double mfB, mf;
+   const unsigned int ku = mp->ku, mb=mp->mbB, nb=mp->nbB;
+   unsigned int kbB, k, U;
+   if (!maxK)
+      maxK = 1024;
+/*
+ * In initial search, recursive doubling
+ */
+   printf("   %d %s: FINDING KB FOR B=(%d,%d):\n", mp->ID, 
+          GetMMLabelName(pre, mp), mb, nb);
+   mfB = TimeMMKernel(verb, tflag, mp, pre, mb, nb, ku, beta, 0, -1);
+   printf("      KB=%u, mf=%.2f\n", ku, mfB);
+   k = kbB = ku;
+   do
+   {
+      k += k;
+      mf = TimeMMKernel(verb, tflag, mp, pre, mb, nb, k, beta, 0, -1);
+      printf("      KB=%u, mf=%.2f\n", k, mf);
+      if (mf > mfB)
+      {
+         mfB = mf;
+         kbB = k;
+      }
+   }
+   while (k <= maxK && mf*1.02 > mfB);
+   if (ku < 4)
+   {
+      U = ATL_iLCM(mp->nu, ku);
+      if (U > 8)
+         U = ATL_iLCM(mp->mu, ku);
+      if (U > 8)
+         U = ku+ku;
+   }
+   else
+      U = ku;
+   maxK++;
+   k = kbB+kbB;
+   maxK = Mmax(maxK, k);
+   printf("\n   INITIAL KB=%u, refine [%u,%u) steps of %u:\n", kbB, kbB>>1,
+          maxK, U);
+   for (k=(kbB>>1)+U; k < maxK; k += U)
+   {
+      mf = TimeMMKernel(verb, tflag, mp, pre, mb, nb, k, beta, 0, -1);
+      printf("      KB=%u, mf=%.2f\n", k, mf);
+      if (mf > mfB)
+      {
+         mfB = mf;
+         kbB = k;
+      }
+   }
+   mp->mflop[0] = mfB;
+   mp->kbB = kbB;
+   printf("   %d %s, B=(%d,%d,%d), mf=%.2f\n", mp->ID, GetMMLabelName(pre, mp),
+          mb, nb, kbB, mfB);
+   GetMMLabelName(pre, NULL);
+   return(kbB);
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */

@@ -35442,6 +35442,13 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    double mfB, mf;
    unsigned int mbB, nbB, kbB, maxD=240, D;
 
+   mp = TimeMMFileWithPath(pre, "res", "ipASYM.sum", 0, 0, 0, 1, 0, -1);
+   if (mp)
+   {
+      KillAllMMNodes(mmb);
+      KillAllMMNodes(mp);
+      return;
+   }
    printf("LOOKING FOR BEST ASYMPTOTIC INNER-PRODUCT KERNEL:\n");
    mpB = mp = FindMaxMflopMMQ(mmb, 0);
    mfB = mp->mflop[0];
@@ -35514,6 +35521,48 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    KillAllMMNodes(mmb);
 }
 
+void srch_dMN(char pre, int verb)
+/*
+ * Finds kernels for cases with M=N at fixed values, while K is tuned.
+ * Used in SYRK.
+ */
+{
+   ATL_mmnode_t *bp, *mmb=NULL;
+   unsigned int U, D, d, maxK;
+   
+   bp = TimeMMFileWithPath(pre, "res", "ipdMN.sum", 0, 0, 0, 1, 0, -1);
+   if (bp)
+   {
+      KillAllMMNodes(bp);
+      return;
+   }
+   bp = ReadMMFileWithPath(pre, "res", "ipASYM.sum");
+   assert(bp);
+   while (bp->next)
+      bp = KillMMNode(bp);
+   U = ATL_iLCM(bp->mu, bp->nu);
+   D = Mmax(bp->mbB, bp->nbB);
+   maxK = Mmax(bp->kbB, D);
+   for (d=U; d <= D; d += U)
+   {
+      ATL_mmnode_t *mp;
+      mp = CloneMMNode(bp);
+      mp->next = mmb;
+      mmb = mp;
+      mp->mbB = mp->nbB = d;
+      MMExpandK(verb, pre, 0, 1, mp, maxK);
+      printf("\n");
+   }
+   KillMMNode(bp);
+//   PrintMMNodes(stdout, mmb);
+   while (mmb->next && mmb->mflop[0] < mmb->next->mflop[0])
+      mmb = KillMMNode(mmb);
+   mmb = ReverseMMQ(mmb);
+//   MMPruneMflopTol(mmb, 0, 1.0);
+   WriteMMFileWithPath(pre, "res", "ipdMN.sum", mmb);
+   KillAllMMNodes(mmb);
+}
+
 int main(int nargs, char **args)
 {
    ATL_mmnode_t *mmb, *mp;
@@ -35551,7 +35600,9 @@ int main(int nargs, char **args)
    printf("DONE: ELIMINATED %u UNCOMPETITIVE KERNELS, %u LEFT.\n", 
           nkern0-nkern, nkern);
    PrintMMNodes(stdout, mmb);
+
    findBestIP(pre, verb, mmb, NULL);
+   srch_dMN(pre, verb);
 
    return(0);
 }
