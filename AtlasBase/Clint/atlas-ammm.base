@@ -35350,6 +35350,43 @@ void PrintUsage(char *name, int ierr, char *flag)
 #include "atlas_mmtesttime.h"
 #include <math.h>
 
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+}
+
+char GetFlags(int nargs, char **args)
+{
+   char pre = 'd';
+   int i;
+
+   for (i=1; i < nargs; i++)
+   {
+      int wch, *ip, **ipp, TST=0;
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   return(pre);
+}
+
 void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout, 
             double runBon)
 {
@@ -35441,6 +35478,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    ATL_mmnode_t *tb, *mp, *mpB, *mpU, *mpD;
    double mfB, mf;
    unsigned int mbB, nbB, kbB, maxD=240, D;
+   char upr = pre;
 
    mp = TimeMMFileWithPath(pre, "res", "ipASYM.sum", 0, 0, 0, 1, 0, -1);
    if (mp)
@@ -35568,7 +35606,13 @@ int main(int nargs, char **args)
    ATL_mmnode_t *mmb, *mp;
    int verb=0, nkern0, nkern, flag;
    unsigned int bLLC;
-   char pre='d';
+   char pre, upr;
+   upr = pre = GetFlags(nargs, args);
+   if (pre == 'z')
+      upr = 'd';
+   else if (pre == 'c')
+      upr = 's';
+      
 /*
  * Get user & gen cases, and try compile- and run-time versions
  */
@@ -35584,7 +35628,7 @@ int main(int nargs, char **args)
    mmb = AddUniqueMMKernCompList(mmb, mp);
    KillAllMMNodes(mp);
 
-   bLLC = minSquareNB(pre, LLC_SZ, mmb);
+   bLLC = minSquareNB(upr, LLC_SZ, mmb);
    printf("bLLC = %u\n", bLLC);
    if (bLLC >= 132)
       bLLC -= 12;
@@ -35714,13 +35758,11 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    unsigned int MB, NB, KB;
    unsigned int eltsh=0;
    double mf;
+   const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
    ATL_mmnode_t *mb, *mp, *tb, *mpB;
 
-   if (pre == 'd' || pre == 's') /* this works only for real */
-      eltsh = (pre == 'd') ? 3 : 2;
-   else
-      return;  /* for now, don't think about complex */
-   tb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   eltsh = (upr == 'd') ? 3 : 2;
+   tb = ReadMMFileWithPath(upr, "res", "gAMMRES.sum");
    assert(tb);
 /*
  * Get best-performing kernel, and add it and a kruntime-enabled copy of it
@@ -35765,6 +35807,21 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
  * that fits, and use this size to find the best-performing kernel with a
  * fixed-K-unroll (to avoid i-cache thrashing for huge block sizes). 
  */
+   if (pre == 'z' || pre == 'c')
+   {
+      nelt=L1C_SZ >> eltsh;
+      for (i=12; i*i <= nelt; i += 4);
+      b0 = (i-4)>>1;
+      #if !defined(LLPC_LVL) || LLPC_LVL == 1
+         bP = b0;
+      #else
+         nelt = LLPC_SZ >> eltsh;
+         for (i=b0; i*i <= nelt; i += 4);
+         bP = (i-4)>>1;
+      #endif
+   }
+   else
+   {
    #if !defined(LLPC_LVL) || LLPC_LVL == 1
       nelt=L1C_SZ >> eltsh;
       for (i=12; i*i <= nelt; i += 4);
@@ -35780,6 +35837,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       for (i=b0; i*i <= nelt; i += 4);
       bP = (i-4)>>1;
    #endif
+   }
    do_bfi(pre, 3, b0, 1, "res/tmp.sum", "rkAMM0.sum", -1.0);
 /*
  * For large problems, fully unrolling K may result in i-cache thrashing,
@@ -35952,7 +36010,8 @@ int main(int nargs, char **args)
    unsigned long llc_elts;
    unsigned eltsz = 8;
    int maxK, verb=0;
-   char pre='d';
+   char pre, upr;
+   pre = GetFlags(nargs, args);
 /*
  * For outer product, K is fixed, and you can vary at most 2 dimensions.
  * in practice, wt K fixed, you mainly want to increase NB to maximize
@@ -35983,10 +36042,8 @@ int main(int nargs, char **args)
  * assume the best case of MU=1, the above becomes:
  *    4b^2 + b - (LLC_elts/4), or b = (sqrt(1+LLC_elts/4) - 1)/2 frm quad equ.
  */
-   if (pre == 's')
+   if (pre == 's' || pre == 's')
       eltsz = 4;
-   else if (pre == 'z')
-      eltsz = 16;
    maxK = (sqrt(1 + ((LLC_SZ / eltsz)>>2)) - 3.0)/2.0;
    maxK = Mmin(480, maxK);
    do_opk(verb, pre, NULL, maxK);
