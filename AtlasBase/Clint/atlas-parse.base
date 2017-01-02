@@ -150,6 +150,8 @@ struct CPNode
                     |(1<<MMF_PFCELTS) )
 #define MMF_MVSET  ( (1<<MMF_MVA) | (1<<MMF_MVB) | (1<<MMF_MVC) | (1<<MMF_CPC) )
 #define MMF_MVDEF  ( (1<<MMF_MVA) | (1<<MMF_MVB) )
+#define MMF_DIFFMSK (~((1<<MMF_KCLN)|MMF_MVSET))
+#define MMF_STKBTS (1<<MMF_KCLN)
 #define MMF_DEFAULT ( (1<<MMF_LDCTOP) | (1<<MMF_AOUTER) | MMF_MVDEF )
 #ifndef  FLAG_IS_SET
    #define FLAG_IS_SET(field_, bit_) ( ((field_) & (1<<(bit_))) != 0 )
@@ -2982,6 +2984,7 @@ static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
  * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
  */
 {
+   const int flg0=p0->flag&MMF_DIFFMSK, flg1=p1->flag&MMF_DIFFMSK;
 /*
  * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
  * NOTE: pref & pfLS do not affect output, and so are not checked!
@@ -2989,13 +2992,13 @@ static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
  */
    if (p0->ID == 0 && p1->ID == 0)
       return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
-             p0->vlen == p1->vlen && p0->flag == p1->flag);
+             p0->vlen == p1->vlen && flg0 == flg1);
 /*
  * If both are user kernels, then they may be repeats.  For user kernels,
  * they are the same if both ID and flag match, else they are not.
  */
    else if (p0->ID > 0 && p1->ID > 0)
-      return(p0->ID == p1->ID && p0->flag == p1->flag);
+      return(p0->ID == p1->ID && flg0 == flg1);
    return(0);  /* Can't be the same if above criteria fails */
 }
 @iexp ip @(ip) 1 +
@@ -3040,7 +3043,7 @@ static int MMKernCompsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static int MMKernIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
+static ATL_mmnode_t *MMKernIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
 /*
  * RETURNS: 1 if kernel compilation matching mmp is in list mmb, 0 otherwise
  */
@@ -3048,8 +3051,8 @@ static int MMKernIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
    ATL_mmnode_t *mp;
    for (mp=mmb; mp; mp = mp->next)
       if (MMKernsSame(mmp, mp))
-         return(1);
-   return(0);
+         return(mp);
+   return(NULL);
 }
 
 @iexp ip @(ip) 1 +
@@ -3083,16 +3086,16 @@ ATL_mmnode_t *MMGetKCleanQ(ATL_mmnode_t *db, ATL_mmnode_t *mb)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-static int MMKernCompIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
+static ATL_mmnode_t *MMKernCompIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
 /*
- * RETURNS: 1 if kernel compilation matching mmp is in list mmb, 0 otherwise
+ * RETURNS: ptr to kernel compilation matching mmp is in list mmb, else NULL 
  */
 {
    ATL_mmnode_t *mp;
    for (mp=mmb; mp; mp = mp->next)
       if (MMKernCompsSame(mmp, mp))
-         return(1);
-   return(0);
+         return(mp);
+   return(NULL);
 }
 
 @iexp ip @(ip) 1 +
@@ -3109,9 +3112,12 @@ static ATL_mmnode_t *AddUniqueMMKernsToList
       
    for (mp=newb; mp; mp = mp->next)
    {
-      if (!MMKernIsPresent(mmb, mp))
+      ATL_mmnode_t *p;
+      p = MMKernIsPresent(mmb, mp);
+      if (p)
+         p->flag |= mp->flag & MMF_STKBTS;
+      else
       {
-         ATL_mmnode_t *p;
          p = CloneMMNode(mp);
          p->next = mmb;
          mmb = p;
@@ -3134,9 +3140,12 @@ static ATL_mmnode_t *AddUniqueMMKernCompList
    ATL_mmnode_t *mp;
    for (mp=newb; mp; mp = mp->next)
    {
-      if (!MMKernCompIsPresent(mmb, mp))
+      ATL_mmnode_t *p;
+      p = MMKernCompIsPresent(mmb, mp);
+      if (p)
+         p->flag |= mp->flag & MMF_STKBTS;
+      else
       {
-         ATL_mmnode_t *p;
          p = CloneMMNode(mp);
          p->next = mmb;
          mmb = p;
@@ -3365,6 +3374,79 @@ static void MMApplyMoves2Flags
    ATL_mmnode_t *mmp;
    for (mmp=mmb; mmp; mmp = mmp->next)
       mmp->flag = ((mmp->flag) & mvMSK) | mvSET;
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void MMIvar2str(ATL_mmnode_t *mb)
+/*
+ * Sets str to point to the mmnode of the K cleaner; str is NULL if the routine
+ * does not need K cleanup.  If it is self-cleaning, gets its own node address.
+ * For any non-self-cleaning node needing cleanup, ivar is set to -1.
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      if (FLAG_IS_SET(mp->flag, MMF_KCLN))
+      {
+         if (mp->ivar == 0)
+            mp->str = (char*) mp;   
+         else
+         {
+            const int cnt = mp->ivar - 1;
+            int i;
+            ATL_mmnode_t *kp;
+            for (i=0, kp=mb; i < cnt; kp = kp->next, i++)
+               assert(kp);
+            assert(kp);
+            mp->str = (char*) kp;
+            mp->ivar = -1;
+         }
+      }
+      else
+         mp->str = NULL;
+   }
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void MMstr2Ivar(ATL_mmnode_t *mb)
+/*
+ * Sets ivar according to p->str: if p->str=NULL, or p = p->str, ivar=0, else
+ * ivar equals the index in mb of the K cleanup routine.  Note ivar actually
+ * stores idx+1, so 0 means no externel K clean required.
+ */
+{
+   ATL_mmnode_t *mp;
+
+   for (mp=mb; mp; mp = mp->next)
+   {
+      if (mp->str && mp != (void*)mp->str)
+      {
+         int cnt;
+         ATL_mmnode_t *p, *fnd=(void*)mp->str;
+         for (cnt=0, p=mb; p && p != fnd; cnt++, p = p->next);
+         assert(p);
+         mp->ivar = cnt + 1;
+      }
+      else
+         mp->ivar = 0;
+   }
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_mmnode_t *MMFindKCleanStr(ATL_mmnode_t *mb)
+/*
+ * RETURNS: first node with str that is not NULL or equal to node address.
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      if (mp->str && mp->str != (void*)mp)
+         return(mp);
+   }
+   return(NULL);
 }
 
 static ATL_mmnode_t *MMWinnowByKU(ATL_mmnode_t *mb, int minKB, double tol)

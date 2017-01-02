@@ -35150,9 +35150,44 @@ int main(int nargs, char **args)
       KillAllMMNodes(kb);
    }
 /*
- * Number ivar with location of Kcleaners, and write out master list
+ * Number ivar with location of Kcleaners, and use this to set str to
+ * the actual node address, which reverts ivar to -1 for KCLN nodes; we
+ * will renumber after reordering nodes to try to place Kcleaners right
+ * next to node they clean up for.
  */
    NumberKClean(mb);
+   MMIvar2str(mb);
+/*
+ * Start new queue in kb with all nodes needing non-self K cleaning, and have
+ * their K-cleaners placed right after them when possible (an earlier kernel
+ * using same K-cleaner will force us to use non-contiguous locations).
+ */
+   kb = NULL;
+   KEEP_LOOKING:
+   {
+      ATL_mmnode_t *mp;
+      mp = MMFindKCleanStr(mb);
+      if (mp)
+      {
+         ATL_mmnode_t *p;
+         mb = RemoveMMNodeFromQ(mb, mp);
+         p = (void*)mp->str;
+         mb = RemoveMMNodeFromQ(mb, p);
+         mp->next = p;
+         p->next = kb;
+         kb = mp;
+         goto KEEP_LOOKING;
+      }
+   }
+/*
+ * Join K-clean and their cleaners together with non-cleaning nodes, and then
+ * translate str back to ivar (str does not show up in file, ivar does).
+ * Write out final output file that will be blindly used to generate master
+ * kernel list for ATLAS.
+ */
+   if (mb)
+      mb = ATL_JoinMMQs(kb, mb);
+   MMstr2Ivar(mb);
    printf("DONE K CLEANUP SEARCH, OUTPUT IN '%s'\n", fout);
    WriteMMFile(fout, mb);
    free(fout);
@@ -36830,5 +36865,188 @@ int main(int nargs, char **args)
 
    fnout = GetFlags(nargs, args, &pre, &flag, &maxKU, &reqVL, &fnin, &NB);
    smsrch(pre, flag, fnin, fnout, NB, maxKU, reqVL);
+   return(0);
+}
+@ROUT ammkgen
+#include "atlas_mmgen.h"
+#include "atlas_type.h"
+/*
+ * Takes all amm kernels to be used for anything in ATLAS, and build master
+ * index of kernel structures.  This contains no performance info; that is
+ * handled by views that reference these structures
+ */
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   fprintf(stderr,
+"This routine creates master list of kernel IDs to use, and generates them.\n"
+"It expects all input kerns in [s,d]FNLK1.sum, with K-cleaners in ivar.\n");
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr,"USAGE: %s [flags:\n", name);
+@skip   fprintf(stderr, "   -i : input sumfile (stdin); can be repeated\n");
+   fprintf(stderr, "   -o <path>: what directory to output all files to?\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **OUTD)
+{
+   FILE *fpin=stdin;
+   ATL_mmnode_t *mb=NULL, *mp;
+   char *outd=NULL;
+   int i;
+   char pre='d';
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        if (pre == 'z')
+           pre = 'd';
+        else if (pre == 'c')
+           pre = 's';
+        break;
+      case 'o':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         outd = DupString(args[i]); 
+         break;
+      case 'i':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         mp = ReadMMFile(args[i]);
+         assert(mp);
+         mb = AddUniqueMMKernCompList(mb, mp);
+         KillMMNodes(mp);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!mb)
+   {
+      mb = ReadMMFile(NULL);
+      assert(mb);
+   }
+   if (!outd)
+      outd = DupString("tmp");
+
+   *OUTD = outd;
+   *PRE = pre;
+   return(mb);
+}
+
+int numBitsNeeded(int N)
+{
+   int i;
+   if (N <= 0)
+      return(0);
+   for (i=0; (1<<i) < N; i++);
+   return(i);
+}
+/*
+ * generate:
+ * ATL_AmmKernbyIdx(idx_, kptr_, flg_, vlen_, mu_, nu_, ku_, kbmin_, kbmax_)
+ */
+#define NFLGBITS 3  /* KRUNTIME, KMAJOR, KSELFCLEAN */
+void GenKernInf(ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp;
+   int *MAXs[8];
+   char *nms[8] = {"flg", "vlen", "mu", "nu", "ku", "kbmin", "kbmax"};
+   int MU, NU, KU, VLEN, KBMAX, KBMIN, KCleanIdx;
+   int nbits, pbits, nint, iv;
+   assert(mb);
+   MAXs[0] = NFLGBITS;
+   @iexp iv 1
+   @whiledef vv mu nu ku vlen kbmin kbmax
+   MAXs[@(iv)] = mb->(vv);
+         @iexp iv @(iv) 1 +
+   @endwhile
+   for (mp=mb=next; mp; mp=mp->next)
+   {
+      @iexp iv 0
+      @whiledef vv mu nu ku vlen kbmin kbmax
+      MAXs[iv] = Mmax(MAXs[iv],mp->@(vv));
+         @iexp iv @(iv) 1 +
+      @endwhile
+   }
+   nint=1;
+   nbits = NFLGBITS;
+   pbits = ATL_PSIZE<<3;
+   for (i=1; i < 7; i++)
+   {
+      int bits;
+      MAXs[i] = bits = numBitsNeeded(MAXs[i]);
+      nbits += bits;
+      if (nbits > pbits) /* not enough room left in int */
+      {
+         nbits = bits;
+         nint++;
+      }
+   }
+   assert(nint <= 3);
+   fprintf(fpout, "ATL_AmmKernbyIdx(idx_, k0_, k1_, kn_, flg_, vlen_, "
+           "mu_, nu_, ku_, kbmin_, kbmax_)\\\n{\\\n");
+   if (nint = 1)
+      fprintf(fpout, "const ATL_iptr_t id_=(idx_)<<1; \\\n");
+   else if (nint = 2)
+      fprintf(fpout, "const ATL_iptr_t id_=(idx_)+((idx_)<<1);\\\n");
+   else if (nint = 3)
+      fprintf(fpout, "const ATL_iptr_t id_=(idx_)<<2;\\\n");
+   fprintf(fpout, "ATL_iptr_t bits_;\\\n");
+   fprintf(fpout, "   (k0_) = (void*) (ATL_AMM_KERN[id_]);\n");
+   fprintf(fpout, "   (k1_) = (void*) (ATL_AMM_KERN[id_+1]);\n");
+   fprintf(fpout, "   (kn_) = (void*) (ATL_AMM_KERN[id_+2]);\n");
+   fprintf(fpout, "   bits_ = ATL_AMM_KERN[id_+3];\\\n");
+   fprintf(fpout, "   flg_ = bits_ & 0x%x;\\\n", 1<<(NFLGBITS+1)-1);
+   nbits = NFLGBITS;
+   nint=3;
+   for (i=1; i < 7; i++)
+   {
+      int bits = MAXs[iv];
+      if (nbits + bits > pbits)
+      {
+         fprintf(fpout, "bits_ = ATL_AMM_KERN[id_+%d];\\\n", ++nint);
+         nbits = 0;
+      }
+      if (!nbits)
+         fprintf(fpout, "   %s_ = bits_ & 0x%x;\\\n", nms[i], (1<<(bits+1))-1);
+      else
+         fprintf(fpout, "   %s_ = ((bits_)>>%u) & 0x%x;\\\n", nms[i], 
+                 nbits, (1<<(bits+1))-1);
+      nbits += bits;
+   }
+   fprintf(fpout, "} /* end ATL_AmmKernByIdx macro def */\n");
+}
+
+int main(int nargs char **args)
+{
+   char pre;
+   char *outd;
+   ATL_mmnode_t *mb;
+   mb = GetFlags(nargs, args, &pre, &outd)
+/*
+ * Prep file for generation.  Free present values, and replace with:
+ * ->auth  : kernel name without _b[1,n,0] suffix
+ * ->genstr: for ID=0: genstr, else user kernel name (came in ->rout)
+ * ->rout  : correct present filename
+ */
+   PrepMMForGen(pre, outd, "amm", mb);
+
+   free(outd);
+   KillAllMMNodes(mb);
    return(0);
 }
