@@ -5826,7 +5826,8 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT gmmsearch
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2015
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def cwdate 2016
+#include "atlas_cache.h"
 #include "atlas_misc.h"
 #include "atlas_mmtesttime.h"
 
@@ -35090,7 +35091,7 @@ void NumberKClean(ATL_mmnode_t *mb)
 
    for (cnt=0,mp=mb; mp; mp = mp->next, cnt++)
    {
-      if (mp->ivar == -1) /* need to find a K-cleaner! */
+      if (FLAG_IS_SET(mp->flag, MMF_KCLN))
       {
           int idx;
           idx = GetIdxOfKClean(mb, mp);
@@ -35158,6 +35159,7 @@ int main(int nargs, char **args)
  * next to node they clean up for.
  */
    NumberKClean(mb);
+   WriteMMFile("tmp.sum", mb);
    MMIvar2str(mb);
 /*
  * Start new queue in kb with all nodes needing non-self K cleaning, and have
@@ -36931,7 +36933,7 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **OUTD)
          mp = ReadMMFile(args[i]);
          assert(mp);
          mb = AddUniqueMMKernCompList(mb, mp);
-         KillMMNodes(mp);
+         KillAllMMNodes(mp);
          break;
       default:
          PrintUsage(args[0], i, args[i]);
@@ -36958,31 +36960,91 @@ int numBitsNeeded(int N)
    for (i=0; (1<<i) < N; i++);
    return(i);
 }
+#define NFLGBITS 2  /* KRUNTIME, KMAJOR */
+int *getBitsNeeded(ATL_mmnode_t *mb, int *NINT)
+{
+   ATL_mmnode_t *mp;
+   unsigned int cnt=1, i, nint, nbits, pbits;
+   static unsigned int ib[8];
+
+   assert(mb);
+   ib[0] = NFLGBITS;
+   @iexp iv 1
+   @whiledef vv kbmax kbmin vlen ku nu mu
+   ib[@(iv)] = mb->@(vv);
+         @iexp iv @(iv) 1 +
+   @endwhile
+   for (mp=mb->next; mp; mp=mp->next)
+   {
+      cnt++;
+      @iexp iv 1
+      @whiledef vv kbmax kbmin vlen ku nu mu
+      ib[@(iv)] = Mmax(ib[@(iv)],mp->@(vv));
+         @iexp iv @(iv) 1 +
+      @endwhile
+   }
+   ib[7] = cnt+1;
+   nint=1;
+   nbits = NFLGBITS;
+   pbits = ATL_PSIZE<<3;
+   for (i=1; i < 8; i++)
+   {
+      int bits;
+      ib[i] = bits = numBitsNeeded(ib[i]);
+      nbits += bits;
+      if (nbits > pbits) /* not enough room left in int */
+      {
+         nbits = bits;
+         nint++;
+      }
+   }
+   assert(nint <= 3);
+   *NINT = nint;
+   return(ib);
+}
+
+void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
+{
+   FILE *fpout;
+   char *VN[8]={"FLAG", "MU", "NU", "KU", "VLEN", "KBMIN", "KBMAX","K1IDX"};
+   unsigned int *nbits;
+   char fn[32];
+   unsigned int i, nint;
+
+   sprintf(fn, "atlas_%cammkern.h", pre);
+   fpout = OpenFileWithPath(outd, fn, "w");
+   nbits = getBitsNeeded(mb, &nint);
+   fprintf(fpout, "#define ATL_NINTPACK %u\n", nint);
+   for (i=0; i < 8; i++)
+      fprintf(fpout, "#define ATL_NBIT_%s %u\n", VN[i], nbits[i]);
+   fclose(fpout);
+}
 /*
  * generate:
  * ATL_AmmKernbyIdx(idx_, k0_,k1_,kn_, cpidx, flg_, vlen_, mu_, nu_, ku_, 
  *                  kbmin_, kbmax_)
  */
-#define NFLGBITS 3  /* KRUNTIME, KMAJOR, KSELFCLEAN */
 void GenKernInf(ATL_mmnode_t *mb)
 {
    ATL_mmnode_t *mp;
-   int *MAXs[8];
+   FILE *fpout=NULL;
+   unsigned int MAXs[8];
    char *nms[8] = {"flg", "vlen", "mu", "nu", "ku", "kbmin", "kbmax"};
-   int MU, NU, KU, VLEN, KBMAX, KBMIN, KCleanIdx;
-   int nbits, pbits, nint, iv;
+   unsigned int MU, NU, KU, VLEN, KBMAX, KBMIN, KCleanIdx;
+   unsigned int nbits, pbits, nint, iv, i;
+
    assert(mb);
    MAXs[0] = NFLGBITS;
    @iexp iv 1
-   @whiledef vv mu nu ku vlen kbmin kbmax
-   MAXs[@(iv)] = mb->(vv);
+   @whiledef vv kbmax kbmin vlen ku nu mu
+   MAXs[@(iv)] = mb->@(vv);
          @iexp iv @(iv) 1 +
    @endwhile
-   for (mp=mb=next; mp; mp=mp->next)
+   for (mp=mb->next; mp; mp=mp->next)
    {
       @iexp iv 0
-      @whiledef vv mu nu ku vlen kbmin kbmax
-      MAXs[iv] = Mmax(MAXs[iv],mp->@(vv));
+      @whiledef vv kbmax kbmin vlen ku nu mu
+      MAXs[@(iv)] = Mmax(MAXs[@(iv)],mp->@(vv));
          @iexp iv @(iv) 1 +
       @endwhile
    }
@@ -37001,7 +37063,7 @@ void GenKernInf(ATL_mmnode_t *mb)
       }
    }
    assert(nint <= 3);
-   fprintf(fpout, "ATL_AmmKernbyIdx(idx_, k0_, k1_, kn_, cpI_, flg_, vlen_, "
+   fprintf(fpout, "ATL_AmmKernbyIdx(idx_, k0_, k1_, kn_, flg_, vlen_, "
            "mu_, nu_, ku_, kbmin_, kbmax_)\\\n{\\\n");
    if (nint = 1)
       fprintf(fpout, "const ATL_iptr_t id_=(idx_)<<1; \\\n");
@@ -37035,12 +37097,191 @@ void GenKernInf(ATL_mmnode_t *mb)
    fprintf(fpout, "} /* end ATL_AmmKernByIdx macro def */\n");
 }
 
-int main(int nargs char **args)
+void GenKerns(char pre, char *outd, ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *ub, *mp;
+   char *sgen=NULL;
+   int i, len, dlen;
+   char pr=pre;
+
+   dlen = strlen(outd);
+   len = 0;
+/*
+ * mb has unique compilations, reduce this to unique files, and then generate
+ */
+   ub = AddUniqueMMKernsToList(NULL, mb);
+/*
+ * Generate/copy all required kernels. 
+ */
+   printf("\nGENERATING AMM KERNS:\n");
+   for (mp=ub; mp; mp = mp->next)
+   {
+      const int id=mp->ID;
+      if (!id)
+      {
+         printf("   -> %s\n", mp->rout);
+         assert(mp->genstr);
+         if ( (i=system(mp->genstr)) )
+         {
+            fprintf(stderr, "GENSTR RETURNS %d:\n'%s'\n", i, mp->genstr);
+            exit(i);
+         }
+      }
+      else /* user-supplied kernel */
+      {
+         ATL_mmnode_t *p;
+         printf("   %s -> %s\n", mp->genstr, mp->rout);
+         i = strlen(mp->genstr) + strlen(mp->rout) + dlen + 16;
+         if (i > len)
+         {
+            if (sgen)
+               free(sgen);
+            sgen = malloc(i*sizeof(char));
+            assert(sgen);
+            len = i;
+         }
+         sprintf(sgen, "cp AMMCASES/%s %s/%s", mp->genstr, outd, mp->rout);
+
+         if ( (i=system(sgen)) )
+         {
+            fprintf(stderr, "FAILED CP='%s'\n", sgen);
+            exit(i);
+         }
+      }
+   }
+   printf("DONE GENERATING AMM KERNS.\n");
+   free(sgen);
+   KillAllMMNodes(ub);
+}
+
+void GenMake(char pre, char *outd, ATL_mmnode_t *mb)
+/*
+ * mb files have already been made at least compile-time unique (same source
+ * file might occur multiple times due to need to compile with -DKB)
+ */
+{
+   FILE *fp;
+   char *fn;
+   ATL_mmnode_t *mp;
+   char *sals[3] = {"1", "N1", "X"};
+   char als[3] = {'1', 'n', 'X'};
+   char *sbes[4] = {"0", "1", "N1", "X"};
+   char bes[4] = {'0', '1', 'n', 'X'};  /* use 1st 3 for mmkerns */
+   char ctas[4] = {'N', 'T', 'C', 'H'};
+   char dcomp[8] = {'$', '(', 'D', 'M', 'C', ')', '\0'};
+   char dflags[12] = {'$','(','D','M','C','F','L','A','G','S',')','\0'};
+
+
+   fn = malloc(strlen(outd)+11);
+   assert(fn);
+   sprintf(fn, "%s/%cMake_amm", outd, pre);
+   fp = fopen(fn, "w");
+   assert(fp);
+   free(fn);
+   fprintf(fp, "include ../Make.inc\n");
+   fprintf(fp, "CDEFS2=$(CDEFS)\n\n");
+/*
+ * Spew out kernels to be compiled
+ */
+   fprintf(fp, "objs =");
+   for (mp=mb; mp; mp = mp->next)
+   {
+      int ib;
+      for (ib=0; ib < 3; ib++)
+         fprintf(fp, " \\\n       %s_b%c.o", mp->auth, bes[ib]);
+   }
+   fprintf(fp, "\n");
+/*
+ * library make targets
+ */
+   fprintf(fp, "\n\nlib : %clib.grd\nall : %clib.grd\n%clib : %clib.grd\n",
+           pre, pre, pre, pre);
+   fprintf(fp, "%clib.grd : $(objs)\n", pre);
+   fprintf(fp, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t touch %clib.grd\n", pre);
+   fprintf(fp, "clean : %cclean\n", pre);
+   fprintf(fp, "%cclean:\n\t- rm -f $(objs)\n", pre);
+   fprintf(fp, "killall : %ckillall\n", pre);
+   fprintf(fp, "%ckillall : %cclean\n", pre, pre);
+   fprintf(fp, "\t- $(ARCHIVER) d $(ATLASlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t- rm -f ATL_%c*.[S,c]\n\n", pre);
+/*
+ * Make targets for amm kerns
+ */
+   fprintf(fp, "#\n#  AMM kernel rules\n#\n");
+   fn = (pre == 'd' || pre == 'z') ?  "-DDREAL=1" : "-DSREAL";
+   for (mp=mb; mp; mp = mp->next)
+   {
+      int ib;
+      char *comp, *flgs;
+
+      comp = GetMMKernComp(mp, dcomp, dflags, &flgs);
+      for (ib=0; ib < 3; ib++)
+      {
+         char *sp=" ";
+         fprintf(fp, "%s_b%c.o : %s\n", mp->auth, bes[ib], mp->rout);
+         fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1 \\\n", comp, fn, sbes[ib]);
+         if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+            fprintf(fp, "        -DMB=%d -DNB=%d -DKB=%d",
+                    mp->mbB, mp->nbB, mp->kbB);
+         else
+            sp = "        ";
+         if (FLAG_IS_SET(mp->flag, MMF_MVA))
+         {
+            fprintf(fp, "%s-DATL_MOVEA", sp);
+            sp = " ";
+         }
+         if (FLAG_IS_SET(mp->flag, MMF_MVB))
+         {
+            fprintf(fp, "%s-DATL_MOVEB", sp);
+            sp = " ";
+         }
+         if (FLAG_IS_SET(mp->flag, MMF_MVC))
+         {
+            fprintf(fp, "%s-DATL_MOVEC", sp);
+            sp = " ";
+         }
+         fprintf(fp, " \\\n        %s \\\n", flgs);
+         fprintf(fp,
+                 "        -DATL_USERMM=%s_b%c \\\n        -c -o %s_b%c.o \\\n",
+                 mp->auth, bes[ib], mp->auth, bes[ib]);
+         fprintf(fp, "        %s\n", mp->rout);
+      }
+   }
+   fclose(fp);
+}
+
+void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb)
+{
+   FILE *fpout;
+   int ib, inxt, iaut;
+   char bes[3] = {'0', '1', 'n'};
+   char fn[24];
+
+   sprintf(fn, "atlas_%cammproto.h", pre);
+   inxt = GetOffset(&mb->next, mb);
+   iaut = GetOffset(&mb->auth, mb);
+   fpout = OpenFileWithPath(outd, fn, "w");
+   assert(fpout);
+   fprintf(fpout,"#ifndef ATLAS_AMMPROTO_H\n   #define ATLAS_AMMPROTO_H 1\n\n");
+   for (ib=0; ib < 3; ib++)
+      PrintMMProtos(fpout, pre, "KERN", mb, iaut, bes[ib]);
+   fprintf(fpout, "\n#endif /* end multiple inclusion guard */\n");
+   fclose(fpout);
+   GenKerns(pre, outd, mb);
+   GenMake(pre, outd, mb);
+   GenKernArr(pre, outd, mb);
+}
+
+int main(int nargs, char **args)
 {
    char pre;
    char *outd;
-   ATL_mmnode_t *mb;
-   mb = GetFlags(nargs, args, &pre, &outd)
+   ATL_mmnode_t *mb, *ub;
+
+   mb = GetFlags(nargs, args, &pre, &outd);
 /*
  * Prep file for generation.  Free present values, and replace with:
  * ->auth  : kernel name without _b[1,n,0] suffix
@@ -37048,6 +37289,7 @@ int main(int nargs char **args)
  * ->rout  : correct present filename
  */
    PrepMMForGen(pre, outd, "amm", mb);
+   GenAllFiles(pre, outd, mb);
 
    free(outd);
    KillAllMMNodes(mb);
