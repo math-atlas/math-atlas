@@ -36930,10 +36930,15 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **OUTD)
       case 'i':
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
+         if (mb)
+            KillAllMMNodes(mb);
+         mb = ReadMMFile(args[i]);
+@beginskip
          mp = ReadMMFile(args[i]);
          assert(mp);
          mb = AddUniqueMMKernCompList(mb, mp);
          KillAllMMNodes(mp);
+@endskip
          break;
       default:
          PrintUsage(args[0], i, args[i]);
@@ -37003,21 +37008,80 @@ int *getBitsNeeded(ATL_mmnode_t *mb, int *NINT)
    return(ib);
 }
 
+void PrintIntsHex(FILE *fp, ATL_mmnode_t *mp, int nint, int *nbits)
+{
+   ATL_iptr_t ib, ish;
+
+   ib = FLAG_IS_SET(mp->flag, MMF_KRUNTIME);
+   ib |= FLAG_IS_SET(mp->flag, MMF_KVEC) ? 2 : 0;
+   ish = nbits[0];
+   @iexp iv 1
+   @whiledef vv kbmax kbmin vlen ku nu mu
+   if (ish+nbits[@(iv)] > ATL_PSIZE*8)
+   {
+      fprintf(fp, ", 0x%lxL", ib);
+      ib = ish = 0;
+   }
+   ib |= mp->@(vv) << ish;
+   ish += nbits[@(iv)];
+      @iexp iv @(iv) 1 +
+   @endwhile
+   fprintf(fp, ", 0x%lxL", ib);
+}
+
 void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
 {
    FILE *fpout;
+   ATL_mmnode_t *mp;
    char *VN[8]={"FLAG", "MU", "NU", "KU", "VLEN", "KBMIN", "KBMAX","K1IDX"};
    unsigned int *nbits;
-   char fn[32];
-   unsigned int i, nint;
+   unsigned int k, i, nint, N;
+   ATL_iptr_t ibt;
 
-   sprintf(fn, "atlas_%cammkern.h", pre);
-   fpout = OpenFileWithPath(outd, fn, "w");
+   assert(sizeof(ATL_iptr_t) == ATL_psize);
+   N = ATL_CountNumberOfMMNodes(mb);
+   fpout = OpenMMGenHeader(outd, 0, pre, "amm", NULL, "kern", mb);
+   fprintf(fpout, "#include atlas_damm_proto.h\n\n");
+
    nbits = getBitsNeeded(mb, &nint);
+   k = nint + 3;
+   fprintf(fpout, "#define ATL_ENTRYN %u\n", k);
+   for (i=0; i < 32 && !((1<<i)&k); i++);
+   if (k^(1<<i) == 0)
+      fprintf(fpout, "#define ATL_Idx2Entry(i_) ((i_)<<%u)\n", i);
+   else if (k == 5)
+      fprintf(fpout, "#define ATL_Idx2Entry(i_) (((i_)<<2)+(i_))\n", i);
+   else if (k == 6)
+      fprintf(fpout, "#define ATL_Idx2Entry(i_) (((i_)<<2)+((i_)<<1))\n", i);
+   else
+      fprintf(fpout, "#define ATL_Idx2Entry(i_) ((i_)*%u)\n", k);
    fprintf(fpout, "#define ATL_NINTPACK %u\n", nint);
    for (i=0; i < 8; i++)
       fprintf(fpout, "#define ATL_NBIT_%s %u\n", VN[i], nbits[i]);
-   fclose(fpout);
+   fprintf(fpout, "\n");
+   fprintf(fpout, "#ifndef ATL_DECL_\n   extern ATL_iptr_t ATL_AMM_KERN[%u];\n",
+           N*(3+nint));
+   fprintf(fpout, "#else\nconst ATL_iptr_t ATL_AMM_KERN[%u]=\n{\n", N*(3+nint));
+
+   mp = mb;
+   fprintf(fpout, "(ATL_iptr_t)%s_b1,\n(ATL_iptr_t)%s_b0,\n(ATL_iptr_t)%s_bn\n",
+           mp->auth, mp->auth, mp->auth);
+   PrintIntsHex(fpout, mp, nint, nbits);
+   fprintf(fpout, "/* %u: U=(%u,%u,%u), VL=%u, KB=(%u,%u) KclnI=%d, */",
+           0, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kbmin, mp->kbmax, 
+           mp->ivar-1);
+   for (i=1,mp=mb->next; mp; mp = mp->next, i++)
+   {
+      fprintf(fpout, 
+              ",\n(ATL_iptr_t)%s_b1,\n(ATL_iptr_t)%s_b0,\n(ATL_iptr_t)%s_bn\n",
+              mp->auth, mp->auth, mp->auth);
+      PrintIntsHex(fpout, mp, nint, nbits);
+      fprintf(fpout, "/* %u: U=(%u,%u,%u), VL=%u, KB=(%u,%u), KclnI=%d */",
+              i, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kbmin, mp->kbmax, 
+              mp->ivar-1);
+   }
+   fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n");
+   CloseGenHeader(fpout);
 }
 /*
  * generate:
@@ -37109,7 +37173,7 @@ void GenKerns(char pre, char *outd, ATL_mmnode_t *mb)
 /*
  * mb has unique compilations, reduce this to unique files, and then generate
  */
-   ub = AddUniqueMMKernsToList(NULL, mb);
+   ub = AddUniquePerfMMKernsToList(NULL, mb);
 /*
  * Generate/copy all required kernels. 
  */
@@ -37260,16 +37324,14 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb)
    char bes[3] = {'0', '1', 'n'};
    char fn[24];
 
-   sprintf(fn, "atlas_%cammproto.h", pre);
+   fpout = OpenMMGenHeader(outd, 0, pre, "amm", NULL, "proto", mb);
+   assert(fpout);
    inxt = GetOffset(&mb->next, mb);
    iaut = GetOffset(&mb->auth, mb);
-   fpout = OpenFileWithPath(outd, fn, "w");
-   assert(fpout);
    fprintf(fpout,"#ifndef ATLAS_AMMPROTO_H\n   #define ATLAS_AMMPROTO_H 1\n\n");
    for (ib=0; ib < 3; ib++)
       PrintMMProtos(fpout, pre, "KERN", mb, iaut, bes[ib]);
-   fprintf(fpout, "\n#endif /* end multiple inclusion guard */\n");
-   fclose(fpout);
+   CloseGenHeader(fpout);
    GenKerns(pre, outd, mb);
    GenMake(pre, outd, mb);
    GenKernArr(pre, outd, mb);
