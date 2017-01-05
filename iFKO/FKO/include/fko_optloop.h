@@ -65,4 +65,5 @@ int DelLoopControl(LOOPQ *lp);
 int CountUnrollFactor(LOOPQ *lp);
 short *UpdateDeref(INSTQ *ip, int ireg, int inc);
 struct ptrinfo *FindConstMovingPtr(BBLOCK *bp);
+int FindNumIFs(BLIST *scope);
 #endif

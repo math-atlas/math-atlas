@@ -4629,7 +4629,7 @@ OPTLOOP=1
       'x': type=d sets=2 uses=3 ReduceExpandable=0
  *============================================================================*/
 {
-   int i, npaths, nifs;
+   int i, npaths, nifs, bvlpl;
    FILE *fpout=stdout;
    int MaxR, MinR, RC;
    int *pvec;
@@ -4653,9 +4653,6 @@ OPTLOOP=1
    
    MaxR=0; MinR=0; RC=0;
    VmaxminR=0; Vrc=0; Vspec=0; Vn=0;
-
-   pvec = calloc(FKO_MaxPaths, sizeof(int));
-   assert(pvec);
 
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
@@ -4710,6 +4707,9 @@ OPTLOOP=1
  */
       npaths = FindNumPaths(optloop);
       nifs = FindNumIFs(optloop->blocks) - 1; /* 1 for loop itself */
+      
+      pvec = calloc(npaths, sizeof(int));
+      assert(pvec);
 
       if (npaths > 1)
       {
@@ -4847,7 +4847,7 @@ OPTLOOP=1
 
                /*Vslp = !SlpVectorization();*/
                VECT_FLAG |= VECT_SLP; /* need to specify the vect for optloop*/
-               Vslp = !LoopNestVec();
+               Vslp = !LoopNestVec(NULL, &bvlpl);
                iVecMethod[SLP] = Vslp;
 
             }
@@ -4933,6 +4933,7 @@ OPTLOOP=1
 #endif
    return;   
 }
+
 #if 0
 void PrintLoopInfo()
 /*
@@ -5495,7 +5496,7 @@ int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec)
       ipb->prev = ipb->next = NULL;
       KillThisInst(ipb);
    }
-   CFUSETU2D = INDEADU2D = 0;
+   CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 /*   fprintf(stderr, "ACCEXP, nchanges=%d\n\n", nchanges); */
    return(nchanges);
 }
@@ -5875,7 +5876,7 @@ int DoAllScalarExpansion(LOOPQ *lp, int unroll, int vec)
       ipb->prev = ipb->next = NULL;
       KillThisInst(ipb);
    }
-   CFUSETU2D = INDEADU2D = 0;
+   CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 /*   fprintf(stderr, "SCLEXP, nchanges=%d\n\n", nchanges); */
    return(nchanges);
 }
