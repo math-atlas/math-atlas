@@ -225,7 +225,7 @@ int RevealArchMemUses(void)
       }
    }
    if (nchanges)
-      CFUSETU2D = INDEADU2D = 0;
+      CFUSETU2D = INUSETU2D = INDEADU2D = 0;
    return nchanges;
 }
 #endif

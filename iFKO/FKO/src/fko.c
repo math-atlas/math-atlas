@@ -9,7 +9,8 @@
 #include "fko_loop.h"
 
 FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL, *fpLOOPINFO=NULL;
-FILE *fpLRSINFO=NULL, *fpARCHINFO=NULL;
+FILE *fpLRSINFO=NULL, *fpARCHINFO=NULL, *fpVECINFO=NULL, *fpVECINFO2=NULL;
+FILE *fpBVNUM=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 /*int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;*/ /*not used anymore */
@@ -36,6 +37,7 @@ static char fST[1024], fLIL[1024], fmisc[1024];
 static short *PFDST=NULL, *PFLVL=NULL;
 static char **PFARR=NULL;
 int  USEALLIREG=0; /* not used anymore */
+int IWAY = 0;
 
 int noptrec=0;
 enum FKOOPT optrec[512];
@@ -54,6 +56,10 @@ void PrintUsageN(char *name)
    fprintf(stderr, "  -i <file> : generate loop info file and quit\n");
    fprintf(stderr, "  -iarch <file> : generate architectural info and quit\n");
    fprintf(stderr, "  -ilrs <file> : generate LR spilling info and quit\n");
+   fprintf(stderr, "  -ivec <file> : generate vectorization info and quit\n");
+   fprintf(stderr, 
+         "  -ibvnum <file> : write vecapproach # of best vector method\n");
+   fprintf(stderr, "  -ivec2 <file> : generate vectorization info and quit\n");
    fprintf(stderr, "  -o <outfile> : assembly output file\n");
    fprintf(stderr, "  -R [d,n] <directory/name> : restore path & base name\n");
    fprintf(stderr, "  -K 0 : suppress comments\n");
@@ -70,10 +76,13 @@ void PrintUsageN(char *name)
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
    fprintf(stderr, "  -U all : Unroll main loop all the way\n");
    /*fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");*/
+   fprintf(stderr, "  -vec : apply best possible vectorizaion\n");
+   fprintf(stderr, "  -vecapproach <#> : apply vectorization based on <#>\n");
    fprintf(stderr, "  -LNZV : loop level no hazard vectorization\n");
    fprintf(stderr, "  -SV <path#> <nvlens> :" 
                    "Apply SpecVec to path# using nvlens bet\n" );
-   //fprintf(stderr, "  -SLPV : basic block level no hazard vectorization\n");
+   fprintf(stderr, "  -SLP : basic block level no hazard vectorization\n");
+   fprintf(stderr, "  -w <#> : indicate #way to init SLP vectorization\n");
    /*fprintf(stderr, "  -B : Stronger Bet unrolling for SV\n");*/
    fprintf(stderr, "  -M : Maximum paths to be analyzed in SV\n");
    /*fprintf(stderr, 
@@ -475,7 +484,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
 #endif
 /*
  *       SV path sbunroll 
- *       SLPV = SLP vectorization, at first we only applied to loop
+ *       SLP = SLP vectorization, at first we only applied to loop
  */
          case 'S':
             if (args[i][2] && args[i][2]=='V')
@@ -503,7 +512,10 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             else
                PrintUsageN(args[0]);
             break;
-         case 'W':
+         case 'w': /* #way to init SLP*/
+             IWAY = atoi(args[++i]); 
+             break;
+         case 'W': /* use cache write-through stores */
             id = malloc(sizeof(struct idlist));
             id->name = args[++i];
             id->next = idb;
@@ -536,7 +548,14 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             }
             break;
          case 'v':
-            FKO_FLAG |= IFF_VERBOSE;
+            if (!strcmp(args[i], "-vecapproach"))
+               SetVecFlag(atoi(args[++i]));
+            else if(!strcmp(args[i], "-vec"))
+               FKO_FLAG |= IFF_BESTVEC;
+            else if (!strcmp(args[i], "-v"))
+               FKO_FLAG |= IFF_VERBOSE;
+            else
+               PrintUsageN(args[0]);
             break;
 /*
  *       specify the path to speculate for speculative vectorization, this is
@@ -650,6 +669,20 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             else if (args[i][2] && args[i][2]=='a' && args[i][3]=='r' 
                      && args[i][4]=='c' && args[i][5]=='h')
                fpp = &fpARCHINFO;
+/*
+ *          -ivec2 : vectorization info with VecRank details
+ */   
+            else if (args[i][2] && args[i][2]=='v' && args[i][3]=='e' 
+                     && args[i][4]=='c' && (args[i][5] && args[i][5] == '2'))
+               fpp = &fpVECINFO2;
+/*
+ *          -ivec : vectorization info 
+ */   
+            else if (args[i][2] && args[i][2]=='v' && args[i][3]=='e' 
+                     && args[i][4]=='c')
+               fpp = &fpVECINFO;
+            else if (!strcmp(args[i], "-ibvec"))
+               fpp =&fpBVNUM;
             
             else PrintUsageN(args[0]);
 
@@ -3290,7 +3323,7 @@ void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
    enum tregs { R_INT, R_FLOAT, R_DOUBLE, R_VINT, R_VFLOAT, R_VDOUBLE}; 
    int ropt[nreg];
    int rglob[nreg];
-   int nropt, nrglob, tnr;
+   int nropt=0, nrglob=0, tnr=0;
 
    for (op=optblks; op; op=op->next)
    {
@@ -3365,20 +3398,14 @@ struct optblkq *PerformRepeatableOpts(struct optblkq *optblks)
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
-   #ifdef X86
-/*
- * handle system constant specially for X86 
- */
-      RevealArchMemUses(); /* to handle ABS in X86 */
-      if (!CFUSETU2D)
-      {
-         CalcInsOuts(bbbase);
-         CalcAllDeadVariables();
-      }
-   #endif
 /*
  * Perform repeatable optimizations based on optblks 
  */
+#if 0
+      fprintf(stdout, "\n LIL Repeatable opt\n");
+      PrintInst(stdout,bbbase);
+      exit(0);
+#endif
    PerformOptN(optblks);
 
    return(optblks);
@@ -3435,14 +3462,23 @@ void FinalStage(FILE *fpout, struct optblkq *optblks)
  */
 {
 /*
- * FIXME: we need dead store elimination before applying repeatable optimization
+ * Need to reveal arch mem uses before DeadDefElim, otherwise, those defs would
+ * be deleted from prologue
+ */
+#ifdef X86
+   RevealArchMemUses(); /* to handle ABS in X86 */
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+#endif
+/*
+ * NOTE: we need dead store elimination before applying repeatable optimization
  * like, register assignment
  */
    if (!(FKO_FLAG & IFF_NODDE) )
       DoDeadDefElim();
-/*
- * perform dead store 
- */
 /*
  * perform repeatable optimization
  */
@@ -3774,8 +3810,6 @@ int IsSimpleLoopNestVec(int vflag)
 {
    int k, type;
    int lpnest = 0;
-   int vsize;
-   struct ptrinfo *pi;
    LOOPQ *lpq;
    extern LOOPQ *optloop;
    
@@ -3795,23 +3829,15 @@ int IsSimpleLoopNestVec(int vflag)
       return(0);
    }
 /*
- * if we want to apply loopnest vectorization on rolled loop (not by SLP), we 
- * can't have cleanup and loop peeling for alignment right now
+ * fko supports vectorization for x86 only so far
  */
-#ifdef X86
-/*
- * should have a function in arch.c ... will check that later
- */
-   #ifdef AVX
-      vsize=32;
-   #elif defined(SSE3) || defined(SSE41)
-      vsize=16;
-   #else
-      fko_error(__LINE__, "Unknown SIMD unit!!!");
-   #endif
-#else
+#ifndef X86
    return(0);
 #endif
+/*
+ * if we want to apply loopnest vectorization on rolled loop (not by SLP), we 
+ * can't have cleanup and loop peeling for alignment right now
+ */   
    if ( !(vflag & VECT_SLP) )
    {
 /*
@@ -3935,12 +3961,14 @@ int main(int nargs, char **args)
  *===========================================================================
  */
 {
+   int ur, bvlpl;
    FILE *fpin, *fpout;
    char *fin;
    struct optblkq *optblks;
    BBLOCK *bp;
    /*int RCapp;*/
    LPLIST *lpnest;
+   short *ptrs, *aptr;
    extern FILE *yyin;
    extern BBLOCK *bbbase;
    extern int SKIP_PEELING;
@@ -3972,10 +4000,9 @@ int main(int nargs, char **args)
    if (FKO_FLAG & IFF_READINTERM)
    {
       fprintf(stderr, 
-             "Need to call restore function. It is not implemented yet\n");
+             "Need to call restore function. Only supported for state 0\n");
       exit(0);
    }
-
 /*===========================================================================
  *    STATE 0:
  *       1. Generate 1st LIL after parsing the HIL (Simple ld/st LIL).
@@ -3992,13 +4019,26 @@ int main(int nargs, char **args)
 /*
  * save state0 so that we can restore problem from that  
  */
-   SaveFKOState0(); /* this function works for state0. */
+   if (fpLOOPINFO || fpVECINFO || fpVECINFO2 || fpBVNUM)
+      SaveFKOState0(); /* this function works for state0. */
 /*
  * if we need information for tunning, generate and return those info.
  */
    if (fpLOOPINFO)
    {
       FeedbackLoopInfo();
+      KillAllGlobalData(optblks); 
+      exit(0);
+   }
+   else if (fpVECINFO || fpVECINFO2)
+   {
+      VecInfo(0); /* 0 means print not only best one nut also others */ 
+      KillAllGlobalData(optblks); 
+      exit(0);
+   }
+   else if (fpBVNUM)
+   {
+      fprintf(fpBVNUM, "BEST-VECTOR-METHOD: %d\n", VecInfo(1));
       KillAllGlobalData(optblks); 
       exit(0);
    }
@@ -4009,7 +4049,16 @@ int main(int nargs, char **args)
       exit(0);
    }
 #endif   
-
+/*
+ * if we want to apply compiler's suggested best vectorization methods, analyze
+ * it and set flags
+ */
+   if (FKO_FLAG & IFF_BESTVEC)
+   {
+      SaveFKOState0(); /* this function works for state0. */
+      SetVecFlag(VecInfo(1)); 
+      RestoreFKOState0();
+   }
 /*===========================================================================
  *    STATE 1:
  *       1. Generate initial prologue/epilogue, CFG, find loops
@@ -4056,13 +4105,8 @@ int main(int nargs, char **args)
       CheckFlow(bbbase, __FILE__,__LINE__);
       FindLoops();
       CheckFlow(bbbase, __FILE__, __LINE__);
+      /*ShowFlow("fall.dot",bbbase);*/
    }
-#if 0   
-   fprintf(stdout, "After Fall-thru conversion\n");
-   PrintInst(stdout, bbbase);
-   ShowFlow("fall.dot",bbbase);
-   exit(0);
-#endif   
 /*
  * Right now, we will consider only optloop for theses transformation, but
  * it can be applied anywhere. 
@@ -4080,48 +4124,19 @@ int main(int nargs, char **args)
       if (STATE1_FLAG & IFF_ST1_MMR)
       {
 /*
- *       Right now, we will transform the whole if blk, if this blk is used only
- *       for determing the max/min. We will extend this to figure out the 
- *       max/min var and strip it out from the loop. 
+ *       this optimiozation tries to eliminate the branch if that is only used
+ *       to findout max/min value
  */
          ElimMaxMinIf(1,1); /* both max and min */
-#if 0 
-         fprintf(stdout, "LIL after ElimMax/MinIf\n");
-         PrintInst(stdout, bbbase);
-         GenerateAssemblyWithCommonOpts(fpout, optblks );
-#endif
       }
-
+/*
+ *    we always try to move max/min variable before applying RC 
+ */
       if (STATE1_FLAG & IFF_ST1_RC)
       {
-#if 0 
-         fprintf(stdout, "LIL Before RC\n");
-         PrintInst(stdout, bbbase);
-         ShowFlow("cfg.dot", bbbase);
-#endif   
          /*assert(!IterativeRedCom());*/
-/*
- *       testing.... for iamax
- */
          MovMaxMinVarsOut(1,1); /* both max/min */
-#if 0
-         fprintf(stdout, "LIL after MaxMin\n");
-         PrintInst(stdout, bbbase);
-         fflush(stdout);
-#endif
          assert(!IterativeRedCom());
-#if 0
-         fprintf(stdout, "LIL after RC\n");
-         PrintInst(stdout, bbbase);
-         exit(0);
-#endif
-         /*RCapp = 1;*/ /* for debug */
-#if 0 
-         fprintf(stdout, "LIL after RC\n");
-         PrintInst(stdout, bbbase);
-         exit(0);
-         GenerateAssemblyWithCommonOpts(fpout, optblks );
-#endif         
       } 
    }
    else
@@ -4131,7 +4146,7 @@ int main(int nargs, char **args)
    }
 
 #if 0
-   if (FKO_FLAG & IFF_GENINTERM && state1) /*flag state0 is not impl yet */
+   if (FKO_FLAG & IFF_GENINTERM && state1) /*flag state1 is not impl yet */
    {
       SaveFKOState(1);
       exit(0);
@@ -4199,35 +4214,59 @@ int main(int nargs, char **args)
       UpdateVecLoop(optloop);
    }
 /*
- * Vectorization for Simple loop nest 
+ * Vectorization for Simple loop nest
+ * can be any of them: SLP, SV and no hazard....
  */   
    else if ( (FKO_FLAG & IFF_VECTORIZE) && IsSimpleLoopNestVec(VECT_FLAG) )
    {
-      /*fprintf(stderr, "*****applying loop nest vect\n");*/
-      fko_warn(__LINE__,"*****applying loop nest vect\n");
-      assert(!LoopNestVec());
+      if ((IWAY-STN_VEC_SLP) > 0)
+      {
+         ptrs = OrderedVecPtrAccess(optloop);
+         if (ptrs && (IWAY-STN_VEC_SLP) <= ptrs[0])
+         {
+            aptr = malloc(2*sizeof(short));
+            assert(aptr);
+            aptr[0] = 1;
+            aptr[1] = ptrs[IWAY-STN_VEC_SLP];
+            /*fprintf(stderr, "ptr = %s(%d)\n", STname[aptr[1]-1], IWAY);*/
+            assert(!LoopNestVec(aptr, &bvlpl));
+            free(ptrs);
+            free(aptr);
+         }
+         else
+            fko_error(__LINE__, "Unknown way for SLP (-w #)\n");
+      }
+      else
+         assert(!LoopNestVec(NULL, &bvlpl));
    }
    else if ( (FKO_FLAG & IFF_VECTORIZE) && (VECT_FLAG & VECT_SLP) )
    {
 /*
- *    apply SLP vectorization method 
+ *    apply SLP vectorization method, use iway to init pack for SLP 
  */
-      /*assert(!SlpVectorization());*/
-      assert(!LoopNestVec());
-      CheckUseSet();
-#if 0
-      fprintf(stdout, "LIL after SLP Vec\n");
-      PrintInst(stdout, bbbase);
-      exit(0);
-#endif
+      if ( (IWAY-STN_VEC_SLP) > 0)
+      {
+         ptrs = OrderedVecPtrAccess(optloop);
+         if (ptrs && (IWAY-STN_VEC_SLP) <= ptrs[0])
+         {
+            aptr = malloc(2*sizeof(short));
+            assert(aptr);
+            aptr[0] = 1;
+            aptr[1] = ptrs[IWAY-STN_VEC_SLP];
+            /*fprintf(stderr, "ptr = %s(%d)\n", STname[aptr[1]-1], IWAY);*/
+            assert(!LoopNestVec(aptr, &bvlpl));
+            free(ptrs);
+            free(aptr);
+         }
+         else
+            fko_error(__LINE__, "Unknown way for SLP (-w #)\n");
+      }
+      else
+         assert(!LoopNestVec(NULL, &bvlpl));
+      /*CheckUseSet();*/
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {
-#if 0
-         fprintf(stdout, "LIL before speculation test \n");
-         PrintInst(stdout, bbbase);
-         exit(0);
-#endif
       if (IsSpeculationNeeded())
       {
          #if IFKO_DEBUG_LEVEL > 1
@@ -4252,14 +4291,6 @@ int main(int nargs, char **args)
  *       Want to make the vector code fall-thru always
  */
          ReshapeFallThruCode(); 
-#if 0
-         fprintf(stdout, "LIL AFTER LARGER BET \n");
-         PrintInst(stdout, bbbase);
-         exit(0);
-#endif         
-/*
- *       NOTE: Haven't fixed the issue if there is outof Regs!!!
- */
          /* FKO_UR = 1;*/  /* forced to unroll factor 1*/
       }
       
@@ -4289,23 +4320,7 @@ int main(int nargs, char **args)
  *    old UnrollCleanup will not work anymore after calling this function.
  *    new UnrollCleanup should recognize the changes and update accordingly
  *    NOTE: as this cleanup updates the loopcontrol, must invalidate the old 
- *    one
- *    HERE HERE .... shifted up 
- */
-/*
- *    NOTE: There is a issue here. If we reconstruct the CFG after vectorization
- *    we can't call existing KillLoopControl function. checking for cleanup 
- *    will split the basic block. Existing KillLoopControl function always
- *    check preheader for the CF_LOOP_INIT flag. So, it will fail the assertion.
- *    There can be two way to solve this issue:
- *       1. Update the KillLoopControl, make it robust and check preheader->up
- *          blk also for CF_LOOP_INIT. Need to update the AddLoopControl func 
- *          also to find out the flag.
- *       2. Keep track of the New CFG construction. Avoid creating this before
- *          unroll loop if vectorization is applied. 
- *    sol-2 may not work after implementing the unroll for speculative 
- *    vectorization. We may need to reconstruct CFG after Vspec!!
- *    DONE: KillLoopControl and AddLoopControl function is updated.!
+ *    one.
  */
 #if 0      
       if (FKO_UR <= 1)
@@ -4377,11 +4392,6 @@ int main(int nargs, char **args)
  *    even not done the speculative vect.
  */
       UnrollLoop(optloop, FKO_UR); /* with modified cleanup */
-#if 0
-         fprintf(stdout, "LIL AFTER UNROLL \n");
-         PrintInst(stdout, bbbase);
-         exit(0);
-#endif         
    }
 /*
  * apply unroll all the way. we will get rid of optloop at the end of 
@@ -4389,11 +4399,12 @@ int main(int nargs, char **args)
  */
    else if (FKO_UR == -1)
    {
-      int ur;
       ur = CountUnrollFactor(optloop);
-      assert(ur);
       if(ur > 1) 
-         UnrollLoop(optloop, ur); /* with modified cleanup */ 
+         UnrollLoop(optloop, ur); /* with modified cleanup */
+      else 
+         FKO_UR = 0;
+      
    }
    /* neither vectorize nor unrolled ! */
    else if (!DO_VECT(FKO_FLAG) && !(VECT_FLAG & VECT_INTRINSIC) ) 
@@ -4410,16 +4421,8 @@ int main(int nargs, char **args)
    CheckFlow(bbbase, __FILE__,__LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
-#if 0 
-         fprintf(stdout, "LIL after Unrolling \n");
-         PrintInst(stdout, bbbase);
-         PrintLoop(stderr, optloop);
-         //GenerateAssemblyWithCommonOpts(fpout, optblks );
-         exit(0);
-#endif         
-
 /*
- * Scalar Expansion ... ... 
+ * State3: Scalar Expansion ... ... 
  */
    if (STATE3_FLAG & IFF_ST3_SE)
    {
@@ -4504,266 +4507,8 @@ int main(int nargs, char **args)
  *    5. Free all memory for global data 
  * Now, it's time to apply repeatable optimizations 
  */
-#if 0
-   fprintf(stdout, "LIL Before Repeat Opt \n");
-   PrintInst(stdout, bbbase);
-   PrintST(stdout);
-   exit(0);
-#else
-   /*GenerateAssemblyWithCommonOpts(fpout, optblks );
-   KillAllGlobalData(optblks);*/ 
    FinalStage(fpout, optblks);
-#endif
-
-   return(0);
-
-#if 0
-/*==========================================================================
- * Previous code with 3 states:
- * 
- * State0: plain LIL but with updates of ST and optloop for AE
- * State1 & State3:  Generating Epilogue and Prologue, Vector analysis,
- *        Resrtore State0 code, then vectorization.
- * State2 : Applied only if Vectorization is not applied.
- *        Scalar Vars analyis, Restore State0 code, Epilogue/Prologue 
- *        generation, updates optloop with prefetche info.
- *==========================================================================*/
-
-
-   optblks = GetFlagsN(nargs, args, &fin, &fpin, &fpout);
-   if (!optblks)
-      optblks = DefaultOptBlocks();
-   optblks = OptBlockQtoTree(optblks);
-   if (FKO_FLAG & IFF_READINTERM)
-   {
-      if (FKO_FLAG & IFF_VECTORIZE)
-         RestoreFKOState(3);
-      else
-         RestoreFKOState(2);
-   }
-   else
-   {
-      yyin = fpin;
-      bp = bbbase = NewBasicBlock(NULL, NULL);
-      bp->inst1 = bp->instN = NULL;
-      yyparse();
-      fclose(fpin);
-      AddOptSTEntries();
-      SaveFKOState(0);
-#if 0
-      fprintf(stdout,"FIRST LIL\n");
-      PrintInst(stdout,bbbase);
-      PrintST(stdout);
-      exit(0);
-#endif
-/*
- *    Majedul: 
- *    Consider Max/Min vars detection as global 
- *    NOTE: It can't be done at the AddOptSTEntires as max/min var analysis 
- *    needs CFG formation. For this, we need to generate the prologue and 
- *    epilogue. 
- *
- *    Note that GenPrologueEpilogueStubs should be called only once
- *    so, removed it from IsSpeculationNeeded(). For normal vectorization, 
- *    FKOstate0 code is retrieved anyway. So, it will not create problem 
- *    it state0 code is save without generating PrologueEpilogue.
- *
- *    HERE HERE, if we need Max/Min var analysis in NCONTRL vectorization, this
- *    information will be lost!!! As we consider Max/Min only inside optloop, 
- *    NCONTRL vectorization can't be applied if there is a Max/Min var. 
- */
-      if (optloop && FKO_FLAG & IFF_VECTORIZE)
-         UpdateOptLoopWithMaxMinVars();
-      AddOptSTEntries1(); /* these two will be merge later */
-
-      if (!fpLOOPINFO && (FKO_FLAG & IFF_VECTORIZE))
-      {
-         if (IsSpeculationNeeded() && 1)
-         {
-            /*UpdateOptLoopWithMaxMinVars(optloop);*/
-            
-            if (VECT_FLAG & VECT_NCONTRL)
-            {
-
-              /* fprintf(stderr, "Control Flow exists in main loop!!\n");*/
-/*
- *             keep backward compatibility right now
- */
-               #if defined(SSV)
-                  VECT_FLAG &= ~VECT_NCONTRL;
-                  VECT_FLAG |= VECT_SSV;
-                  fprintf(stderr, "Considering macro(SSV) for vector!!\n");
-               #elif defined(VRC)
-                  VECT_FLAG &= ~VECT_NCONTRL;
-                  VECT_FLAG |= VECT_VRC;
-                  /*fprintf(stderr, "Considering macro(VRC) for vector!!\n");*/
-               #elif defined(VEM)
-                  VECT_FLAG &= ~VECT_NCONTRL;
-                  VECT_FLAG |= VECT_VEM;
-                  fprintf(stderr, "Considering macro(VEM) for vector!!\n");
-               #else
-                  fko_error(__LINE__, "Unknown Vectorization");
-               #endif
-
-            }
-
-            if (VECT_FLAG & VECT_SSV)
-            {
-               #if IFKO_DEBUG_LEVEL > 1
-                  fprintf(stderr,"Vectorization Method: SSV \n");
-               #endif
-               SpeculativeVectorAnalysis();
-               SpecSIMDLoop();
-               #if 1
-                  GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
-                  exit(0);
-               #else
-/*
- *                NOTE: need to parameterize the vectorization.
- *                Haven't fixed the issue if there is outof Regs!!!
- */
-                  FKO_UR = 1; /* forced to unroll factor 1*/
-               #endif
-            }
-            else if (VECT_FLAG & VECT_VRC)
-            {
-               #if IFKO_DEBUG_LEVEL > 1
-                  fprintf(stderr,"Vectorization Method: VRC \n");
-               #endif
-               VectorRedundantComputation();
-                  /*FKO_UR = 1;*/ /* forced to unroll factor 1*/
-            }
-            else if (VECT_FLAG & VECT_VEM)
-            {
-               #if IFKO_DEBUG_LEVEL > 1
-                  fprintf(stderr,"Vectorization Method: VEM \n");
-               #endif
-               VectorizeElimIFwithMaxMin();
-                  /*FKO_UR = 1;*/  /* forced to unroll factor 1*/
-            }
-            else ; /* no other choice */
-         }
-         else
-         {
-            assert(!VectorizeStage1());
-            assert(!VectorizeStage3(0, 0));
-         }
-      }
-      else
-         DoStage2(0, 0);
-   }
    
-#if 0 
-   fprintf(stdout,"LIL before optimization\n");
-   PrintInst(stdout, bbbase);
-   exit(0);
-#endif
-
-   if (fpLOOPINFO)
-      PrintLoopInfo();
-   if (FKO_FLAG & IFF_GENINTERM)
-      exit(0);
-/*
- * If we were unable to produce correct code, back off and save sp
- */
-   if (GoToTown(0, FKO_UR, optblks))
-   {
-      fprintf(stderr, "\n\nOut of regs for SAVESP, forcing full save.\n");
-      USEALLIREG = 1;
-      if (FKO_FLAG & IFF_VECTORIZE)
-      {
-         RestoreFKOState(1);
-         assert(!VectorizeStage3(0, 0));
-      }
-      else
-      {
-         RestoreFKOState(0);
-         DoStage2(0, 0);
-      }
-      if (GoToTown(0, FKO_UR, optblks))
-      {
-         USEALLIREG = 0;
-         fprintf(stderr, 
-                 "\n\nOut of registers for SAVESP, reserving SAVESP!!\n");
-         if (FKO_FLAG & IFF_VECTORIZE)
-         {
-            RestoreFKOState(1);
-            assert(!VectorizeStage3(IREGBEG+NIR-1, 0));
-         }
-         else
-         {
-            RestoreFKOState(0);
-            DoStage2(IREGBEG+NIR-1, 0);
-         }
-         assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
-      }
-      else
-         USEALLIREG = 0;
-   }
-   DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
-
-   if (!(FKO_FLAG & IFF_READINTERM))
-   {
-      if (fpLIL)
-      {
-         PrintInst(fpLIL, bbbase);
-         fclose(fpLIL);
-      }
-      if (fpST)
-      {
-         PrintST(fpST);
-         fclose(fpST);
-      }
-#if 0
-   /* Sometime, rewrite IG to take global table, rather than sorted table */
-      if (fpIG)
-      {
-         PrintIG(fpIG);
-         fclose(fpIG);
-      }
-#endif
-   }
-      if (DO_LIL(FKO_FLAG))
-      {
-      if (!DO_ASS(FKO_FLAG))
-         PrintInst(fpout, bbbase);
-      else
-      {
-         if (!fin)
-            fpl = fopen("ifko_tmp.l", "w");
-         else
-         {
-            for (i=0; ln[i] = fin[i]; i++);
-            for (i--; i > 0 && ln[i] != '.'; i--);
-            if (ln[i] == '.')
-            {
-               ln[i+1] = 'l';
-               ln[i+2] = '\0';
-            }
-            else strcat(ln, ".l");
-            fpl = fopen(ln, "w");
-         }
-         assert(fpl);
-         PrintInst(fpl, bbbase);
-      }
-   }
-/*   ShowFlow("dot.out", bbbase); */
-   if (DO_ASS(FKO_FLAG))
-   {
-#if 0
-      fprintf(stdout, "\n LIL BEFORE L2A: \n");
-      PrintInst(stdout,bbbase);
-      fprintf(stdout, "\n ST BEFORE L2A: \n");
-      PrintST(stdout,bbbase);
-      //exit(0);
-#endif
-      abase = lil2ass(bbbase);
-      KillAllBasicBlocks(bbbase);
-      bbbase = NULL;
-      dump_assembly(fpout, abase);
-      KillAllAssln(abase);
-   }
    return(0);
-#endif   
 }
 

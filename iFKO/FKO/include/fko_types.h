@@ -379,6 +379,7 @@ struct pack     /* data structure to manage pack in SLP vectorization */
  */
 #define NSLP_ACC 0x10
 #define NSLP_SCAL 0x20
+#define SLP_VBROADCAST 0x40
 
 typedef struct slpvector SLP_VECTOR;
 struct slpvector
@@ -448,5 +449,18 @@ struct optblkq
                              which don't get register calculated in RegAsg; 
                             -1 if not related to RegAsg */
 };
-
+/*
+ * type for rout markups
+ * NOTE: supported markups for alignment only now
+ */
+typedef struct rtmarkup RTMARKUP;
+struct rtmarkup
+{
+   short *aaligned;   /* arrays that have known alignment */
+   short *abalign;    /* alignments of above arrays */
+   short *maaligned;    /* arrays which are mutually aligned with other arrays */
+   short *mbalign;    /* mutual alignment byte of the above array */
+   short *faalign;    /* arrays need to be force aligned */
+   short *fbalign;    /* alignments of the above arrays */
+};
 #endif
