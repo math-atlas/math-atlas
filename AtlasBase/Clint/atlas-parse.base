@@ -1133,6 +1133,26 @@ static int CountListEntries(void *vb, int nxtoff)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static int CountListMaskALL(void *vb, int msk, int nxtoff, int ioff)
+/*
+ * counts number of nodes where all bits set in msk are set in int at ioff
+ */
+{
+   int i=0;
+   char *cp = vb;
+   while (cp)
+   {
+      int flag;
+      flag = GetIntAtOff(cp, ioff);
+      if ((flag&msk) == msk)
+         i++;
+      cp = GetStrAtOff(cp, nxtoff);
+   }
+   return(i);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static int GetIntMaxMinAtOff(void *vb, int nxtoff, int off, int *MAX, int *MIN)
 /*
  * Find the max and min of any integer in vb+off in list, next ptr at nxtoff;
@@ -4059,7 +4079,7 @@ char *CopyFlag2Str(unsigned int flag)
  * Encodes TOBLK,CBLK,TRANS,CONJ,KERN into standard string
  */
 {
-   static char nm[12];
+   static char nm[8];
    if (flag&(1<<CPF_TOBLK))
    {
       nm[0] = 'F'; nm[1] = 'r'; nm[2] = 'o'; nm[3] = 'm';
@@ -4068,25 +4088,25 @@ char *CopyFlag2Str(unsigned int flag)
    {
       nm[0] = 'I'; nm[1] = 'n'; nm[2] = 't'; nm[3] = 'o';
    }
-   nm[5] = (flag&(1<<CPF_CBLK)) ? 'C' : 'A';
+   nm[4] = (flag&(1<<CPF_CBLK)) ? 'C' : 'A';
    if (flag&(1<<CPF_TRANS))
-      nm[6] = (flag&(1<<CPF_CONJ)) ? 'H' : 'T';
+      nm[5] = (flag&(1<<CPF_CONJ)) ? 'H' : 'T';
    else
-      nm[6] = (flag&(1<<CPF_CONJ)) ? 'C' : 'N';
+      nm[5] = (flag&(1<<CPF_CONJ)) ? 'C' : 'N';
    if (!(flag&CPF_ALLKERN))
-      nm[7] = 'g';
+      nm[6] = 'g';
    else if (flag&(1<<CPF_SYRK))
-      nm[7] = 'r';
+      nm[6] = 'r';
    else if (flag&(1<<CPF_SYMM))
-      nm[7] = 'y';
+      nm[6] = 'y';
    else if (flag&(1<<CPF_TRMM))
-      nm[7] = 't';
+      nm[6] = 't';
    else if (flag&(1<<CPF_TRSM))
-      nm[7] = 's';
+      nm[6] = 's';
    else
       assert(0);
       
-   nm[8] = '\0';
+   nm[7] = '\0';
    return(nm);
 }
 
@@ -4151,7 +4171,7 @@ ATL_cpnode_t *GetCopyMatches(ATL_cpnode_t *cb, int flag)
          continue;
       if (!(flag & (cp->flag&CPF_ALLALP)))
          continue;
-      if (flag&CPF_CBLK)
+      if (flag&(1<<CPF_CBLK))
          if (!(flag & (cp->flag&CPF_ALLBET)))
             continue;
       tp = CloneCPNode(cp);
@@ -4220,7 +4240,8 @@ ATL_cpnode_t *CopySortMarkedFirst(ATL_cpnode_t *cb)
    while (cp)
    {
       ATL_cpnode_t *cs;
-      while (cp && (cp->flag & (1<<CPF_TMP))); /* skip set nodes */
+      while (cp && (cp->flag & (1<<CPF_TMP)))  /* skip set nodes */
+         cp = cp->next;
 /*
  *    If we find unset node, find next set node, and swap them
  */
@@ -4236,6 +4257,7 @@ ATL_cpnode_t *CopySortMarkedFirst(ATL_cpnode_t *cb)
             break;
       }
    }
+   return(cb);
 }
 
 @iexp ip @(ip) 1 +
@@ -9279,7 +9301,7 @@ void PrintMakeTargs(FILE *fp, char pre)
    fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
    fprintf(fp, "\t- rm -f ATL_%c*.[S,c]\n\n", pre);
 }
-#endif  /* end guard around atlas_@(rt)mmgen.h */
+#endif  /* end guard around atlas_mmgen.h */
 @ROUT getflagarrs
 
 @iexp ip @(ip) 1 +

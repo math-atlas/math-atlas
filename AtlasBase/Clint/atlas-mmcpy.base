@@ -1254,9 +1254,9 @@ int main(int nargs, char **args)
 }
 @ROUT cpydrv
 #include "atlas_mmgen.h"
+#define uint unsigned int
 
-ATL_cpnode_t **SplitList(char pre, ATL_cpnode_t *cb, int *NLIST, 
-   unsigned int **FLAGS)
+ATL_cpnode_t **SplitList(char pre, ATL_cpnode_t *cb, int *NLIST, uint **FLAGS)
 /*
  * Splits cb according to GetCopyMatches, returns number of non-NULL lists
  * in *NLIST, and the non-NULL flag values in FLGS.
@@ -1265,7 +1265,7 @@ ATL_cpnode_t **SplitList(char pre, ATL_cpnode_t *cb, int *NLIST,
 {
 @skip   char fn[32]={'c','p','y','P','E','R','F','_'};
 @skip   char *sp;
-   int id; /* TOBLK unset or set */
+   int ik; /* loop over kernels, which can be incoherent */
    int nlist=0, nalloc;
    int *flags;
    ATL_cpnode_t **lists;
@@ -1276,44 +1276,46 @@ ATL_cpnode_t **SplitList(char pre, ATL_cpnode_t *cb, int *NLIST,
    assert(lists && flags);
 
    CopyApplyBlasRules(cb);
-   for (id=0; id < 1; id++)
+   for (ik=CPF_SYRK-1; ik <= CPF_TRSM; ik++)
    {
-      int flag = id;
       int ic; /* CBLK unset or set */
       for (ic=0; ic < 2; ic++)
       {
-         int ia;
-         for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
+         const int B0=(ic)?CPF_BE1:0, BN=(ic)?CPF_BE0:1;
+         int id; /* TOBLK unset or set */
+         for (id=0; id < 2; id++)
          {
-            int ik;
-            for (ik=CPF_SYRK; ik <= CPF_TRSM; ik++)
+            int ia;
+            for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
             {
-               const int nb=(ic) ? CPF_BE0 : CPF_BE1;
                int ib;
 
-               for (ib=CPF_BE1; ib <= nb; ib++)
+               for (ib=B0; ib <= BN; ib++)
                {
-                  ATL_cpnode_t *bp;
-                  flag |= (1<<ik)|(1<<ia)|(ic<CPF_CBLK)|(id<<CPF_TOBLK);
-                  if (ic)
-                     flag |= 1<<ib;
-                  bp = GetCopyMatches(cb, flag);
-                  if (bp)
+                  const int HN = (ic || pre == 'd' || pre == 's') ? 0 : 1;
+                  int ih;
+                  for (ih=0; ih <= HN; ih++)
                   {
-                     if (nlist == nalloc)
+                     ATL_cpnode_t *bp;
+                     int flag;
+                     flag = (id<<CPF_TOBLK)|(ic<<CPF_CBLK)|(1<<ia);
+                     flag |= (ik >= CPF_SYRK) ? (1<<ik) : 0;
+                     if (ic)
+                        flag |= 1<<ib;
+                     else
+                        flag |= (ib<<CPF_TRANS)|(ih<<CPF_CONJ);
+                     bp = GetCopyMatches(cb, flag);
+                     if (bp)
                      {
-                        nalloc = nlist + 4;
-                        lists = realloc(lists, nalloc*sizeof(ATL_cpnode_t *));
-                        flags = realloc(flags, nalloc*sizeof(int));
+                        if (nlist == nalloc)
+                        {
+                           nalloc = nlist + 4;
+                           lists = realloc(lists,nalloc*sizeof(ATL_cpnode_t *));
+                           flags = realloc(flags,nalloc*sizeof(int));
+                        }
+                        lists[nlist] = bp;
+                        flags[nlist++] = flag;
                      }
-                     lists[nlist] = bp;
-                     flags[nlist++] = flag;
-                     @BEGINSKIP
-                     sp = CopyFlag2Str(flag);
-                     strcpy(fn+8, sp);
-                     strcpy(fn+8+strlen(sp), ".CPS");
-                     WriteCPFileWithPath(pre, "res", fn, bp);
-                     @ENDSKIP
                   }
                }
             }
@@ -1325,6 +1327,83 @@ ATL_cpnode_t **SplitList(char pre, ATL_cpnode_t *cb, int *NLIST,
    return(lists);
 }
 
+unsigned int CountRegion(int N, ATL_cpnode_t **cbs)
+{
+   const uint mask=(CPF_ALLKERN|(1<<CPF_CBLK)), flag=(cbs[0]->flag)&mask;
+   uint i;
+
+   for (i=1; i < N; i++)
+      if (flag != ((cbs[i]->flag)&mask))
+         return(i);
+   return(N);
+}
+
+uint *CountMoveShared(const uint N,  ATL_cpnode_t **cbs)
+{
+   uint *cnts;
+   ATL_cpnode_t *cp=cbs[0];
+   uint i, ioff, nxtoff;
+
+   cnts = malloc(N*sizeof(uint));
+   assert(cnts);
+   ioff = GetOffset(&cp->flag, cp);
+   nxtoff = GetOffset(&cp->next, cp);
+   for (i=0; i < N; i++)
+   {
+      uint j;
+/*
+ *    Mark all files duplicated between i and remaining lists
+ */
+      for (j=i+1; j < N; j++)
+         CopyMarkDup_noscal(cbs[i], cbs[j]);
+/*
+ *    Move all duplicated entries to beginning of list
+ */
+      cbs[i] = CopySortMarkedFirst(cbs[i]);
+      cnts[i] = CountListMaskALL(cbs[i], (1<<CPF_TMP), nxtoff, ioff);
+   }
+   return(cnts);
+}
+
+void SortByCount(uint N, uint *nshar,  ATL_cpnode_t **cbs, uint *flgs)
+{
+   uint i;
+   for (i=0; i < N; i++)
+      printf("nshar= %u (of %u)\n", nshar[i], ATL_CountNumberOfCPNodes(cbs[i]));
+}
+
+void CohereLists(const uint N, ATL_cpnode_t **cbs, uint *flgs)
+/*
+ * cbs already sorted in precedence: kernel, mtx (C/A).
+ * The indices of a given kernel must match in all kern,mtx lists, despite
+ * the fact that views may make it so these lists contain different numbers
+ * and types of cp funcs.  The idea that shared funcs between kern,mtx lists
+ * share the same index regardless of file length means that the lists COHERE.
+ *
+ * Therefore, to make the files within a given region cohere, we figure out
+ * how many files are in the region, and then within this region we sort
+ * the lists from least number of shared files to most.
+ * Each list is sorted so all shared files come first, and then the files
+ * with least number of shared kernels dictate where all longer lists locate
+ * their corresponding files.
+ */
+{
+   int n, i=0;
+   do
+   {
+      unsigned int *nshar;
+
+      n = CountRegion(N-i, cbs);
+      nshar = CountMoveShared(n, cbs);
+      SortByCount(n, nshar, cbs, flgs);
+
+      cbs += n;
+      flgs += n;
+      i += n;
+      free(nshar);
+   }
+   while (i < N);
+}
 void CreateMasterIdx(char pre)
 {
    ATL_cpnode_t *cb, **cbs;
@@ -1339,7 +1418,10 @@ void CreateMasterIdx(char pre)
    assert(cb);
    cbs = SplitList(pre, cb, &N, &flgs);
    KillAllCPNodes(cb);
-   
+   CohereLists(N, cbs, flgs);
+/*
+ * Write out master list of used copy kernels
+ */
    fp = fopen(fn, "w");
    assert(fp);
    fprintf(fp, "%u\n", N);
@@ -1350,7 +1432,7 @@ void CreateMasterIdx(char pre)
       cb = cbs[i];
       flag = cb->flag & msk;
       sp = CopyFlag2Str(flag);
-      fprintf(fp, "%u '%s'\n", flag, sp);
+      fprintf(fp, "%x '%s'\n", flag, sp);
    }
    fclose(fp);
 
