@@ -32,12 +32,18 @@
 */
    static short maxunroll=0, itermul=0;
    extern short STderef;
+   extern RTMARKUP rtmu;
    
    int yylex(void);
    void yyerror(char *msg);
 
    struct idlist *NewID(char *name);
    static void UpdateLoop(struct loopq *lp);
+   static void Update_RoutMU();
+   void HandleListMU(int which);
+   void HandleIntMU(int which, int ival);
+   void HandleListIntMU(int which, int ival);
+   void HandleMU(int which);
    void HandleLoopListMU(int which);
    void HandleLoopIntMU(int which, int ival);
    void HandleLoopListIntMU(int which, int ival);
@@ -72,14 +78,14 @@
 }
 
 
-%token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
+%token ROUT_NAME ROUT_LOCALS ROUT_MARKUP ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
 %token VDOUBLE VFLOAT
 %token VHADD VHMAX VHMIN VHSEL VBROADCAST
 %token PREFETCHR PREFETCHW
 %token DOUBLE_ARRAY FLOAT_ARRAY INT_ARRAY UINT_ARRAY UNROLL_ARRAY
 %token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF GOTO
-%token <sh> LOOP_LIST_MU LOOP_INT_MU LOOP_MU LOOP_LIST_INT_MU
+%token <sh> LIST_MU INT_MU MU LIST_INT_MU
 %token <inum> ICONST
 %token <fnum> FCONST
 %token <dnum> DCONST
@@ -119,6 +125,7 @@ line : stateflag
      | paradec ';' 
      | typedec ';'
      | constinit ';'
+     | markups
      | statement
      | loop 
      ;
@@ -140,20 +147,26 @@ stateflag: ROUT_NAME NAME
                yyerror("Improper ROUT_LOCALS statement");
             WhereAt = 2;
          }
-         | ROUT_BEGIN
+         | ROUT_MARKUP
          {
             if (WhereAt > 2)
+               yyerror("Improper ROUT_MARKUP statement");
+            WhereAt = 3;   
+         }
+         | ROUT_BEGIN
+         {
+            if (WhereAt > 3)
                yyerror("Improper ROUT_BEGIN statement");
-            
+            Update_RoutMU(); 
             CreateLocalDerefs();
             CreateArrColPtrs(); /* can't be called before CreateLocalDerefs() */
-            WhereAt = 3;
+            WhereAt = 4;
          }
          | ROUT_END
          {
-            if (WhereAt > 3)
+            if (WhereAt > 4)
                yyerror("Improper ROUT_END statement");
-            WhereAt = 4;
+            WhereAt = 5;
          }
 	 ;
 loopsm2  : '{' '+' '}'     { $$ = 2; } 
@@ -172,21 +185,34 @@ loop_beg : LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
          | LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm
          { $$ = DoLoop($2, $4, $7, STiconstlookup(1), $5, $8, 2); VecIntr = 0; }
          ;
-loop_markup : LOOP_LIST_MU LST idlist { HandleLoopListMU($1); }
-            | LOOP_INT_MU LST icexpr  { HandleLoopIntMU($1, $3); }
-            | LOOP_LIST_INT_MU '(' icexpr ')' LST idlist { HandleLoopListIntMU($1,
+/*loop_markup : LIST_MU LST idlist { HandleLoopListMU($1); }
+            | INT_MU LST icexpr  { HandleLoopIntMU($1, $3); }
+            | LIST_INT_MU '(' icexpr ')' LST idlist { HandleLoopListIntMU($1,
                                                            $3); }
-            | LOOP_LIST_INT_MU '(' icexpr ')' LST '*' {HandleLoopListIntMU($1, 
+            | LIST_INT_MU '(' icexpr ')' LST '*' {HandleLoopListIntMU($1, 
                                                        $3); }
- /*            | MAX_UNROLL   LST icexpr { maxunroll = $3; } */
-            | LOOP_MU { HandleLoopMU($1); }
+            | MU { HandleLoopMU($1); }
             ;
 loop_markups : loop_markups loop_markup ';'
              |
+             ;*/
+markup : LIST_MU LST idlist { HandleListMU($1); }
+            | INT_MU LST icexpr  { HandleIntMU($1, $3); }
+            | LIST_INT_MU '(' icexpr ')' LST idlist { HandleListIntMU($1,
+                                                           $3); }
+            | LIST_INT_MU '(' icexpr ')' LST '*' {HandleListIntMU($1, 
+                                                       $3); }
+            | MU { HandleMU($1); }
+            ;
+markups : markups markup ';'
+             |
              ;
+
 loop_body : LOOP_BODY statements LOOP_END { DoComment("Done LOOP_BODY"); }
           ;
-loop : loop_beg loop_markups loop_body    { UpdateLoop($1); }
+/*loop : loop_beg loop_markups loop_body    { UpdateLoop($1); }
+     ;*/
+loop : loop_beg markups loop_body    { UpdateLoop($1); }
      ;
 
 typedec : INT LST idlist              { declare_list(T_INT); }
@@ -801,6 +827,14 @@ void HandleLoopMU(int which)
    }
 }
 
+void HandleMU(int which)
+{
+   if (WhereAt == 3)
+      fko_error(__LINE__, "Markup not implemented yet for rout\n");
+   else if (WhereAt > 3)
+      HandleLoopMU(which);
+}
+
 void HandleLoopIntMU(int which, int ival)
 /*
  * Handles loop markup involving integer scalar values.  The markups are
@@ -825,6 +859,15 @@ void HandleLoopIntMU(int which, int ival)
       fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
    }
 }
+
+void HandleIntMU(int which, int ival)
+{
+   if (WhereAt == 3)
+      fko_error(__LINE__, "Markup not implemented yet for rout\n");
+   else if (WhereAt > 3)
+      HandleLoopIntMU(which, ival);
+}
+
 void HandleLoopListMU(int which)
 /*
  * Handles loop markup consisting of simple lists.  The markups are encoded
@@ -860,6 +903,14 @@ void HandleLoopListMU(int which)
       LMA[which] = sp - 1; /* list of id with count at position 0 */
    }
    KillIDs();
+}
+
+void HandleListMU(int which)
+{
+   if (WhereAt == 3)
+      fko_error(__LINE__, "Markup not implemented yet for rout\n");
+   else if (WhereAt > 3)
+      HandleLoopListMU(which); 
 }
 
 void HandleLoopListIntMU(int which, int ival)
@@ -978,6 +1029,37 @@ void HandleLoopListIntMU(int which, int ival)
 #endif
 }
 
+void HandleListIntMU(int which, int ival)
+{
+   /*if (WhereAt == 3)
+      fprintf(stderr, "inside Rout_markup \n");
+   else if (WhereAt > 3)*/
+      HandleLoopListIntMU(which, ival);
+}
+
+void Update_RoutMU()
+{
+/*
+ *    Handle markup with no param, not yet
+ */
+   LMU[0] = LMU[1] = 0;
+/*
+ *    Handle markup with list
+ */
+   LMA[0] = LMA[1] = LMA[2] = LMA[3] = LMA[4] = NULL;
+/*
+ *    Handle markup which has a list ids and a value; 
+ */
+   rtmu.aaligned = LMAA[0];
+   rtmu.abalign = LMAB[0];
+   rtmu.maaligned = LMAA[1];
+   rtmu.mbalign = LMAB[1];
+   rtmu.faalign = LMAA[2];
+   rtmu.fbalign = LMAB[2];
+   
+   LMAA[0] = LMAA[1] = LMAA[2] = NULL;
+   LMAB[0] = LMAB[1] = LMAB[2] = NULL;
+}
 
 void para_list()
 {

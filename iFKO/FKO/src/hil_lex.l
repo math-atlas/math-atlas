@@ -10,9 +10,9 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "//"[^\n]*\n    { lnno++; strcpy(yylval.str, yytext+2); return(TCOMMENT); }
 [\t \v]		{}
 [\n]    {lnno++;}
-[-]?{ICON}"."{ICON}([e,E][-+]?{ICON})?[f,F] { sscanf(yytext, "%f", &yylval.fnum);  
+[-]?{ICON}"."{ICON}([eE][-+]?{ICON})?[fF] { sscanf(yytext, "%f", &yylval.fnum);  
        return(FCONST); }
-[-]?{ICON}"\."{ICON}([e,E][-+]?{ICON})? { yylval.dnum = atof(yytext); 
+[-]?{ICON}"\."{ICON}([eE][-+]?{ICON})? { yylval.dnum = atof(yytext); 
        return(DCONST); }
 {ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
 {HCON}    { sscanf(yytext, "%x", &yylval.inum);  return(ICONST); }
@@ -48,18 +48,18 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "::"    { return(LST); }
 "LOOP_BODY" { return(LOOP_BODY); }
 "LOOP_END" { return(LOOP_END); }
-"LIVE_SCALARS_IN"  { yylval.sh = 0; return(LOOP_LIST_MU); }
-"LIVE_SCALARS_OUT" { yylval.sh = 1; return(LOOP_LIST_MU); }
-"DEAD_ARRAYS_IN"   { yylval.sh = 2; return(LOOP_LIST_MU); }
-"DEAD_ARRAYS_OUT"  { yylval.sh = 3; return(LOOP_LIST_MU); }
-"NO_PREFETCH"      { yylval.sh = 4; return(LOOP_LIST_MU); }
-"MAX_UNROLL"       { yylval.sh = 0; return(LOOP_INT_MU); }
-"ITER_MULT"        { yylval.sh = 1; return(LOOP_INT_MU); }
-"ALIGNED"          { yylval.sh = 0; return(LOOP_LIST_INT_MU); }
-"MUTUALLY_ALIGNED" { yylval.sh = 1; return(LOOP_LIST_INT_MU); }
-"FORCE_ALIGN"      { yylval.sh = 2; return(LOOP_LIST_INT_MU); }
-"NO_CLEANUP"   { yylval.sh = 0; return(LOOP_MU); }
-"UNSAFE_RC"   { yylval.sh = 1; return(LOOP_MU); }
+"LIVE_SCALARS_IN"  { yylval.sh = 0; return(LIST_MU); }
+"LIVE_SCALARS_OUT" { yylval.sh = 1; return(LIST_MU); }
+"DEAD_ARRAYS_IN"   { yylval.sh = 2; return(LIST_MU); }
+"DEAD_ARRAYS_OUT"  { yylval.sh = 3; return(LIST_MU); }
+"NO_PREFETCH"      { yylval.sh = 4; return(LIST_MU); }
+"MAX_UNROLL"       { yylval.sh = 0; return(INT_MU); }
+"ITER_MULT"        { yylval.sh = 1; return(INT_MU); }
+"ALIGNED"          { yylval.sh = 0; return(LIST_INT_MU); }
+"MUTUALLY_ALIGNED" { yylval.sh = 1; return(LIST_INT_MU); }
+"FORCE_ALIGN"      { yylval.sh = 2; return(LIST_INT_MU); }
+"NO_CLEANUP"   { yylval.sh = 0; return(MU); }
+"UNSAFE_RC"   { yylval.sh = 1; return(MU); }
 "LOOP"  { return(LOOP_BEGIN); }
 "DOUBLE" { return(DOUBLE); }
 "FLOAT" { return(FLOAT); }
@@ -76,6 +76,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "ROUTINE" { return(ROUT_NAME); }
 "UNROLL_ARRAY" { return(UNROLL_ARRAY); }
 "ROUT_LOCALS" { return(ROUT_LOCALS); }
+"ROUT_MARKUP" { return(ROUT_MARKUP); }
 "CONST_INIT" { return(CONST_INIT); }
 "ROUT_BEGIN" { return(ROUT_BEGIN); }
 "RETURN"   { return(RETURN); }

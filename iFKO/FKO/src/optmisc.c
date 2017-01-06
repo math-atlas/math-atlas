@@ -485,6 +485,7 @@ int MinBlkPtrUpdates(BBLOCK *blk, struct ptrinfo *pi0)
          InsNewInst(blk, NULL, ip, ADD, -reg, -reg, STiconstlookup(inc));
       else assert(0);
       InsNewInst(blk, NULL, ip, ST, SToff[pi->ptr-1].sa[2], -reg,  0 );
+      INUSETU2D = CFUSETU2D = INDEADU2D = 0;
    }
 }
 
