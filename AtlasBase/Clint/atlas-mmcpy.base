@@ -191,10 +191,10 @@ void PrintUsage(char *name, int ierr, char *flag)
    else if (ierr < 0)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags:\n", name);
-   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+@skip   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
    fprintf(stderr, "   -i <cpyin.CPS>: (stdin) list of copy to search\n");
    fprintf(stderr, "   -o <cpyout.CPS>: (stdout) fastest copy kernels\n");
-   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
+@skip   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    exit(ierr ? ierr : -1);
 }
 
@@ -1255,6 +1255,111 @@ int main(int nargs, char **args)
 @ROUT cpydrv
 #include "atlas_mmgen.h"
 
+ATL_cpnode_t **SplitList(char pre, ATL_cpnode_t *cb, int *NLIST, 
+   unsigned int **FLAGS)
+/*
+ * Splits cb according to GetCopyMatches, returns number of non-NULL lists
+ * in *NLIST, and the non-NULL flag values in FLGS.
+ * RETURNS: *NLIST-length array of lists
+ */
+{
+@skip   char fn[32]={'c','p','y','P','E','R','F','_'};
+@skip   char *sp;
+   int id; /* TOBLK unset or set */
+   int nlist=0, nalloc;
+   int *flags;
+   ATL_cpnode_t **lists;
+
+   nalloc = 8;
+   lists = malloc(nalloc*sizeof(ATL_cpnode_t *));
+   flags = malloc(nalloc*sizeof(int));
+   assert(lists && flags);
+
+   CopyApplyBlasRules(cb);
+   for (id=0; id < 1; id++)
+   {
+      int flag = id;
+      int ic; /* CBLK unset or set */
+      for (ic=0; ic < 2; ic++)
+      {
+         int ia;
+         for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
+         {
+            int ik;
+            for (ik=CPF_SYRK; ik <= CPF_TRSM; ik++)
+            {
+               const int nb=(ic) ? CPF_BE0 : CPF_BE1;
+               int ib;
+
+               for (ib=CPF_BE1; ib <= nb; ib++)
+               {
+                  ATL_cpnode_t *bp;
+                  flag |= (1<<ik)|(1<<ia)|(ic<CPF_CBLK)|(id<<CPF_TOBLK);
+                  if (ic)
+                     flag |= 1<<ib;
+                  bp = GetCopyMatches(cb, flag);
+                  if (bp)
+                  {
+                     if (nlist == nalloc)
+                     {
+                        nalloc = nlist + 4;
+                        lists = realloc(lists, nalloc*sizeof(ATL_cpnode_t *));
+                        flags = realloc(flags, nalloc*sizeof(int));
+                     }
+                     lists[nlist] = bp;
+                     flags[nlist++] = flag;
+                     @BEGINSKIP
+                     sp = CopyFlag2Str(flag);
+                     strcpy(fn+8, sp);
+                     strcpy(fn+8+strlen(sp), ".CPS");
+                     WriteCPFileWithPath(pre, "res", fn, bp);
+                     @ENDSKIP
+                  }
+               }
+            }
+         }
+      }
+   }
+   *NLIST = nlist;
+   *FLAGS = flags;
+   return(lists);
+}
+
+void CreateMasterIdx(char pre)
+{
+   ATL_cpnode_t *cb, **cbs;
+   FILE *fp;
+   unsigned int *flgs;
+   unsigned int N, i;
+   const unsigned int msk=~((1<<CPF_MVEC)|(1<<CPF_NVEC)|(1<<CPF_ASM)|
+      (1<<CPF_TMP));
+   char fn[32]={'r','e','s','/',pre,'m','a','s','t','e','r','.','C','P','I',0};
+
+   cb = ReadCPFileWithPath(pre, "res", "cpyPERF.CPS");
+   assert(cb);
+   cbs = SplitList(pre, cb, &N, &flgs);
+   KillAllCPNodes(cb);
+   
+   fp = fopen(fn, "w");
+   assert(fp);
+   fprintf(fp, "%u\n", N);
+   for (i=0; i < N; i++)
+   {
+      char *sp;
+      unsigned int flag;
+      cb = cbs[i];
+      flag = cb->flag & msk;
+      sp = CopyFlag2Str(flag);
+      fprintf(fp, "%u '%s'\n", flag, sp);
+   }
+   fclose(fp);
+
+   for (i=0; i < N; i++)
+      KillAllCPNodes(cbs[i]);
+   free(cbs);
+   free(flgs);
+}
+
 void PrintUsage(char *name, int ierr, char *flag)
 {
    fprintf(stderr, 
@@ -1462,8 +1567,13 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
       cb = b;
    }
    cbC = CopyNoRep(cbC, minSz);
-   cp = ATL_LastCPNode(cb);
-   cp->next = cbC;
+   if (cb)
+   {
+      cp = ATL_LastCPNode(cb);
+      cp->next = cbC;
+   }
+   else
+      cb = cbC;
    for (cp=cb; cp; cp = cp->next)
    {
       if (!cp->ID && cp->rout)  /* generated filenames should be */
@@ -1480,8 +1590,7 @@ void DoSearch(char pre)
 {
    char *ln;
    ln = DupString("./xcpysearch -i res/Xcpylst.CPS -o res/XcpyPERF.CPS");
-   ln[20] = pre;
-   ln[39] = pre;
+   ln[20] = ln[39] = pre;
    assert(!Sys2File(ln, "stdout"));
    free(ln);
 }
@@ -1533,6 +1642,7 @@ int main(int nargs, char **args)
    cb = GetAllCopy(pre, vb, minSz);
    KillAllCPNodes(cb);
    DoSearch(pre);
+   CreateMasterIdx(pre);
    DoGen(pre, path);
    DoGenH(pre, path, vb);
    KillAllViews(vb);

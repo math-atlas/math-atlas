@@ -71,6 +71,7 @@
 #define CPF_TRMM    18
 #define CPF_TRSM    19
 #define CPF_ASM     20 /* only set during gen */
+#define CPF_TMP     21 /* always unset after use */
 
 #define CPF_DEFAULT   0  /* default is no bits set */
 #define CPF_ALLALP ((1<<CPF_AL1)|(1<<CPF_ALN)|(1<<CPF_ALX))
@@ -1528,6 +1529,63 @@ static ATL_@(rt)node_t *Remove@up@(rt)NodeFromQ
    assert(p);
    prev->next = nukeme->next;
    nukeme->next = NULL;
+   return(Q);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip): swap two nodes in Q */
+static ATL_@(rt)node_t *Swap@up@(rt)NodeInQ
+(
+   ATL_@(rt)node_t *Q,     /* queue of nodes */
+   ATL_@(rt)node_t *p0,    /* first node to be swap */
+   ATL_@(rt)node_t *p1     /* second node to be swap */
+)
+/*
+ * Puts p0 in queue at place p1 was, and p1 in place p0 was.
+ * RETURNS: possibly changed Q
+ */
+{
+   ATL_@(rt)node_t *p, *prv0=NULL, *prv1=NULL, *nxt;
+   unsigned int fnd=0;
+
+   if (!Q || !p0 || !p1 || p1 == p0) /* need different pair to swap */
+      return(Q);
+   for (p=Q; fnd != 3 && p; p = p->next)
+   {
+      if (fnd&1 == 0) /* still looking for p0 */
+      {
+         if (p == p0)
+            fnd |= 1;
+         else
+            prv0 = p;
+      }
+      if (fnd&2 == 0) /* still looking for p1 */
+      {
+         if (p == p1)
+            fnd |= 2;
+         else
+            prv1 = p;
+      }
+   }
+   assert(fnd == 3);
+   nxt = p0->next;
+   p0->next = p1->next;
+   p1->next = nxt;
+   if (Q != p0 && Q != p1) /* common case that does not change Q */
+   {
+      prv0->next = p1;
+      prv1->next = p0;
+   }
+   else if (Q == p0)
+   {
+      Q = p1;
+      prv1->next = p0;
+   }
+   else /* Q == p1 */
+   {
+      Q = p0;
+      prv0->next = p1;
+   }
    return(Q);
 }
 
@@ -3996,6 +4054,44 @@ ATL_cpnode_t *FindEquivCopy_ab(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+char *CopyFlag2Str(unsigned int flag)
+/*
+ * Encodes TOBLK,CBLK,TRANS,CONJ,KERN into standard string
+ */
+{
+   static char nm[12];
+   if (flag&(1<<CPF_TOBLK))
+   {
+      nm[0] = 'F'; nm[1] = 'r'; nm[2] = 'o'; nm[3] = 'm';
+   }
+   else
+   {
+      nm[0] = 'I'; nm[1] = 'n'; nm[2] = 't'; nm[3] = 'o';
+   }
+   nm[5] = (flag&(1<<CPF_CBLK)) ? 'C' : 'A';
+   if (flag&(1<<CPF_TRANS))
+      nm[6] = (flag&(1<<CPF_CONJ)) ? 'H' : 'T';
+   else
+      nm[6] = (flag&(1<<CPF_CONJ)) ? 'C' : 'N';
+   if (!(flag&CPF_ALLKERN))
+      nm[7] = 'g';
+   else if (flag&(1<<CPF_SYRK))
+      nm[7] = 'r';
+   else if (flag&(1<<CPF_SYMM))
+      nm[7] = 'y';
+   else if (flag&(1<<CPF_TRMM))
+      nm[7] = 't';
+   else if (flag&(1<<CPF_TRSM))
+      nm[7] = 's';
+   else
+      assert(0);
+      
+   nm[8] = '\0';
+   return(nm);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 static char *GetCpySumNam(int flag, char ch)
 {
    char pre, calp;
@@ -4019,6 +4115,159 @@ static char *GetCpySumNam(int flag, char ch)
       sprintf(fnam, "%c%c%c2%c_a%c.CPS", pre, ch, c0, c1, calp);
    }
    return(fnam);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void CopyApplyBlasRules(ATL_cpnode_t *cb)
+{
+   ATL_cpnode_t *cp;
+/*
+ * SYRK A/B copies are same as GEMM A/B copies
+ */
+   for (cp=cb; cp; cp = cp->next)
+   {
+      if ((cp->flag & (1<<CPF_SYRK)) && !(cp->flag & (1<<CPF_CBLK)))
+         cp->flag ^= 1<<CPF_SYRK;
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *GetCopyMatches(ATL_cpnode_t *cb, int flag)
+/*
+ * RETURNS: cloned queue of all nodes in cb that match flag on:
+ *    ALLKERN,TOBLK,CBLK,TRANS,CONJ,ALx,BEx(only for C).
+ * NOTE: cb is not changed.
+ */
+{
+   ATL_cpnode_t *cp, *cn=NULL;
+   const unsigned int exactmsk=CPF_ALLKERN|(1<<CPF_CBLK)|(1<<CPF_TOBLK)
+      |(1<<CPF_TRANS)|(1<<CPF_CONJ);
+   for (cp=cb; cp; cp = cp->next)
+   {
+      ATL_cpnode_t *tp;
+      if ((flag&exactmsk) != (cp->flag&exactmsk))
+         continue;
+      if (!(flag & (cp->flag&CPF_ALLALP)))
+         continue;
+      if (flag&CPF_CBLK)
+         if (!(flag & (cp->flag&CPF_ALLBET)))
+            continue;
+      tp = CloneCPNode(cp);
+      tp->next = cn;
+      cn = tp;
+   }
+   return(cn);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *FindCopy_noscal(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
+/*
+ * Searches cb for kern that match dup, ignoring alpha/beta settings
+ * RETURNS: NULL if no copy rout equivalent to dup is in cb, else ptr to dup
+ */
+{
+   const unsigned int flgD=dup->flag;
+   ATL_cpnode_t *cp;
+   dup->flag &= ~(CPF_ALLALP | CPF_ALLBET);
+   for (cp=cb; cp; cp = cp->next)
+   {
+      const unsigned int flg=cp->flag;
+      cp->flag &= ~(CPF_ALLALP | CPF_ALLBET);
+      if (!CopyAreDiff(cp, dup))
+      {
+         dup->flag = flgD;
+         cp->flag = flg;
+         return(cp);
+      }
+      cp->flag = flg;
+   }
+   dup->flag = flgD;
+   return(NULL);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void CopyMarkDup_noscal(ATL_cpnode_t *b0, ATL_cpnode_t *b1)
+/* 
+ * Set CPF_TMP for all kerns of b0 & b1 that appear in both
+ */
+{
+   ATL_cpnode_t *p0;
+   if (!b0 || !b1)
+      return;
+   for (p0=b0; p0; p0 = p0->next)
+   {
+      ATL_cpnode_t *p1;
+      p1 = FindCopy_noscal(b1, p0);
+      if (p1)
+      {
+         p0->flag |= (1<<CPF_TMP);
+         p1->flag |= (1<<CPF_TMP);
+      }
+   }
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *CopySortMarkedFirst(ATL_cpnode_t *cb)
+/*
+ * Ensures nodes with CPF_TMP set appear first in cb.
+ */
+{
+   ATL_cpnode_t *cp=cb;
+   while (cp)
+   {
+      ATL_cpnode_t *cs;
+      while (cp && (cp->flag & (1<<CPF_TMP))); /* skip set nodes */
+/*
+ *    If we find unset node, find next set node, and swap them
+ */
+      if (cp)
+      {
+         for (cs=cp->next; cs && !(cp->flag & (1<<CPF_TMP)); cs = cs->next);
+         if (cs)
+         {
+            cb = SwapCPNodeInQ(cb, cp, cs);
+            cp = cs->next;
+         }
+         else
+            break;
+      }
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *CopyDictateOrder(ATL_cpnode_t *b0, ATL_cpnode_t *b1)
+/*
+ * Queue b1 is reordered to match corresponding nodes in b0.  A node
+ * corresponds if it matches: on everything except scalars (alpha for A/B,
+ * alpha & beta for C).
+ * ASSUMES: len(b0) <= len(b1); b0 & b1 are arrs of same type excpt for scalars.
+ * RETURNS: possibly new base of b1
+ */
+{
+   ATL_cpnode_t *p0;
+   unsigned int cnt0=0;
+   for (p0=b0; p0; p0 = p0->next, cnt0++)
+   {
+      ATL_cpnode_t *p1;
+      p1 = FindCopy_noscal(b1, p0);
+/*
+ *    I must swap p1 with cnt0 in b1
+ */
+      if (p1)
+      {
+         ATL_cpnode_t *p;
+         unsigned int cnt1=0;
+         for (p=b1; cnt1 != cnt0 && p; cnt1++, p = p->next);
+         assert(p);
+         if (cnt1 != cnt0)
+            b1 = SwapCPNodeInQ(b1, p1, p);
+      }
+   }
 }
 
 @iexp ip @(ip) 1 +
