@@ -3890,6 +3890,62 @@ void SetAllCopyGenStr(ATL_cpnode_t *cb)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+char *CopyFlag2Str(unsigned int flag)
+/*
+ * Encodes TOBLK,CBLK,TRANS,CONJ,KERN,alp,bet into standard string
+ */
+{
+   static char nm[16];
+   if (flag&(1<<CPF_TOBLK))
+   {
+      nm[0] = 'F'; nm[1] = 'r'; nm[2] = 'o'; nm[3] = 'm';
+   }
+   else
+   {
+      nm[0] = 'I'; nm[1] = 'n'; nm[2] = 't'; nm[3] = 'o';
+   }
+   nm[4] = (flag&(1<<CPF_CBLK)) ? 'C' : 'A';
+   if (flag&(1<<CPF_TRANS))
+      nm[5] = (flag&(1<<CPF_CONJ)) ? 'H' : 'T';
+   else
+      nm[5] = (flag&(1<<CPF_CONJ)) ? 'C' : 'N';
+   if (!(flag&CPF_ALLKERN))
+      nm[6] = 'g';
+   else if (flag&(1<<CPF_SYRK))
+      nm[6] = 'r';
+   else if (flag&(1<<CPF_SYMM))
+      nm[6] = 'y';
+   else if (flag&(1<<CPF_TRMM))
+      nm[6] = 't';
+   else if (flag&(1<<CPF_TRSM))
+      nm[6] = 's';
+   else
+      assert(0);
+      
+   nm[7] = '_';
+   nm[8] = 'a';
+   if (flag & (1<<CPF_AL1))
+      nm[9] = '1';
+   else
+      nm[9] = (flag & (1<<CPF_ALN)) ? 'N' : 'X';
+   if (flag&(1<<CPF_CBLK))
+   {
+      nm[10] = 'b';
+      if (flag & (1<<CPF_BEN))
+         nm[11] = 'N';
+      else if (flag & (1<<CPF_BEX))
+         nm[11] = 'X';
+      else
+         nm[11] = (flag & (1<<CPF_BE1)) ? '1' : '0';
+      nm[12] = '\0';
+   }
+   else
+      nm[10] = '\0';
+   return(nm);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 char *ConjCopyName(ATL_cpnode_t *cp)
 {
    if (!(cp->flag&(1<<CPF_CBLK)))
@@ -3920,16 +3976,18 @@ char *UnConjCopyName(ATL_cpnode_t *cp)
 /* procedure @(ip) */
 char *GetCopyName(ATL_cpnode_t *p, int exlen)
 {
-   char *sp=NULL, *dir;
+   char *sp=NULL, *dir, *flgstr;
    const int ID=p->ID, flag=p->flag;
    int len, i=0;
    char pre, cal;
 
    pre = CopyGetPre(flag);
    dir = CopyGetDirect(flag);
+   flgstr = CopyFlag2Str(flag);
+   len = strlen(flgstr);
 /*
  * For C format routine naming scheme is: 
- *    ATL_<pre>cp[Into,From]C[g,k,y,r,s]_<mu>x<nu>x<blksz>_aXbX
+ *    ATL_<pre>cp[Into,From]C[N,T][g,k,y,r,s]_aXbX_<mu>x<nu>x<blksz>
  */
    cal = CopyGetAlphaC(flag);
    if (flag & (1<<CPF_CBLK))
@@ -3938,41 +3996,21 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
       unsigned int blksz = p->mu * p->nu;
       if (p->kvec > 1)
          blksz = ((blksz+p->kvec-1)/p->kvec)*p->kvec;
-      len = 25+NumDecDigits(p->mu)+NumDecDigits(p->nu)+NumDecDigits(blksz);
+      len += 12+NumDecDigits(p->mu)+NumDecDigits(p->nu)+NumDecDigits(blksz);
       sp = malloc(len+exlen);
       assert(sp);
-      cbe = CopyGetBetaC(flag);
-      if (flag&(1<<CPF_SYRK))
-         ck = 'k';
-      else if (flag&(1<<CPF_SYMM))
-         ck = 'y';
-      else if (flag&(1<<CPF_TRMM))
-         ck = 'r';
-      else if (flag&(1<<CPF_TRSM))
-         ck = 's';
-      i = sprintf(sp, "ATL_%ccp%sC%c_%ux%ux%u_a%cb%c", pre, dir, ck,
-                  p->mu, p->nu, blksz, cal, cbe);
+      i = sprintf(sp, "ATL_%ccp%s_%ux%ux%u", pre, flgstr, p->mu, p->nu, blksz);
    }
 /*
  * For A format routine naming scheme is:
- *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_<nu>_<kvec>_aX
+ *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_aX_<nu>_<kvec>
  */
    else
    {
-      char cks[4]={'k', 'y', 'r', 's'};
-      char ck='g', cta;
-      for (i=CPF_SYRK; i <= CPF_TRSM; i++)
-         if ((flag>>i)&1)
-            ck = cks[i-CPF_SYRK];
-      len = 21 + NumDecDigits(p->nu) + NumDecDigits(p->kvec);
+      len += 11 + NumDecDigits(p->nu) + NumDecDigits(p->kvec);
       sp = malloc(len+exlen);
       assert(sp);
-      if (flag & (1<<CPF_TRANS))  /* transpose */
-         cta = (flag & (1<<CPF_CONJ)) ? 'H' : 'T';
-      else
-         cta = (flag & (1<<CPF_CONJ)) ? 'C' : 'N';
-      i = sprintf(sp, "ATL_%ccp%sA%c%c_%u_%u_a%c", pre, dir,
-                  cta, ck, p->nu, p->kvec, cal);
+      i = sprintf(sp, "ATL_%ccp%s_%u_%u", pre, flgstr, p->nu, p->kvec);
    }
    assert(i < len);
    return(sp);
@@ -4070,50 +4108,6 @@ ATL_cpnode_t *FindEquivCopy_ab(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
       }
    }
    return(NULL);
-}
-
-@iexp ip @(ip) 1 +
-/* procedure @(ip) */
-char *CopyFlag2Str(unsigned int flag)
-/*
- * Encodes TOBLK,CBLK,TRANS,CONJ,KERN,alp into standard string
- */
-{
-   static char nm[12];
-   if (flag&(1<<CPF_TOBLK))
-   {
-      nm[0] = 'F'; nm[1] = 'r'; nm[2] = 'o'; nm[3] = 'm';
-   }
-   else
-   {
-      nm[0] = 'I'; nm[1] = 'n'; nm[2] = 't'; nm[3] = 'o';
-   }
-   nm[4] = (flag&(1<<CPF_CBLK)) ? 'C' : 'A';
-   if (flag&(1<<CPF_TRANS))
-      nm[5] = (flag&(1<<CPF_CONJ)) ? 'H' : 'T';
-   else
-      nm[5] = (flag&(1<<CPF_CONJ)) ? 'C' : 'N';
-   if (!(flag&CPF_ALLKERN))
-      nm[6] = 'g';
-   else if (flag&(1<<CPF_SYRK))
-      nm[6] = 'r';
-   else if (flag&(1<<CPF_SYMM))
-      nm[6] = 'y';
-   else if (flag&(1<<CPF_TRMM))
-      nm[6] = 't';
-   else if (flag&(1<<CPF_TRSM))
-      nm[6] = 's';
-   else
-      assert(0);
-      
-   nm[7] = '-';
-   nm[8] = 'a';
-   if (flag & (1<<CPF_AL1))
-      nm[9] = '1';
-   else
-      nm[9] = (flag & (1<<CPF_ALN)) ? 'N' : 'X';
-   nm[10] = '\0';
-   return(nm);
 }
 
 @iexp ip @(ip) 1 +
@@ -4373,6 +4367,8 @@ void CopyFixTransByMtx(char mtx, char ta, ATL_cpnode_t *cb)
          msk = (1<<CPF_CONJ);
       else if (ta == 'H')
          msk = (1<<CPF_TRANS) | (1<<CPF_CONJ);
+      else /* no-trans */
+         msk = 0;
    }
    for (cp=cb; cp; cp = cp->next)
    {
@@ -8352,6 +8348,36 @@ ATL_cpnode_t *GetAllCopyNodesFromMM(int flag, ATL_mmnode_t *mb)
       cb = cp;
    }
    return(ReverseCPQ(cb));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+int *MMGetCopyIdxsFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
+/*
+ * RETURNS: integer array of indices (starting from 1) in cb
+ */
+{
+   ATL_mmnode_t *mp;
+   int i, N, *idxs;
+   if (!mb)
+      return(NULL);
+   N = ATL_CountNumberOfMMNodes(mb);
+   idxs = malloc(N*sizeof(int));
+   assert(idxs);
+   for (i=0,mp=mb; mp; i++, mp = mp->next)
+   {
+      ATL_cpnode_t *cm, *cp;
+      int id;
+
+      cm = GetCopyNodeFromMM(flag, mp);
+      for (id=1,cp=cb; cp; cp = cp->next, id++)
+         if (!CopyAreDiff(cp, cm))
+            break;
+      KillCPNode(cm);
+      assert(cp);
+      idxs[i] = id;
+   }
+   return(idxs);
 }
 
 @iexp ip @(ip) 1 +

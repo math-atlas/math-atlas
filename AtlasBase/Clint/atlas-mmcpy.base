@@ -839,6 +839,7 @@ static int flag2PrIdx(int flag)
 
 @endskip
 #include "atlas_mmgen.h"
+#include "atlas_type.h"
 void PrintProtos(FILE *fp, ATL_cpnode_t *cb)
 {
    ATL_cpnode_t *cp;
@@ -1229,6 +1230,153 @@ void GenAllAHeadDir(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
    free(tnam);
 }
 
+int *ReadMasterIdx(char pre, int *N)
+{
+   FILE *fp;
+   int *flags;
+   char fn[16]={'r','e','s','/',pre,'m','a','s','t','e','r','.','C','P','I',0};
+   unsigned int i, n;
+
+   fp = fopen(fn, "r");
+   assert(fp);
+   assert(fscanf(fp, "%u", &n) == 1);
+   flags = malloc(n*sizeof(int));
+   assert(flags);
+   for (i=0; i < n; i++)
+   {
+      assert(fscanf(fp, " %x '%*s' ", flags+i) == 1);
+      printf("flag[%u] = %x\n", i, flags[i]);
+   }
+
+   *N = n;
+   return(flags);
+}
+
+void DoMaster(char pre, FILE *fp, ATL_cpnode_t *cb)
+{
+   ATL_cpnode_t *cp;
+   char *sp;
+   int N, i;
+
+   assert(cb);
+   fprintf(fp, "#include \"atlas_amm.h\"\n/*\n * Prototypes\n */\n");
+   PrintProtos(fp, cb);
+
+   sp = CopyFlag2Str(cb->flag);
+   fprintf(fp, "/*\n * Index array\n */\n");
+   N = ATL_CountNumberOfCPNodes(cb);
+   fprintf(fp, 
+      "#ifndef ATL_DECL_\n   const extern ATL_cparr_t ATL_Cpy%s[%u];\n", 
+           sp, N+N);
+   fprintf(fp, "#else\nconst ATL_cparr_t ATL_Cpy%s[%u] =\n{", sp, N+N);
+   sp = "\n";
+   for (i=0,cp=cb; cp; cp = cp->next, i++)
+   {
+      ATL_cpflt_t mf = cp->mflop[0], *mfp;
+      ATL_iptr_t imf=0;
+      mfp = (ATL_cpflt_t*) &imf;
+      *mfp = mf;
+      fprintf(fp, "%s   (ATL_cparr_t)%s, ", sp, cp->rout);
+      if (sizeof(imf) > sizeof(int))
+         fprintf(fp, "0x%lxL", imf);
+      else
+         fprintf(fp, "0x%x", imf);
+      fprintf(fp, "/* IDX=%u */", i);
+      sp = ",\n";
+   }
+   fprintf(fp, "\n};\n");
+   fprintf(fp, "#endif /* end else of ifndef ATL_DECL */\n");
+   fprintf(fp, "\n");
+}
+
+void GenMasterFiles(char pre, char *path)
+{
+   int *flags;
+   char *fn;
+   int i, pL, L, N;
+
+   pL = strlen(path);
+   L = pL + 32;
+
+   fn = malloc(pL+32);
+   assert(fn);
+   flags = ReadMasterIdx(pre, &N);
+   for (i=0; i < N; i++)
+   {
+      char *sp;
+      ATL_cpnode_t *cb;
+      FILE *fp;
+      int k;
+
+      sp = CopyFlag2Str(flags[i]);
+      k = sprintf(fn, "res/%ccpyPERF_%s.CPS", pre, sp);
+      assert(k < L);
+      cb = ReadCPFile(fn);
+      assert(cb);
+      k = sprintf(fn, "%s/atlas_%c%s.h", path, pre, sp);
+      assert(k < L);
+      fp = fopen(fn, "w");
+      assert(fp);
+      sp = fn + pL;
+      while (*sp == '/')
+         sp++;
+      while (*sp != '.')
+      {
+         *sp = toupper(*sp);
+         sp++;
+      }
+      *sp++ = '_';
+      *sp++ = 'H';
+      *sp = '\0';
+      sp = fn + pL;
+      fprintf(fp, "#ifndef %s\n", sp);
+      fprintf(fp, "   #define %s 1\n\n", sp);
+      DoMaster(pre, fp, cb);
+      fprintf(fp, "#endif /* end multiple inclusion guard */\n");
+      fclose(fp);
+      KillAllCPNodes(cb);
+   }
+   free(fn);
+   free(flags);
+}
+
+#if 0
+int GenView(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
+{
+   const int vflag = vp->flag;
+   int plen, vlen, d;
+   char *tfn, *fn;
+
+   plen = strlen(path);
+   if (path[plen-1] == '/')  /* avoid double / */
+      path[--plen] = '\0';
+   vlen = strlen(vp->nam);
+   tlen = plen + 1 + 6 + vlen + 12 + 3;
+   tlen = (tlen > 26) ? tlen : 26;
+   tfn = malloc(tlen*sizeof(char));
+   assert(tfn);
+   for (d=CPV_C2BLK; d <= CPV_BLK2A; d++)
+   {
+      int flag, ia;
+      const int alpb = (d <= CPV_BLK2C) ? CPV_AL1C : CPV_AL1Al
+
+      if (!(vflag & d))     /* if this view doesn't contain */
+         continue;          /* this mtx/dir, skip rest */
+      if (d==CPV_C2BLK)
+         flag = (1<<CPF_TOBLK)|(1<<CPF_CBLK);
+      else if (d == CPV_BLK2C)
+         flag = (1<<CPF_CBLK);
+      else
+         flag = (d == CPV_A2BLK) ? (1<<CPF_TOBLK) : 0 ;
+      for (ia=0; ia < 3; ia++)
+      {
+         if (!(vflag & (1<<(alpb+ia))))
+            continue;
+      }
+   }
+}
+#endif
+
 int main(int nargs, char **args)
 {
    ATL_view_t *vb, *vp;
@@ -1237,13 +1385,15 @@ int main(int nargs, char **args)
    ATL_cpnode_t *cb;
 
    vb = GetFlags(nargs, args, &pre, &path);
+   GenMasterFiles(pre, path);
    cb = ReadCPFileWithPath(pre, "res", "cpyPERF.CPS");
    for (vp=vb; vp; vp = vp->next)
    {
       ATL_mmnode_t *mb;
       mb = ReadMMFile(vp->fnam);
-      GenAllCHeadDir(pre, path, vp, mb, cb);
-      GenAllAHeadDir(pre, path, vp, mb, cb);
+      GenView(pre, path, vp, mb);
+@skip      GenAllCHeadDir(pre, path, vp, mb, cb);
+@skip      GenAllAHeadDir(pre, path, vp, mb, cb);
       KillAllMMNodes(mb);
    }
 
@@ -1329,7 +1479,8 @@ ATL_cpnode_t **SplitList(char pre, ATL_cpnode_t *cb, int *NLIST, uint **FLAGS)
 
 unsigned int CountRegion(int N, ATL_cpnode_t **cbs)
 {
-   const uint mask=(CPF_ALLKERN|(1<<CPF_CBLK)), flag=(cbs[0]->flag)&mask;
+   const uint mask=(CPF_ALLKERN|(1<<CPF_CBLK)|(1<<CPF_TOBLK)), 
+              flag=(cbs[0]->flag)&mask;
    uint i;
 
    for (i=1; i < N; i++)
@@ -1368,16 +1519,48 @@ uint *CountMoveShared(const uint N,  ATL_cpnode_t **cbs)
 void SortByCount(uint N, uint *nshar,  ATL_cpnode_t **cbs, uint *flgs)
 {
    uint i;
-   for (i=0; i < N; i++)
-      printf("nshar= %u (of %u)\n", nshar[i], ATL_CountNumberOfCPNodes(cbs[i]));
+   for (i=0; i < N-1; i++)
+   {
+      uint imin=i, min=nshar[i], j;
+      for (j=i+1; j < N; j++)
+      {
+         if (nshar[j] < min)
+         {
+            imin = j;
+            min = nshar[j];
+         }
+      }
+      if (imin != i)
+      {
+         void *vp = cbs[i];
+         cbs[i] = cbs[j];
+         cbs[j] = vp;
+         nshar[j] = nshar[i];
+         nshar[i] = min;
+         min = flgs[i];
+         flgs[i] = flgs[j];
+         flgs[j] = min;
+      }
+   }
+}
+
+void DictateOrders(const uint N, ATL_cpnode_t **cbs)
+{
+   uint i;
+   for (i=0; i < N-1; i++)
+   {
+      uint j;
+      for (j=i+1; j < N; j++)
+         CopyDictateOrder(cbs[i], cbs[j]);
+   }
 }
 
 void CohereLists(const uint N, ATL_cpnode_t **cbs, uint *flgs)
 /*
- * cbs already sorted in precedence: kernel, mtx (C/A).
- * The indices of a given kernel must match in all kern,mtx lists, despite
+ * cbs already sorted in precedence: kernel, mtx (C/A), dir.
+ * The indices of a given kernel must match in all kern,mtx,dir lists, despite
  * the fact that views may make it so these lists contain different numbers
- * and types of cp funcs.  The idea that shared funcs between kern,mtx lists
+ * and types of cp funcs.  The idea that shared funcs between kern,mtx,dir lists
  * share the same index regardless of file length means that the lists COHERE.
  *
  * Therefore, to make the files within a given region cohere, we figure out
@@ -1396,17 +1579,18 @@ void CohereLists(const uint N, ATL_cpnode_t **cbs, uint *flgs)
       n = CountRegion(N-i, cbs);
       nshar = CountMoveShared(n, cbs);
       SortByCount(n, nshar, cbs, flgs);
+      free(nshar);
+      DictateOrders(n, cbs);
 
       cbs += n;
       flgs += n;
       i += n;
-      free(nshar);
    }
    while (i < N);
 }
 void CreateMasterIdx(char pre)
 {
-   ATL_cpnode_t *cb, **cbs;
+   ATL_cpnode_t *cb, **cbs, *cp;
    FILE *fp;
    unsigned int *flgs;
    unsigned int N, i;
@@ -1416,6 +1600,12 @@ void CreateMasterIdx(char pre)
 
    cb = ReadCPFileWithPath(pre, "res", "cpyPERF.CPS");
    assert(cb);
+   for (cp=cb; cp; cp = cp->next)
+   {
+      if (cp->rout)
+         free(cp->rout);
+      cp->rout = GetCopyName(cp, 0);
+   }
    cbs = SplitList(pre, cb, &N, &flgs);
    KillAllCPNodes(cb);
    CohereLists(N, cbs, flgs);
@@ -1433,10 +1623,7 @@ void CreateMasterIdx(char pre)
       flag = cb->flag & msk;
       sp = CopyFlag2Str(flag);
       fprintf(fp, "%x '%s'\n", flag, sp);
-      if (cb->flag & (1<<CPF_CBLK))
-         sprintf(fn+5, "cpyPERF_%s_b%c.CPS", sp, CopyGetBetaC(cb->flag));
-      else
-         sprintf(fn+5, "cpyPERF_%s.CPS", sp);
+      sprintf(fn+5, "cpyPERF_%s.CPS", sp);
       WriteCPFile(fn, cb);
    }
    fclose(fp);
