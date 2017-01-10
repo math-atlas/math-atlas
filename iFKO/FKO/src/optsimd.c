@@ -16296,7 +16296,7 @@ int CheckRedVarforVectors(SLP_VECTOR *vlist, BBLOCK *blk)
          vl->redvar = rvar;
          /*fprintf(stderr, "vec=%s, redvar=%s\n", STname[vl->vec-1], 
                STname[rvar-1]);*/
-         fprintf(stderr, "vec=%s, redvar=%s\n", STname[vl->vec-1], 
+         fko_warn(__LINE__, "vec=%s, redvar=%s\n", STname[vl->vec-1], 
                STname[rvar-1]);
       }
    }
@@ -17749,7 +17749,8 @@ int PreSLPchecking(LOOPQ *lp)
  */
    if (!lp->posttails || lp->posttails->next)
    {
-      fprintf(stderr, "only one posttails is considered in SLP\n");
+      /*fprintf(stderr, "only one posttails is considered in SLP\n");*/
+      fko_warn(__LINE__, "only one posttails is considered in SLP\n");
       return(1);
    }
 /*
@@ -17757,7 +17758,8 @@ int PreSLPchecking(LOOPQ *lp)
  */
    if (!lp->blocks || lp->blocks->next)
    {
-      fprintf(stderr, "only one block is considered in SLP\n");
+      /*fprintf(stderr, "only one block is considered in SLP\n");*/
+      fko_warn(__LINE__, "only one block is considered in SLP\n");
       return(1);
    }
 #if 0   
@@ -18510,9 +18512,6 @@ int BlkPrivateVariableRename(BBLOCK *blk)
             vp = STstrlookup(vnam);
             if (!vp)
                vp = InsertNewLocal(vnam, FLAG2TYPE(STflag[sp[i]-1]));
-            //PrintVars(stderr, "ip->set: ", ip->set);
-            //PrintThisInst(stderr, 0, ip);
-            //fprintf(stderr, "var = %s(%d)\n", STname[sp[i]-1], sp[i]);
             assert(ip->inst[1] > 0);
             assert(STpts2[ip->inst[1]-1] == sp[i]);
             /*if (STpts2[ip->inst[1]-1] != sp[i])
@@ -19234,8 +19233,10 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
  */
             else if (nelem) 
             {
-               PrintVectors(stderr, vl);
-               fprintf(stderr, "mixed up=%s(%d,%d) !!", STname[vl->vec-1], 
+               /*PrintVectors(stderr, vl);*/
+               /*fprintf(stderr, "mixed up=%s(%d,%d) !!", STname[vl->vec-1], 
+                       nelem, vl->vlen);*/
+               fko_warn(__LINE__, "mixed up=%s(%d,%d) !!", STname[vl->vec-1], 
                        nelem, vl->vlen);
                mixed = 1;
 /*
@@ -19450,7 +19451,7 @@ int IsSlpConsistent(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2,
  * recompute CFG and it will destroy the loop structure... we need to figure
  * out live-out vectors without recomputing data-flow.
  */
-   //fprintf(stderr, "++++++checking consistency at prehead -> loop\n");
+   /*fprintf(stderr, "++++++checking consistency at prehead -> loop\n");*/
    res = IsSlpFlowConsistent(loop->preheader, loop->header, v1, v0, 
             loop->header->ins, loop->preheader->outs);
 #if 0
@@ -19463,10 +19464,10 @@ int IsSlpConsistent(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2,
       if (vl->isused)
          PrintThisVector(stderr,vl);
 #endif
-   //fprintf(stderr, "+++++checking consistency at loop -> posttail\n");
+   /*fprintf(stderr, "+++++checking consistency at loop -> posttail\n");*/
    res += IsSlpFlowConsistent(loop->tails->blk, loop->posttails->blk, v0, v2, 
             loop->posttails->blk->ins, loop->tails->blk->outs);
-   //fprintf(stderr, "+++++checking consistency at posttail -> prehead\n");
+   /*fprintf(stderr, "+++++checking consistency at posttail -> prehead\n");*/
    res += IsSlpFlowConsistent(loop->posttails->blk, loop->preheader, v2, v1, 
             loop->preheader->ins, loop->posttails->blk->outs);
 
@@ -19673,14 +19674,15 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
 /*
  * exit condition of the recursion: when it reaches optloop
  */
-   if (!lpl->next ) //optloop
+   if (!lpl->next ) /*optloop*/
    {
       if (VECT_FLAG & VECT_SLP)
       {
          assert(lpl->loop->blocks && !lpl->loop->blocks->next); //single blk
          if (PreSLPchecking(lpl->loop)) /* needed for other optimizations */
          {
-            fprintf(stderr, "Prechecking failed for SLP\n");
+            /*fprintf(stderr, "Prechecking failed for SLP\n");*/
+            fko_warn(__LINE__, "Prechecking failed for SLP\n");
             *err = 1;
             (*vres) = 0;
             return(NULL);
@@ -19690,31 +19692,17 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
          ins = BitVecCopy(ins, blk->ins);
          FilterOutRegs(ins);
          vo = NULL;
-#if 0
-         fprintf(stderr, "*****************Applying SLP on optloop\n");
-         fprintf(stderr, "Scalar codes:\n");
-         PrintThisInstQ(stderr, lpl->loop->blocks->blk->inst1);
-         fprintf(stderr, "==================================\n");
-#endif
          vo = DoSingleBlkSLP(lpl->loop->blocks->blk, ins, vo, ptrs, err, 0);
          KillBitVec(ins);
          if (*err)
          {
-            fprintf(stderr, "SLP fails in optloop!\n");
+            /*fprintf(stderr, "SLP fails in optloop!\n");*/
+            fko_warn(__LINE__, "SLP fails in optloop!\n");
             KillVlist(vo);
             (*vres) = 0;
             return NULL;
          }
          (*vres) = 1;
-#if 0
-         {
-            //extern BBLOCK *bbbase;
-            fprintf(stderr, "vectorized loop block:\n");
-            //PrintInst(stderr, bbbase);
-            PrintThisInstQ(stderr, lpl->loop->blocks->blk->inst1); 
-            //exit(0);
-         }
-#endif
 /*
  *       NOTE: no need, since we ensure there is no scalar and vector inst  
  *       for a varibale at the same time
@@ -19748,25 +19736,12 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
          /*FinalizeVectorCleanup(lpl->loop, 1);*/
          SKIP_PELOGUE = 0;
          /*SKIP_PEELING = 0;*/  
-#if 0
-         {
-            extern BBLOCK *bbbase;
-            fprintf(stderr, "vectorized loop block:\n");
-            PrintInst(stderr, bbbase);
-            exit(0);
-         }
-#endif
 /*
  *       NOTE: generating these vectors from optloop won't help slp for next 
  *       steps except the posttail's vvrsum codes. They are main controlled by
  *       NSLP_ACC and NSLP_SCAL flag
  */
          vo = CreateVlistFromLoop(lpl->loop);
-#if 0
-         fprintf(stderr, "generated vectors");
-         PrintVectors(stderr, vo);
-         exit(0);
-#endif
          return(vo);
       }
       else 
@@ -20103,7 +20078,10 @@ int LoopNestVec(short *ptrs, int *bvlpl)
 
 #endif
    KillAllLPlist(ll); 
-
+/*
+ * Optimize loop control 
+ */
+   OptimizeLoopControl(optloop, 1, 1, NULL);
 /*
  * recompute the CFG
  */
@@ -20151,7 +20129,7 @@ int LoopNestOpt()
       if (optloop && IsLoopUnswitchable(lpnest))
       {
          /*fprintf(stderr, "Loop unswitchable!!\n");*/
-         fprintf(stderr, "Loop unswitchable!!\n");
+         fko_warn(__LINE__, "Loop unswitchable!!\n");
          LoopUnswitch(lpnest);
          InvalidateLoopInfo();
          bbbase = NewBasicBlocks(bbbase);
