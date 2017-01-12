@@ -1872,12 +1872,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                if (op3 < 0 )
                   ap->next = PrintAssln("\tvaddss\t%s,%s,%s\n", 
                                         archxmmregs[GetDregID(op3)],
-	                                archxmmregs[-FREGBEG-op1],
+	                                archxmmregs[-FREGBEG-op2],
 	                                archxmmregs[-FREGBEG-op1]);
                else
                   ap->next = PrintAssln("\tvaddss\t%s,%s,%s\n", 
                                         GetDregOrDeref(op3),
-	                                archxmmregs[-FREGBEG-op1],
+	                                archxmmregs[-FREGBEG-op2],
 	                                archxmmregs[-FREGBEG-op1]);
 
             #else
@@ -3212,7 +3212,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*
  *       Allow scalar to vector reg to reg move
  *       two variation :
- * 1. VDMOVS vr0, sr, vr1  // vr0[0] = vr2[0], vr0[vlen-1: 1] = vr1[vlen-1: 1]
+ * 1. VDMOVS vr0, sr, vr1  // vr0[0] = sr, vr0[vlen-1: 1] = vr1[vlen-1: 1]
  * 2. VDMOVS sr, vr, 0     // sr = vr[0]
  *       here vr0 and vr1 should be vector register
  */

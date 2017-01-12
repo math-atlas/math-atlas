@@ -127,6 +127,9 @@
    #endif
    #ifdef AVX
       #define ArchHasMemBroadcast
+      #define ArchHasFPthreeOps
+      #define ArchHasVFPthreeOps
+      #define ArchHasVINTthreeOps
       #define FP_VEC
       #define FKO_SVLEN 8
       #define DP_VEC
