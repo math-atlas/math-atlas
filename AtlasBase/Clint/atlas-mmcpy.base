@@ -1340,8 +1340,303 @@ void GenMasterFiles(char pre, char *path)
    free(flags);
 }
 
-#if 0
-int GenView(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
+unsigned int MMIdxCount(ATL_mmnode_t *mb, ATL_mmnode_t *want)
+/*
+ * RETURNS: index (from 1) of want in mb, 0 if not found
+ */
+{
+   ATL_mmnode_t *mp;
+   int i;
+   for (i=0, mp=mb; mp; mp->next)
+      if (MMKernsPerfSame(mb, want))
+         return(i+1);
+   return(0);
+}
+
+void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp, *MB;
+   FILE *fpout;
+   char *sp, *fn;
+   char *mnms[10] = {"m", "n", "k", "amm", "A2b", "B2b", "b2C", 
+                    "b2A", "b2B", "C2b"};
+   char *nms[10]={"MB", "NB", "KB", "AMMI",
+                "A2BLK", "B2BLK", "BLK2C", "BLK2A", "BLK2B", "C2BLK"};
+   int nbits[10];
+   char **cpnms = nms + 4;
+   int *cpidxs[6], *cpnbits=nbits+4;
+   int i, d, len, N, nint, nbit;
+   int minMB, minNB, minKB, maxMB, maxNB, maxKB, minKID, maxKID, tbits;
+   const unsigned int vflag=vp->flag;
+/*
+ * Need these because the frontend machine could conceivably have a smaller
+ * int type than the machine being compiled for.  Would need to have the
+ * tuned machine do the generation to avoid this assertion.  I also assume
+ * both machines have same float, but ATLAS typically assumes IEEE storage
+ * so this is less risky
+ */
+   #if (ATL_ISIZE < ATL_FSIZE)
+      #error "Integer shorter than float!"
+   #endif
+   assert(ATL_ISIZE <= sizeof(int));
+   len = strlen(path) + 8 + 1 + strlen(vp->nam) + 8;
+   fn = malloc(len*sizeof(char));
+   assert(fn);
+   d = sprintf(fn, "%s/atlas_%c%s_view.h", path, pre, vp->nam);
+   assert(d < len);
+   fpout = fopen(fn, "w");
+   assert(fpout);
+   N = ATL_CountNumberOfMMNodes(mb);
+
+   for (d=0; d < 2; d++)
+   {
+      unsigned int m, flag;
+      for (m=0; m < 3; m++)
+      {
+         int FIND=0, i;
+         i = d+(d<<1) + m; /* i = 3*d+m */
+         if (m == 2) /* C idx */
+         {
+            int b;
+            flag = 1<<CPF_CBLK;
+            for (b=0; b < 4; b++)
+            {
+               if (vflag & 1<<(CPV_BE1C+b))
+               {
+                  flag |= 1<<CPF_BE1+b;
+                  break;
+               }
+            }
+            for (b=0; b < 3; b++)
+            {
+               if (vflag & 1<<(CPV_AL1C+b))
+               {
+                  flag |= 1<<CPF_AL1+b;
+                  break;
+               }
+            }
+            if (vflag & (1<<CPV_BE1C))
+               flag |= 1<<CPF_BE1;
+            else if (vflag & (1<<CPV_BE1C))
+            if (!d && (vflag&(1<<CPV_BLK2C)))
+               FIND = 1;
+            else if (d && (vflag&(1<<CPV_BLK2C)))
+               FIND = 1;
+         }
+         else /* A or B */
+         {
+            int b;
+
+            flag = (m == 1) ? (1<<CPF_ABLK) : 0;
+            for (b=0; b < 3; b++)
+            {
+               if (vflag & 1<<(CPV_AL1A+b))
+               {
+                  flag |= 1<<CPF_AL1+b;
+                  break;
+               }
+            }
+            if (!d && (vflag&(1<<CPV_A2BLK)))
+               FIND = 1;
+            else if (d && (vflag&(1<<CPV_BLK2A)))
+               FIND = 1;
+         }
+/*
+ *       If view uses this mtx,dir setting, allocate an N+1 iarray, with
+ *       1st entry being the minimum value found, rest being offset from min.
+ */
+         if (FIND)
+         {
+            int min, k;
+            ATL_cpnode_t *cb;
+            //cpflags[i] = flag;
+            sp = CopyFlag2Str(flag);
+            k = sprintf(fn, "res/%ccpyPERF_%s.CPS", pre, sp);
+            assert(k < len);
+            cb = ReadCPFile(fn);
+            cpidxs[i] = MMGetCopyIdxsFromList(flag, mb, cb);
+            KillAllCPNodes(cb);
+            assert(cpidxs[i]);
+            assert(cpidxs[i][0] == N);
+            min = cpidxs[i][1];
+            for (k=1; k < N; k++)
+               min = Mmin(min, cpidxs[i][k+1]);
+            for (k=1; k <= N; k++)
+               cpidxs[i][k+1] -= min;
+            cpidxs[i][0] = min;
+            min = cpidxs[i][1];  /* now actually maximum */
+            for (k=2; k <= N; k++)
+               min = Mmax(min, cpidxs[i][k]);
+            cpnbits[i] = ATL_numBitsNeeded(min);
+         }
+         else
+         {
+            cpidxs[i] = NULL;
+            cpnbits[i] = 0;
+         }
+      }
+   }
+   for (tbits=i=0; i < 6; i++)
+   {
+      fprintf(fpout, "#define ATL_MIN_%s  %d\n", cpnms[i], 
+              cpidxs ? cpidxs[i][0] : 0);
+      fprintf(fpout, "#define ATL_NBIT_%s %d\n", cpnms[i], cpnbits[i]);
+      tbits += cpnbits[i];
+   }
+   maxMB = minMB = mb->mbB;
+   maxNB = minNB = mb->nbB;
+   maxKB = minKB = mb->kbB;
+   MB = ReadMMFileWithPath(pre, "res", "FNLK1.sum");
+   assert(MB);
+   maxKID = minKID = MMIdxCount(MB, mb);
+   assert(maxKID);
+   for (mp=mb->next; mp; mp = mp->next)
+   {
+      int b;
+      ATL_mmnode_t p;
+      b = mp->mbB;
+      maxMB = Mmax(b, maxMB);
+      minMB = Mmin(b, minMB);
+      b = mp->nbB;
+      maxNB = Mmax(b, maxNB);
+      minNB = Mmin(b, minNB);
+      b = mp->kbB;
+      maxKB = Mmax(b, maxKB);
+      minKB = Mmin(b, minKB);
+      b = MMIdxCount(MB, mp);
+      assert(b);
+      maxKID = Mmax(b, maxKID);
+      minKID = Mmin(b, minKID);
+   }
+   KillAllMMNodes(MB);
+   nbits[0] = ATL_numBitsNeeded(maxMB-minMB);  /* now set vals to */
+   nbits[1] = ATL_numBitsNeeded(maxNB-minNB);  /* number of bits needed */
+   nbits[2] = ATL_numBitsNeeded(maxKB-minKB);  /* to store offsets from min */
+   nbits[3] = ATL_numBitsNeeded(maxKID-minKID);
+   tbits += nbits[0] + nbits[1] + nbits[2] + nbits[3];
+   fprintf(fpout, "#define ATL_MIN_AMMI  %u\n", minKID);
+   fprintf(fpout, "#define ATL_NBIT_AMMI %u\n", nbits[2]);
+   fprintf(fpout, "#define ATL_MIN_MB    %u\n", minMB);
+   fprintf(fpout, "#define ATL_NBIT_MB   %u\n", nbits[0]);
+   fprintf(fpout, "#define ATL_MIN_NB    %u\n", minNB);
+   fprintf(fpout, "#define ATL_NBIT_KB   %u\n", nbits[1]);
+   fprintf(fpout, "#define ATL_MIN_KB    %u\n", minKB);
+   fprintf(fpout, "#define ATL_NBIT_KB   %u\n", nbits[2]);
+   if (tbits > (ATL_ISIZE<<3))
+   {
+      for (nbit=nint=i=0; i < 9; i++)
+      {
+         nbit += nbits[i];
+         if (nbit > (ATL_ISIZE<<3))
+         {
+            nbit = nbits[i];
+            nint++;
+         }
+      }
+   }
+   fprintf(fpout, "#define ATL_VIEW_NINT %u\n", ++nint);
+   if (i == 2)
+      fprintf(fpout, "#define ATL_VIEW_IDXMUL(i_) ((i_)+(i_))\n");
+   else if (i == 3)
+      fprintf(fpout, "#define ATL_VIEW_IDXMUL(i_) ((i_)+((i_)<<1))\n");
+   else if (i == 4)
+      fprintf(fpout, "#define ATL_VIEW_IDXMUL(i_) ((i_)<<2)\n");
+   else
+      fprintf(fpout, "#define ATL_VIEW_IDXMUL(i_) ((i_)*%u)\n", nint);
+   fprintf(fpout, "#define ATL_VIEW_LEN %u\n", N);
+
+   fprintf(fpout,"\n#ifndef ATL_DECL_\n   const extern int ATL_%s_view[%u];\n", 
+           vp->nam, nint*N);
+   fprintf(fpout, "#else\n   const int ATL_%s_view[%u] =\n{", vp->nam, nint*N);
+   sp = "\n";
+   for (i=0, mp=mb; mp; mp = mp->next, i++)
+   {
+      int k, iv=0, ammI;
+      float *timepflop;
+      timepflop = (float*) &k;
+      *timepflop = 1.0 / mp->mflop[0];
+      fprintf(fpout, "%s/* %u:SPF=%e B=(%u,%u,%u) ammI=%u [a,b]blkI=%u,%u "
+              "blk2cI=%u blk2[a,b]I=%u,%u c2blkI=%u */\n",
+              sp, *timepflop, i, mp->mbB, mp->nbB, mp->kbB, ammI,
+              cpidxs[0]?cpidxs[0][i+1]:0,cpidxs[1]?cpidxs[1][i+1]:0,
+              cpidxs[2]?cpidxs[2][i+1]:0,cpidxs[3]?cpidxs[3][i+1]:0,
+              cpidxs[4]?cpidxs[4][i+1]:0,cpidxs[5]?cpidxs[5][i+1]:0);
+      ammI = MMIdxCount(MB, mp);
+      fprintf(fpout, "%x", k);
+//<ammtime><mb><nb><kb><kernI><a2blkI><b2blkI><blk2cI><blk2aI><blk2bI><c2blkI>
+      for (nbit=k=0; k < 10; k++)
+      {
+         const unsigned int nvbits = nbits[k];
+         if (nvbits)
+         {
+            int v;
+            switch(k)
+            {
+            case 0:
+               v = mp->mbB - minMB;
+               break;
+            case 1:
+               v = mp->nbB - minNB;
+               break;
+            case 2:
+               v = mp->kbB - minKB;
+               break;
+            case 3:
+               v = ammI - minKID; 
+               break;
+            default:
+               v = cpidxs[k-4] ? cpidxs[k-4][i+1] : 0;
+            }
+            if (nbit+nvbits > (ATL_ISIZE<<3))
+            {
+               fprintf(fpout, ",%x", iv);
+               iv = 0;
+               nbit = 0;
+            }
+            iv = (iv<<nvbits)|v;
+            nbit += nvbits;
+         }
+         if (nbit != 0)
+            fprintf(fpout, ",%x", iv);
+         sp = ";\n";
+      }
+   }
+   fprintf(fpout, "\n};\n");
+   fprintf(fpout, "#endif /* end else of ifndef ATL_DECL_ */\n");
+
+   fprintf(fpout, "#define ATL_GetViewInfo(id_, spf_, m_, n_, k_, amm_, "
+           "A2b_, B2b_, b2C_, b2A_, b2B_, C2b_) \\\n{ \\\n");
+   fprintf(fpout,"   unsigned int *ip_=ATL_%s_view+ATL_VIEW_IDXMUL(id_); \\\n");
+   fprintf(fpout,"   unsigned int v_=ip[1]; \\\n");
+   fprintf(fpout, "   spf_ = *((float*)ip_); \\\n");
+   for (i=1,nbit=d=0; d < 10; d++)
+   {
+      const unsigned int nvbits = nbits[d];
+      if (nbit+nvbits > (ATL_ISIZE<<3))
+      {
+         fprintf(fpout, "   v_ = ip[%u]; \\\n", ++i);
+         nbit = 0;
+      }
+      fprintf(fpout, "   %s_ = ATL_MIN_%s", mnms[d], nms[d]);
+      if (!nvbits)
+         fprintf(fpout, "; \\\n");
+      else
+      {
+         fprintf(fpout, " + (v_ & 0x%x); \\\n", (1<<nvbits)-1);
+         fprintf(fpout, "   v_ >>= %u; \\\n", nvbits);
+      }
+      nbit += nvbits;
+   }
+   fprintf(fpout, "} /* end ATL_GetViewInfo */\n");
+
+   fprintf(fpout, "\n#endif /* end multiple inclusion guard */\n");
+   fclose(fpout);
+   free(fn);
+//<ammtime><mb><nb><kb><kernI><a2blkI><b2blkI><blk2cI><blk2aI><blk2bI><c2blkI>
+}
+
+@beginskip
+void GenViews(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
 {
    const int vflag = vp->flag;
    int plen, vlen, d;
@@ -1370,12 +1665,36 @@ int GenView(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
          flag = (d == CPV_A2BLK) ? (1<<CPF_TOBLK) : 0 ;
       for (ia=0; ia < 3; ia++)
       {
+         int nta, it;
          if (!(vflag & (1<<(alpb+ia))))
             continue;
+         if (flag&(1<<CPF_CBLK))
+            nta = 1;
+         else
+            nta = (pre == 'c' || pre == 'z') ? 4 : 2;
+         flag |= CPF_AL1+ia;
+         for (it=0; it < nta; it++)
+         {
+            const int nb = (flag&(1<<CPF_CBLK)) ? 4 : 1;
+            int ib;
+
+            if (!(flag&(1<<CPF_CBLK)))
+               flag |= ((it&1)<<CPF_TRANS) | ((it&2)<<(CPF_CONJ-1));
+            for (ib=0; ib < nb; ib++)
+            {
+               ATL_cpnode_t *cmb;
+               if (flag&(1<<CPF_CBLK))
+               {
+                  if (!(vflag & (1<<(CPV_BE1C+ib))))
+                     continue;
+                  flag |= 1<<(CPF_BE1+ib);
+               }
+            }
+         }
       }
    }
 }
-#endif
+@endskip
 
 int main(int nargs, char **args)
 {
@@ -1391,7 +1710,7 @@ int main(int nargs, char **args)
    {
       ATL_mmnode_t *mb;
       mb = ReadMMFile(vp->fnam);
-      GenView(pre, path, vp, mb);
+      GenViewFile(pre, path, vp, mb);
 @skip      GenAllCHeadDir(pre, path, vp, mb, cb);
 @skip      GenAllAHeadDir(pre, path, vp, mb, cb);
       KillAllMMNodes(mb);
