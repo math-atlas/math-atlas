@@ -2754,22 +2754,28 @@ res/@(pre)@(rt) : xgmmsearch
 	./xuammsearch -p @(pre) -b $(NRF) -M 2 a c -T 1.01 -K 0
 	make @(pre)install_uamm_noclean ID=0
 	cp res/@(pre)uAMMFRC.sum $(BLDdir)/src/threads/lapack/amm/sumd/.
-@(pre)views=-V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1 syrk res/@(pre)gAMSYRK.sum \
+@(pre)views=-V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipgen res/@(pre)ipASYMP.sum \
+    @skip -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1 syrk res/@(pre)gAMSYRK.sum \
+    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X opgen res/@(pre)rkAMMFNL.sum 
     @skip pf ipmn     ipdn    ipdm
     @skip rt ipmnPERF ipnPERF ipmPERF
-    @multidef pf ipge     opsq     oprk     
-    @whiledef rt geAMMRES sqAMMRES rkAMMRES
+@BEGINSKIP
+    @multidef pf ipge     oprk   
+    @whiledef rt ipASYMP rkAMMRES 
        -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X @(pf) res/@(pre)@(rt).sum \
        @undef pf
     @endwhile
-       -V Cd=F Ca=1 Cb=0 Ad=I Aa=1,N sqlu res/@(pre)sqAMMRES.sum
+@skip       -V Cd=F Ca=1 Cb=0 Ad=I Aa=1,N sqlu res/@(pre)sqAMMRES.sum
+@ENDSKIP
 $(AMMdir)/KERNEL/@up@(pre)COPY:
 	mkdir $(AMMdir)/KERNEL/@up@(pre)COPY
 @skip	ln -s $(BLDdir)/Make.inc $(AMMdir)/KERNEL/@up@(pre)COPY/Make.inc
    @declare "@(pre)install_cpy: " y n 
       $(AMMdir)/KERNEL/@up@(pre)COPY xcpydrv
-      @multidef rt gAMSYRK
-      @whiledef rt geAMMRES sqAMMRES rkAMMRES gAMSYRK ipmnPERF ipnPERF ipmPERF
+@SKIP      @multidef rt gAMSYRK
+@SKIP @whiledef rt geAMMRES sqAMMRES rkAMMRES gAMSYRK ipmnPERF ipnPERF ipmPERF
+   @skip gAMSYRK ipmnPERF ipnPERF ipmPERF
+   @whiledef rt rkAMMFNL ipASYMP
          res/@(pre)@(rt).sum
       @endwhile
    @enddeclare
@@ -2825,21 +2831,22 @@ $(AMMdir)/KERNEL/@up@(pre)COPY:
       @define cpr @z@
       @multidef pp z d
    @ptyp s d c z
-res/@(pre)ipASYM.sum : xipsrch 
+res/@(pre)ipASYMP.sum : res/@(pre)gAMMRES.sum xipsrch
 	./xipsrch -p @(pre)
-res/@(pre)rkAMMFNL.sum : xopsrch
+res/@(pre)rkAMMFNL.sum : res/@(pre)gAMMRES.sum xopsrch
 	./xopsrch -p @(pre)
-res/@(pre)K1.sum : xaddKClean res/@(pre)ipASYM.sum res/@(cpr)ipASYM.sum
-	./xaddKClean -i res/@(pre)ipASYM.sum -i res/@(cpr)ipASYM.sum \
+res/@(pre)K1.sum : xaddKClean res/@(pre)ipASYMP.sum res/@(cpr)ipASYMP.sum
+	./xaddKClean -i res/@(pre)ipASYMP.sum -i res/@(cpr)ipASYMP.sum \
                      -o res/@(pre)K1.sum
 res/@(pre)FNLK1.sum : xammk1srch res/@(pre)K1.sum res/@(pre)rkAMMFNL.sum res/@(cpr)rkAMMFNL.sum 
 	./xammk1srch -i res/@(pre)K1.sum -i res/@(pre)rkAMMFNL.sum \
             -i res/@(cpr)rkAMMFNL.sum -o res/@(pre)FNLK1.sum
    @ptyp s d
-@(pre)install_amm: res/@(pre)FNLK1.sum xammgen
+@(pre)install_amm: res/@(pre)FNLK1.sum xammkgen
 	- cd $(AMMdir)/KERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
-	./xammgen -p @(pre) -d $(AMMdir)/KERNEL 
+	./xammkgen -p @(pre) -o $(AMMdir)/KERNEL 
 	mv $(AMMdir)/KERNEL/*.h $(INCAdir)/.
+	cd $(AMMdir)/KERNEL ; $(PMAKE) -f @(pre)Make_amm lib
 	$(MAKE) @(pre)install_cpy
    @ptyp d
 	$(MAKE) zinstall_cpy

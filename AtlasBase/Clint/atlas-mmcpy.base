@@ -1365,9 +1365,10 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    int nbits[10];
    char **cpnms = nms + 4;
    int *cpidxs[6], *cpnbits=nbits+4;
-   int i, d, len, N, nint, nbit;
+   int i, d, plen, vlen, len, N, nint, nbit;
    int minMB, minNB, minKB, maxMB, maxNB, maxKB, minKID, maxKID, tbits;
    const unsigned int vflag=vp->flag;
+   char upr = pre;
 /*
  * Need these because the frontend machine could conceivably have a smaller
  * int type than the machine being compiled for.  Would need to have the
@@ -1381,7 +1382,13 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    assert(ATL_ISIZE <= sizeof(int));
    assert(mb);
    assert(vp);
-   len = strlen(path) + 8 + 1 + strlen(vp->nam) + 8;
+   if (pre == 'c')
+      upr = 's';
+   else if (pre == 'z')
+      upr = 'd';
+   plen = strlen(path);
+   vlen = strlen(vp->nam);
+   len = plen + 8 + 1 + vlen + 8;
    len = (len < 33) ? 33 : len;  /* need room for cpyPERF_<str>.CPS */
    fn = malloc(len*sizeof(char));
    assert(fn);
@@ -1390,6 +1397,12 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    fpout = fopen(fn, "w");
    assert(fpout);
    N = ATL_CountNumberOfMMNodes(mb);
+   sp = fn + plen + 1;
+   for (i=0; sp[i]; i++)
+      sp[i] = toupper(sp[i]);
+   sp[i-2] = '_';
+   sp[i-1] = 'H';
+   fprintf(fpout, "#ifndef %s\n   #define %s 1\n\n", sp, sp);
 
    for (d=0; d < 2; d++)
    {
@@ -1495,15 +1508,15 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    }
    for (tbits=i=0; i < 6; i++)
    {
-      fprintf(fpout, "#define ATL_MIN_%s  %d\n", cpnms[i], 
+      fprintf(fpout, "#define ATL_MINV_%s     %3u\n", cpnms[i], 
               cpidxs[i] ? cpidxs[i][0] : 0);
-      fprintf(fpout, "#define ATL_NBIT_%s %d\n", cpnms[i], cpnbits[i]);
+      fprintf(fpout, "#define ATL_NBIT_%s     %3u\n", cpnms[i], cpnbits[i]);
       tbits += cpnbits[i];
    }
    maxMB = minMB = mb->mbB;
    maxNB = minNB = mb->nbB;
    maxKB = minKB = mb->kbB;
-   MB = ReadMMFileWithPath(pre, "res", "FNLK1.sum");
+   MB = ReadMMFileWithPath(upr, "res", "FNLK1.sum");
    assert(MB);
    maxKID = minKID = MMIdxCount(MB, mb);
    assert(maxKID);
@@ -1530,14 +1543,15 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    nbits[2] = ATL_numBitsNeeded(maxKB-minKB);  /* to store offsets from min */
    nbits[3] = ATL_numBitsNeeded(maxKID-minKID);
    tbits += nbits[0] + nbits[1] + nbits[2] + nbits[3];
-   fprintf(fpout, "#define ATL_MIN_AMMI  %u\n", minKID);
-   fprintf(fpout, "#define ATL_NBIT_AMMI %u\n", nbits[2]);
-   fprintf(fpout, "#define ATL_MIN_MB    %u\n", minMB);
-   fprintf(fpout, "#define ATL_NBIT_MB   %u\n", nbits[0]);
-   fprintf(fpout, "#define ATL_MIN_NB    %u\n", minNB);
-   fprintf(fpout, "#define ATL_NBIT_KB   %u\n", nbits[1]);
-   fprintf(fpout, "#define ATL_MIN_KB    %u\n", minKB);
-   fprintf(fpout, "#define ATL_NBIT_KB   %u\n", nbits[2]);
+   fprintf(fpout, "#define ATL_MINV_AMMI      %3u\n", minKID);
+   fprintf(fpout, "#define ATL_NBIT_AMMI      %3u\n", nbits[2]);
+   fprintf(fpout, "#define ATL_MINV_MB        %3u\n", minMB);
+   fprintf(fpout, "#define ATL_NBIT_MB        %3u\n", nbits[0]);
+   fprintf(fpout, "#define ATL_MINV_NB        %3u\n", minNB);
+   fprintf(fpout, "#define ATL_NBIT_NB        %3u\n", nbits[1]);
+   fprintf(fpout, "#define ATL_MINV_KB        %3u\n", minKB);
+   fprintf(fpout, "#define ATL_NBIT_KB        %3u\n", nbits[2]);
+   fprintf(fpout, "\n");
    if (tbits > (ATL_ISIZE<<3))
    {
       for (nbit=nint=i=0; i < 9; i++)
@@ -1574,12 +1588,27 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
       timepflop = (float*) &k;
       *timepflop = 1.0 / mp->mflop[0];
       ammI = MMIdxCount(MB, mp);
+      fprintf(fpout, "%s/* %u:SPF=%e B=(%u,%u,%u) ammI=%u",
+              sp, i, *timepflop, mp->mbB, mp->nbB, mp->kbB, ammI);
+      if (cpidxs[0] || cpidxs[1] || cpidxs[2])
+         fprintf(fpout, " [A,B]2b=%u,%u b2C=%u", 
+                 cpidxs[0]?cpidxs[0][i+1]+cpidxs[0][0]:0,
+                 cpidxs[1]?cpidxs[1][i+1]+cpidxs[1][0]:0,
+                 cpidxs[2]?cpidxs[2][i+1]+cpidxs[2][0]:0);
+      if (cpidxs[3] || cpidxs[4] || cpidxs[5])
+         fprintf(fpout, " b2[A,B]=%u,%u C2b=%u",
+                 cpidxs[3]?cpidxs[3][i+1]+cpidxs[3][0]:0,
+                 cpidxs[4]?cpidxs[4][i+1]+cpidxs[4][0]:0,
+                 cpidxs[5]?cpidxs[5][i+1]+cpidxs[5][0]:0);
+     fprintf(fpout, " */\n");
+     @beginskip
       fprintf(fpout, "%s/* %u:SPF=%e B=(%u,%u,%u) ammI=%u [A,B]2blkI=%u,%u "
               "blk2CI=%u blk2[A,B]I=%u,%u C2blkI=%u */\n",
               sp, i, *timepflop, mp->mbB, mp->nbB, mp->kbB, ammI,
               cpidxs[0]?cpidxs[0][i+1]:0,cpidxs[1]?cpidxs[1][i+1]:0,
               cpidxs[2]?cpidxs[2][i+1]:0,cpidxs[3]?cpidxs[3][i+1]:0,
               cpidxs[4]?cpidxs[4][i+1]:0,cpidxs[5]?cpidxs[5][i+1]:0);
+     @endskip
       fprintf(fpout, "0x%x", k);
 //<ammtime><mb><nb><kb><kernI><a2blkI><b2blkI><blk2cI><blk2aI><blk2bI><c2blkI>
       for (nbit=k=0; k < 10; k++)
@@ -1614,10 +1643,10 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
             iv = (iv<<nvbits)|v;
             nbit += nvbits;
          }
-         if (nbit != 0)
-            fprintf(fpout, ",0x%x", iv);
          sp = ",\n";
       }
+      if (nbit != 0)
+         fprintf(fpout, ",0x%x", iv);
    }
    KillAllMMNodes(MB);
    for (d=0; d < 6; d++)
@@ -1640,7 +1669,7 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
          fprintf(fpout, "   v_ = ip[%u]; \\\n", ++i);
          nbit = 0;
       }
-      fprintf(fpout, "   %s_ = ATL_MIN_%s", mnms[d], nms[d]);
+      fprintf(fpout, "   %s_ = ATL_MINV_%s", mnms[d], nms[d]);
       if (!nvbits)
          fprintf(fpout, "; \\\n");
       else
@@ -2123,7 +2152,11 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
                ATL_mmnode_t *mb;
                ATL_cpnode_t *bb;
                mb = ReadMMFile(vp->fnam);
-               assert(mb);
+               if (!mb)
+               {
+                  fprintf(stderr, "NO KERNS FROM VIEW FILE '%s'!\n", vp->fnam);
+                  assert(mb);
+               }
                bb = GetAllCopyNodesFromMM(flg, mb);
                if (bb)
                {
