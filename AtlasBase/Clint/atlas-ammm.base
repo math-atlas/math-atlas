@@ -37028,12 +37028,15 @@ int *getBitsNeeded(ATL_mmnode_t *mb, int *NINT)
    return(ib);
 }
 
-void PrintIntsHex(FILE *fp, ATL_mmnode_t *mp, int nint, int *nbits)
+int PrintIntsHex(FILE *fp, ATL_mmnode_t *mp, int nint, int *nbits)
+/* RETURNS: flag stored */
 {
    ATL_iptr_t ib, ish;
+   int flag;
 
    ib = FLAG_IS_SET(mp->flag, MMF_KRUNTIME);
    ib |= FLAG_IS_SET(mp->flag, MMF_KVEC) ? 2 : 0;
+   flag = ib;
    ish = nbits[0];
    @iexp iv 1
    @whiledef vv ivar kbmax kbmin vlen ku nu mu
@@ -37047,6 +37050,7 @@ void PrintIntsHex(FILE *fp, ATL_mmnode_t *mp, int nint, int *nbits)
       @iexp iv @(iv) 1 +
    @endwhile
    fprintf(fp, ", 0x%lxL", ib);
+   return(flag);
 }
 
 void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
@@ -37055,7 +37059,7 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    ATL_mmnode_t *mp;
    char *VN[8]={"FLAG", "MU", "NU", "KU", "VLEN", "KBMIN", "KBMAX","K1IDX"};
    unsigned int *nbits;
-   unsigned int k, i, nint, N;
+   unsigned int k, i, nint, N, nkvec;
    ATL_iptr_t ibt;
 
    assert(sizeof(ATL_iptr_t) == ATL_psize);
@@ -37079,28 +37083,49 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    for (i=0; i < 8; i++)
       fprintf(fpout, "#define ATL_NBIT_%s %u\n", VN[i], nbits[i]);
    fprintf(fpout, "\n");
-   fprintf(fpout, "#ifndef ATL_DECL_\n   extern ATL_iptr_t ATL_AMM_KERN[%u];\n",
+   fprintf(fpout, 
+           "#ifndef ATL_DECL_\n   extern const ATL_iptr_t ATL_AMM_KERN[%u];\n",
            N*(3+nint));
    fprintf(fpout, "#else\nconst ATL_iptr_t ATL_AMM_KERN[%u]=\n{\n", N*(3+nint));
 
    mp = mb;
    fprintf(fpout, "(ATL_iptr_t)%s_b1,\n(ATL_iptr_t)%s_b0,\n(ATL_iptr_t)%s_bn\n",
            mp->auth, mp->auth, mp->auth);
-   PrintIntsHex(fpout, mp, nint, nbits);
-   fprintf(fpout, "/* %2u: U=(%u,%u,%u), VL=%u, KB=(%u,%u) KclnI=%d */",
-           0, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kbmin, mp->kbmax, 
+   i = PrintIntsHex(fpout, mp, nint, nbits);
+   fprintf(fpout, "/* %2u: FL=%x, U=(%u,%u,%u), VL=%u, KB=(%u,%u) KclnI=%d */",
+           0, i, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kbmin, mp->kbmax, 
            mp->ivar-1);
+   nkvec = FLAG_IS_SET(mp->flag, MMF_KVEC);
    for (i=1,mp=mb->next; mp; mp = mp->next, i++)
    {
       fprintf(fpout, 
               ",\n(ATL_iptr_t)%s_b1,\n(ATL_iptr_t)%s_b0,\n(ATL_iptr_t)%s_bn\n",
               mp->auth, mp->auth, mp->auth);
-      PrintIntsHex(fpout, mp, nint, nbits);
-      fprintf(fpout, "/* %2u: U=(%u,%u,%u), VL=%u, KB=(%u,%u), KclnI=%d */",
-              i, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kbmin, mp->kbmax, 
+      k = PrintIntsHex(fpout, mp, nint, nbits);
+      fprintf(fpout, 
+              "/* %2u: FL=%x, U=(%u,%u,%u), VL=%u, KB=(%u,%u), KclnI=%d */",
+              i, k, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kbmin, mp->kbmax, 
               mp->ivar-1);
+      nkvec += FLAG_IS_SET(mp->flag, MMF_KVEC);
    }
-   fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n");
+   fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n\n");
+
+   fprintf(fpout, "#define ATL_MLamm_iinfo(ia_,FLAG_,MU_,NU_,KU_,VLEN_"
+                  "KBMIN_,KBMAX_,K1IDX_) \\\n");
+   fprintf(fpout, "{ \\\n   ATL_iptr_t v_ = *(ia_); \\\n");
+   for (nint=k=i=0; i < 8; i++)
+   {
+      int nb=nbits[i];
+      if (k + nb > ATL_PSIZE*8)
+      {
+         fprintf(fpout, "   v_ = (ia_)[%u]; \\\n", ++nint);
+         k = 0;
+      }
+      fprintf(fpout, "   %s_ = v_ & 0x%x; \\\n", VN[i], (1<<nb)-1);
+      if (i != 7)
+         fprintf(fpout, "   v_ >>= %u; \\\n", nb);
+   }
+   fprintf(fpout, "} /* end ATL_MLamm_iinfo definition */\n");
    CloseGenHeader(fpout);
 }
 /*
@@ -37375,4 +37400,244 @@ int main(int nargs, char **args)
    free(outd);
    KillAllMMNodes(mb);
    return(0);
+}
+@ROUT ATL_pop_rkinfo
+#include ATL_DECL_
+#include Mstr(Mjoin(ATLAS_PRE,amm_kern.h))
+#include Mstr(Mjoin(ATLAS_PRE,rk_view.h))
+
+void ATL_pop_rkinfo  /* populate rknfo_t using atlas_rk_view idx */
+   (rkinfo_t *out, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta,
+    size_t nfmblks, size_t npmblks, int mb, int pmb,
+    size_t nfnblks, size_t npnblks, int nb, int pnb)
+{
+
+   #if ATL_rkAMM_MAXKVEC == 0
+      const unsigned int kb = K;
+   #else
+      int unsigned kb = K;
+   #endif
+   const unsigned int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx];
+   const unsigned int ku=ATL_AMM_KUs[idx], vlen=ATL_AMM_VLENs[idx];
+   unsigned int sz, nmu, nnu;
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define CONE ATL_rone
+   #endif
+
+   #if ATL_rkAMM_MAXKVEC > 0
+      if (ATL_AMM_KMAJOR(idx))
+         kb = ((K + ku - 1)/ku)*ku;
+   #endif
+   out->nfmblks = nfmblks;
+   out->npmblks = npmblks;
+   out->mb = mb;
+   out->pmb = pmb;
+   out->nfnblks = nfnblks;
+   out->npnblks = npnblks;
+   out->nb = nb;
+   out->pnb = pnb;
+   out->mu = mu;
+   out->nu = nu;
+   out->ku = ku;
+   out->vlen = vlen;
+   out->lda = lda;
+   out->ldb = ldb;
+   out->ldc = ldc;
+
+   out->nmu = mb / mu;
+   out->pnmu = pmb / mu;
+   out->nnu = nb / nu;
+   out->pnnu = pnb / nu;
+   if (npmblks)
+   {
+      out->mF = M - nfmblks*mb - (npmblks-1)*pmb;
+      out->nmuF = (out->mF+mu-1) / mu;
+   }
+   else
+      out->nmuF = out->mF = 0;
+   if (npnblks)
+   {
+      out->nF = N - nfnblks*nb - (npnblks-1)*pnb;
+      out->nnuF = (out->nF+nu-1) / nu;
+   }
+   else
+      out->nnuF = out->nF = 0;
+   sz = ((mu*nu+vlen-1)/vlen)*vlen;
+   sz *= (out->nmu) ? out->nmu : out->pnmu;
+   sz *= (out->nnu) ? out->nnu : out->pnnu;
+   out->szC = sz;
+   out->idx = idx;
+   out->amm_b0 = ATL_AMM_KERN_b0[idx];
+   #ifdef TCPLX
+      out->amm_b1 = ATL_AMM_KERN_b1[idx];
+      out->amm_bn = ATL_AMM_KERN_bn[idx];
+   #endif
+   out->kb = K;
+   out->KB = kb;
+   out->lda = lda;
+   out->ldb = ldb;
+   out->ldc = ldc;
+   out->pszA = pmb*kb;
+   out->szA = kb * ((mb) ? mb:pmb);
+   out->pszB = kb*pnb;
+   out->szB = kb * ((nb) ? nb:pnb);
+   out->alpA = out->alpB = CONE;
+   out->beta = beta;
+   #ifdef TCPLX
+      out->ONE = CONE;
+   if (TA == AtlasNoTrans || TA == AtlasConj)
+   #else
+   if (TA == AtlasNoTrans)
+   #endif
+   {
+      out->incAm  = mb SHIFT;
+      out->pincAm = pmb SHIFT;
+   }
+   else
+   {
+      out->incAm = lda*(mb SHIFT);
+      out->pincAm = lda*(pmb SHIFT);
+   }
+   #ifdef TCPLX
+   if (TB == AtlasNoTrans || TB == AtlasConj)
+   #else
+   if (TB == AtlasNoTrans)
+   #endif
+   {
+      out->incBn = ldb*(nb SHIFT);
+      out->pincBn = ldb*(pnb SHIFT);
+   }
+   else
+   {
+      out->incBn  = nb SHIFT;
+      out->pincBn = pnb SHIFT;
+   }
+/*
+ * Once we have ATL_ammmN written, put alpha on A if there's only 1 blk of
+ * of B.  For now, always put on B and use ATL_ammmM
+ */
+   #if 0
+   if (nnblks > 1 && nmblks < 2) /* If we only have row panel of C */
+   {                             /* apply alpha to A */
+      #ifdef TCPLX
+         if (TB == AtlasNoTrans)
+            out->b2blk = ATL_AMM_BN2BLK_a1[idx];
+         else if (TB == AtlasTrans)
+            out->b2blk = ATL_AMM_BT2BLK_a1[idx];
+         else
+            out->b2blk = (TB == AtlasConjTrans) ?
+               ATL_AMM_BH2BLK_a1[idx] : ATL_AMM_BC2BLK_a1[idx];
+
+         if (SCALAR_IS_ONE(alpha))
+         {
+            if (TA == AtlasNoTrans)
+               out->a2blk = ATL_AMM_AT2BLK_a1[idx];
+            else if (TA == AtlasTrans)
+               out->a2blk = ATL_AMM_AN2BLK_a1[idx];
+            else
+               out->a2blk = (TA == AtlasConjTrans) ?
+                  ATL_AMM_AC2BLK_a1[idx] : ATL_AMM_AH2BLK_a1[idx];
+         }
+         else if (SCALAR_IS_NONE(alpha))
+         {
+            if (TA == AtlasNoTrans)
+               out->a2blk = ATL_AMM_AT2BLK_an[idx];
+            else if (TA == AtlasTrans)
+               out->a2blk = ATL_AMM_AN2BLK_an[idx];
+            else
+               out->a2blk = (TA == AtlasConjTrans) ?
+                  ATL_AMM_AC2BLK_an[idx] : ATL_AMM_AH2BLK_an[idx];
+         }
+         else
+         {
+            if (TA == AtlasNoTrans)
+               out->a2blk = ATL_AMM_AT2BLK_aX[idx];
+            else if (TA == AtlasTrans)
+               out->a2blk = ATL_AMM_AN2BLK_aX[idx];
+            else
+               out->a2blk = (TA == AtlasConjTrans) ?
+                  ATL_AMM_AC2BLK_aX[idx] : ATL_AMM_AH2BLK_aX[idx];
+         }
+      #else
+         out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_BN2BLK_a1[idx] : ATL_AMM_BT2BLK_a1[idx];
+         if (SCALAR_IS_ONE(alpha))
+            out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_a1[idx] : ATL_AMM_AN2BLK_a1[idx];
+         else if (SCALAR_IS_NONE(alpha))
+            out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_an[idx] : ATL_AMM_AN2BLK_an[idx];
+         else
+            out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_aX[idx] : ATL_AMM_AN2BLK_aX[idx];
+      #endif
+   }
+   else  /* apply alpha to B */
+   #endif
+   {
+      out->alpB = alpha;
+      #ifdef TCPLX
+         if (TA == AtlasNoTrans)
+            out->a2blk = ATL_AMM_AT2BLK_a1[idx];
+         else if (TA == AtlasTrans)
+            out->a2blk = ATL_AMM_AN2BLK_a1[idx];
+         else
+            out->a2blk = (TA == AtlasConjTrans) ?
+               ATL_AMM_AC2BLK_a1[idx] : ATL_AMM_AH2BLK_a1[idx];
+
+         if (SCALAR_IS_ONE(alpha))
+         {
+            if (TB == AtlasNoTrans)
+               out->b2blk = ATL_AMM_BN2BLK_a1[idx];
+            else if (TB == AtlasTrans)
+               out->b2blk = ATL_AMM_BT2BLK_a1[idx];
+            else
+               out->b2blk = (TB == AtlasConjTrans) ?
+                  ATL_AMM_BH2BLK_a1[idx] : ATL_AMM_BC2BLK_a1[idx];
+         }
+         else if (SCALAR_IS_NONE(alpha))
+         {
+            if (TB == AtlasNoTrans)
+               out->b2blk = ATL_AMM_BN2BLK_an[idx];
+            else if (TB == AtlasTrans)
+               out->b2blk = ATL_AMM_BT2BLK_an[idx];
+            else
+               out->b2blk = (TB == AtlasConjTrans) ?
+                  ATL_AMM_BH2BLK_an[idx] : ATL_AMM_BC2BLK_an[idx];
+         }
+         else
+         {
+            if (TB == AtlasNoTrans)
+               out->b2blk = ATL_AMM_BN2BLK_aX[idx];
+            else if (TB == AtlasTrans)
+               out->b2blk = ATL_AMM_BT2BLK_aX[idx];
+            else
+               out->b2blk = (TB == AtlasConjTrans) ?
+                  ATL_AMM_BH2BLK_aX[idx] : ATL_AMM_BC2BLK_aX[idx];
+         }
+      #else
+         out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_a1[idx] : ATL_AMM_AN2BLK_a1[idx];
+         if (SCALAR_IS_ONE(alpha))
+            out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_BN2BLK_a1[idx] : ATL_AMM_BT2BLK_a1[idx];
+         else if (SCALAR_IS_NONE(alpha))
+            out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_BN2BLK_an[idx] : ATL_AMM_BT2BLK_an[idx];
+         else
+            out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_BN2BLK_aX[idx] : ATL_AMM_BT2BLK_aX[idx];
+      #endif
+   }
+   if (SCALAR_IS_NONE(beta))
+      out->blk2C = ATL_AMM_BLK2C_a1_bn[idx];
+   else if (SCALAR_IS_ONE(beta))
+      out->blk2C = ATL_AMM_BLK2C_a1_b1[idx];
+   else
+      out->blk2C = (SCALAR_IS_ZERO(beta)) ?
+         ATL_AMM_BLK2C_a1_b0[idx] : ATL_AMM_BLK2C_a1_bX[idx];
 }
