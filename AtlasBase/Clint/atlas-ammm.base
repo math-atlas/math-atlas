@@ -36987,17 +36987,23 @@ int numBitsNeeded(int N)
    return(i);
 }
 #define NFLGBITS 2  /* KRUNTIME, KMAJOR */
+#define NIVAR 8
 int *getBitsNeeded(ATL_mmnode_t *mb, int *NINT)
+/*
+ * 1st NIVAR entries has number of bits required after subtracting MINVALs
+ * which are stoted in 2nd NIVAR entries 
+ */
 {
    ATL_mmnode_t *mp;
    unsigned int cnt=1, i, nint, nbits, pbits;
-   static unsigned int ib[8];
+   static unsigned int ib[NIVAR*2];
 
    assert(mb);
    ib[0] = NFLGBITS;
+   ib[NIVAR] = 0;
    @iexp iv 1
-   @whiledef vv kbmax kbmin vlen ku nu mu
-   ib[@(iv)] = mb->@(vv);
+   @whiledef vv ivar kbmax kbmin vlen ku nu mu
+   ib[@(iv)] = ib[@(iv)+NIVAR] = mb->@(vv);
          @iexp iv @(iv) 1 +
    @endwhile
    for (mp=mb->next; mp; mp=mp->next)
@@ -37006,16 +37012,17 @@ int *getBitsNeeded(ATL_mmnode_t *mb, int *NINT)
       @iexp iv 1
       @whiledef vv ivar kbmax kbmin vlen ku nu mu
       ib[@(iv)] = Mmax(ib[@(iv)],mp->@(vv));
+      ib[@(iv)+NIVAR] = Mmin(ib[@(iv)+NIVAR],mp->@(vv));
          @iexp iv @(iv) 1 +
       @endwhile
    }
    nint=1;
    nbits = NFLGBITS;
    pbits = ATL_PSIZE<<3;
-   for (i=1; i < 8; i++)
+   for (i=1; i < NIVAR; i++)
    {
       int bits;
-      ib[i] = bits = numBitsNeeded(ib[i]);
+      ib[i] = bits = numBitsNeeded(ib[i]-ib[i+NIVAR]);
       nbits += bits;
       if (nbits > pbits) /* not enough room left in int */
       {
@@ -37045,11 +37052,12 @@ int PrintIntsHex(FILE *fp, ATL_mmnode_t *mp, int nint, int *nbits)
       fprintf(fp, ", 0x%lxL", ib);
       ib = ish = 0;
    }
-   ib |= mp->@(vv) << ish;
+   ib |= (mp->@(vv)-nbits[@(iv)+NIVAR]) << ish;
    ish += nbits[@(iv)];
       @iexp iv @(iv) 1 +
    @endwhile
-   fprintf(fp, ", 0x%lxL", ib);
+   if (ish)
+      fprintf(fp, ", 0x%lxL", ib);
    return(flag);
 }
 
@@ -37072,21 +37080,24 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    fprintf(fpout, "#define ATL_ENTRYN %u\n", k);
    for (i=0; i < 32 && !((1<<i)&k); i++);
    if (k^(1<<i) == 0)
-      fprintf(fpout, "#define ATL_Idx2Entry(i_) ((i_)<<%u)\n", i);
+      fprintf(fpout, "#define ATL_ML_Idx2Entry(i_) ((i_)<<%u)\n", i);
    else if (k == 5)
-      fprintf(fpout, "#define ATL_Idx2Entry(i_) (((i_)<<2)+(i_))\n", i);
+      fprintf(fpout, "#define ATL_ML_Idx2Entry(i_) (((i_)<<2)+(i_))\n", i);
    else if (k == 6)
-      fprintf(fpout, "#define ATL_Idx2Entry(i_) (((i_)<<2)+((i_)<<1))\n", i);
+      fprintf(fpout, "#define ATL_ML_Idx2Entry(i_) (((i_)<<2)+((i_)<<1))\n", i);
    else
-      fprintf(fpout, "#define ATL_Idx2Entry(i_) ((i_)*%u)\n", k);
-   fprintf(fpout, "#define ATL_NINTPACK %u\n", nint);
-   for (i=0; i < 8; i++)
+      fprintf(fpout, "#define ATL_ML_Idx2Entry(i_) ((i_)*%u)\n", k);
+   fprintf(fpout, "#define ATL_NINTPACK %u\n\n", nint);
+   for (i=0; i < NIVAR; i++)
+   {
+      fprintf(fpout, "#define ATL_MIN_%s  %u\n", VN[i], nbits[i+NIVAR]);
       fprintf(fpout, "#define ATL_NBIT_%s %u\n", VN[i], nbits[i]);
+   }
    fprintf(fpout, "\n");
    fprintf(fpout, 
-           "#ifndef ATL_DECL_\n   extern const ATL_iptr_t ATL_AMM_KERN[%u];\n",
+           "#ifndef ATL_DECL_\n   extern const ATL_iptr_t ATL_AMM_ML[%u];\n",
            N*(3+nint));
-   fprintf(fpout, "#else\nconst ATL_iptr_t ATL_AMM_KERN[%u]=\n{\n", N*(3+nint));
+   fprintf(fpout, "#else\nconst ATL_iptr_t ATL_AMM_ML[%u]=\n{\n", N*(3+nint));
 
    mp = mb;
    fprintf(fpout, "(ATL_iptr_t)%s_b1,\n(ATL_iptr_t)%s_b0,\n(ATL_iptr_t)%s_bn\n",
@@ -37110,22 +37121,47 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    }
    fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n\n");
 
-   fprintf(fpout, "#define ATL_MLamm_iinfo(ia_,FLAG_,MU_,NU_,KU_,VLEN_"
+   fprintf(fpout, "#define ATL_AMM_ML_iinfo(ia_,FLAG_,MU_,NU_,KU_,VLEN_"
                   "KBMIN_,KBMAX_,K1IDX_) \\\n");
    fprintf(fpout, "{ \\\n   ATL_iptr_t v_ = *(ia_); \\\n");
    for (nint=k=i=0; i < 8; i++)
    {
       int nb=nbits[i];
-      if (k + nb > ATL_PSIZE*8)
+      if (nb)
       {
-         fprintf(fpout, "   v_ = (ia_)[%u]; \\\n", ++nint);
-         k = 0;
+         if (k + nb > ATL_PSIZE*8)
+         {
+            fprintf(fpout, "   v_ = (ia_)[%u]; \\\n", ++nint);
+            k = 0;
+         }
+         if (nbits[i+NIVAR])
+            fprintf(fpout, "   %s_ = ATL_MIN_%s + (v_&0x%x); \\\n", 
+                    VN[i], VN[i], (1<<nb)-1);
+         else
+            fprintf(fpout, "   %s_ = v_ & 0x%x; \\\n", VN[i], (1<<nb)-1);
+         if (i != 7)
+            fprintf(fpout, "   v_ >>= %u; \\\n", nb);
       }
-      fprintf(fpout, "   %s_ = v_ & 0x%x; \\\n", VN[i], (1<<nb)-1);
-      if (i != 7)
-         fprintf(fpout, "   v_ >>= %u; \\\n", nb);
+      else
+         fprintf(fpout, "   %s_ = 0; \\\n", VN[i]);
    }
-   fprintf(fpout, "} /* end ATL_MLamm_iinfo definition */\n");
+   fprintf(fpout, "} /* end ATL_AMM_ML_iinfo definition */\n");
+
+   fprintf(fpout, "\n#define ATL_AMM_ML_info(id_,mm1_, mm0_, mmN_,FLAG_,"
+                  "MU_,NU_,KU_,VLEN_KBMIN_,KBMAX_,K1IDX_) \\\n");
+   fprintf(fpout, "{ \\\n"
+           "   ATL_iptr_t *ip_=ATL_AMM_ML + ATL_ML_Idx2Entry(id_); \\\n");
+   fprintf(fpout, "   *((ATL_iptr_t*)(mm1_)) = *ip_; \\\n");
+   fprintf(fpout, "   *((ATL_iptr_t*)(mm0_)) = ip_[1]; \\\n");
+   fprintf(fpout, "   *((ATL_iptr_t*)(mmN_)) = ip_[2]; \\\n");
+   fprintf(fpout, "   ATL_ML_iinfo(ip_+3,FLAG_,MU_,NU_,KU_,VLEN_"
+                  "KBMIN_,KBMAX_,K1IDX_); \\\n");
+   fprintf(fpout, "} /* end ATL_AMM_ML_info definition */\n");
+   
+   fprintf(fpout, 
+           "/*\n * Following macros return 1 if flag set, else 0\n */\n");
+   fprintf(fpout, "#define ATL_AMM_KRUNTIME(flg_) ((flg_)&1)\n");
+   fprintf(fpout, "#define ATL_AMM_KMAJOR(flg_) (((flg_)>>1)&1)\n");
    CloseGenHeader(fpout);
 }
 /*
