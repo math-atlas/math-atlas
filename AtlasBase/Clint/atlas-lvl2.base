@@ -1482,6 +1482,7 @@ static void *ATL_Align2Ptr(void *pu, void *pA)
 #include "atlas_misc.h"
 #include "atlas_lvl2.h"
 #include "atlas_lvl3.h"
+#include "atlas_cache.h"
 #if defined(ATL_INL1)
    #include Mstr(Mjoin(Mjoin(atlas_,PRE),r2_L1.h))
 #elif defined(ATL_INL2)
@@ -1490,27 +1491,37 @@ static void *ATL_Align2Ptr(void *pu, void *pA)
    #include Mstr(Mjoin(Mjoin(atlas_,PRE),r2.h))
 #else
    #define ATL_CHOICE
-   #include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
-   #include "atlas_cacheedge.h"
+   #if defined(LLPC_SZ) && LLPC_LVL != 1
+      #define MY_CE LLPC_SZ
+   #elif defined(LLC_SZ) && LLC_LVL != 1
+      #define MY_CE LLC_SZ
+   #else
+      #ifndef L1C_SZ
+         #error "How is L1 size not defined?"
+      #endif
+      #define MY_CE (ATL_MulBySize(L1C_SZ)<<2)
+   #endif
+@skip   #include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
+@skip   #include "atlas_cacheedge.h"
 @beginskip
    #if defined(ATL_NCPU) && ATL_NCPU > 1
       #include "atlas_tcacheedge.h"
    #else
       #include "atlas_cacheedge.h"
    #endif
-@endskip
 /*
  * If I don't believe CacheEdge setting (or not set), set L2 size to 4*L1
  */
    #ifdef CacheEdge
       #if CacheEdge > 4194304 || CacheEdge == 0
-         #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+         #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
       #else
          #define MY_CE CacheEdge
       #endif
    #else
-      #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+      #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
    #endif
+@endskip
 #endif
 
 #ifdef TREAL
@@ -1574,10 +1585,10 @@ void ATL_ger2
 @skip       !ATL_L2AIsOverlapped(0, ATL_sizeof, M, N, (size_t)A, lda))
       Mjoin(MY_GER2,_OOC)(M, N, alpha0, X, incX, Y, incY, beta0, W, incW, 
                           Z, incZ, A, lda);
-   else if (opsize > ATL_MulBySize(ATL_L1elts))
+   else if (opsize > ATL_MulBySize(L1C_ELTS))
        Mjoin(MY_GER2,_L2)(M, N, alpha0, X, incX, Y, incY, beta0, W, incW, 
                           Z, incZ, A, lda);
-   else /* if (opsize <= ATL_MulBySize(ATL_L1elts)) */
+   else /* if (opsize <= ATL_MulBySize(L1C_ELTS)) */
        Mjoin(MY_GER2,_L1)(M, N, alpha0, X, incX, Y, incY, beta0, W, incW, 
                           Z, incZ, A, lda);
 #else
@@ -1892,12 +1903,12 @@ void ATL_ger2
  */
    #ifdef CacheEdge
       #if CacheEdge > 4194304 || CacheEdge == 0
-         #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+         #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
       #else
          #define MY_CE CacheEdge
       #endif
    #else
-      #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+      #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
    #endif
 #endif
 
@@ -1948,7 +1959,7 @@ void ATL_ger
 #ifdef ATL_CHOICE
    const size_t opsize = (M*N+M+N)*sizeof(TYPE)SHIFT;
 
-   if (opsize <= ATL_MulBySize(ATL_L1elts))
+   if (opsize <= ATL_MulBySize(L1C_ELTS))
       Mjoin(MY_GER,_L1)(M, N, alpha0, X, incX, Y, incY, A, lda);
    else if (opsize <= MY_CE)
       Mjoin(MY_GER,_L2)(M, N, alpha0, X, incX, Y, incY, A, lda);
@@ -2235,19 +2246,19 @@ void ATL_ger_ldamul
     (defined(ATL_MULADD) && (ATL_mmnreg >= 28))
    #define ATL_GetPartMVN(A_, lda_, mb_, nb_) \
    { \
-      *(nb_) = (((3*(ATL_L1elts - 4)) / (20))>>2)<<1; \
+      *(nb_) = (((3*(L1C_ELTS - 4)) / (20))>>2)<<1; \
       if (ATL_pagesize > (lda_)) \
       { \
          *(mb_) = (ATL_pagesize / (lda_)) * ATL_ntlb; \
          if ( (*mb_) < *(nb_) ) *(nb_) = ((*(mb_))>>1)<<1; \
       } \
       else *(nb_) = ATL_ntlb; \
-      *(mb_) = ( ((3*ATL_L1elts)>>2) - *(nb_) ) / ((*(nb_)+1)<<1); \
+      *(mb_) = ( ((3*L1C_ELTS)>>2) - *(nb_) ) / ((*(nb_)+1)<<1); \
 @skip      *(mb_) = 4; \
    }
    #define ATL_GetPartMVT(A_, lda_, mb_, nb_) \
    { \
-      *(mb_) = (((3*ATL_L1elts) / 20)>>2)<<2; \
+      *(mb_) = (((3*L1C_ELTS) / 20)>>2)<<2; \
       *(nb_) = 2; \
    }
 #else
@@ -2256,20 +2267,20 @@ void ATL_ger_ldamul
    #define ATL_GetPartMVN(A_, lda_, mb_, nb_) \
    { \
       *(mb_) = Mmax(2,ATL_mmMU); \
-      *(nb_) = ( ((3*ATL_L1elts)>>2) - ((*(mb_))<<1)  ) / ( ((*(mb_))<<1)+1 ); \
+      *(nb_) = ( ((3*L1C_ELTS)>>2) - ((*(mb_))<<1)  ) / ( ((*(mb_))<<1)+1 ); \
       if (ATL_pagesize > (lda_)) \
          (*nb_) = Mmin(*(nb_), (ATL_pagesize/(lda_)) *ATL_ntlb); \
       else *(nb_) = ATL_ntlb; \
       if (*(nb_) > NB) *(nb_) = ATL_MulByNB(ATL_DivByNB(*(nb_))); \
       else (*nb_) = NB; \
-      *(mb_) = ( ((3*ATL_L1elts)>>2) - *(nb_) ) / ((*(nb_)+1)<<1); \
+      *(mb_) = ( ((3*L1C_ELTS)>>2) - *(nb_) ) / ((*(nb_)+1)<<1); \
       if (*(mb_) > ATL_mmMU) (*mb_) = ((*mb_) / ATL_mmMU)*ATL_mmMU; \
       else *(mb_) = ATL_mmMU; \
    }
    #define ATL_GetPartMVT(A_, lda_, mb_, nb_) \
    { \
       *(nb_) = Mmax(2,ATL_mmMU); \
-      *(mb_) = ( ((3*ATL_L1elts)>>2) - ((*(nb_))<<1) ) / ( ((*(nb_))<<1)+1 ); \
+      *(mb_) = ( ((3*L1C_ELTS)>>2) - ((*(nb_))<<1) ) / ( ((*(nb_))<<1)+1 ); \
       if (*(mb_) > NB) *(mb_) = ATL_MulByNB(ATL_DivByNB(*(mb_))); \
       else *(mb_) = NB; \
    }
@@ -6555,14 +6566,14 @@ void Mjoin(PATL,symvL)(const int N, const SCALAR alpha, const TYPE *A,
    if (ATL_pagesize > lda) maxNB = (ATL_pagesize / lda) * ATL_ntlb;
    else maxNB = ATL_ntlb;
    nb = ATL_lcm(mb, nb);
-   size = (3*ATL_L1elts)>>3;
+   size = (3*L1C_ELTS)>>3;
    while (nb*(2+nb) < size) nb >>= 1;
    nb <<= 1;
 
 /*
  * Figure mb & nb partitioning for A
  */
-   size = (3*ATL_L1elts)>>3;
+   size = (3*L1C_ELTS)>>3;
    while (mb+nb+mb*nb < size)
    {
       if (mb<<1 <= maxNB) mb <<= 1;
@@ -8760,6 +8771,7 @@ void ATL_@(pre)hpr2(const enum ATLAS_UPLO Uplo, const int N,
 #include <assert.h>
 #include <string.h>
 #include "atlas_misc.h"
+#include "atlas_cache.h"
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
 
 @ROUT r1ktime r2ktime mvktime
@@ -9302,7 +9314,7 @@ void GetFlags(int nargs, char **args, int *verb,
    #else
       *pgelts = 4*ATL_DivBySize(1024);
    #endif
-   *celts = 0.75*ATL_L1elts;
+   *celts = 0.75*L1C_ELTS;
    #ifdef L2SIZE
       *flushelts = L2SIZE;
    #else
@@ -9621,6 +9633,7 @@ ID=3  MU=8  NU=4 minM=9 minN=4 alignA=8 ALIGNX2A=1 alignY=8 SSE=3 LDAMUL=16 \
 #include "atlas_misc.h"
 #include "atlas_@(ru)parse.h"
 #include "atlas_@(rt)testtime.h"
+#include "atlas_cache.h"
 #include "atlas_ssysinfo.h"
 
 /*
@@ -17874,7 +17887,7 @@ void ATL_gemv
 #include "atlas_misc.h"
 #include "atlas_lvl2.h"
 #include "atlas_lvl3.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
+@skip #include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
 #include "atlas_cacheedge.h"
 @beginskip
 #if defined(ATL_NCPU) && ATL_NCPU > 1
@@ -17888,12 +17901,12 @@ void ATL_gemv
  */
 #ifdef CacheEdge
    #if CacheEdge > 4194304 || CacheEdge == 0
-      #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+      #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
    #else
       #define MY_CE CacheEdge
    #endif
 #else
-   #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+   #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
 #endif
 
 void Mjoin(PATL,gemv)
@@ -17920,7 +17933,7 @@ void Mjoin(PATL,gemv)
 @skip      if (!OL || opsize > MY_CE)
       if (opsize > MY_CE)
         Mjoin(PATL,gemvN)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
-      else if (opsize > ATL_MulBySize(ATL_L1elts))
+      else if (opsize > ATL_MulBySize(L1C_ELTS))
         Mjoin(PATL,gemvN_L2)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
       else
         Mjoin(PATL,gemvN_L1)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
@@ -17933,7 +17946,7 @@ void Mjoin(PATL,gemv)
    #endif
       if (opsize > MY_CE)
          Mjoin(PATL,gemvT)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
-      else if (opsize > ATL_MulBySize(ATL_L1elts))
+      else if (opsize > ATL_MulBySize(L1C_ELTS))
          Mjoin(PATL,gemvT_L2)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
       else
          Mjoin(PATL,gemvT_L1)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
@@ -17943,7 +17956,7 @@ void Mjoin(PATL,gemv)
       {
          if (opsize > MY_CE)
             Mjoin(PATL,gemvCT)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
-         else if (opsize > ATL_MulBySize(ATL_L1elts))
+         else if (opsize > ATL_MulBySize(L1C_ELTS))
             Mjoin(PATL,gemvCT_L2)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
          else
             Mjoin(PATL,gemvCT_L1)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
@@ -17952,7 +17965,7 @@ void Mjoin(PATL,gemv)
       {
          if (opsize > MY_CE)
             Mjoin(PATL,gemvCN)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
-         else if (opsize > ATL_MulBySize(ATL_L1elts))
+         else if (opsize > ATL_MulBySize(L1C_ELTS))
             Mjoin(PATL,gemvCN_L2)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
          else
             Mjoin(PATL,gemvCN_L1)(M, N, alpha, A, lda, X, incX, beta, Y, incY);
@@ -18037,22 +18050,23 @@ void TRMVUN
 
 #include "atlas_reflvl2.h"          /* temporary for building purposes */
 #include "atlas_reflevel2.h"        /* used for gbmv, gpmv and gpr.    */
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
-#include "atlas_cacheedge.h"
+@skip #include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
+#include "atlas_cache.h"
+@skip #include "atlas_cacheedge.h"
 
 #ifdef CacheEdge
 @ROUT ATL_trmv  ATL_trsv
    #if !defined(CacheEdge) || CacheEdge > 4194304 || CacheEdge == 0
-      #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+      #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
 @ROUT ATL_symv ATL_hemv
    #if !defined(CacheEdge) || CacheEdge == 0
-      #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+      #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
 @ROUT ATL_trmv  ATL_trsv ATL_symv ATL_hemv
    #else
       #define MY_CE CacheEdge
    #endif
 #else
-   #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+   #define MY_CE (4*ATL_MulBySize(L1C_ELTS))
 #endif
 
 @ROUT ATL_trmv 
@@ -18318,7 +18332,7 @@ static int ATL_trmvUN
    if (opsize > MY_CE)
       gemv = Mjoin(PATL,gemvN);
    else
-      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvN_L1) :
+      gemv = (opsize <= ATL_MulBySize(L1C_ELTS)) ? Mjoin(PATL,gemvN_L1) :
              Mjoin(PATL,gemvN_L2);
    trmvK = (Diag == AtlasNonUnit) ? ATL_trmvUNNk : ATL_trmvUNUk;
 /*
@@ -18416,7 +18430,7 @@ static int ATL_trmvUT
    if (opsize > MY_CE)
       gemv = Mjoin(PATL,gemvT);
    else
-      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvT_L1) :
+      gemv = (opsize <= ATL_MulBySize(L1C_ELTS)) ? Mjoin(PATL,gemvT_L1) :
              Mjoin(PATL,gemvT_L2);
    trmvK = (Diag == AtlasNonUnit) ? ATL_trmvUTNk : ATL_trmvUTUk;
 /*
@@ -18515,7 +18529,7 @@ static int ATL_trmvLN
    if (opsize > MY_CE)
       gemv = Mjoin(PATL,gemvN);
    else
-      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvN_L1) :
+      gemv = (opsize <= ATL_MulBySize(L1C_ELTS)) ? Mjoin(PATL,gemvN_L1) :
              Mjoin(PATL,gemvN_L2);
    trmvK = (Diag == AtlasNonUnit) ? ATL_trmvLNNk : ATL_trmvLNUk;
 /*
@@ -18616,7 +18630,7 @@ static int ATL_trmvLT
    if (opsize > MY_CE)
       gemv = Mjoin(PATL,gemvT);
    else
-      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvT_L1) :
+      gemv = (opsize <= ATL_MulBySize(L1C_ELTS)) ? Mjoin(PATL,gemvT_L1) :
              Mjoin(PATL,gemvT_L2);
    trmvK = (Diag == AtlasNonUnit) ? ATL_trmvLTNk : ATL_trmvLTUk;
 /*
@@ -18832,7 +18846,7 @@ static int ATL_trsvUN_k
    if (opsize > MY_CE)
       gemv = Mjoin(PATL,gemvN);
    else
-      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvN_L1) :
+      gemv = (opsize <= ATL_MulBySize(L1C_ELTS)) ? Mjoin(PATL,gemvN_L1) :
              Mjoin(PATL,gemvN_L2);
 /*
  * If X is aligned to Cachelen wt inc=1, use it as y
@@ -18920,7 +18934,7 @@ static int ATL_trsvUT_k
    if (opsize > MY_CE)
       gemv = Mjoin(PATL,gemvT);
    else
-      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvT_L1) :
+      gemv = (opsize <= ATL_MulBySize(L1C_ELTS)) ? Mjoin(PATL,gemvT_L1) :
              Mjoin(PATL,gemvT_L2);
 /*
  * If X is aligned to Cachelen wt inc=1, use it as y
@@ -19017,7 +19031,7 @@ static int ATL_trsvLN_k
    if (opsize > MY_CE)
       gemv = Mjoin(PATL,gemvN);
    else
-      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvN_L1) :
+      gemv = (opsize <= ATL_MulBySize(L1C_ELTS)) ? Mjoin(PATL,gemvN_L1) :
              Mjoin(PATL,gemvN_L2);
 /*
  * If X is aligned to Cachelen wt inc=1, use it as y
@@ -19108,7 +19122,7 @@ static int ATL_trsvLT_k
    if (opsize > MY_CE)
       gemv = Mjoin(PATL,gemvT);
    else
-      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvT_L1) :
+      gemv = (opsize <= ATL_MulBySize(L1C_ELTS)) ? Mjoin(PATL,gemvT_L1) :
              Mjoin(PATL,gemvT_L2);
 /*
  * If X is aligned to Cachelen wt inc=1, use it as x
@@ -19316,7 +19330,7 @@ static void ATL_symvL
       gemvT = Mjoin(PATL,gemvT);
       gemvN = Mjoin(PATL,gemvN_L2);
    }
-   else if (opsize <= ATL_MulBySize(ATL_L1elts))
+   else if (opsize <= ATL_MulBySize(L1C_ELTS))
    {
       gemvT = Mjoin(PATL,gemvT_L1);
       gemvN = Mjoin(PATL,gemvN_L1);
@@ -19385,7 +19399,7 @@ static void ATL_symvU
       gemvT = Mjoin(PATL,gemvT);
       gemvN = Mjoin(PATL,gemvN_L2);
    }
-   else if (opsize <= ATL_MulBySize(ATL_L1elts))
+   else if (opsize <= ATL_MulBySize(L1C_ELTS))
    {
       gemvT = Mjoin(PATL,gemvT_L1);
       gemvN = Mjoin(PATL,gemvN_L1);

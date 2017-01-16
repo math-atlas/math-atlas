@@ -14004,7 +14004,7 @@ int Mjoin(PATL,ammmABC)
    @define rt @Mjoin(PATL,ammm_IP)@
 #include "atlas_misc.h"
 #include "atlas_amm.h"
-#include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+@skip #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
 @ROUT ATL_ammm_IP ATL_cammm_IP
 /*
  * This routine handles M <= MAXM && N <= MAXN && very long K, or
@@ -14027,7 +14027,7 @@ int Mjoin(PATL,ammmABC)
 #include "atlas_misc.h"
 #include "atlas_lvl2.h"
 #include "atlas_level1.h"
-#include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+#include Mstr(Mjoin(ATLAS_PRE,opgen_sum.h))
    @define rt @Mjoin(PATL,ammm)@
 @ROUT ATL_cammm_tN ATL_cammmMNK
 #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
@@ -16073,6 +16073,7 @@ int Mjoin(PATL,ammm_IP)
          return(0);
    }
    #endif
+#if 0
 /*
  * 1-block special case code can return w/o doing op if it thinks
  * rank-K would be faster
@@ -16081,12 +16082,17 @@ int Mjoin(PATL,ammm_IP)
       if (!Mjoin(PATL,ammm_1b)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                beta, C, ldc))
          return(0);
+#else
 /*
  * Rank-K can fail to allocate space, so return success/failure
  */
-   if (K > 2 && K <= ATL_rkAMM_LASTKB)
+   if (K > 2 && K <= ATL_VWopgen_MAX_KB)
       return(Mjoin(PATL,ammm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc));
+   else 
+      return(1); // until rank-K works
+#endif
+#if 0
 /*
  * Handle case that is really an inner product shape (M<=MB, N<=NB, large K)
  * This case not allowed to fail since it requires only 3*NB^2 workspace.
@@ -16110,6 +16116,7 @@ int Mjoin(PATL,ammm_IP)
                                   beta, C, ldc));
    return(Mjoin(PATL,ammmKNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
                                beta, C, ldc));
+#endif
 }
 @ROUT ATL_cammm
 {
@@ -37080,18 +37087,18 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    fprintf(fpout, "#define ATL_ENTRYN %u\n", k);
    for (i=0; i < 32 && !((1<<i)&k); i++);
    if (k^(1<<i) == 0)
-      fprintf(fpout, "#define ATL_ML_Idx2Entry(i_) ((i_)<<%u)\n", i);
+      fprintf(fpout, "#define ATL_AMM_Idx2Entry(i_) ((i_)<<%u)\n", i);
    else if (k == 5)
-      fprintf(fpout, "#define ATL_ML_Idx2Entry(i_) (((i_)<<2)+(i_))\n", i);
+      fprintf(fpout, "#define ATL_AMM_Idx2Entry(i_) (((i_)<<2)+(i_))\n", i);
    else if (k == 6)
-      fprintf(fpout, "#define ATL_ML_Idx2Entry(i_) (((i_)<<2)+((i_)<<1))\n", i);
+      fprintf(fpout, "#define ATL_AMM_Idx2Entry(i_) (((i_)<<2)+((i_)<<1))\n", i);
    else
-      fprintf(fpout, "#define ATL_ML_Idx2Entry(i_) ((i_)*%u)\n", k);
+      fprintf(fpout, "#define ATL_AMM_Idx2Entry(i_) ((i_)*%u)\n", k);
    fprintf(fpout, "#define ATL_NINTPACK %u\n\n", nint);
    for (i=0; i < NIVAR; i++)
    {
-      fprintf(fpout, "#define ATL_MIN_%s  %u\n", VN[i], nbits[i+NIVAR]);
-      fprintf(fpout, "#define ATL_NBIT_%s %u\n", VN[i], nbits[i]);
+      fprintf(fpout, "#define ATL_AMM_MIN_%s  %u\n", VN[i], nbits[i+NIVAR]);
+      fprintf(fpout, "#define ATL_AMM_NBIT_%s %u\n", VN[i], nbits[i]);
    }
    fprintf(fpout, "\n");
    fprintf(fpout, 
@@ -37121,7 +37128,7 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    }
    fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n\n");
 
-   fprintf(fpout, "#define ATL_AMM_ML_iinfo(ia_,FLAG_,MU_,NU_,KU_,VLEN_"
+   fprintf(fpout, "#define ATL_AMM_iinfo(ia_,FLAG_,MU_,NU_,KU_,VLEN_,"
                   "KBMIN_,KBMAX_,K1IDX_) \\\n");
    fprintf(fpout, "{ \\\n   ATL_iptr_t v_ = *(ia_); \\\n");
    for (nint=k=i=0; i < 8; i++)
@@ -37145,18 +37152,18 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
       else
          fprintf(fpout, "   %s_ = 0; \\\n", VN[i]);
    }
-   fprintf(fpout, "} /* end ATL_AMM_ML_iinfo definition */\n");
+   fprintf(fpout, "} /* end ATL_AMM_iinfo definition */\n");
 
-   fprintf(fpout, "\n#define ATL_AMM_ML_info(id_,mm1_, mm0_, mmN_,FLAG_,"
-                  "MU_,NU_,KU_,VLEN_KBMIN_,KBMAX_,K1IDX_) \\\n");
+   fprintf(fpout, "\n#define ATL_AMM_info(id_,mm1_, mm0_, mmN_,FLAG_,"
+                  "MU_,NU_,KU_,VLEN_,KBMIN_,KBMAX_,K1IDX_) \\\n");
    fprintf(fpout, "{ \\\n"
-           "   ATL_iptr_t *ip_=ATL_AMM_ML + ATL_ML_Idx2Entry(id_); \\\n");
+           "   ATL_iptr_t *ip_=ATL_AMM_ML + ATL_AMM_Idx2Entry(id_); \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mm1_)) = *ip_; \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mm0_)) = ip_[1]; \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mmN_)) = ip_[2]; \\\n");
-   fprintf(fpout, "   ATL_ML_iinfo(ip_+3,FLAG_,MU_,NU_,KU_,VLEN_"
+   fprintf(fpout, "   ATL_AMM_iinfo(ip_+3,FLAG_,MU_,NU_,KU_,VLEN_"
                   "KBMIN_,KBMAX_,K1IDX_); \\\n");
-   fprintf(fpout, "} /* end ATL_AMM_ML_info definition */\n");
+   fprintf(fpout, "} /* end ATL_AMM_info definition */\n");
    
    fprintf(fpout, 
            "/*\n * Following macros return 1 if flag set, else 0\n */\n");
@@ -37437,19 +37444,41 @@ int main(int nargs, char **args)
    KillAllMMNodes(mb);
    return(0);
 }
-@ROUT ATL_pop_rkinfo
+@ROUT ATL_opinfo
 #include ATL_DECL_
 #include Mstr(Mjoin(ATLAS_PRE,amm_kern.h))
-#include Mstr(Mjoin(ATLAS_PRE,rk_view.h))
+#include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
+
+@whiledef al 1 N X
+   @whiledef ta N T
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
+   @endwhile
+#ifdef TCPLX
+   @whiledef ta C H
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
+   @endwhile
+#endif
+   @whiledef be 1 N X
+#include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a@(al)b@(be).h))
+   @endwhile
+
+@endwhile
 
 void ATL_pop_rkinfo  /* populate rknfo_t using atlas_rk_view idx */
-   (rkinfo_t *out, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+   (rkinfo_t *out, int iv, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta,
     size_t nfmblks, size_t npmblks, int mb, int pmb,
     size_t nfnblks, size_t npnblks, int nb, int pnb)
 {
+   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, flgK;
+   double spmfMM, spmfCP;
+   ammkern_t amm1, amm0, ammN;
 
+   ATL_assert(iv < ATL_VWopgen_NCASES);
+   ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, KB, imm, icpA, icpB, icpC, k, k, k);
+   ATL_assert(imm < ATL_AMM_NCASES);
+   ATL_AMM_info(imm, amm1, amm0, ammN, flgK, mu, nu, ku
    #if ATL_rkAMM_MAXKVEC == 0
       const unsigned int kb = K;
    #else
