@@ -37142,7 +37142,7 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
             k = 0;
          }
          if (nbits[i+NIVAR])
-            fprintf(fpout, "   %s_ = ATL_MIN_%s + (v_&0x%x); \\\n", 
+            fprintf(fpout, "   %s_ = ATL_AMM_MIN_%s + (v_&0x%x); \\\n", 
                     VN[i], VN[i], (1<<nb)-1);
          else
             fprintf(fpout, "   %s_ = v_ & 0x%x; \\\n", VN[i], (1<<nb)-1);
@@ -37154,14 +37154,14 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    }
    fprintf(fpout, "} /* end ATL_AMM_iinfo definition */\n");
 
-   fprintf(fpout, "\n#define ATL_AMM_info(id_,mm1_, mm0_, mmN_,FLAG_,"
+   fprintf(fpout, "\n#define ATL_AMM_info(id_,mm0_, mm1_, mmN_,FLAG_,"
                   "MU_,NU_,KU_,VLEN_,KBMIN_,KBMAX_,K1IDX_) \\\n");
-   fprintf(fpout, "{ \\\n"
-           "   ATL_iptr_t *ip_=ATL_AMM_ML + ATL_AMM_Idx2Entry(id_); \\\n");
+   fprintf(fpout, "{ \\\n   const ATL_iptr_t *ip_=ATL_AMM_ML + "
+                  "ATL_AMM_Idx2Entry(id_); \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mm1_)) = *ip_; \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mm0_)) = ip_[1]; \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mmN_)) = ip_[2]; \\\n");
-   fprintf(fpout, "   ATL_AMM_iinfo(ip_+3,FLAG_,MU_,NU_,KU_,VLEN_"
+   fprintf(fpout, "   ATL_AMM_iinfo(ip_+3,FLAG_,MU_,NU_,KU_,VLEN_,"
                   "KBMIN_,KBMAX_,K1IDX_); \\\n");
    fprintf(fpout, "} /* end ATL_AMM_info definition */\n");
    
@@ -37445,7 +37445,8 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT ATL_opinfo
-#include ATL_DECL_
+#include "atlas_amm.h"
+#define  ATL_DECL_ 1
 #include Mstr(Mjoin(ATLAS_PRE,amm_kern.h))
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
 
@@ -37458,45 +37459,77 @@ int main(int nargs, char **args)
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
    @endwhile
 #endif
-   @whiledef be 1 N X
+   @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a@(al)b@(be).h))
    @endwhile
 
 @endwhile
 
-void ATL_pop_rkinfo  /* populate rknfo_t using atlas_rk_view idx */
-   (rkinfo_t *out, int iv, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+void ATL_rkinfo  /* populate rknfo_t using atlas_rk_view K-3 idx */
+   (rkinfo_t *out, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
-    const SCALAR alpha, const SCALAR beta,
-    size_t nfmblks, size_t npmblks, int mb, int pmb,
-    size_t nfnblks, size_t npnblks, int nb, int pnb)
+    const SCALAR alpha, const SCALAR beta)
 {
-   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, flgK;
-   double spmfMM, spmfCP;
    ammkern_t amm1, amm0, ammN;
-
-   ATL_assert(iv < ATL_VWopgen_NCASES);
-   ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, KB, imm, icpA, icpB, icpC, k, k, k);
-   ATL_assert(imm < ATL_AMM_NCASES);
-   ATL_AMM_info(imm, amm1, amm0, ammN, flgK, mu, nu, ku
-   #if ATL_rkAMM_MAXKVEC == 0
-      const unsigned int kb = K;
-   #else
-      int unsigned kb = K;
-   #endif
-   const unsigned int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx];
-   const unsigned int ku=ATL_AMM_KUs[idx], vlen=ATL_AMM_VLENs[idx];
-   unsigned int sz, nmu, nnu;
+   ATL_cparr_t *cp = (ATL_cparr_t *)&out->a2blk;
+   double spmfMM, spmfCP;
+   size_t nfmblks, npmblks, nfnblks, npnblks;
+   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, vlen, flgK;
+   unsigned int sz, nmu, nnu, pnmu, pnnu, mb, pmb, nb, pnb, MB, NB, kb=K;
+   const unsigned int iv=K-3;
    #ifdef TCPLX
       static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
    #else
+      ATL_iptr_t iptmp;
       #define CONE ATL_rone
    #endif
 
-   #if ATL_rkAMM_MAXKVEC > 0
-      if (ATL_AMM_KMAJOR(idx))
-         kb = ((K + ku - 1)/ku)*ku;
+   ATL_assert(iv < ATL_VWopgen_NCASES);
+   ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
+   icpA += icpA; icpB += icpB; icpC += icpC;
+   ATL_assert(imm < ATL_AMM_NCASES);
+   #ifdef TCPLX
+      ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bN, flgK, 
+                   mu, nu, ku, vlen, k, k, k);
+   #else
+      ATL_AMM_info(imm, &out->amm_b0, &iptmp, &iptmp, flgK, 
+                   mu, nu, ku, vlen, k, k, k);
    #endif
+
+   if (M > MB)
+   {
+      mb = MB;
+      nfmblks = M / MB;
+      nmu = MB / mu;
+      out->mF = pmb = M - nfmblks*MB;
+      pnmu = (pmb+mu-1)/mu;
+      pmb = pnmu * mu;
+      npmblks = (pmb) ? 1 : 0;
+   }
+   else
+   {
+      nmu = (M+mu-1)/mu;
+      mb = nmu * mu;
+      npmblks = pmb = pnmu = out->mF = 0;
+   }
+   if (N > NB)
+   {
+      nb = NB;
+      nfnblks = N / NB;
+      nnu = NB / nu;
+      out->nF = pnb = N - nfnblks*NB;
+      pnnu = (pnb+nu-1)/nu;
+      pnb = pnnu * nu;
+      npnblks = (pnb) ? 1 : 0;
+   }
+   else
+   {
+      nnu = (N+nu-1)/nu;
+      nb = nnu * nu;
+      npnblks = pnb = pnnu = out->nF = 0;
+   }
+
+   kb = ((K+ku-1)/ku)*ku;
    out->nfmblks = nfmblks;
    out->npmblks = npmblks;
    out->mb = mb;
@@ -37513,43 +37546,25 @@ void ATL_pop_rkinfo  /* populate rknfo_t using atlas_rk_view idx */
    out->ldb = ldb;
    out->ldc = ldc;
 
-   out->nmu = mb / mu;
-   out->pnmu = pmb / mu;
-   out->nnu = nb / nu;
-   out->pnnu = pnb / nu;
-   if (npmblks)
-   {
-      out->mF = M - nfmblks*mb - (npmblks-1)*pmb;
-      out->nmuF = (out->mF+mu-1) / mu;
-   }
-   else
-      out->nmuF = out->mF = 0;
-   if (npnblks)
-   {
-      out->nF = N - nfnblks*nb - (npnblks-1)*pnb;
-      out->nnuF = (out->nF+nu-1) / nu;
-   }
-   else
-      out->nnuF = out->nF = 0;
+   out->nmu = nmu;
+   out->nmuF = out->pnmu = pnmu;
+   out->nnu = nnu;
+   out->nnuF = out->pnnu = pnnu;
+
    sz = ((mu*nu+vlen-1)/vlen)*vlen;
    sz *= (out->nmu) ? out->nmu : out->pnmu;
    sz *= (out->nnu) ? out->nnu : out->pnnu;
    out->szC = sz;
-   out->idx = idx;
-   out->amm_b0 = ATL_AMM_KERN_b0[idx];
-   #ifdef TCPLX
-      out->amm_b1 = ATL_AMM_KERN_b1[idx];
-      out->amm_bn = ATL_AMM_KERN_bn[idx];
-   #endif
+   out->idx = iv;
    out->kb = K;
    out->KB = kb;
    out->lda = lda;
    out->ldb = ldb;
    out->ldc = ldc;
    out->pszA = pmb*kb;
-   out->szA = kb * ((mb) ? mb:pmb);
+   out->szA = kb * mb;
    out->pszB = kb*pnb;
-   out->szB = kb * ((nb) ? nb:pnb);
+   out->szB = kb * nb;
    out->alpA = out->alpB = CONE;
    out->beta = beta;
    #ifdef TCPLX
@@ -37625,7 +37640,7 @@ void ATL_pop_rkinfo  /* populate rknfo_t using atlas_rk_view idx */
                out->a2blk = ATL_AMM_AN2BLK_aX[idx];
             else
                out->a2blk = (TA == AtlasConjTrans) ?
-                  ATL_AMM_AC2BLK_aX[idx] : ATL_AMM_AH2BLK_aX[idx];
+                       ATL_AMM_AC2BLK_aX[idx] : ATL_AMM_AH2BLK_aX[idx];
          }
       #else
          out->b2blk = (TB == AtlasNoTrans) ?
@@ -37647,62 +37662,65 @@ void ATL_pop_rkinfo  /* populate rknfo_t using atlas_rk_view idx */
       out->alpB = alpha;
       #ifdef TCPLX
          if (TA == AtlasNoTrans)
-            out->a2blk = ATL_AMM_AT2BLK_a1[idx];
+            *cp = ATL_CpyFromATg_a1[icpA];
          else if (TA == AtlasTrans)
-            out->a2blk = ATL_AMM_AN2BLK_a1[idx];
+            *cp = ATL_CpyFromANg_a1[icpA];
          else
-            out->a2blk = (TA == AtlasConjTrans) ?
-               ATL_AMM_AC2BLK_a1[idx] : ATL_AMM_AH2BLK_a1[idx];
+            *cp = (TA == AtlasConjTrans) ?  
+                  ATL_CpyFromACg_a1[icpA]: ATL_CpyFromAHg_a1[icpA];
 
+         cp = (ATL_cparr_t *)&out->b2blk;
          if (SCALAR_IS_ONE(alpha))
          {
             if (TB == AtlasNoTrans)
-               out->b2blk = ATL_AMM_BN2BLK_a1[idx];
+               *cp = ATL_CpyFromANg_a1[icpB];
             else if (TB == AtlasTrans)
-               out->b2blk = ATL_AMM_BT2BLK_a1[idx];
+               *cp = ATL_CpyFromATg_a1[icpB];
             else
-               out->b2blk = (TB == AtlasConjTrans) ?
-                  ATL_AMM_BH2BLK_a1[idx] : ATL_AMM_BC2BLK_a1[idx];
+               *cp = (TA == AtlasConjTrans) ?  
+                     ATL_CpyFromAHg_a1[icpB]: ATL_CpyFromACg_a1[icpB];
          }
          else if (SCALAR_IS_NONE(alpha))
          {
             if (TB == AtlasNoTrans)
-               out->b2blk = ATL_AMM_BN2BLK_an[idx];
+               *cp = ATL_CpyFromANg_aN[icpB];
             else if (TB == AtlasTrans)
-               out->b2blk = ATL_AMM_BT2BLK_an[idx];
+               *cp = ATL_CpyFromATg_aN[icpB];
             else
-               out->b2blk = (TB == AtlasConjTrans) ?
-                  ATL_AMM_BH2BLK_an[idx] : ATL_AMM_BC2BLK_an[idx];
+               *cp = (TA == AtlasConjTrans) ?  
+                     ATL_CpyFromAHg_aN[icpB]: ATL_CpyFromACg_aN[icpB];
          }
          else
          {
             if (TB == AtlasNoTrans)
-               out->b2blk = ATL_AMM_BN2BLK_aX[idx];
+               *cp = ATL_CpyFromANg_aX[icpB];
             else if (TB == AtlasTrans)
-               out->b2blk = ATL_AMM_BT2BLK_aX[idx];
+               *cp = ATL_CpyFromATg_aX[icpB];
             else
-               out->b2blk = (TB == AtlasConjTrans) ?
-                  ATL_AMM_BH2BLK_aX[idx] : ATL_AMM_BC2BLK_aX[idx];
+               *cp = (TA == AtlasConjTrans) ?  
+                     ATL_CpyFromAHg_aX[icpB]: ATL_CpyFromACg_aN[icpB];
          }
       #else
-         out->a2blk = (TA == AtlasNoTrans) ?
-                      ATL_AMM_AT2BLK_a1[idx] : ATL_AMM_AN2BLK_a1[idx];
+         *cp = (TA == AtlasNoTrans) ? 
+               ATL_CpyFromATg_a1[icpA]:ATL_CpyFromANg_a1[icpA];
+         cp = (ATL_cparr_t *) &out->b2blk;
          if (SCALAR_IS_ONE(alpha))
-            out->b2blk = (TB == AtlasNoTrans) ?
-                      ATL_AMM_BN2BLK_a1[idx] : ATL_AMM_BT2BLK_a1[idx];
+            *cp = (TA == AtlasNoTrans) ? 
+                  ATL_CpyFromANg_a1[icpB]:ATL_CpyFromATg_a1[icpB];
          else if (SCALAR_IS_NONE(alpha))
-            out->b2blk = (TB == AtlasNoTrans) ?
-                      ATL_AMM_BN2BLK_an[idx] : ATL_AMM_BT2BLK_an[idx];
+            *cp = (TA == AtlasNoTrans) ? 
+                  ATL_CpyFromANg_aN[icpB]:ATL_CpyFromATg_aN[icpB];
          else
-            out->b2blk = (TB == AtlasNoTrans) ?
-                      ATL_AMM_BN2BLK_aX[idx] : ATL_AMM_BT2BLK_aX[idx];
+            *cp = (TA == AtlasNoTrans) ? 
+                  ATL_CpyFromANg_aX[icpB]:ATL_CpyFromATg_aX[icpB];
       #endif
    }
+   cp = (ATL_cparr_t *) &out->blk2C;
    if (SCALAR_IS_NONE(beta))
-      out->blk2C = ATL_AMM_BLK2C_a1_bn[idx];
+      *cp = ATL_CpyIntoCNg_a1bN[icpC];
    else if (SCALAR_IS_ONE(beta))
-      out->blk2C = ATL_AMM_BLK2C_a1_b1[idx];
+      *cp = ATL_CpyIntoCNg_a1b1[icpC];
    else
-      out->blk2C = (SCALAR_IS_ZERO(beta)) ?
-         ATL_AMM_BLK2C_a1_b0[idx] : ATL_AMM_BLK2C_a1_bX[idx];
+      *cp = (SCALAR_IS_ZERO(beta)) ? 
+            ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
 }

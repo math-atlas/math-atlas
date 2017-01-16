@@ -1366,7 +1366,7 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    int nbits[10];
    char **cpnms = nms + 4;
    int *cpidxs[6], *cpnbits=nbits+4;
-   int i, d, plen, vlen, len, N, nint, nbit;
+   int i, d, plen, vlen, len, N, nint, nbit, nkvec;
    int minMB, minNB, minKB, maxMB, maxNB, maxKB, minKID, maxKID, tbits;
    const unsigned int vflag=vp->flag;
    char upr = pre;
@@ -1405,7 +1405,10 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    assert(d < len);
    fpout = fopen(fn, "w");
    assert(fpout);
-   N = ATL_CountNumberOfMMNodes(mb);
+   for (mp=mb, N=nkvec=0; mp; mp = mp->next, N++)
+      if (FLAG_IS_SET(mb->flag, MMF_KVEC))
+         nkvec++;
+@skip   N = ATL_CountNumberOfMMNodes(mb);
    sp = fn + plen + 1;
    for (i=0; sp[i]; i++)
       sp[i] = toupper(sp[i]);
@@ -1561,6 +1564,7 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    fprintf(fpout, "#define ATL_VW%s_NBIT_NB        %3u\n", VN, nbits[1]);
    fprintf(fpout, "#define ATL_VW%s_MIN_KB         %3u\n", VN, minKB);
    fprintf(fpout, "#define ATL_VW%s_NBIT_KB        %3u\n", VN, nbits[2]);
+   fprintf(fpout, "#define ATL_VW%s_NKVEC          %3u\n", VN, nkvec);
    fprintf(fpout, "\n");
    if (tbits > (ATL_ISIZE<<3))
    {
@@ -1671,16 +1675,16 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    fprintf(fpout, "#define ATL_GetVW%sInfo(id_, spf_, m_, n_, k_, amm_, "
            "A2b_, B2b_, b2C_, \\\n"
            "                        b2A_, b2B_, C2b_) \\\n{ \\\n", VN);
-   fprintf(fpout,"   unsigned int *ip_=ATL_VIEW_%s+ATL_VW%s_IDXMUL(id_); \\\n",
+   fprintf(fpout,"   const unsigned int *ip_=ATL_VIEW_%s+ATL_VW%s_IDXMUL(id_); \\\n",
            VN, VN);
-   fprintf(fpout,"   unsigned int v_=ip[1]; \\\n");
+   fprintf(fpout,"   unsigned int v_=ip_[1]; \\\n");
    fprintf(fpout, "   spf_ = *((float*)ip_); \\\n");
    for (i=1,nbit=d=0; d < 10; d++)
    {
       const unsigned int nvbits = nbits[d];
       if (nbit+nvbits > (ATL_ISIZE<<3))
       {
-         fprintf(fpout, "   v_ = ip[%u]; \\\n", ++i);
+         fprintf(fpout, "   v_ = ip_[%u]; \\\n", ++i);
          nbit = 0;
       }
       fprintf(fpout, "   %s_ = ATL_VW%s_MIN_%s", mnms[d], VN, nms[d]);
@@ -1699,7 +1703,7 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    fprintf(fpout, "#ifndef ATL_VIEW_TABLE\n");
    fprintf(fpout, "   #define ATL_VIEW_TABLE ATL_VIEW_%s\n", VN);
    fprintf(fpout, "   #define ATL_GetViewInfo ATL_GetVW%sInfo\n", VN);
-   @whiledef vm MAX_KB MAX_NB MAX_MB IDXMUL NINT NCASES
+   @whiledef vm NKVEC MAX_KB MAX_NB MAX_MB IDXMUL NINT NCASES
    fprintf(fpout, "   #define ATL_VIEW_@(vm) ATL_VW%s_@(vm)\n", VN);
    @endwhile
    @whiledef vm A2BLK B2BLK BLK2C BLK2A BLK2B C2BLK AMMI KB NB MB
