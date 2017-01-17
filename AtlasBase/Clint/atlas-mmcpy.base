@@ -543,6 +543,7 @@ int main(int nargs, char **args)
 @ROUT cpygen
 #include "atlas_cpparse.h"
 #include "atlas_mmgen.h"
+#include "atlas_iopt.h"
 void GenMake(ATL_cpnode_t *cb, char *path)
 {
    FILE *fp;
@@ -1356,17 +1357,21 @@ unsigned int MMIdxCount(ATL_mmnode_t *mb, ATL_mmnode_t *want)
 
 void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
 {
-   ATL_mmnode_t *mp, *MB;
+   ATL_mmnode_t *mp, *MB, *maxPerf=NULL;
    FILE *fpout;
+   #define NTHRSH 11
+   int THRSH[NTHRSH] = {25, 33, 50, 66, 75, 80, 85, 90, 95, 98, 99};
+   ATL_mmnode_t *mpT[NTHRSH];
    char *sp, *fn, *VN;
    char *mnms[10] = {"m", "n", "k", "amm", "A2b", "B2b", "b2C", 
                     "b2A", "b2B", "C2b"};
    char *nms[10]={"MB", "NB", "KB", "AMMI",
                 "A2BLK", "B2BLK", "BLK2C", "BLK2A", "BLK2B", "C2BLK"};
-   int nbits[10];
+   int nbits[10], idxT[NTHRSH];
    char **cpnms = nms + 4;
    int *cpidxs[6], *cpnbits=nbits+4;
-   int i, d, plen, vlen, len, N, nint, nbit, nkvec;
+   double mfMax=0.0;
+   int i, d, plen, vlen, len, N, nint, nbit, nkvec, idxMax=0;
    int minMB, minNB, minKB, maxMB, maxNB, maxKB, minKID, maxKID, tbits;
    const unsigned int vflag=vp->flag;
    char upr = pre;
@@ -1533,10 +1538,19 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    assert(MB);
    maxKID = minKID = MMIdxCount(MB, mb);
    assert(maxKID);
-   for (mp=mb->next; mp; mp = mp->next)
+   for (i=0; i < NTHRSH; i++)
+      mpT[i] = NULL;
+   for (i=0, mp=mb->next; mp; mp = mp->next, i++)
    {
       int b;
       ATL_mmnode_t p;
+
+      if (mp->mflop[0] > mfMax)
+      {
+         mfMax = mp->mflop[0];
+         idxMax = i;
+         maxPerf = mp;
+      }
       b = mp->mbB;
       maxMB = Mmax(b, maxMB);
       minMB = Mmin(b, minMB);
@@ -1577,9 +1591,11 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
             nint++;
          }
       }
+      if (nbit)
+         nint++;
    }
-   if (nbit)
-      nint++;
+   else
+      nint = 1;
    fprintf(fpout, "#define ATL_VW%s_NINT     %u\n", VN, ++nint);
    if (nint == 2)
       fprintf(fpout, "#define ATL_VW%s_IDXMUL(i_) ((i_)+(i_))\n", VN);
@@ -1596,13 +1612,32 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
 
    fprintf(fpout,"\n#ifndef ATL_DECL_\n   const extern unsigned int "
            "ATL_VIEW_%s[%u];\n", VN, nint*N);
-   fprintf(fpout, "#else\n   const unsigned int ATL_VIEW_%s[%u] =\n{", 
+   fprintf(fpout, "#else\nconst unsigned int ATL_VIEW_%s[%u] =\n{", 
            VN, nint*N);
    sp = "\n";
    for (i=0, mp=mb; mp; mp = mp->next, i++)
    {
       int k, iv=0, ammI;
       float *timepflop;
+/*
+ *    Setup threshhold blocking factors, don't go past max perf kernel
+ */
+      for (k=0; k < NTHRSH; k++)
+      {
+         if (!mpT[k] && THRSH[k]*0.01*mfMax < mp->mflop[0])
+         {
+            if (i < idxMax)
+            {
+               mpT[k] = mp;
+               idxT[k] = i;
+            }
+            else
+            {
+               mpT[k] = maxPerf;
+               idxT[k] = idxMax;
+            }
+         }
+      }
       timepflop = (float*) &k;
       *timepflop = 1.0 / mp->mflop[0];
       ammI = MMIdxCount(MB, mp);
@@ -1698,6 +1733,20 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
       nbit += nvbits;
    }
    fprintf(fpout, "} /* end ATL_GetViewInfo */\n");
+
+   fprintf(fpout, "/*\n * Percent of max perf macros\n */\n");
+   for (i=0; i < NTHRSH; i++)
+   {
+      mp = mpT[i];
+      fprintf(fpout, "#define ATL_VW%s_%dLCMU %d\n", VN, THRSH[i],
+              ATL_iLCM(ATL_iLCM(mp->mu,mp->nu),mp->ku));
+      fprintf(fpout, "#define ATL_VW%s_%dLCMMN %d\n", VN, THRSH[i],
+              ATL_iLCM(mp->mu,mp->nu));
+      fprintf(fpout, "#define ATL_VW%s_%dMB %d\n", VN, THRSH[i], mp->mbB);
+      fprintf(fpout, "#define ATL_VW%s_%dNB %d\n", VN, THRSH[i], mp->nbB);
+      fprintf(fpout, "#define ATL_VW%s_%dKB %d\n", VN, THRSH[i], mp->kbB);
+      fprintf(fpout, "#define ATL_VW%s_%dIDX %d\n",VN, THRSH[i], idxT[i]);
+   }
 
    fprintf(fpout, "/*\n * Generic names for first-included view\n */\n");
    fprintf(fpout, "#ifndef ATL_VIEW_TABLE\n");
