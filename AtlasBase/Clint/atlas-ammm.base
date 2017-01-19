@@ -35837,6 +35837,12 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
    ATL_mmnode_t *mb, *mp, *tb, *mpB;
 
+   tb = TimeMMFileWithPath(pre, "res", "opFNL.sum", 0, verb, 0, 0, 0, -1);
+   if (tb)
+   {
+      KillAllMMNodes(tb);
+      return;
+   }
    eltsh = (upr == 'd') ? 3 : 2;
    tb = ReadMMFileWithPath(upr, "res", "gAMMRES.sum");
    assert(tb);
@@ -35858,7 +35864,8 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    mp = ATL_LastMMNode(mb);
    mp->next = GetWorkingUserCases(verb, pre);
    for (mp=mb; mp; mp = mp->next)
-      mp->flag = (mp->flag & ~MMF_MVSET)|((1<<MMF_MVA)|(1<<MMF_MVC));
+      mp->flag = (mp->flag & ~MMF_MVSET) |
+                 ((1<<MMF_MVA)|(1<<MMF_MVC)|(1<<MMF_CPC));
    WriteMMFile("res/tmp.sum", mb);
 /*
  * If the L1 is the last level of private cache, fitting all blocks necessary
@@ -35914,7 +35921,8 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       bP = (i-4)>>1;
    #endif
    }
-   do_bfi(pre, 3, b0, 1, "res/tmp.sum", "rkAMM0.sum", -1.0);
+   do_bfi(pre, 3, b0, 1, "res/tmp.sum", "opL1.sum", -1.0);
+
 /*
  * For large problems, fully unrolling K may result in i-cache thrashing,
  * so we want to explore very large problems using loops with KU < KB.
@@ -35973,7 +35981,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    else
       KillMMNode(mpB);
 
-   WriteMMFileWithPath(pre, "res", "rkAMMMAX.sum", mp);
+   WriteMMFileWithPath(pre, "res", "opASYMP.sum", mp);
    KillMMNode(mp);
 /*
  * Get temporary queue, eliminate kerns not providing unique KU speedup,
@@ -35987,7 +35995,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       tb = MMWinnowByKU(tb, bP, 1.05);
       WriteMMFile("res/tmp.sum", mb);
       printf("FINDING BEST RANK-K KERNELS FOR LLC:\n");
-      do_bfi(pre, bP+1, KB, 1, "res/tmp.sum", "rkAMMLLC.sum", 1.015);
+      do_bfi(pre, bP+1, KB, 1, "res/tmp.sum", "opLLC.sum", 1.015);
       printf("DONE\n");
    }
    else
@@ -36047,24 +36055,24 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       mb = MMWinnowByKU(mb, b0, 1.10);
       WriteMMFile("res/tmp.sum", mb);
       printf("FINDING BEST RANK-K KERNELS FOR LLPC:\n");
-      do_bfi(pre, b0+1, bP, 1, "res/tmp.sum", "rkAMMLLPC.sum", 1.015);
+      do_bfi(pre, b0+1, bP, 1, "res/tmp.sum", "opLLPC.sum", 1.015);
       printf("DONE\n");
    }
    #endif
    KillAllMMNodes(mb);
    GetMMLabelName(pre, NULL);
-   mb = ReadMMFileWithPath(pre, "res", "rkAMM0.sum");
+   mb = ReadMMFileWithPath(pre, "res", "opL1.sum");
    assert(mb);
    mp = ATL_LastMMNode(mb);
-   tb = ReadMMFileWithPath(pre, "res", "rkAMMLLPC.sum");
+   tb = ReadMMFileWithPath(pre, "res", "opLLPC.sum");
    if (tb)
    {
       mp->next = tb;
       mp = ATL_LastMMNode(tb);
    }
-   tb = ReadMMFileWithPath(pre, "res", "rkAMMLLC.sum");
+   tb = ReadMMFileWithPath(pre, "res", "opLLC.sum");
    mp->next = tb;
-   WriteMMFileWithPath(pre, "res", "rkAMMFNL.sum", mb);
+   WriteMMFileWithPath(pre, "res", "opFNL.sum", mb);
    KillAllMMNodes(mb);
 }
 
@@ -36519,7 +36527,7 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             ob->flag |= (1<<MMF_MVC) | (1<<MMF_MVA);
 @ROUT bfisrch
             if (flag&((1<<FLG_OPCPY)|(1<<FLG_OP)))
-               ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVC);
+               ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVC) | (1<<MMF_CPC);
             else
                ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVB);
 @ROUT bfisrch trsmsrch
@@ -36560,7 +36568,8 @@ void prepOP(ATL_mmnode_t *mb)
 {
    ATL_mmnode_t *mp;
    for (mp=mb; mp; mp = mp->next)
-      mp->flag = (mp->flag&(~MMF_MVSET))|((1<<MMF_MVA)|(1<<MMF_MVC));
+      mp->flag = (mp->flag&(~MMF_MVSET)) |
+                 ((1<<MMF_MVA)|(1<<MMF_MVC)|(1<<MMF_CPC));
 }
 /*
  * This search takes idx kern from fnin, and then finds the best performing
