@@ -35579,7 +35579,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
          printf("   TUNE BLK for %s, current=(%u,%u,%u), mf=%.2f\n",
                 GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB, 
                 mp->mflop[0]);
-         mfN = MMExpandMNK(verb, pre, 0, 0, maxD, mp);
+         mfN = MMExpandMNK(verb, pre, 0, 0, 0, NULL, maxD, mp);
          if (mfN > mfB)
          {
             printf(
@@ -35601,7 +35601,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    mpD = CloneMMNode(mpB);
    KillAllMMNodes(mmb);
    mpU = CloneMMNode(mpD);
-   mf = MMExpandMNK(verb, pre, 0, 0, 0, mpU);
+   mf = MMExpandMNK(verb, pre, 0, 0, 0, NULL, 0, mpU);
    if (mf < mfB)
    {
       KillMMNode(mpU);
@@ -35618,7 +35618,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
             continue;
       }
       mp = CloneMMNode(mpD);
-      mf = MMExpandMNK(verb, pre, 0, 0, D, mp);
+      mf = MMExpandMNK(verb, pre, 0, 0, 0, NULL, D, mp);
       mp->next = mmb;
       mmb = mp;
    }
@@ -35727,6 +35727,16 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT opsrch
+int opWorkSetOK(unsigned long csz, ATL_mmnode_t *mp, int mb, int nb, int kb)
+/*
+ * RETURNS: 0 if working set for usual outer product > csz, else 1
+ */
+{
+   unsigned long sz;
+   sz = mb*nb + kb*(mp->mu+mb+nb);
+   return(sz <= csz);
+}
+
 /*
  * This search forms the backbone of ATLAS outer-product support.  It will
  * find all the kernels needed to support 3 categories of degenerate dims:
@@ -35827,7 +35837,7 @@ int main(int nargs, char **args)
  */
 void do_opk(int verb, char pre, char *fnam, int maxK)
 {
-   long i, nelt=L1C_SZ>>3;
+   long i, nelt_llc, nelt=L1C_SZ>>3;
    unsigned int b0=60;   /* largest kb where we brute-force search */
    unsigned int bP;      /* largest square block fitting in LLPC */
    unsigned int bL;      /* largest square block fitting in LLC */
@@ -35843,6 +35853,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       KillAllMMNodes(tb);
       return;
    }
+   nelt_llc = (pre == 'd' || pre == 'z') ? (LLC_SZ>>3) : (LLC_SZ>>2);
    eltsh = (upr == 'd') ? 3 : 2;
    tb = ReadMMFileWithPath(upr, "res", "gAMMRES.sum");
    assert(tb);
@@ -35950,7 +35961,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
  */
    printf("   FINDING BEST MAX BLOCK FACTORS, current=(%d,%d,%d):\n", 
           mp->mbB, mp->nbB, mp->kbB);
-   MMExpandMNK(verb, pre, 4, 0, 512, mp);
+   MMExpandMNK(verb, pre, 4, 0, nelt_llc, opWorkSetOK, 512, mp);
    MB = mp->mbB; NB = mp->nbB; KB = mp->kbB;
    printf("   BEST B=(%d,%d,%d), mf=%.2f, speedup=%.2f\n", MB, NB, KB, 
           mp->mflop[0], mp->mflop[0] / mf);
@@ -35971,7 +35982,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       mp = mpB;
       printf("   FINDING BEST MAX BLOCK FACTORS, current=(%d,%d,%d):\n", 
              mp->mbB, mp->nbB, mp->kbB);
-      MMExpandMNK(verb, pre, 4, 0, 512, mp);
+      MMExpandMNK(verb, pre, 4, 0, nelt_llc, opWorkSetOK, 512, mp);
       MB = mp->mbB; NB = mp->nbB; KB = mp->kbB;
       printf("   BEST B=(%d,%d,%d), mf=%.2f, speedup=%.2f\n", MB, NB, KB, 
              mp->mflop[0], mp->mflop[0] / mf);
@@ -36604,7 +36615,7 @@ void DoSrchD(char pre, int flag, int KB, char *fnin, int idx, char *fnout)
    if (KB)
       mf = MMExpandMN(verb, pre, flg, 0, mp);
    else
-      mf = MMExpandMNK(verb, pre, flg, 0, 512, mp);
+      mf = MMExpandMNK(verb, pre, flg, 0, 0, NULL, 512, mp);
    printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mp->kbB, mf);
    PrintMMLine(stdout, mp);
    if (fnout)
