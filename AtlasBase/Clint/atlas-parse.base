@@ -1587,40 +1587,58 @@ static ATL_@(rt)node_t *Swap@up@(rt)NodeInQ
       return(Q);
    for (p=Q; fnd != 3 && p; p = p->next)
    {
-      if (fnd&1 == 0) /* still looking for p0 */
+      if ((fnd&1) == 0) /* still looking for p0 */
       {
          if (p == p0)
             fnd |= 1;
-         else
+         else 
+         {
             prv0 = p;
+         }
       }
-      if (fnd&2 == 0) /* still looking for p1 */
+      if ((fnd&2) == 0) /* still looking for p1 */
       {
          if (p == p1)
             fnd |= 2;
          else
+         {
             prv1 = p;
+         }
       }
    }
-   assert(fnd == 3);
-   nxt = p0->next;
-   p0->next = p1->next;
-   p1->next = nxt;
-   if (Q != p0 && Q != p1) /* common case that does not change Q */
+   if (fnd != 3)
    {
-      prv0->next = p1;
-      prv1->next = p0;
+      fprintf(stderr, "\nFND=%u!!\n\n", fnd);
+      assert(fnd == 3);
    }
-   else if (Q == p0)
+   if (prv0 == p1)  /* p1->p0-> */
    {
-      Q = p1;
-      prv1->next = p0;
+      if (prv1)
+         prv1->next = p0;
+      p1->next = p0->next;
+      p0->next = p1;
    }
-   else /* Q == p1 */
+   else if (prv1 == p0) /* p0->p1-> */
    {
+      if (prv0)
+         prv0->next = p1;
+      p0->next = p1->next;
+      p1->next = p0;
+   }
+   else /* neither predecessor of other */
+   {
+      nxt = p0->next;
+      p0->next = p1->next;
+      p1->next = nxt;
+      if (prv0)
+         prv0->next = p1;
+      if (prv1)
+         prv1->next = p0;
+   }
+   if (Q == p1)
       Q = p0;
-      prv0->next = p1;
-   }
+   else if (Q == p0)
+      Q = p1;
    return(Q);
 }
 
@@ -4218,19 +4236,21 @@ ATL_cpnode_t *GetCopyMatches(ATL_cpnode_t *cb, int flag)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_cpnode_t *FindCopy_noscal(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
+ATL_cpnode_t *FindCopy_cohere(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
 /*
- * Searches cb for kern that match dup, ignoring alpha/beta settings
+ * Searches cb for kern that match dup, except for flag, where the only
+ * bits that matter are: CBLK,MVEC,NVEC,KERN
  * RETURNS: NULL if no copy rout equivalent to dup is in cb, else ptr to dup
  */
 {
    const unsigned int flgD=dup->flag;
+   const unsigned msk=((1<<CPF_CBLK)|(1<<CPF_MVEC)|(1<<CPF_NVEC)|CPF_ALLKERN);
    ATL_cpnode_t *cp;
-   dup->flag &= ~(CPF_ALLALP | CPF_ALLBET);
+   dup->flag &= msk;
    for (cp=cb; cp; cp = cp->next)
    {
       const unsigned int flg=cp->flag;
-      cp->flag &= ~(CPF_ALLALP | CPF_ALLBET);
+      cp->flag &= msk;
       if (!CopyAreDiff(cp, dup))
       {
          dup->flag = flgD;
@@ -4245,7 +4265,7 @@ ATL_cpnode_t *FindCopy_noscal(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-void CopyMarkDup_noscal(ATL_cpnode_t *b0, ATL_cpnode_t *b1)
+void CopyMarkDup_cohere(ATL_cpnode_t *b0, ATL_cpnode_t *b1)
 /* 
  * Set CPF_TMP for all kerns of b0 & b1 that appear in both
  */
@@ -4256,7 +4276,7 @@ void CopyMarkDup_noscal(ATL_cpnode_t *b0, ATL_cpnode_t *b1)
    for (p0=b0; p0; p0 = p0->next)
    {
       ATL_cpnode_t *p1;
-      p1 = FindCopy_noscal(b1, p0);
+      p1 = FindCopy_cohere(b1, p0);
       if (p1)
       {
          p0->flag |= (1<<CPF_TMP);
@@ -4300,8 +4320,7 @@ ATL_cpnode_t *CopySortMarkedFirst(ATL_cpnode_t *cb)
 ATL_cpnode_t *CopyDictateOrder(ATL_cpnode_t *b0, ATL_cpnode_t *b1)
 /*
  * Queue b1 is reordered to match corresponding nodes in b0.  A node
- * corresponds if it matches: on everything except scalars (alpha for A/B,
- * alpha & beta for C).
+ * corresponds as dictated by FindCopy_cohere.
  * ASSUMES: len(b0) <= len(b1); b0 & b1 are arrs of same type excpt for scalars.
  * RETURNS: possibly new base of b1
  */
@@ -4311,20 +4330,24 @@ ATL_cpnode_t *CopyDictateOrder(ATL_cpnode_t *b0, ATL_cpnode_t *b1)
    for (p0=b0; p0; p0 = p0->next, cnt0++)
    {
       ATL_cpnode_t *p1;
-      p1 = FindCopy_noscal(b1, p0);
+      p1 = FindCopy_cohere(b1, p0);
 /*
  *    I must swap p1 with cnt0 in b1
  */
       if (p1)
       {
          ATL_cpnode_t *p;
-         unsigned int cnt1=0;
+         unsigned int cnt1=0, cnt2=0;
+/*
+ *       Find node presently at cnt0 in b1, and swap it with p1
+ */
          for (p=b1; cnt1 != cnt0 && p; cnt1++, p = p->next);
          assert(p);
-         if (cnt1 != cnt0)
+         if (p != p1)
             b1 = SwapCPNodeInQ(b1, p1, p);
       }
    }
+   return(b1);
 }
 
 @iexp ip @(ip) 1 +
