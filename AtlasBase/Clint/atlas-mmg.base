@@ -373,6 +373,14 @@ void ATL_USERCPMM       /* col-access matx to access-major blk */
 @ROUT ATL_am2cm ATL_cm2am ammmtst
 {
    ATL_CSZT n = (N/@(nu))*@(nu), incA = lda*@(nu);
+   @iif ku > 1
+   ATL_CSZT KK = ((K+@(ku)-1)/@(ku))*@(ku);
+@ROUT ATL_am2cm `   ATL_CSZT KZ = KK-K, ZSKIP=KZ*@(nu);`
+      @define KB @KK@
+   @endiif
+   @iif ku < 2
+      @define KB @K@
+   @endiif
    ATL_SZT i, j;
    @declare "   @(cnst)TYPE " n n ";"
       *A0=A
@@ -411,6 +419,19 @@ void ATL_USERCPMM       /* col-access matx to access-major blk */
       @iexp j @(j) 1 +
       @endiwhile
    }
+   @iif ku > 1
+@ROUT ATL_am2cm
+   b += ZSKIP;
+@ROUT ATL_cm2am ammmtst
+   for (;i < KK; i++, b += @(incdup))
+      @iexp j 0
+      @iwhile j < @(nu)
+      b[@(j)] =
+         @iexp j @(j) 1 +
+      @endiwhile
+             ATL_rzero;
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+   @endiif
    @mif nu ! "1
    switch(N-n)
    {
@@ -448,6 +469,17 @@ void ATL_USERCPMM       /* col-access matx to access-major blk */
       @endiwhile
 @ROUT ATL_am2cm ATL_cm2am ammmtst
       }
+@ROUT ATL_cm2am ammmtst
+   @iif ku > 1
+      for (; i < KK; i++, b += @(incdup))
+      @iexp j 0
+      @iwhile j < @(nu)
+         b[@(j)] =
+         @iexp j @(j) 1 +
+      @endiwhile
+                ATL_rzero;
+   @endiif
+@ROUT ATL_am2cm ATL_cm2am ammmtst
       break;
    @iexp n @(n) 1 +
    @endiwhile
@@ -870,6 +902,10 @@ void ATL_cm2am
 @ROUT ATL_cam2cm ATL_ccm2am cammmtst
 {
    ATL_CSZT K2=K+K, lda2=lda+lda, n = (N/@(nu))*@(nu), incA = lda2*@(nu);
+   @iif ku > 1
+   ATL_CSZT KK = ((K+@(ku)-1)/@(ku))*@(ku), KR=KK-K;
+@ROUT ATL_cam2cm  `   ATL_CINT ZINC = KR*@(nu)`
+   @endiif
    ATL_SZT i, j;
    @mif nalp = "X
    const register TYPE ra=(*alpha), ia=alpha[1];
@@ -933,6 +969,20 @@ void ATL_cm2am
       @iexp j @(j) 1 +
       @endiwhile
       }
+   @iif ku > 1
+@ROUT ATL_cam2cm
+      rA += ZINC;
+      iA += ZINC;
+@ROUT ATL_ccm2am cammmtst
+      for (i=0; i < KR; i++, rA += @(nu) iA += @(nu))
+      @iexp j 0
+      @iwhile j < @(nu)
+         rA[@(j)] = iA[@(j)] =
+      @iexp j @(j) 1 +
+      @endiwhile
+                         ATL_rzero;
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+   @endiif
       @iexp j 0 0 +
       @iwhile j < @(nu)
       A@(j) += incA;
@@ -997,6 +1047,17 @@ void ATL_cm2am
       @endiwhile
 @ROUT ATL_cam2cm ATL_ccm2am cammmtst
       }
+@ROUT ATL_ccm2am cammmtst
+   @iif ku > 1
+      for (i=0; i < KR; i++, rA += @(nu) iA += @(nu))
+      @iexp j 0
+      @iwhile j < @(nu)
+         rA[@(j)] = iA[@(j)] =
+      @iexp j @(j) 1 +
+      @endiwhile
+                         ATL_rzero;
+    @endiif
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
       break;
    @iexp n @(n) 1 +
    @endiwhile
@@ -1261,7 +1322,14 @@ void ATL_USERCPMM       /* row-access matrix to access-major block */
 )
 @ROUT ATL_am2rm ATL_rm2am ammmtst
 {
-   ATL_CSZT pansz = @(mu)*K, m = M/@(mu)*@(mu), mr = M-m, incA = lda - m;
+   ATL_CSZT m = M/@(mu)*@(mu), mr = M-m, incA = lda - m;
+   @iif ku > 1
+   ATL_CSZT KK = ((K+@(ku)-1)/@(ku))*@(ku), pansz=@(mu)*KK;
+@ROUT ATL_rm2am ammmtst `   ATL_CUINT KR=KK-K`
+   @endiif
+   @iif ku < 2
+   ATL_CSZT pansz = @(mu)*K;
+   @endiif
    ATL_SZT i, j;
    @iexp incV @(mu) @(dupB) *
 
@@ -1326,6 +1394,34 @@ void ATL_USERCPMM       /* row-access matrix to access-major block */
       }
       @endmif
    }
+@ROUT ATL_rm2am ammmtst
+   @iif ku > 1
+   if (KR)  /* need zero padding if @(ku) (K unroll) doesn't divide K */
+   {
+      for (i=0; i < M; i += 4, b += pansz)  /* loop over all panels */
+      {
+      @iif ku > 2
+         TYPE *pp = b;
+         for (j=0; j < KR; j++, pp += @(nu)) /* zero KR*mu block */
+         @iexp i 0
+         @iwhile i < @(mu)
+            pp[@(i)] =
+         @iexp i @(i) 1 +
+         @endiwhile
+                    ATL_rzero;
+      @endiif
+      @iif ku == 2
+         @iexp i 0
+         @iwhile i < @(mu)
+         b[@(i)] =
+         @iexp i @(i) 1 +
+         @endiwhile
+                 ATL_rzero;
+      @endiif
+      }
+   }
+   @endiif
+@ROUT ATL_am2rm ATL_rm2am ammmtst
 }
 @ROUT ammmtst `#endif`
 @endiif
@@ -1734,7 +1830,14 @@ void ATL_USERCPMM       /* row- to access-major */
 @ROUT ATL_cam2rm ATL_crm2am cammmtst
 {
    @iexp mu2 @(mu) @(mu) +
-   ATL_CSZT pansz = @(mu)*K, m = M/@(mu)*@(mu), mr = M-m, incA = (lda - m)<<1;
+   ATL_CSZT m = M/@(mu)*@(mu), mr = M-m, incA = (lda - m)<<1;
+   @iif ku > 1
+   ATL_CSZT pansz = @(mu)*KK;
+@ROUT ATL_crm2am cammmtst `   ATL_UINT KR = KK-K;`
+   @endiif
+   @iif ku < 2
+   ATL_CSZT pansz = @(mu)*K;
+   @endiif
    ATL_CSZT m2 = m+m;
    ATL_SZT i, j;
    @mif nalp = "X
@@ -1853,6 +1956,34 @@ void ATL_USERCPMM       /* row- to access-major */
       }
       @endmif
    }
+@ROUT ATL_crm2am cammmtst
+   @iif ku > 1
+   if (KR)  /* need zero padding if @(ku) (K unroll) doesn't divide K */
+   {
+      for (i=0; i < M; i += 4, iA += pansz, rA += pansz) 
+      {                                 /* loop over all panels */
+      @iif ku > 2
+         TYPE *pr = rA, *pi = iA;
+         for (j=0; j < KR; j++, pr += @(nu), pi += @(nu)) /* zero KR*mu block */
+         @iexp i 0
+         @iwhile i < @(mu)
+            pr[@(i)] = pi[@(i)] =
+         @iexp i @(i) 1 +
+         @endiwhile
+                            ATL_rzero;
+      @endiif
+      @iif ku == 2
+         @iexp i 0
+         @iwhile i < @(mu)
+         rA[@(i)] = iA[@(i)] =
+         @iexp i @(i) 1 +
+         @endiwhile
+                         ATL_rzero;
+      @endiif
+      }
+   }
+   @endiif
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
 }
 @ROUT cammmtst `#endif`
 @endiif
