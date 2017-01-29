@@ -35640,27 +35640,35 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
       KillMMNode(mpU);
       mpU = NULL;
    }
-   mmb = NULL;
-   for (D=32; D < 512; D += D)
+
+   maxD = Mmax(mpU->kbB,mpU->mbB);
+   maxD = Mmax(maxD, mpU->nbB);
+   for (D=32; D < maxD; D += D);
+   maxD = D >> 1;  /* largest pow2 smaller than max D found in best kern */
+   printf("LOOKING FOR BEST KERNS WITH D < %d:\n", maxD);
+   mmb = mpU;
+   mmb->flag |= (1<<MMF_KCLN);
+   for (D=maxD; D >= 32; D = D>>1)
    {
-      if (D >= maxD)
-      {
-         mpD->next = mmb;
-         mmb = mpD;
-         if (D == maxD)
-            continue;
-      }
+      printf("   LOOKING FOR BEST KERNS WITH D < %d:\n", D);
       mp = CloneMMNode(mpD);
       mf = MMExpandMNK(verb, pre, 0, 0, 0, NULL, D, mp);
+      mp->flag |= (1<<MMF_KCLN);
       mp->next = mmb;
       mmb = mp;
+      printf("   FOUND ID=%d : B=(%d,%d,%d) mf=%.2f\n",  mp->ID, mp->mbB, 
+             mp->nbB, mp->kbB, mp->mflop[0]);
    }
+   printf("DONE LOOKING FOR RESTRICTED D KERNELS.\n");
+@beginskip
    if (mpU)
    {
       mpU->next = mmb;
       mmb = mpU;
    }
    mmb = ReverseMMQ(mmb);
+@endskip
+   MMWinnowByOrder(mmb, 0, 1.0);
    WriteMMFileWithPath(pre, "res", "ipASYMP.sum", mmb);
 
 @skip   tb = NULL;
@@ -37512,7 +37520,7 @@ int main(int nargs, char **args)
 @ROUT ATL_opinfo
 #include "atlas_amm.h"
 #define  ATL_DECL_ 1
-#include Mstr(Mjoin(ATLAS_PRE,amm_kern.h))
+#include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
 
 @whiledef al 1 N X
@@ -37540,7 +37548,7 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
    double spmfMM, spmfCP;
    size_t nfmblks, npmblks, nfnblks, npnblks;
    unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, vlen, flgK;
-   unsigned int sz, nmu, nnu, pnmu, pnnu, mb, pmb, nb, pnb, MB, NB, kb=K;
+   unsigned int sz, nmu, nnu, pnmu, pnnu, mb, pmb, nb, pnb, MB, NB, kb;
    const unsigned int iv=K-3;
    #ifdef TCPLX
       static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
@@ -37555,7 +37563,7 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
    icpA += icpA - 2; icpB += icpB - 2; icpC += icpC - 2;
    ATL_assert(imm < ATL_AMM_NCASES);
    #ifdef TCPLX
-      ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bN, flgK, 
+      ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bn, flgK, 
                    mu, nu, ku, vlen, k, k, k);
    #else
       ATL_AMM_info(imm, &out->amm_b0, &iptmp, &iptmp, flgK, 
@@ -37748,7 +37756,7 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
             else if (TB == AtlasTrans)
                *cp = ATL_CpyFromATg_a1[icpB];
             else
-               *cp = (TA == AtlasConjTrans) ?  
+               *cp = (TB == AtlasConjTrans) ?  
                      ATL_CpyFromAHg_a1[icpB]: ATL_CpyFromACg_a1[icpB];
          }
          else if (SCALAR_IS_NONE(alpha))
@@ -37758,7 +37766,7 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
             else if (TB == AtlasTrans)
                *cp = ATL_CpyFromATg_aN[icpB];
             else
-               *cp = (TA == AtlasConjTrans) ?  
+               *cp = (TB == AtlasConjTrans) ?  
                      ATL_CpyFromAHg_aN[icpB]: ATL_CpyFromACg_aN[icpB];
          }
          else
@@ -37768,7 +37776,7 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
             else if (TB == AtlasTrans)
                *cp = ATL_CpyFromATg_aX[icpB];
             else
-               *cp = (TA == AtlasConjTrans) ?  
+               *cp = (TB == AtlasConjTrans) ?  
                      ATL_CpyFromAHg_aX[icpB]: ATL_CpyFromACg_aN[icpB];
          }
       #else
@@ -37776,13 +37784,13 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
                ATL_CpyFromATg_a1[icpA]:ATL_CpyFromANg_a1[icpA];
          cp = (ATL_cparr_t *) &out->b2blk;
          if (SCALAR_IS_ONE(alpha))
-            *cp = (TA == AtlasNoTrans) ? 
+            *cp = (TB == AtlasNoTrans) ? 
                   ATL_CpyFromANg_a1[icpB]:ATL_CpyFromATg_a1[icpB];
          else if (SCALAR_IS_NONE(alpha))
-            *cp = (TA == AtlasNoTrans) ? 
+            *cp = (TB == AtlasNoTrans) ? 
                   ATL_CpyFromANg_aN[icpB]:ATL_CpyFromATg_aN[icpB];
          else
-            *cp = (TA == AtlasNoTrans) ? 
+            *cp = (TB == AtlasNoTrans) ? 
                   ATL_CpyFromANg_aX[icpB]:ATL_CpyFromATg_aX[icpB];
       #endif
    }

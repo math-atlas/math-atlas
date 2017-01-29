@@ -90,7 +90,7 @@ struct CPNode
    double mflop[4];
    int ID;         /* ID unique in <pre>copy.idx */
    int STGID;      /* storage ID predefined vals: [1-6] */
-   int mu, nu;     /* unrolling along M & N dims, respectively */
+   int mu, nu;     /* unrolling for C-M&N, A-K&M, B-K&N */
    int mb, nb;     /* M/N dims to use for timing */
    int vlen;       /* > 1: vector length used in copy generation */
    int kvec;       /* > 1: vec with size kvec along K dim */
@@ -3596,6 +3596,25 @@ ATL_mmnode_t *MMFindStrMatch(ATL_mmnode_t *mb, void *st)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static void MMWinnowByOrder(ATL_mmnode_t *mb, int imf, double tol)
+/*
+ * Deletes any node from mb that isn't faster than the preceeding node
+ */
+{
+   ATL_mmnode_t *mp;
+   if (!mb)
+      return;
+   if (tol == 0.0)
+      tol = 1.0;
+   mp = mb;
+   while (mp->next)
+   {
+      if (mp->mflop[imf] >= mp->next->mflop[imf]*tol)
+         mp->next = KillMMNode(mp->next);
+      else
+         mp = mp->next;
+   }
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -3892,10 +3911,11 @@ char *GetCopyGenStr(ATL_cpnode_t *p)
    {
       int sz, i;
       const char *frm;
-      sz = 17 + 20;
+      sz = 17 + 24;
       sz += strlen(p->rout);
       sz += NumDecDigits(p->kvec);
       sz += NumDecDigits(p->nu);
+      sz += NumDecDigits(p->mu);
       sz += NumDecDigits(ialp)+1;
       gs = malloc(sz*sizeof(char));
       assert(gs);
@@ -3904,8 +3924,8 @@ char *GetCopyGenStr(ATL_cpnode_t *p)
       else /* complex */
          frm = (flag&(1<<CPF_TOBLK)) ? "make gen_cA%c2blk":"make gen_cblk2A%c";
       i = sprintf(gs, frm, (flag&(1<<CPF_TRANS))?'T':'N');
-      i += sprintf(gs+i, " rt=%s kmaj=%u UR=%u alpha=%d", p->rout, p->kvec, 
-                   p->nu, ialp);
+      i += sprintf(gs+i, " rt=%s kmaj=%u UR=%u ku=%u alpha=%d", p->rout, 
+                   p->kvec, p->nu, p->mu, ialp);
       assert(i < sz);
    }
    return(gs);
@@ -4056,14 +4076,15 @@ char *GetCopyName(ATL_cpnode_t *p, int exlen)
    }
 /*
  * For A format routine naming scheme is:
- *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_aX_<nu>_<kvec>
+ *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_aX_<ku>x<nu>_<kvec>
  */
    else
    {
-      len += 11 + NumDecDigits(p->nu) + NumDecDigits(p->kvec);
+      len += 12 + NumDecDigits(p->nu) + NumDecDigits(p->mu) + 
+             NumDecDigits(p->kvec);
       sp = malloc(len+exlen);
       assert(sp);
-      i = sprintf(sp, "ATL_%ccp%s_%u_%u", pre, flgstr, p->nu, p->kvec);
+      i = sprintf(sp, "ATL_%ccp%s_%ux%u_%u", pre, flgstr, p->mu, p->nu,p->kvec);
    }
    assert(i < len);
    return(sp);
@@ -4082,11 +4103,11 @@ static int CopyAreDiff(ATL_cpnode_t *c0, ATL_cpnode_t *c1)
       return(0);   /* this may change when we actually support */
    if (c0->nu != c1->nu)
       return(1);
+   if (c0->mu != c1->mu)
+      return(1);
    if (c0->flag & (1<<CPF_CBLK))
    {
       int msk = ~((1<<CPF_ASM)|(1<<CPF_TMP));
-      if (c0->mu != c1->mu)
-         return(1);
       if ((c0->flag&msk) != (c1->flag&msk))
          return(1);
       if (c0->kvec || c1->kvec)
@@ -7457,7 +7478,8 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
    NU = ATL_iLCM(NU, ku);
    kb = mb = nb = kbB = mbB = nbB = MU = KU = NU;
    mfB = TimeMMKernel(verb, tflag, mp, pre, mbB, nbB, kb, beta, 0, -1);
-   printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mbB, nbB, kbB, mfB);
+   printf("      ID=%d : B=(%u,%u,%u) maxB=%d mf=%.2f\n", mp->ID, 
+          mbB, nbB, kbB, maxB, mfB);
 
    AGAIN:
       do   /* loop to check that best of M/N expansion improved performance */
@@ -8387,21 +8409,35 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
       cp->mu = mp->mu;
       cp->nu = mp->nu;
    }
-   else if (flag&(1<<CPF_ABLK))
+   else /* A or B */
    {
-      cp->STGID = mp->stgA;
-      cp->mb = mp->mbB;
-      cp->nb = mp->kbB;
-      cp->nu = mp->mu;
+      if (flag&(1<<CPF_ABLK))  /* A */
+      {
+         cp->STGID = mp->stgA ;
+         cp->mb = mp->mbB;
+         cp->nb = mp->kbB;
+         cp->nu = mp->mu;
+      }
+      else                      /* B */
+      {
+         cp->STGID = mp->stgB;
+         cp->mb = mp->kbB;
+         cp->nb = mp->nbB;
+         cp->nu = mp->nu;
+      }
       cp->mu = 1;
-   }
-   else /* copy for B */
-   {
-      cp->STGID = mp->stgB;
-      cp->mb = mp->kbB;
-      cp->nb = mp->nbB;
-      cp->nu = mp->nu;
-      cp->mu = 1;
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC))  /* KVEC only cleans to vlen */
+         cp->mu = mp->vlen;
+      else /* For M/N-VEC, see if we need zero-padded copy support */
+      {
+         const unsigned int kr = mp->kbB % mp->ku;
+         if (kr)
+            cp->mu = mp->ku;
+         #define TMPFLG ((1<<MMF_KCLN)|(1<<MMF_KRUNTIME))
+         else if (((mp->flag) & TMPFLG) == TMPFLG)
+            cp->mu = mp->ku;
+         #undef TMPFLG
+      }
    }
    return(cp);
 }
@@ -8451,6 +8487,7 @@ int *MMGetCopyIdxsFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
       {
          fprintf(stderr, "CANNOT FIND COPY FOR:\n");
          PrintCPLine(stderr, cm);
+         PrintMMLine(stderr, mp);
          fprintf(stderr, "\nFAILING LIST: %p\n", cb);
          PrintCPNodes(stderr, cb);
          assert(cp);

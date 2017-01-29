@@ -60,7 +60,7 @@
 # TOBLK: Mandatory. 
 #         0: copies from STGID block storage to column-major
 #         1: copies from column-major to STGID block storage
-# MU/NU: [0] unrolling along rows/cols
+# MU/NU: [0] unrolling along 1st & 2nd dim (MU=KU for A/B!);
 # TRANS: [n] Needed only for A/B storage, indicates transpose being done:
 #    N: cols of matrix stored contiguously, rows strided (col-major)
 #    T: rows of matrix stored contiguously, cols strided (row-major)
@@ -1308,34 +1308,48 @@ void GenMasterFiles(char pre, char *path)
       char *sp;
       ATL_cpnode_t *cb;
       FILE *fp;
-      int k;
+      const int NC = (pre == 'z' || pre == 'c') ? 2 : 1;
+      int k, ic;
 
       sp = CopyFlag2Str(flags[i]);
       k = sprintf(fn, "res/%ccpyPERF_%s.CPS", pre, sp);
       assert(k < L);
       cb = ReadCPFile(fn);
       assert(cb);
-      k = sprintf(fn, "%s/atlas_%c%s.h", path, pre, sp);
-      assert(k < L);
-      fp = fopen(fn, "w");
-      assert(fp);
-      sp = fn + pL;
-      while (*sp == '/')
-         sp++;
-      while (*sp != '.')
+      for (ic=0; ic < NC; ic++)
       {
-         *sp = toupper(*sp);
-         sp++;
+         if (ic)
+         {
+            ATL_cpnode_t *cp;
+            sp = CopyFlag2Str(flags[i]|(1<<CPF_CONJ));
+            for (cp=cb; cp; cp = cp->next)
+            {
+               cp->flag |= 1<<CPF_CONJ;
+               ConjCopyName(cp);
+            }
+         }
+         k = sprintf(fn, "%s/atlas_%c%s.h", path, pre, sp);
+         assert(k < L);
+         fp = fopen(fn, "w");
+         assert(fp);
+         sp = fn + pL;
+         while (*sp == '/')
+            sp++;
+         while (*sp != '.')
+         {
+            *sp = toupper(*sp);
+            sp++;
+         }
+         *sp++ = '_';
+         *sp++ = 'H';
+         *sp = '\0';
+         sp = fn + pL + 1;
+         fprintf(fp, "#ifndef %s\n", sp);
+         fprintf(fp, "   #define %s 1\n\n", sp);
+         DoMaster(pre, fp, cb);
+         fprintf(fp, "#endif /* end multiple inclusion guard */\n");
+         fclose(fp);
       }
-      *sp++ = '_';
-      *sp++ = 'H';
-      *sp = '\0';
-      sp = fn + pL + 1;
-      fprintf(fp, "#ifndef %s\n", sp);
-      fprintf(fp, "   #define %s 1\n\n", sp);
-      DoMaster(pre, fp, cb);
-      fprintf(fp, "#endif /* end multiple inclusion guard */\n");
-      fclose(fp);
       KillAllCPNodes(cb);
    }
    free(fn);
@@ -2307,6 +2321,19 @@ ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
       }
       last->next = cb;
       cb = b;
+      @BEGINSKIP
+      if (pre == 'z' || pre == 'c')  /* need CONJ dups too! */
+      {
+         last = b = CloneCPQueue(cb);
+         for (cp=b; cp; cp = cp->next)
+         {
+            cp->flag |= 1<<CPF_CONJ;
+            last = cp;
+         }
+         last->next = cb;
+         cb = b;
+      }
+      @ENDSKIP
    }
    cbC = CopyNoRep(cbC, minSz);
    if (cb)
