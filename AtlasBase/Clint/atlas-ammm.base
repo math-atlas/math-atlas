@@ -607,6 +607,17 @@ struct opinfo
 
 enum ATL_AMMALG {ATL_amm1b, ATL_ammrkK, ATL_NMK};
 
+void Mjoin(PATL,geipinfo)
+   (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta);
+
+void Mjoin(PATL,geipinfo_pop)
+   (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta, 
+    size_t nfmblks, size_t npmblks, ATL_UINT mb, ATL_UINT pmb,
+    size_t nfnblks, size_t npnblks, ATL_UINT nb, ATL_UINT pnb);
 static int Mjoin(PATL,geGetAmmmIndx)(size_t M, size_t N, size_t K)
 {
    ATL_assert(0);
@@ -16076,32 +16087,23 @@ int Mjoin(PATL,ammm_IP)
          return(0);
    }
    #endif
-#if 0
-/*
- * 1-block special case code can return w/o doing op if it thinks
- * rank-K would be faster
- */
-   if (M <= ATL_rkAMM_LASTMB && N <= ATL_rkAMM_LASTNB && K <= ATL_rkAMM_LASTKB)
-      if (!Mjoin(PATL,ammm_1b)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                               beta, C, ldc))
-         return(0);
-#else
 /*
  * Rank-K can fail to allocate space, so return success/failure
  */
+   #if 0
    if (K > 2 && K <= ATL_VWopgen_MAX_KB)
       return(Mjoin(PATL,ammm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc));
-   else 
-      return(1); // until rank-K works
-#endif
-#if 0
+   #endif
 /*
  * Handle case that is really an inner product shape (M<=MB, N<=NB, large K)
  * This case not allowed to fail since it requires only 3*NB^2 workspace.
  */
-   if (M <= ATL_geAMM_LASTMB && N <= ATL_geAMM_LASTNB)
+#if 0
+   if (M <= ATL_VWipgen_LASTMB && N <= ATL_VWipgen_LASTNB)
       return(Mjoin(PATL,ammm_IP)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+   else 
+      return(1); // until rank-K works
                                  beta, C, ldc));
 /*
  * If B/C have only one column panel, call special low-workspace (3NB^3)
@@ -16110,16 +16112,18 @@ int Mjoin(PATL,ammm_IP)
    if (N <= ATL_geAMM_LASTNB)
       return(Mjoin(PATL,ammm_tN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                  beta, C, ldc));
+#endif
 /*
  * Next two loop orderings are general case, so use whichever uses least
  * workspace
  */
+   #if 0
    if (M > N)
       return(Mjoin(PATL,ammmKMNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc));
+   #endif
    return(Mjoin(PATL,ammmKNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
                                beta, C, ldc));
-#endif
 }
 @ROUT ATL_cammm
 {
@@ -28484,9 +28488,7 @@ int Mjoin(PATL,ammmKNMK)
    int i, kb, extra;
    ipinfo_t ip;
 
-   i = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
-   Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, K, lda, ldb, ldc,
-                               alpha, beta);
+   Mjoin(PATL,geipinfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, bet);
 /*
  * Figure out a partition of K that should allow malloc to succeed. 
  * In this routine, we need to allocate space for a block of C,
@@ -28543,8 +28545,7 @@ int Mjoin(PATL,ammmKNMK)
 
       for (k=Kp; k < K; k += Kp)
       {
-         Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, Kp, lda, ldb, ldc,
-                                     alpha, bet);
+         Mjoin(PATL,geipinfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, bet);
          Mjoin(PATL,iploopsNMK)(&ip, 0, 0, A, B, C, 1|2|4, a, b, 
                                 rC, c, bet, ip.blk2c);
          #ifdef TCPLX
@@ -28556,8 +28557,7 @@ int Mjoin(PATL,ammmKNMK)
          B += incBk;
       }
       k = K - k + Kp;
-      Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, k, lda, ldb, ldc,
-                                  alpha, bet);
+      Mjoin(PATL,geipinfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, bet);
       Mjoin(PATL,iploopsNMK)(&ip, 0, 0, A, B, C, 1|2|4, a, b, 
                              rC, c, bet, ip.blk2c);
    }
@@ -28571,7 +28571,7 @@ int Mjoin(PATL,ammmKNMK)
 @ROUT ATL_ammmKMNK
 #include "atlas_misc.h"
 #include "atlas_amm.h"
-#include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+//#include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
 
 int Mjoin(PATL,ammmKMNK)
 (
@@ -28603,9 +28603,7 @@ int Mjoin(PATL,ammmKMNK)
    int i, kb, extra;
    ipinfo_t ip;
 
-   i = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
-   Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, K, lda, ldb, ldc,
-                               alpha, beta);
+   Mjoin(PATL,geipinfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
 /*
  * Figure out a partition of K that should allow malloc to succeed.
  * In this routine, we need to allocate space for a block of C,
@@ -28660,8 +28658,7 @@ int Mjoin(PATL,ammmKMNK)
 
       for (k=Kp; k < K; k += Kp)
       {
-         Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, Kp, lda, ldb, ldc,
-                                     alpha, bet);
+         Mjoin(PATL,geipinfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, bet);
          Mjoin(PATL,iploopsMNK)(&ip, 0, 0, A, B, C, 1|2|8, a, b,
                                 rC, c, bet, ip.blk2c);
          #ifdef TCPLX
@@ -28673,8 +28670,7 @@ int Mjoin(PATL,ammmKMNK)
          B += incBk;
       }
       k = K - k + Kp;
-      Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, k, lda, ldb, ldc,
-                                  alpha, bet);
+      Mjoin(PATL,geipinfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, bet);
       Mjoin(PATL,iploopsMNK)(&ip, 0, 0, A, B, C, 1|2|8, a, b,
                              rC, c, bet, ip.blk2c);
    }
@@ -37525,13 +37521,14 @@ int main(int nargs, char **args)
    KillAllMMNodes(mb);
    return(0);
 }
-@ROUT ATL_opinfo
+@ROUT ATL_opinfo ATL_ipinfo
 #include "atlas_amm.h"
 @ROUT ATL_ipinfo 
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #define  ATL_DECL_ 1
 #include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
-ATL_opinfo 
+#undef ATL_DECL_
+@ROUT ATL_opinfo 
 #define  ATL_DECL_ 1
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
@@ -37847,23 +37844,24 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
    #ifdef TCPLX
       static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
    #else
-      ATL_iptr_t iptmp
+      ATL_iptr_t iptmp;
       #define CONE ATL_rone
    #endif
    ATL_UINT vlen, mu, nu, ku, kb, nkblks, KB0, kb0, szC; 
-   ATL_UINT imm, ik1, icpA, icpB, icpC;
+   ATL_UINT imm, ik1, icpA, icpB, icpC, flgK, kbmin, k;
    float spmf;
 
-   ATL_GetVWipgenInfo(idx, spmf, MB, NB, kb, imm, icpA, icpB, icpC, k, k, k);
+   ATL_GetVWipgenInfo(idx, spmf, k, k, kb, imm, icpA, icpB, icpC, k, 
+                      kbmin, k);
    imm--;
    icpA += icpA - 2;
    icpB += icpB - 2;
    icpC += icpC - 2;
    #ifdef TCPLX
-      ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bn, flgK,
+      ATL_AMM_info(imm, &ip->amm_b0, &ip->amm_b1, &ip->amm_bn, flgK,
                    mu, nu, ku, vlen, k, k, ik1);
    #else
-      ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &iptmp, flgK,
+      ATL_AMM_info(imm, &ip->amm_b0, &ip->amm_b1, &iptmp, flgK,
                    mu, nu, ku, vlen, k, k, ik1);
    #endif
    ip->mu = mu;
@@ -37914,8 +37912,7 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
          {
             if (ATL_AMM_KRUNTIME(idx))
             {
-               ATL_CUINT min=ATL_AMM_KBMINs[idx];
-               if ((min && KB0 < min) || (KB0/ku)*ku != KB0)
+               if ((kbmin && KB0 < kbmin) || (KB0/ku)*ku != KB0)
                   ip->ammK1_b0 = NULL;
             }
             else
@@ -37925,8 +37922,7 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
       else if (ATL_AMM_KRUNTIME(idx))
       {
          KB0 = ((kb0+ku-1)/ku)*ku;
-         ATL_CUINT min=ATL_AMM_KBMINs[idx];
-         if ((min && kb0 < min) || KB0-kb0 > 3)
+         if ((kbmin && kb0 < kbmin) || KB0-kb0 > 3)
             ip->ammK1_b0 = NULL;
       }
       else if (kb0+3 < kb) /* comp-time K works only if we pad to kb! */
@@ -37935,9 +37931,9 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
       {
          KB0 = ATL_AMM_KMAJOR(flgK) ? KB0 : kb0;
          #ifdef TCPLX
-            ATL_AMM_kinfo(ik1, &out->ammK1_b0, &out->ammK1_b1, &out->ammK1_bn)
+            ATL_AMM_kinfo(ik1, &ip->ammK1_b0, &ip->ammK1_b1, &ip->ammK1_bn)
          #else
-            ATL_AMM_info(ik1, &out->amm_b0, &out->amm_b1, &iptmp);
+            ATL_AMM_kinfo(ik1, &ip->amm_b0, &ip->amm_b1, &iptmp);
          #endif
       }
       else
@@ -38014,7 +38010,7 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
                ATL_CpyFromATg_aX[icpA] : ATL_CpyFromANg_aX[icpA];
    }
 
-   cp = (ATL_cparr_t *) &(out->b2blk);
+   cp = (ATL_cparr_t *) &(ip->b2blk);
    if (SCALAR_IS_NONE(ip->alpB))
    {
       #ifdef TCPLX
@@ -38052,13 +38048,13 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
             ATL_CpyFromANg_aX[icpB] : ATL_CpyFromATg_aX[icpB];
    }
 
-   cp = (ATL_cparr_t *) &(out->blk2c_b1);
+   cp = (ATL_cparr_t *) &(ip->blk2c_b1);
    if (SCALAR_IS_ONE(ip->alpC))
    {
       *cp = ATL_CpyIntoCNg_a1b1[icpC];
-      cp = (ATL_cparr_t *) &(out->blk2c);
+      cp = (ATL_cparr_t *) &(ip->blk2c);
       if (SCALAR_IS_NONE(beta))
-         *cp = ATL_CpyIntoCNg_a1bn[icpC];
+         *cp = ATL_CpyIntoCNg_a1bN[icpC];
       else if (SCALAR_IS_ONE(beta))
          ip->blk2c = ip->blk2c_b1;
       else
@@ -38068,9 +38064,9 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
    else if (SCALAR_IS_NONE(ip->alpC))
    {
       *cp = ATL_CpyIntoCNg_aNb1[icpC];
-      cp = (ATL_cparr_t *) &(out->blk2c);
+      cp = (ATL_cparr_t *) &(ip->blk2c);
       if (SCALAR_IS_NONE(beta))
-         *cp = ATL_CpyIntoCNg_aNbn[icpC];
+         *cp = ATL_CpyIntoCNg_aNbN[icpC];
       else if (SCALAR_IS_ONE(beta))
          ip->blk2c = ip->blk2c_b1;
       else
@@ -38080,9 +38076,9 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
    else /* alphaC = X */
    {
       *cp = ATL_CpyIntoCNg_aXb1[icpC];
-      cp = (ATL_cparr_t *) &(out->blk2c);
+      cp = (ATL_cparr_t *) &(ip->blk2c);
       if (SCALAR_IS_NONE(beta))
-         *cp = ATL_CpyIntoCNg_aXbn[icpC];
+         *cp = ATL_CpyIntoCNg_aXbN[icpC];
       else if (SCALAR_IS_ONE(beta))
          ip->blk2c = ip->blk2c_b1;
       else
@@ -38139,7 +38135,9 @@ void Mjoin(PATL,geipinfo)
 )
 {
    size_t nfmblks, npmblks, nfnblks, npnblks;
-   ATL_UINT mb, pmb, nb, pnb, mu, nu, ku, imm, idx=ATL_VWipgen_NCASES-1;
+   const ATL_iptr_t *ipp;
+   ATL_UINT mb, pmb, nb, pnb, mu, nu, nmu, pnmu, nnu, pnnu;
+   ATL_UINT MB, NB, k, imm, idx=ATL_VWipgen_NCASES-1;
    float spf;
    #if ATL_VWipgen_NCASES > 1
    if (K < ATL_VWipgen_MAX_KB)
@@ -38149,6 +38147,52 @@ void Mjoin(PATL,geipinfo)
             break;
    }
    #endif
-   ATL_GetVWipgenInfo(idx, spf, MB, NB, KB, imm, k, k, k, k, k, k);
-   ATL_AMM_iinfo(imm, k, mu, nu, ku, k, k, k, k);
+   ATL_GetVWipgenInfo(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
+   ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
+   ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
+   if (MB > M)
+   {
+      npmblks = 1;
+      nfmblks = 0;
+      pnmu = nmu = (M+mu-1)/mu;
+      mb = pmb = nmu * mu;
+   }
+   else
+   {
+      nfmblks = M / MB;
+      nmu = MB / mu;
+      pmb = M - nfmblks*MB;
+      if (pmb)
+      {
+         npmblks = 1;
+         pnmu = (pmb+mu-1) / mu;
+         pmb = pnmu * mu;
+      }
+      else
+         npmblks = pnmu = pmb = 0;
+   }
+   if (NB > N)
+   {
+      npnblks = 1;
+      nfnblks = 0;
+      pnnu = nnu = (N+nu-1)/nu;
+      nb = pnb = nnu * nu;
+   }
+   else
+   {
+      nfnblks = N / NB;
+      nnu = NB / nu;
+      pnb = N - nfnblks*MB;
+      if (pnb)
+      {
+         npnblks = 1;
+         pnnu = (pnb+nu-1) / nu;
+         pnb = pnnu * nu;
+      }
+      else
+         npmblks = pnmu = pmb = 0;
+   }
+   Mjoin(PATL,geipinfo_pop)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha,
+                            beta, nfmblks, npmblks, mb, pmb, nfnblks,
+                            npnblks, nb, pnb);
 }
