@@ -555,6 +555,7 @@ struct ipinfo
    uint szC;                /* size of real portion of C workspace */
    uint pszA, szA;          /* size of real portion of part & full blks of A */
    uint pszB, szB;          /* size of real portion of part & full blks of B */
+   ushort exsz;             /* extra bytes to alloc past end */
    ushort mF, nF;           /* size of final part of mat before copy */
    ushort mb, pmb, nb, pnb; /* full & partial blk factors for M & N */
    ushort kb;               /* sz of all K blks except first */
@@ -16117,11 +16118,9 @@ int Mjoin(PATL,ammm_IP)
  * Next two loop orderings are general case, so use whichever uses least
  * workspace
  */
-   #if 0
    if (M > N)
       return(Mjoin(PATL,ammmKMNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc));
-   #endif
    return(Mjoin(PATL,ammmKNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
                                beta, C, ldc));
 }
@@ -28504,8 +28503,7 @@ int Mjoin(PATL,ammmKNMK)
  * Set up extra to have all sizes that are independent of K.
  * sz[A,B] will be multiplied by number of K blks to get final answer.
  */
-   extra = (ip.mu<<1)*ip.nu;
-   extra = ATL_MulBySize(ip.szC+extra) + 3 * ATL_Cachelen; 
+   extra = ATL_MulBySize(ip.szC+ip.exsz) + 3 * ATL_Cachelen; 
    szA = ip.szA*ip.nfmblks + ip.pszA*ip.npmblks;
    szB = ip.szB;
    while(1)
@@ -28619,8 +28617,7 @@ int Mjoin(PATL,ammmKMNK)
  * Set up extra to have all sizes that are independent of K.
  * sz[A,B] will be multiplied by number of K blks to get final answer.
  */
-   extra = (ip.mu<<1)*ip.nu;
-   extra = ATL_MulBySize(ip.szC+extra) + 3 * ATL_Cachelen;
+   extra = ATL_MulBySize(ip.szC+ip.exsz) + 3 * ATL_Cachelen;
    szB = ip.szB*ip.nfnblks + ip.pszB*ip.npnblks;
    szA = ip.szA;
    while(1)
@@ -37873,6 +37870,10 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
    ip->ldb = ldb;
    ip->ldc = ldc;
 
+   ip->nfmblks = nfmblks;
+   ip->npmblks = npmblks;
+   ip->nfnblks = nfnblks;
+   ip->npnblks = npnblks;
    ip->mb = mb;
    ip->pmb = pmb;
    ip->nmu = mb / mu;
@@ -37898,19 +37899,18 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
  */
    nkblks = K / kb;
    KB0 = kb0 = K - nkblks*kb;
-   if (kb0)  /* K not a multiple of kb, could have problem */
    ip->ammK1_b0 = ip->amm_b0;  /* hope: normal kerns for K-clean */
    #ifdef TCPLX
       ip->ONE = CONE;
    #endif
    if (kb0)  /* K not a multiple of kb, need initial block */
    {
-      if (ATL_AMM_KMAJOR(idx))  
+      if (ATL_AMM_KMAJOR(flgK))  
       {
          KB0 = ((kb0+vlen-1)/vlen)*vlen; /* k-maj req K mul of vlen */
          if (KB0 != kb)
          {
-            if (ATL_AMM_KRUNTIME(idx))
+            if (ATL_AMM_KRUNTIME(flgK))
             {
                if ((kbmin && KB0 < kbmin) || (KB0/ku)*ku != KB0)
                   ip->ammK1_b0 = NULL;
@@ -37919,7 +37919,7 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
                ip->ammK1_b0 = NULL;
          }
       }
-      else if (ATL_AMM_KRUNTIME(idx))
+      else if (ATL_AMM_KRUNTIME(flgK))
       {
          KB0 = ((kb0+ku-1)/ku)*ku;
          if ((kbmin && kb0 < kbmin) || KB0-kb0 > 3)
@@ -37931,7 +37931,7 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
       {
          KB0 = ATL_AMM_KMAJOR(flgK) ? KB0 : kb0;
          #ifdef TCPLX
-            ATL_AMM_kinfo(ik1, &ip->ammK1_b0, &ip->ammK1_b1, &ip->ammK1_bn)
+            ATL_AMM_kinfo(ik1, &ip->ammK1_b0, &ip->ammK1_b1, &ip->ammK1_bn);
          #else
             ATL_AMM_kinfo(ik1, &ip->amm_b0, &ip->amm_b1, &iptmp);
          #endif
@@ -37956,6 +37956,7 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
    }
    ip->KB0 = KB0;
    ip->kb0 = kb0;
+   ip->exsz = (mu+mu)*nu;
    szC = ((mu*nu+vlen-1)/vlen)*vlen;
    szC *= ip->nnu * ip->nmu;
    ip->szC = szC;
@@ -38159,6 +38160,7 @@ void Mjoin(PATL,geipinfo)
    }
    else
    {
+      mb = MB;
       nfmblks = M / MB;
       nmu = MB / mu;
       pmb = M - nfmblks*MB;
@@ -38180,6 +38182,7 @@ void Mjoin(PATL,geipinfo)
    }
    else
    {
+      nb = NB;
       nfnblks = N / NB;
       nnu = NB / nu;
       pnb = N - nfnblks*MB;
