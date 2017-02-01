@@ -7459,8 +7459,8 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-#define FSTR 1.01  /* must be 1% faster to be allowed to expand blksz */
-#define NFUT 200   /* max # of futile expansion tries */
+#define FSTR 1.005 /* must be 0.5% faster to be allowed to expand blksz */
+#define NFUT 80    /* max # of futile expansion tries */
 double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
                    int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int),
                    const int maxB, ATL_mmnode_t *mp)
@@ -7598,8 +7598,6 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
    mp->mflop[0] = mfB;
    return(mfB);
 }
-#undef FSTR
-#undef NFUT
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int MMExpandK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp, 
@@ -7682,7 +7680,7 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    const unsigned int mu=mp->mu, nu=mp->nu, MB0=mp->mbB, NB0=mp->nbB;
    unsigned int MU, NU;
    int kb=mp->kbB, mbB, nbB, mb, nb;
-   int FASTER=0;
+   int FASTER=0, nfut;
    double mfB;
 
    mb = nb = mbB = nbB = MU = NU = ATL_iLCM(mu, nu);
@@ -7690,6 +7688,7 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mbB, nbB, kb, mfB);
 
    AGAIN:
+      nfut = 0;
       do   /* loop to check that best of M/N expansion improved performance */
       {
          double mfM, mfN, mf=0.0;
@@ -7705,29 +7704,32 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          {
             mf = mfN;
             nb = nbN;
-            if (mfN > mfB)
+            if (mfN > FSTR*mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
                mfB = mfN;
                FASTER = 1;
+               nfut = 0;
             }
          }
          else
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= mfB)
+            if (mfM >= FSTR*mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
                mfB = mfM;
                FASTER = 1;
+               nfut = 0;
             }
          }
          if (!FASTER)
          {
-            FASTER = (mf*1.03 > mfB);
+            nfut++;
+            FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
             printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
          }
       }
@@ -7776,7 +7778,7 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    unsigned int MU, NU;
    const int NK=(tflag>>31)&1;
    int kb=mp->kbB, mbB, nbB, kbB, mb, nb;
-   int FASTER=0;
+   int FASTER=0, nfut=0;
    double mfB;
 
    if (NK)
@@ -7813,31 +7815,34 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          {
             mf = mfN;
             nb = nbN;
-            if (mfN > mfB)
+            if (mfN > FSTR*mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
                mfB = mfN;
                kbB = kbn;
                FASTER = 1;
+               nfut = 0;
             }
          }
          else
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= mfB)
+            if (mfM >= FSTR*mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
                mfB = mfM;
                kbB = kbm;
                FASTER = 1;
+               nfut = 0;
             }
          }
          if (!FASTER)
          {
-            FASTER = (mf*1.03 > mfB);
+            nfut++;
+            FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
             printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
          }
       }
@@ -7866,6 +7871,8 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    return(mfB);
 }
 
+#undef FSTR
+#undef NFUT
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int MMKernCanHandleCase(ATL_mmnode_t *mp, int mb, int nb, int kb)
