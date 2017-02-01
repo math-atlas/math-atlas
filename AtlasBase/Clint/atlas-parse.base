@@ -7459,6 +7459,8 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+#define FSTR 1.01  /* must be 1% faster to be allowed to expand blksz */
+#define NFUT 200   /* max # of futile expansion tries */
 double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
                    int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int),
                    const int maxB, ATL_mmnode_t *mp)
@@ -7473,7 +7475,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
    const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
    unsigned int MU, NU, KU;
    int mbB, nbB, kbB, mb, nb, kb;
-   int FASTER=0;
+   int FASTER=0, nfut;
    double mfB;
 
    NU = ATL_iLCM(mu, nu);
@@ -7484,6 +7486,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
           mbB, nbB, kbB, maxB, mfB);
 
    AGAIN:
+      nfut = 0;
       do   /* loop to check that best of M/N expansion improved performance */
       {
          double mfM, mfN, mfK, mf;
@@ -7533,42 +7536,46 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          {
             mf = mfK;
             kb = kbN;
-            if (mfK > mfB)
+            if (mfK >= FSTR*mfB)
             {
                printf(" --> INC KB TO %u!\n", kbN);
                kbB = kbN;
                mfB = mfK;
                FASTER = 1;
+               nfut = 0;
             }
          }
          else if (mfN >= mfM)
          {
             mf = mfN;
             nb = nbN;
-            if (mfN > mfB)
+            if (mfN >= FSTR*mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
                mfB = mfN;
                FASTER = 1;
+               nfut = 0;
             }
          }
          else
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= mfB)
+            if (mfM >= FSTR*mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
                mfB = mfM;
                FASTER = 1;
+               nfut = 0;
             }
          }
          if (!FASTER)
          {
-            FASTER = (mf*1.03 > mfB);
+            FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
             printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
+            nfut++;
          }
       }
       while (FASTER);
@@ -7591,6 +7598,8 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
    mp->mflop[0] = mfB;
    return(mfB);
 }
+#undef FSTR
+#undef NFUT
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int MMExpandK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp, 
