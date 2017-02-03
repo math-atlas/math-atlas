@@ -7459,8 +7459,16 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-#define FSTR 1.005 /* must be 0.5% faster to be allowed to expand blksz */
-#define NFUT 80    /* max # of futile expansion tries */
+#define NFUT  200  /* max # of futile expansion tries */
+#define FSTR0 1.0
+#define BLK1  60
+#define FSTR1 1.005 /* 0.5% faster before expanding blk larger than BLK1 */
+#define BLK2  120
+#define FSTR2 1.010 /* 1.0% faster before expanding blk larger BLK2 */
+#define BLK3  240
+#define FSTR3 1.015 /* 1.5% faster before expanding blk larger than BLK3 */
+#define FSTR4 1.018 /* 1.8% faster before expanding blk larger than BLK4 */
+
 double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
                    int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int),
                    const int maxB, ATL_mmnode_t *mp)
@@ -7492,7 +7500,16 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          double mfM, mfN, mfK, mf;
          int mbN=mb+MU, nbN=nb+NU, kbN=kb+KU;
          int MOK, NOK, KOK;
+         double fstrK, fstrN, fstrM;
 
+         @whiledef d K N M
+         if (@low@(d)b <= BLK1)
+            fstr@(d) = FSTR0;
+         else if (@low@(d)b <= BLK2)
+            fstr@(d) = FSTR2;
+         else
+            fstr@(d) = (@low@(d)b <= BLK3) ? FSTR3 : FSTR4;
+         @endwhile
          if (sz && wrkSetOK)
          {
             MOK = wrkSetOK(sz, mp, mbN, nb, kb);
@@ -7532,11 +7549,11 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          }
 
          FASTER = 0;
-         if (mfK >= mfM && mfK >= mfN)
+         if (mfK*fstrM >= mfM*fstrK && mfK*fstrN >= mfN*fstrK)
          {
             mf = mfK;
             kb = kbN;
-            if (mfK >= FSTR*mfB)
+            if (mfK >= fstrK*mfB)
             {
                printf(" --> INC KB TO %u!\n", kbN);
                kbB = kbN;
@@ -7545,11 +7562,11 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
                nfut = 0;
             }
          }
-         else if (mfN >= mfM)
+         else if (mfN*fstrM >= mfM*fstrN)
          {
             mf = mfN;
             nb = nbN;
-            if (mfN >= FSTR*mfB)
+            if (mfN >= fstrN*mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
@@ -7562,7 +7579,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= FSTR*mfB)
+            if (mfM >= fstrN*mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
@@ -7574,7 +7591,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          if (!FASTER)
          {
             FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
-            printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
+            printf(" --> SLOWDOWN of %.4f\n", mf/mfB);
             nfut++;
          }
       }
@@ -7598,6 +7615,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
    mp->mflop[0] = mfB;
    return(mfB);
 }
+
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int MMExpandK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp, 
@@ -7691,8 +7709,17 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
       nfut = 0;
       do   /* loop to check that best of M/N expansion improved performance */
       {
-         double mfM, mfN, mf=0.0;
+         double mfM, mfN, mf=0.0, fstrM, fstrN;
          int mbN=mb+MU, nbN=nb+NU;
+
+         @whiledef d N M
+         if (@low@(d)bN <= BLK1)
+            fstr@(d) = FSTR0;
+         else if (@low@(d)bN <= BLK2)
+            fstr@(d) = FSTR2;
+         else
+            fstr@(d) = (@low@(d)bN <= BLK3) ? FSTR3 : FSTR4;
+         @endwhile
 
          mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
          printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kb,mfN);
@@ -7700,11 +7727,11 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kb,mfM);
 
          FASTER = 0;
-         if (mfN >= mfM)
+         if (mfN*fstrM >= mfM*fstrN)
          {
             mf = mfN;
             nb = nbN;
-            if (mfN > FSTR*mfB)
+            if (mfN > fstrN*mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
@@ -7717,7 +7744,7 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= FSTR*mfB)
+            if (mfM >= fstrM*mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
@@ -7730,7 +7757,7 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          {
             nfut++;
             FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
-            printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
+            printf(" --> SLOWDOWN of %.4f\n", mf/mfB);
          }
       }
       while (FASTER);
@@ -7801,21 +7828,29 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    AGAIN:
       do   /* loop to check that best of M/N expansion improved performance */
       {
-         double mfM, mfN, mf=0.0;
+         double mfM, mfN, mf=0.0, fstrM, fstrN;
          int mbN=mb+MU, nbN=nb+NU;
          const unsigned int kbm = (NK) ? kb : mbN, kbn = (NK) ? nbN : kb;
 
+         @whiledef d N M
+         if (@low@(d)bN <= BLK1)
+            fstr@(d) = FSTR0;
+         else if (@low@(d)bN <= BLK2)
+            fstr@(d) = FSTR2;
+         else
+            fstr@(d) = (@low@(d)bN <= BLK3) ? FSTR3 : FSTR4;
+         @endwhile
          mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kbn, beta, 0, -1);
          printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kbn,mfN);
          mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kbm, beta, 0, -1);
          printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kbm,mfM);
 
          FASTER = 0;
-         if (mfN >= mfM)
+         if (mfN*fstrM >= mfM*fstrN)
          {
             mf = mfN;
             nb = nbN;
-            if (mfN > FSTR*mfB)
+            if (mfN >= fstrN*mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
@@ -7829,7 +7864,7 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= FSTR*mfB)
+            if (mfM >= fstrM*mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
@@ -7843,7 +7878,7 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          {
             nfut++;
             FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
-            printf(" --> SLOWDOWN of %.2f\n", mf/mfB);
+            printf(" --> SLOWDOWN of %.4f\n", mf/mfB);
          }
       }
       while (FASTER);
@@ -7871,8 +7906,15 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    return(mfB);
 }
 
-#undef FSTR
 #undef NFUT
+#undef BLK1
+#undef BLK2
+#undef BLK3
+#undef FSTR0
+#undef FSTR1
+#undef FSTR2
+#undef FSTR3
+#undef FSTR4
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
 int MMKernCanHandleCase(ATL_mmnode_t *mp, int mb, int nb, int kb)
@@ -8480,7 +8522,7 @@ ATL_cpnode_t *GetAllCopyNodesFromMM(int flag, ATL_mmnode_t *mb)
 /* procedure @(ip) */
 int *MMGetCopyIdxsFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
 /*
- * RETURNS: integer array of indices (starting from 1) in cb, 1st elt is len
+ * RETURNS: integer array of indices (starting from 0) in cb, 1st elt is len
  */
 {
    ATL_mmnode_t *mp;
@@ -8498,7 +8540,7 @@ int *MMGetCopyIdxsFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
 
       cm = GetCopyNodeFromMM(flag, mp);
       assert(cm);
-      for (id=1,cp=cb; cp; cp = cp->next, id++)
+      for (id=0,cp=cb; cp; cp = cp->next, id++)
          if (!CopyAreDiff(cp, cm))
             break;
       if (!cp)

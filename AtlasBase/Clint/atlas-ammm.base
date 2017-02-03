@@ -561,9 +561,9 @@ struct ipinfo
    ushort kb;               /* sz of all K blks except first */
    ushort kb0;              /* K%kb or if zero, kb */
    ushort KB0;              /* if amm k-vec, ((kb0+ku-1)/ku)*ku, else kb0 */
-   uchar nmu, nnu;          /* # of unrollings along each dim */
-   uchar pnmu, pnnu;        /* # of unrollings in partial blocks */
-   uchar nmuF, nnuF;        /* # of unrolling for final (remainder) block */
+   ushort nmu, nnu;         /* # of unrollings along each dim */
+   ushort pnmu, pnnu;       /* # of unrollings in partial blocks */
+   ushort nmuF, nnuF;       /* # of unrolling for final (remainder) block */
    uchar mu, nu, ku;        /* unrolling for each dim used by amm */
    uchar vlen;              /* vector length (needed for KVEC kerns) */
 };
@@ -596,9 +596,9 @@ struct opinfo
    ushort mb, pmb, nb, pnb; /* full & partial blk factors for M & N */
    ushort kb;               /* K from original problem */
    ushort KB;               /* ((kb+ku-1)/vl)*vl if kvec, else kb */
-   uchar nmuF, nnuF;        /* # of unrollings in final M/N blocks */
-   uchar nmu, nnu;          /* # of unrollings along each dim */
-   uchar pnmu, pnnu;        /* # of unrollings in partial blocks */
+   ushort nmuF, nnuF;       /* # of unrollings in final M/N blocks */
+   ushort nmu, nnu;         /* # of unrollings along each dim */
+   ushort pnmu, pnnu;       /* # of unrollings in partial blocks */
    uchar mu, nu, ku;        /* unrolling for each dim used by amm */
    uchar vlen;              /* vector length (needed for KVEC kerns) */
 };
@@ -16091,7 +16091,7 @@ int Mjoin(PATL,ammm_IP)
 /*
  * Rank-K can fail to allocate space, so return success/failure
  */
-   #if 0
+   #if 1
    if (K > 2 && K <= ATL_VWopgen_MAX_KB)
       return(Mjoin(PATL,ammm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc));
@@ -37167,6 +37167,7 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
       fprintf(fpout, "#define ATL_AMM_NBIT_%s %u\n", VN[i], nbits[i]);
    }
    fprintf(fpout, "\n");
+   fprintf(fpout, "#define ATL_AMM_ML ATL_%cAMM_ML\n", pre);
    fprintf(fpout, 
            "#ifndef ATL_DECL_\n   extern const ATL_iptr_t ATL_AMM_ML[%u];\n",
            N*(3+nint));
@@ -37216,7 +37217,7 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
             fprintf(fpout, "   v_ >>= %u; \\\n", nb);
       }
       else
-         fprintf(fpout, "   %s_ = 0; \\\n", VN[i]);
+         fprintf(fpout, "   %s_ = ATL_AMM_MIN_%s; \\\n", VN[i], VN[i]);
    }
    fprintf(fpout, "} /* end ATL_AMM_iinfo definition */\n");
 
@@ -37526,10 +37527,14 @@ int main(int nargs, char **args)
 #include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
 #undef ATL_DECL_
 @ROUT ATL_opinfo 
-#define  ATL_DECL_ 1
+#ifdef TREAL
+   #define  ATL_DECL_ 1
+#endif
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
+#ifndef TREAL
+   #define  ATL_DECL_ 1
+#endif
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
-
 @ROUT ATL_opinfo ATL_ipinfo
 @whiledef al 1 N X
    @whiledef ta N T
@@ -37568,9 +37573,10 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
 
    ATL_assert(iv < ATL_VWopgen_NCASES);
    ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
-   imm--;
-   icpA += icpA - 2; icpB += icpB - 2; icpC += icpC - 2;
    ATL_assert(imm < ATL_AMM_NCASES);
+   icpA += icpA;
+   icpB += icpB;
+   icpC += icpC;
    #ifdef TCPLX
       ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bn, flgK, 
                    mu, nu, ku, vlen, k, k, k);
@@ -37850,10 +37856,9 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
 
    ATL_GetVWipgenInfo(idx, spmf, k, k, kb, imm, icpA, icpB, icpC, k, 
                       kbmin, k);
-   imm--;
-   icpA += icpA - 2;
-   icpB += icpB - 2;
-   icpC += icpC - 2;
+   icpA += icpA;
+   icpB += icpB;
+   icpC += icpC;
    #ifdef TCPLX
       ATL_AMM_info(imm, &ip->amm_b0, &ip->amm_b1, &ip->amm_bn, flgK,
                    mu, nu, ku, vlen, k, k, ik1);
@@ -37929,6 +37934,8 @@ void Mjoin(PATL,geipinfo_pop)  /* populate ip wt given params */
          ip->ammK1_b0 = NULL;
       if (!ip->ammK1_b0) /* must use ik1 kerns instead! */
       {
+         ATL_assert(ik1);
+         ik1--;
          KB0 = ATL_AMM_KMAJOR(flgK) ? KB0 : kb0;
          #ifdef TCPLX
             ATL_AMM_kinfo(ik1, &ip->ammK1_b0, &ip->ammK1_b1, &ip->ammK1_bn);
@@ -38141,7 +38148,7 @@ void Mjoin(PATL,geipinfo)
    ATL_UINT MB, NB, k, imm, idx=ATL_VWipgen_NCASES-1;
    float spf;
    #if ATL_VWipgen_NCASES > 1
-   if (K < ATL_VWipgen_MAX_KB)
+   if (K < ATL_VWipgen_LAST_KB)
    {
       for (idx=ATL_VWipgen_NCASES-2; idx; idx--)
          if (K <= ATL_GetVWipgenKB(idx))
@@ -38151,7 +38158,7 @@ void Mjoin(PATL,geipinfo)
    ATL_GetVWipgenInfo(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
    ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
    ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
-   if (MB > M)
+   if (MB >= M)
    {
       npmblks = 1;
       nfmblks = 0;
@@ -38173,7 +38180,7 @@ void Mjoin(PATL,geipinfo)
       else
          npmblks = pnmu = pmb = 0;
    }
-   if (NB > N)
+   if (NB >= N)
    {
       npnblks = 1;
       nfnblks = 0;
@@ -38185,7 +38192,7 @@ void Mjoin(PATL,geipinfo)
       nb = NB;
       nfnblks = N / NB;
       nnu = NB / nu;
-      pnb = N - nfnblks*MB;
+      pnb = N - nfnblks*NB;
       if (pnb)
       {
          npnblks = 1;
@@ -38193,7 +38200,7 @@ void Mjoin(PATL,geipinfo)
          pnb = pnnu * nu;
       }
       else
-         npmblks = pnmu = pmb = 0;
+         npnblks = pnnu = pnb = 0;
    }
    Mjoin(PATL,geipinfo_pop)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha,
                             beta, nfmblks, npmblks, mb, pmb, nfnblks,
