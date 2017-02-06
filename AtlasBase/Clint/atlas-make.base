@@ -2730,15 +2730,19 @@ res/@(pre)nreg : xgmmsearch @(pre)mflops.frc
 @(pre)tfc :
 	$(MAKE) x@(pre)tfc pre=@(pre) typ=@(typ)
 
+@beginskip
 @multidef rt ipmnPERF.sum ipmPERF.sum ipnPERF.sum geAMMRES.sum geAMMKCLEAN.sum
 @whiledef rt sqAMMRES.sum rkAMMRES.sum sqAMMKCLEAN.sum
 res/@(pre)@(rt) : xammsearch
 	./xammsearch -p @(pre)
 @endwhile
+@endskip
+@BEGINSKIP
 @whiledef rt gAMSYRK.sum
 res/@(pre)@(rt) : res/@(pre)sqAMMRES.sum xgmmsearch 
 	./xgmmsearch -p @(pre)
 @endwhile
+@ENDSKIP
 @whiledef rt gAMMRES.sum gkvAMMUR.sum gmvAMMUR.sum
 res/@(pre)@(rt) : xgmmsearch
 	./xgmmsearch -p @(pre)
@@ -2756,6 +2760,7 @@ res/@(pre)@(rt) : xgmmsearch
 	make @(pre)install_uamm_noclean ID=0
 	cp res/@(pre)uAMMFRC.sum $(BLDdir)/src/threads/lapack/amm/sumd/.
 @(pre)views=-V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipgen res/@(pre)ipASYMP.sum \
+    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipdmn res/@(pre)ipdMN.sum \
     @skip -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1 syrk res/@(pre)gAMSYRK.sum \
     -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X opgen res/@(pre)opFNL.sum 
     @skip pf ipmn     ipdn    ipdm
@@ -2844,9 +2849,16 @@ res/@(pre)FNLK1.sum : xammk1srch res/@(pre)K1.sum res/@(pre)opFNL.sum res/@(cpr)
 	./xammk1srch -i res/@(pre)K1.sum -i res/@(pre)opFNL.sum \
             -i res/@(cpr)opFNL.sum -o res/@(pre)FNLK1.sum
    @ptyp s d
-@(pre)install_amm: res/@(pre)FNLK1.sum xammkgen xbfisrch
+res/@(cpr)gAMSYRK.sum : xgmmsearch
+	./xgmmsearch -p @(cpr)
+res/@(pre)gAMSYRK.sum : xgmmsearch
+	./xgmmsearch -p @(pre)
+res/@(pre)AMSYRKFNL.sum : res/@(pre)gAMSYRK.sum res/@(cpr)gAMSYRK.sum
+	- rm -f res/@(pre)AMSYRKFNL.sum
+	cat res/[@(pre),@(cpr)]gAMSYRK.sum > res/@(pre)AMSYRKFNL.sum
+@(pre)install_amm: res/@(pre)FNLK1.sum res/@(pre)AMSYRKFNL.sum xammkgen xbfisrch
 	- cd $(AMMdir)/KERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
-	./xammkgen -p @(pre) -o $(AMMdir)/KERNEL 
+	./xammkgen -p @(pre) -b res/@(pre)AMSYRKFNL.sum -o $(AMMdir)/KERNEL 
 	mv $(AMMdir)/KERNEL/*.h $(INCAdir)/.
 	cd $(AMMdir)/KERNEL ; $(PMAKE) -f @(pre)Make_amm lib
 	$(MAKE) @(pre)install_cpy
