@@ -36959,14 +36959,18 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT ammkgen
-#include "atlas_mmgen.h"
-#include "atlas_type.h"
 /*
  * Takes all amm kernels to be used for anything in ATLAS, and build master
  * index of kernel structures.  This contains no performance info; that is
  * handled by views that reference these structures
  */
+#include "atlas_mmgen.h"
+#include "atlas_type.h"
+
 void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
+/*
+ * Generate syrk-specific header file
+ */
 {
    ATL_cpnode_t *cb;
    FILE *fp;
@@ -36981,7 +36985,6 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
 
    if (!mb)
       return;
-   assert(!mb->next);
    fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "syrk", NULL);
    fprintf(fp, "#define ATL_SYRKK_VLEN %d\n", mb->vlen);
    fprintf(fp, "#define ATL_SYRKK_KVEC %d\n",
@@ -37569,10 +37572,48 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
 {
    FILE *fpout;
+   ATL_mmnode_t *mp;
    int ib, inxt, iaut;
    char bes[3] = {'0', '1', 'n'};
    char fn[24];
 
+   for (mp=bkb; mp; mp = mp->next)
+   {
+      char cpr = (pre == 's') ? 'c' : 'z';
+      switch(mp->blask)
+      {
+         ATL_mmnode_t *cp, *nxt;
+         int i;
+      case 1:
+         cp = mp->next;
+         assert(cp);
+         assert(cp->blask == mp->blask); /* expect real&cplx kerns! */
+         if (FLAG_IS_SET(mp->flag, MMF_COMPLEX)) /* cplx first */
+         {
+            ATL_mmnode_t *tmp;
+            assert(!FLAG_IS_SET(cp->flag, MMF_COMPLEX));
+            nxt = cp;
+            tmp = cp;
+            cp = mp;
+            mp = tmp;
+         }
+         else /* real first */
+         {
+            assert(FLAG_IS_SET(cp->flag, MMF_COMPLEX));
+            nxt = cp;
+         }
+         i = MMKernsPerfSame(mp, cp);
+         GenSyrkH(pre, outd, mp, i);
+         GenSyrkH(cpr, outd, cp, i);
+         if (i)  /* get rid of complex node to avoid useless compile  */
+             bkb = RemoveMMNodeFromQ(bkb, cp);
+         else
+            mp = nxt;
+         break;
+      default:
+         assert(0);
+      }
+   }
    fpout = OpenMMGenHeader(outd, 0, pre, "amm", NULL, "proto", mb);
    assert(fpout);
    inxt = GetOffset(&mb->next, mb);
@@ -37600,7 +37641,11 @@ int main(int nargs, char **args)
  */
    PrepMMForGen(pre, outd, "amm", mb);
    if (bkb)
+   {
       PrepMMForGen(pre, outd, "amm", bkb);
+      bkb = SortListByIval_G2L(bkb, GetOffset(bkb, &bkb->next), 
+                               GetOffset(bkb, &bkb->blask));
+   }
    GenAllFiles(pre, outd, mb, bkb);
 
    free(outd);
