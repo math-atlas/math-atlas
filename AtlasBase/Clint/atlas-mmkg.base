@@ -1716,6 +1716,180 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    }
 @endiif
 }
+@iif TRI = 1
+@ROUT C2blk `#if 0`
+@BEGINPROC doBlockT m_ n_
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(m_)
+         @iexp k @(i) @(mu) * @(j) +
+         @iif alpha = 1
+            @iif beta = 0
+@ROUT blk2C `            C@(j)[@(i)] = p[@(k)];`
+@ROUT C2blk `            p[@(k)] = C@(j)[@(i)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(j)[@(i)] += p[@(k)];`
+@ROUT C2blk `            p[@(k)] += C@(j)[@(i)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(j)[@(i)] = p[@(k)] - C@(j)[@(i)];`
+@ROUT C2blk `            p[@(k)] = C@(j)[@(i)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] + p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + C@(j)[@(i)];`
+            @endiif
+         @endiif
+         @iif alpha = -1
+            @iif beta = 0
+@ROUT blk2C `            C@(j)[@(i)] = -p[@(k)];`
+@ROUT C2blk `            p[@(k)] = -C@(j)[@(i)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(j)[@(i)] -= p[@(k)];`
+@ROUT C2blk `            p[@(k)] -= C@(j)[@(i)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(j)[@(i)] = -C@(j)[@(i)] - p[@(k)];`
+@ROUT C2blk `            p[@(k)] = -C@(j)[@(i)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] - p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] - C@(j)[@(i)];`
+            @endiif
+         @endiif
+         @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+            @iif beta = 0
+@ROUT blk2C `            C@(j)[@(i)] = alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] = alpha*C@(j)[@(i)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(j)[@(i)] += alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] += alpha*C@(j)[@(i)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(j)[@(i)] = alpha*p[@(k)] - C@(j)[@(i)];`
+@ROUT C2blk `            p[@(k)] = alpha*C@(j)[@(i)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] + alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + alpha*C@(j)[@(i)];`
+            @endiif
+         @endiif
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif m_ = mu
+            C@(j) += @(mu);
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef k
+   @undef i
+   @undef j
+@ENDPROC
+/*
+ * The block is assumed to store L, this function does a transpose while
+ * copying so that it is transferred with Upper portion of C
+ */
+void Mjoin(ATL_USERCPMM,_L2UT)
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   @ROUT blk2C
+   const @(typ) alpha,  /* scalar for b */
+   const @(typ) *b,     /* matrix stored in @(mu)x@(nu)-major order */
+   const @(typ) beta,   /* scalar for C */
+   @(typ) *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+   @ROUT C2blk
+   const @(typ) alpha,  /* scalar for C */
+   const @(typ) *C,     /* matrix to be copied to access-major format */
+   const size_t ldc,    /* stride between row elements */
+   const @(typ) beta,   /* scalar for b */
+   @(typ) *b            /* matrix stored in @(mu)x@(nu)-major order */
+   @ROUT C2blk blk2C
+)
+{
+   const ATL_iptr_t nf = N/@(nu), n = nf*@(nu), incC0 = @(nu)*ldc;
+   ATL_iptr_t pansz, i, j;
+   const unsigned int nr = N-n;
+@ROUT blk2C `   @declare "   @(typ) " n n ";"`
+@ROUT C2blk `   @declare "   const @(typ) " n n ";"`
+      *C0
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+   ATL_assert(N == M);
+   j = (nr) ? nf+1 : nf;
+   pansz = @(bs) * j;
+   j = ((j+1)*j)>>1;
+   b += j * @(bs) - pansz;
+   pansz -= @(bs);
+   C0 = C + n*ldc;
+   @iexp i 1
+   @iwhile i < @(nu)
+      @iexp j -1 @(i) +
+   C@(i) = C@(j) + ldc;
+      @iexp i @(i) 1 +
+   @endiwhile
+   switch(nr)
+   {
+   @iexp m 1
+   @iwhile m < @(nu)
+   case @(m):
+      for (j=0; j < nf; j++, b += @(bs))
+      {
+      @callproc doBlockT @(nu) @(m)
+      }
+      @callproc doBlockT @(m) @(m)
+      @iexp i @(m)
+      @iwhile i < @(nu)
+      C@(i) += n;
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iexp m @(m) 1 +
+      break;
+   @endiwhile
+   default:;
+   }
+   for (i=n; i; i -= @(nu))
+   {
+      b -= pansz;
+      pansz -= @(bs);
+      @iwhile i < @(mu)
+      C@(i) -= incC0 + n;
+         @iexp i @(i) 1 +
+      @endiwhile
+      for (j=0; j < nf; j++, b += @(bs))
+      {
+      @callproc doBlockT @(nu) @(nu)
+      }
+      switch(nr)
+      {
+      @iexp m 1
+      @iwhile m < @(nu)
+      case @(m):
+      @callproc doBlockT @(m) @(nu)
+         break;
+      @iexp m @(m) 1 +
+      break;
+      @endiwhile
+      default:;
+      }
+   }
+}
+@ROUT C2blk `#endif`
+@endiif
 @PRE C Z
    @iexp betX 0 @(beta) ! 1 @(beta) ! & -1 @(beta) ! &
    @iexp alpX 0 @(alpha) ! 1 @(alpha) ! & -1 @(alpha) ! &
