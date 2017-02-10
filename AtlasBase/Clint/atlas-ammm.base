@@ -36967,6 +36967,71 @@ int main(int nargs, char **args)
 #include "atlas_mmgen.h"
 #include "atlas_type.h"
 
+ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
+/*
+ * Creates a copy node for each amm-incompatible copy needed by kerns in kb
+ * RETURNS: queue of kern-spec copies to gen & compile
+ */
+{
+   ATL_cpnode_t *cb=NULL;
+   ATL_mmnode_t *mp;
+   char *fnd, *fn;
+   int dlen;
+   dlen = strlen(outd) + 1;
+   fnd = malloc(dlen+22);
+   assert(fnd);
+   fn = fnd + dlen;
+   sprintf(fnd, "%s/ATL_XSyrkIntoC_aXbX.c", outd);
+   for (mp=kb; mp; mp = mp->next)
+   {
+      ATL_cpnode_t *cp;
+      int cpflag, ib, ia;
+      char cpr = pre;
+      char bn[4] = {'1', 'N', 'X', '0'};
+      cpflag = 0;
+      if (FLAG_IS_SET(mp->flag, MMF_COMPLEX))
+         cpr = (pre == 's') ? 'c' : 'z';
+      else
+         cpflag |= 1 << CPF_REAL;
+      switch(mp->blask)
+      {
+      case 1:  /* SYRK needs C copies for all alpha,beta */
+         cpflag |= (1<<CPF_SYRK) | (1<<CPF_CBLK);
+         cp = GetCopyNodeFromMM(cpflag, mp);
+/*
+ *       Node for each (alpha,beta) case, ->rout=kern name
+ */
+         for (ib=0; ib < 4; ib++)
+         {
+            for (ia=0; ia < 3; ia++)
+            {
+               ATL_cpnode_t *p;
+               p = CloneCPNode(cp);
+               p->flag |= (1<<(CPF_BE1+ib))|(1<<(CPF_AL1+ia));
+               p->rout = fnd;
+               assert(p->rout);
+               fn[4] = cpr;
+               fn[16] = bn[ia];
+               fn[18] = bn[ib];
+               p->genstr = GetCopyGenStr(p);
+               fn[19] = '\0';
+               p->rout = DupString(fn);
+               fn[19] = '.';
+               p->next = cb;
+               cb = p;
+            }
+         }
+         KillCPNode(cp);
+         break;
+      default:
+         fprintf(stderr, "UNKNOWN KERN TYPE %d!\n", mp->blask);
+         assert(0);
+      }
+   }
+   free(fnd);
+   return(cb);
+}
+
 void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
 /*
  * Generate syrk-specific header file
@@ -37409,9 +37474,11 @@ void GenKernInf(ATL_mmnode_t *mb)
    fprintf(fpout, "} /* end ATL_AmmKernByIdx macro def */\n");
 }
 
-void GenKerns(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
+void GenKerns(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
+              ATL_cpnode_t *cb)
 {
    ATL_mmnode_t *ub, *mp;
+   ATL_cpnode_t *cp;
    char *sgen=NULL;
    int i, len, dlen;
    char pr=pre;
@@ -37427,6 +37494,14 @@ void GenKerns(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
  * Generate/copy all required kernels. 
  */
    printf("\nGENERATING AMM KERNS:\n");
+   for (cp=cb; cp; cp=cp->next)
+   {
+      if ( (i=system(cp->genstr)) )
+      {
+         fprintf(stderr, "GENSTR RETURNS %d:\n'%s'\n", i, cp->genstr);
+         exit(i);
+      }
+   }
    for (mp=ub; mp; mp = mp->next)
    {
       const int id=mp->ID;
@@ -37467,7 +37542,8 @@ void GenKerns(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
    KillAllMMNodes(ub);
 }
 
-void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
+void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
+             ATL_cpnode_t *cb)
 /*
  * mb files have already been made at least compile-time unique (same source
  * file might occur multiple times due to need to compile with -DKB)
@@ -37476,6 +37552,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
    FILE *fp;
    char *fn;
    ATL_mmnode_t *mp, *MB;
+   ATL_cpnode_t *cp;
    char *sals[3] = {"1", "N1", "X"};
    char als[3] = {'1', 'n', 'X'};
    char *sbes[4] = {"0", "1", "N1", "X"};
@@ -37505,6 +37582,8 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
       for (ib=0; ib < 3; ib++)
          fprintf(fp, " \\\n       %s_b%c.o", mp->auth, bes[ib]);
    }
+   for (cp=cb; cp; cp = cp->next)
+      fprintf(fp, " \\\n       %s.o", cp->rout);
    fprintf(fp, "\n");
 /*
  * library make targets
@@ -37565,11 +37644,25 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
          fprintf(fp, "        %s\n", mp->rout);
       }
    }
+   fprintf(fp, "#\n#  non-AMM kernel copy rules\n#\n");
+   for (cp=cb; cp; cp = cp->next)
+   {
+      char *ts;
+      if (pre == 'd')
+        ts = (cp->flag & (1<<CPF_REAL)) ? "DREAL" : "DCPLX";
+      else
+        ts = (cp->flag & (1<<CPF_REAL)) ? "SREAL" : "SCPLX";
+      fprintf(fp, "%s.o : %s.c\n", cp->rout, cp->rout);
+      fprintf(fp, "\t$(KC) $(CDEFS2) -D%s=1 -DATL_USERCPMM=%s $(KCFLAGS) \\\n",
+              ts, cp->rout);
+      fprintf(fp, "        -c %s.c\n", cp->rout);
+   }
    KillAllMMNodes(MB);
    fclose(fp);
 }
 
-void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
+void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
+                 ATL_cpnode_t *cb)
 {
    FILE *fpout;
    ATL_mmnode_t *mp;
@@ -37621,8 +37714,8 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb)
    for (ib=0; ib < 3; ib++)
       PrintMMProtos(fpout, pre, "KERN", mb, iaut, bes[ib]);
    CloseGenHeader(fpout);
-   GenKerns(pre, outd, mb, bkb);
-   GenMake(pre, outd, mb, bkb);
+   GenKerns(pre, outd, mb, bkb, cb);
+   GenMake(pre, outd, mb, bkb, cb);
    GenKernArr(pre, outd, mb);
 }
 
@@ -37631,6 +37724,7 @@ int main(int nargs, char **args)
    char pre;
    char *outd;
    ATL_mmnode_t *mb, *ub, *bkb;
+   ATL_cpnode_t *cb;
 
    mb = GetFlags(nargs, args, &pre, &outd, &bkb);
 /*
@@ -37645,10 +37739,12 @@ int main(int nargs, char **args)
       PrepMMForGen(pre, outd, "amm", bkb);
       bkb = SortListByIval_G2L(bkb, GetOffset(bkb, &bkb->next), 
                                GetOffset(bkb, &bkb->blask));
+      cb = GetKernCopies(pre, outd, bkb);
    }
-   GenAllFiles(pre, outd, mb, bkb);
+   GenAllFiles(pre, outd, mb, bkb, cb);
 
    free(outd);
+   KillAllCPNodes(cb);
    KillAllMMNodes(mb);
    return(0);
 }
