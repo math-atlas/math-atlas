@@ -11592,10 +11592,6 @@ ATL_mmnode_t *DoSyrkMUNU
       {
          if (i*j+1 > nreg || j > nb)
             continue;
-         if (i*j+i+j > nreg)
-            mmp->flag |= 1<<MMF_BREG1;
-         else
-            mmp->flag &= ~(1<<MMF_BREG1);
          if (i*VL == j) /* legal M-vectorized SYRK kernel */
          {
             const int b = (nb > j) ? (nb/j)*j : j;
@@ -11603,6 +11599,16 @@ ATL_mmnode_t *DoSyrkMUNU
 
             pB->mu = pB->nu = pM->mu = pM->nu = j;
             pB->mbB = pB->nbB = pM->mbB = pM->nbB = b;
+            if (i*j+i+j > nreg)
+            {
+               pB->flag |= 1<<MMF_BREG1;
+               pM->flag |= 1<<MMF_BREG1;
+            }
+            else
+            {
+               pB->flag &= ~(1<<MMF_BREG1);
+               pM->flag &= ~(1<<MMF_BREG1);
+            }
             pM->genstr = MMGetGenString(pre, pM);
             pB->genstr = MMGetGenString(pre, pB);
             mf = TimeMMKernel(vrb, 0, pM, pre, b, b, kb, 1, 0, -1);
@@ -11637,6 +11643,10 @@ ATL_mmnode_t *DoSyrkMUNU
 
             pK->mbB = pK->nbB = b;
             pK->mu = pK->nu = j;
+            if (i*j+i+j > nreg)
+               pK->flag |= 1<<MMF_BREG1;
+            else
+               pK->flag &= ~(1<<MMF_BREG1);
             pK->genstr = MMGetGenString(pre, pK);
             mf = TimeMMKernel(vrb, 0, pK, pre, b, b, pK->kbB, 1, 0, -1);
             assert(!MMKernelFailsTest(pre, b, b, pK->kbB, 1, pK));
@@ -11658,6 +11668,13 @@ ATL_mmnode_t *DoSyrkMUNU
    printf("Done.\n");
    pK = MMGetNodeGEN(pre, bcB, 0, uB, uB, kvecB ? kvecB:1, VL, kvecB, 
                       0, 0, NULL);
+   if (uB*uB+uB+uB > nreg)
+   {
+      pK->flag |= 1<<MMF_BREG1;
+      if (pK->genstr)
+         free(pK->genstr);
+      pK->genstr = MMGetGenString(pre, pK);
+   }
    if (pre == 'z' || pre == 'c')
       pK->flag |= 1<<MMF_COMPLEX;
    pK->blask = 1;
@@ -37044,12 +37061,13 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    ATL_cpnode_t *cb;
    FILE *fp;
    const int ntr = (pre == 'd' || pre == 's') ? 2 : 4;
-   int ial, ibe, itr;
+   int ial, ibe, itr, flg;
    const char be[3] = {'0', '1', 'n'};
    char bes[4] = {'1', 'n', 'X', '0'};
    char trs[4] = {'N', 'T', 'C', 'H'};
    char rcs[4] = {'c', 'r', 'c', 'r'};
    char cjs[4] = {' ', ' ', 'C', 'C'};
+   char *sfx[2] = {"", "_L2UT"};
 
 
    if (!mb)
@@ -37081,11 +37099,18 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
 /*
  * Prototype/rename all A cpy routs: ATL_<pre>cm2am_syrk<TA>
  */
-   cb = AddMMUniqueACopyFromMMNodes(pre, 'T', mb, NULL);
-   fprintf(fp, "#define ATL_%ca2blk_syrkN %s_Na1\n",
+@skip   cb = AddMMUniqueACopyFromMMNodes(pre, 'T', mb, NULL);
+   flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
+   cb = GetCopyNodeFromMM(flg, mb);
+   cb->rout = GetCopyName(cb, 0);
+   fprintf(fp, "#define ATL_%ca2blk_syrkN %s\n",
            pre, cb->rout);
-   fprintf(fp, "#define ATL_%ca2blk_syrkT %s_Ta1\n",
+   free(cb->rout);
+   cb->flag |= 1<<CPF_TRANS;
+   cb->rout = GetCopyName(cb, 0);
+   fprintf(fp, "#define ATL_%ca2blk_syrkT %s\n",
            pre, cb->rout);
+   KillAllCopyNodes(cb);
    for (itr=0; itr < 2; itr++)
    {
       char tr = itr ? 'T' : 'N';
@@ -37097,7 +37122,6 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
          fprintf(fp,
          "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,ATL_CSZT,TYPE*,TYPE*);\n");
    }
-   KillAllCopyNodes(cb);
 /*
  * Prototype all C cpy routs: ATL_<pre>syblk2cmat_a<alp>_b<bet>
  */
@@ -37105,11 +37129,16 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    {
       for (ibe=0; ibe < 4; ibe++)
       {
-         fprintf(fp, "void ATL_%csyblk2cmat_a%c_b%c\n", pre,bes[ial],bes[ibe]);
-         if (pre == 's' || pre == 'd')
-            fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
-         else
-            fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+         int is;
+         for (is=0; is < 2; is++)
+         {
+            fprintf(fp, "void ATL_%cSyrkIntoC_a%cb%c%s\n", pre, bes[ial],
+                    bes[ibe], sfx[is]);
+            if (pre == 's' || pre == 'd')
+               fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+            else
+               fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+         }
       }
    }
    CloseGenHeader(fp);
@@ -38381,7 +38410,7 @@ void Mjoin(PATL,geipinfo)
    ATL_UINT MB, NB, k, imm, idx=ATL_VWipgen_NCASES-1;
    float spf;
    #if ATL_VWipgen_NCASES > 1
-   if (K < ATL_VWipgen_LAST_KB)
+   if (K < ATL_VWipgen_BEST_KB)
    {
       for (idx=ATL_VWipgen_NCASES-2; idx; idx--)
          if (K <= ATL_GetVWipgenKB(idx))
