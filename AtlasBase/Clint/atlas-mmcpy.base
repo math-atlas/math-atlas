@@ -1815,16 +1815,28 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
    fprintf(fpout, "\n};\n");
    fprintf(fpout, "#endif /* end else of ifndef ATL_DECL_ */\n\n");
 
-   i = nbits[0]+nbits[1]; /* amount to shift off */
-   d = i / (ATL_ISIZE<<3);
-   i -= d*(ATL_ISIZE<<3);
-   if (i+nbits[2] > (ATL_ISIZE<<3))
+   if (nbits[0])
+      fprintf(fpout,"#define ATL_GetVW%sMB(id_) \\\n   (((ATL_VIEW_%s[ATL_VW%s_"
+              "IDXMUL(id_)+%u])&0x%x)+ATL_VW%s_MIN_MB)\n", VN, VN, VN, 
+              1, (1<<nbits[0])-1, VN);
+   else
+      fprintf(fpout, "#define ATL_GetVW%sMB(id_) ATL_VWsyrk_MIN_MB\n", VN);
+   if (!nbits[2])
+      fprintf(fpout, "#define ATL_GetVW%sKB(id_) ATL_VWsyrk_MIN_KB\n", VN);
+   else
    {
-      i = 0;
-      d++;
+      i = nbits[0]+nbits[1]; /* amount to shift off */
+      d = i / (ATL_ISIZE<<3);
+      i -= d*(ATL_ISIZE<<3);
+      if (i+nbits[2] > (ATL_ISIZE<<3))
+      {
+         i = 0;
+         d++;
+      }
+      fprintf(fpout,"#define ATL_GetVW%sKB(id_) \\\n   (((ATL_VIEW_%s[ATL_VW%s_"
+              "IDXMUL(id_)+%u]>>%u)&0x%x)+ATL_VW%s_MIN_KB)\n", VN, VN, VN, 
+              d+1, i, (1<<nbits[2])-1, VN);
    }
-   fprintf(fpout, "#define ATL_GetVW%sKB(id_) \\\n   ((ATL_VIEW_%s[ATL_VW%s_"
-           "IDXMUL(id_)+%u]>>%u)&0x%x)\n", VN, VN, VN, d+1, i, (1<<nbits[2])-1);
    fprintf(fpout, "#define ATL_GetVW%sInfo(id_, spf_, m_, n_, k_, amm_, "
            "A2b_, B2b_, b2C_, \\\n"
            "                        b2A_, b2B_, C2b_) \\\n{ \\\n", VN);
@@ -1972,6 +1984,240 @@ int main(int nargs, char **args)
    KillAllViews(vb);
    KillAllCPNodes(cb);
    free(path);
+   return(0);
+}
+@ROUT cpyfvw
+#include "atlas_mmgen.h"
+#define uint unsigned int
+void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
+{
+   int d;
+
+   ATL_cpnode_t *cb=NULL, *cbC=NULL, *cp;
+   for (d=0; d < 2; d++)  /* 0: M2BLK, 1: BLK2M */
+   {
+      int a;
+      for (a=0; a < 3; a++) /* 0:alp=1, 1:alp=-1, 2:alp=X */
+      {
+         ATL_view_t *vp;
+         for (vp=vb; vp; vp = vp->next) /* scope all input views */
+         {
+            const int vflg=vp->flag;
+            int flg;
+            int b;
+
+            flg = (d) ? 0 : (1<<CPF_TOBLK);
+            flg |= 1<<(CPF_AL1+a);
+            if (pre == 'd')
+               flg |= (1<<CPF_REAL);
+            else if (pre == 's')
+               flg |= (1<<CPF_REAL) | (1<<CPF_SINGLE);
+            else if (pre == 'c')
+               flg |= (1<<CPF_SINGLE);
+/*
+ *          Add copies A needs from all views (TRANS added later) 
+ */
+            if ((vflg&(1<<(CPV_A2BLK+d))) && (vflg&(1<<(CPV_AL1A+a))))
+            {
+               ATL_mmnode_t *mb;
+               ATL_cpnode_t *bb;
+               mb = ReadMMFile(vp->fnam);
+               if (!mb)
+               {
+                  fprintf(stderr, "NO KERNS FROM VIEW FILE '%s'!\n", vp->fnam);
+                  assert(mb);
+               }
+               bb = GetAllCopyNodesFromMM(flg, mb);
+               if (bb)
+               {
+                  cp = ATL_LastCPNode(bb);
+                  cp->next = cb;
+                  cb = bb;
+                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb);
+                  cp = ATL_LastCPNode(bb);
+                  cp->next = cb;
+                  cb = bb;
+               }
+               KillAllMMNodes(mb);
+            }
+
+            if (!(vflg&(1<<(CPV_AL1C+a))))
+               continue;
+            if (!(vflg&(1<<(CPV_C2BLK+d))))
+               continue;
+            flg |= 1<<CPF_CBLK;
+            for (b=0; b < 4; b++) /* 0:beta=1, 1:beta=N, 2:beta=X, 3:beta=0 */
+            {
+               flg &= ~CPF_ALLBET;
+               flg |= 1<<(CPF_BE1+b);
+               if (vflg & (1<<(CPV_BE1C+b)))
+               {
+                  ATL_mmnode_t *mb;
+                  ATL_cpnode_t *bb;
+                  mb = ReadMMFile(vp->fnam);
+                  assert(mb);
+                  bb = GetAllCopyNodesFromMM(flg, mb);
+                  if (bb)
+                  {
+                     cp = ATL_LastCPNode(bb);
+                     cp->next = cbC;
+                     cbC = bb;
+                  }
+                  KillAllMMNodes(mb);
+               }
+            }
+         }  /* end search thru views */
+      }
+   }
+/*
+ * Having added all copies from views that matched, get rid of dups
+ */
+   if (cb)
+   {
+      ATL_cpnode_t *b, *last;
+      cb = CopyNoRep(cb, minSz);
+      last = b = CloneCPQueue(cb);
+      for (cp=b; cp; cp = cp->next)
+      {
+         cp->flag |= 1<<CPF_TRANS;
+         last = cp;
+      }
+      last->next = cb;
+      cb = b;
+      @BEGINSKIP
+      if (pre == 'z' || pre == 'c')  /* need CONJ dups too! */
+      {
+         last = b = CloneCPQueue(cb);
+         for (cp=b; cp; cp = cp->next)
+         {
+            cp->flag |= 1<<CPF_CONJ;
+            last = cp;
+         }
+         last->next = cb;
+         cb = b;
+      }
+      @ENDSKIP
+   }
+   cbC = CopyNoRep(cbC, minSz);
+   if (cb)
+   {
+      cp = ATL_LastCPNode(cb);
+      cp->next = cbC;
+   }
+   else
+      cb = cbC;
+   for (cp=cb; cp; cp = cp->next)
+   {
+      if (!cp->ID && cp->rout)  /* generated filenames should be */
+      {                         /* regenerated & set to ouput name */
+         free(cp->rout);
+         cp->rout = NULL;
+      }
+   }
+/*
+ * Check if current views same as last time
+ */
+   cbC = ReadCPFileWithPath(pre, "res", "cpylst.CPS");
+   if (cbC)
+   {
+      int SAME;
+      SAME = ATL_CountNumberOfCPNodes(cb) == ATL_CountNumberOfCPNodes(cbC);
+      if (SAME)
+      {
+         for (cp=cb; cp; cp = cp->next)
+            if (!FindEquivCopy(cbC, cp))
+               break;
+         SAME = cp == NULL;
+      }
+      if (!SAME)
+      {
+         WriteCPFileWithPath(pre, "res", "cpylst.CPS", cb);
+         printf("UPDATED: res/%ccpylst.CPS!\n\n", pre);
+      }
+      else
+         printf("UNCHANGED: res/%ccpylst.CPS!\n\n", pre);
+      KillAllCPNodes(cbC);
+   }
+   else
+   {
+      WriteCPFileWithPath(pre, "res", "cpylst.CPS", cb);
+      printf("CREATED NEW res/%ccpylst.CPS!\n\n", pre);
+   }
+   KillAllCPNodes(cb);
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr,"USAGE: %s [flags:\n", name);
+   fprintf(stderr,"   -p [d,s,c,z]\n");
+   fprintf(stderr,"   -z <minsz>: (24*24) demand mb*nb>minsz\n");
+   fprintf(stderr,
+   "   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F S=A,C,M,U <name> mmview.sum:\n");
+   fprintf(stderr,
+"      If args to left of = are omitted, these vals don't appear in the view.\n"
+"      Args to right of = may be omitted, which means all values are set.\n"
+"      <name> and <mmview> must appear in that order.\n"
+"      A/Cd=[I,F]: copy Into or From col-major (I,F means both directions).\n"
+"      A/Ca/b give the list of needed alpha/beta for that matrix copy.\n"
+"      S=A,C,M,U: don't store [A,C] copyI, matmulI, or unrollings, resp.\n"
+"      Suppressed copies will still be added to master list, just not in view\n"
+"      <name> is a unique string that will be used in all header files.\n"
+"      mmview.sum: list of amm kerns demanding the copies.\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_view_t *GetFlags(int nargs, char **args, char *PRE, int *MINSZ)
+{
+   ATL_view_t *vb=NULL, *vp;
+   int i, minSz=24*24;
+   char pre='d';
+
+   for (i=1; i < nargs; i++)
+   {
+      char *nam;
+      int k, flag;
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pre = tolower(args[i][0]);
+         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 'z':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         minSz = atoi(args[i]);
+         break;
+      @extract -b @(basd)/atlas-mmcpy.base rout=readview
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   assert(vb);
+   *PRE = pre;
+   *MINSZ = minSz;
+   return(vb);
+}
+
+int main(int nargs, char **args)
+{
+   ATL_view_t *vb;
+   int minSz;
+   char pre;
+
+   vb = GetFlags(nargs, args, &pre, &minSz);
+   GetAllCopy(pre, vb, minSz);
+   KillAllViews(vb);
    return(0);
 }
 @ROUT cpydrv
@@ -2224,7 +2470,6 @@ void PrintUsage(char *name, int ierr, char *flag)
 
    fprintf(stderr,"USAGE: %s [flags:\n", name);
    fprintf(stderr,"   -p [d,s,c,z]\n");
-   fprintf(stderr,"   -z <minsz>: (24*24) demand mb*nb>minsz\n");
    fprintf(stderr, "   -o /path : specify directory to generate into\n");
    @extract -b @(basd)/atlas-mmcpy.base rout=printview
    @BEGINSKIP
@@ -2242,7 +2487,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 }
 
 ATL_view_t *GetFlags
-   (int nargs, char **args, char *PRE, char **PTH, int *MINSZ)
+   (int nargs, char **args, char *PRE, char **PTH)
 {
    ATL_view_t *vb=NULL, *vp;
    char *pth=NULL;
@@ -2264,56 +2509,12 @@ ATL_view_t *GetFlags
          pre = tolower(args[i][0]);
          assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
          break;
-      case 'z':
-         if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-         minSz = atoi(args[i]);
-         break;
       case 'o':
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
          pth = DupString(args[i]);
          break;
       @extract -b @(basd)/atlas-mmcpy.base rout=readview
-@BEGINSKIP
-      case 'V': /* -V C/Aa=1,N,X Cb=0,1,N,X C/Ad=I,F <name> mmview.sum */
-         if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-         flag = 0;
-         for (k=0; k < 5; k++)
-         {
-            char mt, wt;
-            int st;
-            mt = args[i][0];
-            if (mt != 'C' && mt != 'A')
-               break;
-            wt = args[i][1];
-            if (wt != 'a' && wt != 'b' && wt != 'd')
-               break;
-            if (args[i][2] != '=')
-               break;
-            if (wt == 'b')
-            {
-               assert(mt == 'C');
-               flag |= CPV_ScalStr2bits(args[i]+3, CPV_BE1C);
-            }
-            else if (wt == 'a')
-               flag |= CPV_ScalStr2bits(args[i]+3, (mt=='C')?CPV_AL1C:CPV_AL1A);
-            else if (wt == 'd')
-               flag |= CPV_DirStr2bits(args[i]+3,(mt=='C')?CPV_C2BLK:CPV_A2BLK);
-            else
-               PrintUsage(args[0], i-1, NULL);
-            if (++i >= nargs)
-               PrintUsage(args[0], i-1, NULL);
-         }
-         nam = DupString(args[i]);
-         if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-         vp = ATL_NewView(flag, nam, DupString(args[i]));
-         vp->next = vb;
-         vb = vp;
-         break;
-@ENDSKIP
       default:
          PrintUsage(args[0], i, args[i]);
       }
@@ -2323,139 +2524,10 @@ ATL_view_t *GetFlags
       pth = DupString("tmp");
    *PTH = pth;
    *PRE = pre;
-   *MINSZ = minSz;
    return(vb);
 }
 
-ATL_cpnode_t *GetAllCopy(char pre, ATL_view_t *vb, int minSz)
-{
-   int d;
-
-   ATL_cpnode_t *cb=NULL, *cbC=NULL, *cp;
-   for (d=0; d < 2; d++)  /* 0: M2BLK, 1: BLK2M */
-   {
-      int a;
-      for (a=0; a < 3; a++) /* 0:alp=1, 1:alp=-1, 2:alp=X */
-      {
-         ATL_view_t *vp;
-         for (vp=vb; vp; vp = vp->next) /* scope all input views */
-         {
-            const int vflg=vp->flag;
-            int flg;
-            int b;
-
-            flg = (d) ? 0 : (1<<CPF_TOBLK);
-            flg |= 1<<(CPF_AL1+a);
-            if (pre == 'd')
-               flg |= (1<<CPF_REAL);
-            else if (pre == 's')
-               flg |= (1<<CPF_REAL) | (1<<CPF_SINGLE);
-            else if (pre == 'c')
-               flg |= (1<<CPF_SINGLE);
-/*
- *          Add copies A needs from all views (TRANS added later) 
- */
-            if ((vflg&(1<<(CPV_A2BLK+d))) && (vflg&(1<<(CPV_AL1A+a))))
-            {
-               ATL_mmnode_t *mb;
-               ATL_cpnode_t *bb;
-               mb = ReadMMFile(vp->fnam);
-               if (!mb)
-               {
-                  fprintf(stderr, "NO KERNS FROM VIEW FILE '%s'!\n", vp->fnam);
-                  assert(mb);
-               }
-               bb = GetAllCopyNodesFromMM(flg, mb);
-               if (bb)
-               {
-                  cp = ATL_LastCPNode(bb);
-                  cp->next = cb;
-                  cb = bb;
-                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb);
-                  cp = ATL_LastCPNode(bb);
-                  cp->next = cb;
-                  cb = bb;
-               }
-               KillAllMMNodes(mb);
-            }
-
-            if (!(vflg&(1<<(CPV_AL1C+a))))
-               continue;
-            if (!(vflg&(1<<(CPV_C2BLK+d))))
-               continue;
-            flg |= 1<<CPF_CBLK;
-            for (b=0; b < 4; b++) /* 0:beta=1, 1:beta=N, 2:beta=X, 3:beta=0 */
-            {
-               flg &= ~CPF_ALLBET;
-               flg |= 1<<(CPF_BE1+b);
-               if (vflg & (1<<(CPV_BE1C+b)))
-               {
-                  ATL_mmnode_t *mb;
-                  ATL_cpnode_t *bb;
-                  mb = ReadMMFile(vp->fnam);
-                  assert(mb);
-                  bb = GetAllCopyNodesFromMM(flg, mb);
-                  if (bb)
-                  {
-                     cp = ATL_LastCPNode(bb);
-                     cp->next = cbC;
-                     cbC = bb;
-                  }
-                  KillAllMMNodes(mb);
-               }
-            }
-         }  /* end search thru views */
-      }
-   }
-/*
- * Having added all copies from views that matched, get rid of dups
- */
-   if (cb)
-   {
-      ATL_cpnode_t *b, *last;
-      cb = CopyNoRep(cb, minSz);
-      last = b = CloneCPQueue(cb);
-      for (cp=b; cp; cp = cp->next)
-      {
-         cp->flag |= 1<<CPF_TRANS;
-         last = cp;
-      }
-      last->next = cb;
-      cb = b;
-      @BEGINSKIP
-      if (pre == 'z' || pre == 'c')  /* need CONJ dups too! */
-      {
-         last = b = CloneCPQueue(cb);
-         for (cp=b; cp; cp = cp->next)
-         {
-            cp->flag |= 1<<CPF_CONJ;
-            last = cp;
-         }
-         last->next = cb;
-         cb = b;
-      }
-      @ENDSKIP
-   }
-   cbC = CopyNoRep(cbC, minSz);
-   if (cb)
-   {
-      cp = ATL_LastCPNode(cb);
-      cp->next = cbC;
-   }
-   else
-      cb = cbC;
-   for (cp=cb; cp; cp = cp->next)
-   {
-      if (!cp->ID && cp->rout)  /* generated filenames should be */
-      {                         /* regenerated & set to ouput name */
-         free(cp->rout);
-         cp->rout = NULL;
-      }
-   }
-   WriteCPFileWithPath(pre, "res", "cpylst.CPS", cb);
-   return(cb);
-}
-
+@BEGINSKIP
 void DoSearch(char pre)
 {
    char *ln;
@@ -2464,6 +2536,7 @@ void DoSearch(char pre)
    assert(!Sys2File(ln, "stdout"));
    free(ln);
 }
+@ENDSKIP
 
 void DoGen(char pre, char *path)
 {
@@ -2505,13 +2578,12 @@ int main(int nargs, char **args)
    ATL_view_t *vb=NULL, *vp;  /* view base & ptr */
    ATL_cpnode_t *cb=NULL, *op;   /* cpsearch output files */
    char *path, *ln;
-   int minSz;
    char pre;
 
-   vb = GetFlags(nargs, args, &pre, &path, &minSz);
-   cb = GetAllCopy(pre, vb, minSz);
-   KillAllCPNodes(cb);
-   DoSearch(pre);
+   vb = GetFlags(nargs, args, &pre, &path);
+@skip   cb = GetAllCopy(pre, vb, inSz);
+@skip   KillAllCPNodes(cb);
+@skip   DoSearch(pre);
    CreateMasterIdx(pre);
    DoGen(pre, path);
    DoGenH(pre, path, vb);
