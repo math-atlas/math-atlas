@@ -30709,13 +30709,13 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    }
 #endif
 /*
- * Prototype all C cpy routs: ATL_<pre>syblk2cmat_a<alp>_b<bet>
+ * Prototype all C cpy routs: ATL_<pre>SyrkIntoC_a<alp>_b<bet>
  */
    for (ial=0; ial < 3; ial++)
    {
       for (ibe=0; ibe < 4; ibe++)
       {
-         fprintf(fp, "void ATL_%csyblk2cmat_a%c_b%c\n", pre,bes[ial],bes[ibe]);
+         fprintf(fp, "void ATL_%cSyrkIntoC_a%c_b%c\n", pre,bes[ial],bes[ibe]);
          if (pre == 's' || pre == 'd')
             fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
          else
@@ -31890,6 +31890,9 @@ int main(int nargs, char **args)
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+#define ATL_DECL_ 1
+#include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
+#undef ATL_DECL_
 /*
  * Service routine, particularly for parallel.  Takes its blocking from ip
  * (assuming that is what is being used below diagonal blocks
@@ -32226,16 +32229,18 @@ int syrk_amm
  * Need a special case for outer-product eventually.  Outer product is
  * used in right-looking Cholesky
  */
-   if (K <= ATL_sqAMM_LASTKB)
+   #if 0
+   if (K <= ATL_VWsyrk_MAX_MB)
    #ifdef Conj_
       return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
    #else
       return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
    #endif
+   #endif
 /*
  * Inner-product version calls nothing by SYRK kernels
  */
-   if (N < ATL_sqAMM_LASTNB)
+   if (N <= ATL_VWsyrk_MAX_NB)
    {
       #ifdef Conj_
          Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
@@ -32244,6 +32249,8 @@ int syrk_amm
       #endif
       return(0);
    }
+   return(1);  /* not supporting N > MAXNB yet! */
+   #if 0
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
  * For now, just pretend syrk time doesn't matter
@@ -32318,43 +32325,43 @@ int syrk_amm
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,syblk2cmat_an_b1);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b1);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,syblk2cmat_a1_b1):Mjoin(PATL,syblk2cmat_aX_b1);
+                     Mjoin(PATL,SyrkIntoC_a1_b1):Mjoin(PATL,SyrkIntoC_aX_b1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,syblk2cmat_an_bn);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,syblk2cmat_a1_bn):Mjoin(PATL,syblk2cmat_aX_bn);
+                     Mjoin(PATL,SyrkIntoC_a1bN):Mjoin(PATL,SyrkIntoC_aXbN);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,syblk2cmat_an_b0);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                     Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,syblk2cmat_an_bX);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_bX);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,syblk2cmat_a1_bX):Mjoin(PATL,syblk2cmat_aX_bX);
+                     Mjoin(PATL,SyrkIntoC_a1_bX):Mjoin(PATL,SyrkIntoC_aX_bX);
       }
    }
    else
    {
       if (SCALAR_IS_NONE(alpha))
-         blk2sy = Mjoin(PATL,syblk2cmat_an_b0);
+         blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
       else
          blk2sy = SCALAR_IS_ONE(alpha) ?
-                  Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                  Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
    }
    nnblks = ip.nfnblks + ip.npnblks;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
@@ -32442,6 +32449,7 @@ int syrk_amm
    }
    free(vp);
    return(0);
+   #endif
 }
 @ROUT ATL_syrk_OP
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
@@ -32699,44 +32707,44 @@ int syrk_OP
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,syblk2cmat_an_b1);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b1);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,syblk2cmat_a1_b1):Mjoin(PATL,syblk2cmat_aX_b1);
+                     Mjoin(PATL,SyrkIntoC_a1_b1):Mjoin(PATL,SyrkIntoC_aX_b1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,syblk2cmat_an_bn);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,syblk2cmat_a1_bn):Mjoin(PATL,syblk2cmat_aX_bn);
+                     Mjoin(PATL,SyrkIntoC_a1bN):Mjoin(PATL,SyrkIntoC_aXbN);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,syblk2cmat_an_b0);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                     Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,syblk2cmat_an_bX);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_bX);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,syblk2cmat_a1_bX):Mjoin(PATL,syblk2cmat_aX_bX);
+                     Mjoin(PATL,SyrkIntoC_a1_bX):Mjoin(PATL,SyrkIntoC_aX_bX);
       }
    }
    else
    {
       szU = N*N;
       if (SCALAR_IS_NONE(alpha))
-         blk2sy = Mjoin(PATL,syblk2cmat_an_b0);
+         blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
       else
          blk2sy = SCALAR_IS_ONE(alpha) ?
-                  Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                  Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
    }
    extra = (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
@@ -32892,7 +32900,8 @@ int syrk_OP
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 @skip #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
 @skip #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
-#include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
+#include Mstr(Mjoin(ATLAS_PRE,syrk_view.h)) /* blocking & perf info */
+#include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))  /* syrk kernel info */
 
 static INLINE void ATL_syr1
 (
@@ -33067,6 +33076,38 @@ static INLINE void ATL_syr1
    #endif
 }
 
+
+static INLINE int N2Idx(const unsigned int N)
+/*
+ * Uses Recursive halving to find smallest NB >= N in VWsyrk.
+ */
+{
+   unsigned int idxB=ATL_VWsyrk_NCASES-1, idxS=0, idxM;
+   unsigned int nbB, nbS=ATL_VWsyrk_MIN_NB, nbM;
+   if (N <= ATL_VWsyrk_MIN_NB)
+      return(0);
+   nbB = ATL_GetVWsyrkMB(idxB);
+   if (N >= nbB)
+      return(ATL_VWsyrk_NCASES-1);
+   KEEP_ON:
+      idxM = ((idxB-idxS)>>1)+idxS;
+      if (idxM == idxS)
+         return((nbS >= N) ? idxS:idxB);
+      nbM = ATL_GetVWsyrkMB(idxM);
+      if (nbM > N)
+      {
+         idxB = idxM;
+         nbB = nbM;
+      }
+      else if (nbM < N)
+      {
+         idxS = idxM;
+         nbS = nbM;
+      }
+      else /* if (nbM == N) */
+         return(idxM);
+   goto KEEP_ON;
+}
 #ifdef Conj_
 void Mjoin(PATL,herk_IP)
 #else
@@ -33119,7 +33160,7 @@ void Mjoin(PATL,syrk_IP)
    #endif
    size_t szA, szC, szE, incAk, nkb, k;
    ATL_CUINT nnu = (N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU, NN=nnu*ATL_SYRKK_NU;
-   ATL_UINT kb, kb0, KB0;
+   ATL_UINT kb, kb0, KB0, idx;
 /*
  * Handle degenerate cases
  */
@@ -33193,33 +33234,13 @@ void Mjoin(PATL,syrk_IP)
       return;
    }
 /*
- * Choose a KB that is a multiple of KU.  Usually, we like near-square sizes,
- * but for small problems, you want to expand KB to avoid having vector
- * reduction (KVEC) and C store dominate cost.  There's some advantage to
- * containing one or more operands in the L1: on some systems, this results
- * in better max perf, but on all systems it helps to reduce bandwidth demands
- * for parallel operations.  So, don't expand kb beyond L1 if a square problem
- * could fit (since longer than NB KB has only marginal benefit, that might
- * prevent a more substantial in-L1 benefit).  If problem is really tiny,
- * may make sense to contain both C & A in the cache.  We ignore the case
- * where, C/A and the col-major A all fit, as that is super-tiny 
+ * Find NB closest to our present N, and set initial KB to its tuned version
  */
+   idx = N2Idx(NN);
+   kb = ATL_GetVWsyrkKB(idx);
    szC = ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
          * ATL_SYRKK_VLEN;
    szC *= ((nnu+1)*nnu)>>1;  /* only need lower tri blks, not full nnu*nnu */
-   if (szC < ATL_L1elts)  /* If we can't fit C in L1, no square block can */
-   {
-      szE = ATL_L1elts - szC;  /* szE = elts in L1 after C stored there */
-      kb = (szE>>1) / NN;      /* fit A, Ac & C all in L1 */
-      if (kb < N)
-         kb = ATL_L1elts / N;  /* fill L1 with just A */
-      kb = (kb/ATL_SYRKK_KU)*ATL_SYRKK_KU;
-      if (kb < N)              /* if we can't make at least square */
-         kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
-   }
-   else  /* just use kb that worked for out-of-L1 best GEMM case */
-      kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
-   ATL_assert(kb);
 /*
  * Our SYRK C copy is always to Lower, so if output is Upper, will need
  * workspace to put the Lower part, before reflecting it to Upper.
@@ -33250,13 +33271,9 @@ void Mjoin(PATL,syrk_IP)
    else
    {
       nkb = 0;
-      kb0 = K;
+      kb = kb0 = K;
    }
-   #if ATL_SYRKK_KVEC > 1
-      KB0 = ((kb0+ATL_SYRKK_KVEC-1)/ATL_SYRKK_KVEC)*ATL_SYRKK_KVEC;
-   #else
-      KB0 = kb0;
-   #endif
+   KB0 = ((kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    szA = nnu*ATL_SYRKK_NU;
    k = (Uplo == AtlasUpper) ? Mmax(kb,N) : kb;
    szA *= k;
@@ -33284,9 +33301,7 @@ void Mjoin(PATL,syrk_IP)
 #if 0
    ipinfo_t ip;
    int i, flg;
-   i = Mjoin(PATL,geGetAmmmIndx)(N, N, K);
-   Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TA, N, N, K, lda, lda, ldc, 
-         alpha, beta);
+   Mjoin(PATL,geipinfo)(&ip, TA, TA, N, N, K, lda, lda, ldc, alpha, beta);
    flg = (Uplo == AtlasLower) ? 0 : 1;
    if (TA == AtlasNoTrans)
       flg |= 2;
@@ -33295,43 +33310,43 @@ void Mjoin(PATL,syrk_IP)
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,syblk2cmat_an_b1);
+            blk2c = Mjoin(PATL,SyrkIntoC_aNb1);
          else
             blk2c = SCALAR_IS_ONE(alpha) ?
-                    Mjoin(PATL,syblk2cmat_a1_b1):Mjoin(PATL,syblk2cmat_aX_b1);
+                    Mjoin(PATL,SyrkIntoC_a1b1):Mjoin(PATL,SyrkIntoC_aXb1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,syblk2cmat_an_bn);
+            blk2c = Mjoin(PATL,SyrkIntoC_aNbN);
          else
             blk2c = SCALAR_IS_ONE(alpha) ?
-                    Mjoin(PATL,syblk2cmat_a1_bn):Mjoin(PATL,syblk2cmat_aX_bn);
+                    Mjoin(PATL,SyrkIntoC_a1bN):Mjoin(PATL,SyrkIntoC_aXbN);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,syblk2cmat_an_b0);
+            blk2c = Mjoin(PATL,SyrkIntoC_aNb0);
          else
             blk2c = SCALAR_IS_ONE(alpha) ?
-                    Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                    Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,syblk2cmat_an_bX);
+            blk2c = Mjoin(PATL,SyrkIntoC_aNbX);
          else
             blk2c = SCALAR_IS_ONE(alpha) ?
-                    Mjoin(PATL,syblk2cmat_a1_bX):Mjoin(PATL,syblk2cmat_aX_bX);
+                    Mjoin(PATL,SyrkIntoC_a1bX):Mjoin(PATL,SyrkIntoC_aXbX);
       }
    }
    else
    {
       if (SCALAR_IS_NONE(alpha))
-         blk2c = Mjoin(PATL,syblk2cmat_an_b0);
+         blk2c = Mjoin(PATL,SyrkIntoC_aNb0);
       else
          blk2c = SCALAR_IS_ONE(alpha) ?
-                 Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                 Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
    }
    Mjoin(PATL,syrkBlk)(&ip, flg|4, 0, 0, A, a2blk, K<=ip.kb?blk2c:NULL, beta, C,
                        pA, NULL, NULL, NULL, NULL, pC, pA);
@@ -33387,34 +33402,34 @@ void Mjoin(PATL,syrk_IP)
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,syblk2cmat_an_b1);
+            blk2c = Mjoin(PATL,SyrkIntoC_aNb1);
          else
             blk2c = SCALAR_IS_ONE(alpha) ? 
-                    Mjoin(PATL,syblk2cmat_a1_b1):Mjoin(PATL,syblk2cmat_aX_b1);
+                    Mjoin(PATL,SyrkIntoC_a1b1):Mjoin(PATL,SyrkIntoC_aXb1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,syblk2cmat_an_bn);
+            blk2c = Mjoin(PATL,SyrkIntoC_aNbN);
          else
             blk2c = SCALAR_IS_ONE(alpha) ? 
-                    Mjoin(PATL,syblk2cmat_a1_bn):Mjoin(PATL,syblk2cmat_aX_bn);
+                    Mjoin(PATL,SyrkIntoC_a1bN):Mjoin(PATL,SyrkIntoC_aXbN);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,syblk2cmat_an_b0);
+            blk2c = Mjoin(PATL,SyrkIntoC_aNb0);
          else
             blk2c = SCALAR_IS_ONE(alpha) ? 
-                    Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                    Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,syblk2cmat_an_bX);
+            blk2c = Mjoin(PATL,SyrkIntoC_aNbX);
          else
             blk2c = SCALAR_IS_ONE(alpha) ? 
-                    Mjoin(PATL,syblk2cmat_a1_bX):Mjoin(PATL,syblk2cmat_aX_bX);
+                    Mjoin(PATL,SyrkIntoC_a1bX):Mjoin(PATL,SyrkIntoC_aXbX);
       }
       #ifdef TCPLX
          blk2c(N, N, alpha, rC, iC, beta, C, ldc);
@@ -33428,10 +33443,10 @@ void Mjoin(PATL,syrk_IP)
    else /* Upper must use workspace */
    {
       if (SCALAR_IS_NONE(alpha))
-         blk2c = Mjoin(PATL,syblk2cmat_an_b0);
+         blk2c = Mjoin(PATL,SyrkIntoC_aNb0);
       else
          blk2c = SCALAR_IS_ONE(alpha) ? 
-                 Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                 Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
       #ifdef TCPLX
          blk2c(N, N, alpha, rC, iC, beta, c, N);
          #ifdef Conj_  /* must zero imag part of diagonal for HERK */
@@ -37063,8 +37078,8 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    FILE *fp;
    const int ntr = (pre == 'd' || pre == 's') ? 2 : 4;
    int ial, ibe, itr, flg;
-   const char be[3] = {'0', '1', 'n'};
-   char bes[4] = {'1', 'n', 'X', '0'};
+   const char be[3] = {'0', '1', 'N'};
+   char bes[4] = {'1', 'N', 'X', '0'};
    char trs[4] = {'N', 'T', 'C', 'H'};
    char rcs[4] = {'c', 'r', 'c', 'r'};
    char cjs[4] = {' ', ' ', 'C', 'C'};
@@ -37102,6 +37117,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
  */
 @skip   cb = AddMMUniqueACopyFromMMNodes(pre, 'T', mb, NULL);
    flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
+   flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
    cb = GetCopyNodeFromMM(flg, mb);
    cb->rout = GetCopyName(cb, 0);
    fprintf(fp, "#define ATL_%ca2blk_syrkN %s\n",
@@ -37124,7 +37140,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
          "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,ATL_CSZT,TYPE*,TYPE*);\n");
    }
 /*
- * Prototype all C cpy routs: ATL_<pre>syblk2cmat_a<alp>_b<bet>
+ * Prototype all C cpy routs: ATL_<pre>SyrkIntoC_a<alp>_b<bet>
  */
    for (ial=0; ial < 3; ial++)
    {
