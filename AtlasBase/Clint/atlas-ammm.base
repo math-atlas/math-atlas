@@ -33248,6 +33248,23 @@ void Mjoin(PATL,syrk_IP)
  */
    szE = (Uplo == AtlasLower) ? 0 : N*N;
    szE = Mmax(szE, ATL_SYRKK_NU*ATL_SYRKK_NU*2);
+   if (K > kb)
+   {
+      nkb = K / kb;
+      kb0 = K - nkb*kb;
+      if (!kb0)
+      {
+         kb0 = kb;
+         nkb--;
+      }
+      KB0 = ((kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   }
+   else
+   {
+      nkb = 0;
+      kb0 = K;
+      kb = KB0 = ((kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   }
    if (IS_COLMAJ(TA))
    {
       incAk = lda*(kb SHIFT);
@@ -33258,22 +33275,6 @@ void Mjoin(PATL,syrk_IP)
       incAk = kb SHIFT;
       a2blk = Mjoin(PATL,a2blk_syrkN);
    }
-   if (K > kb)
-   {
-      nkb = K / kb;
-      kb0 = K - nkb*kb;
-      if (!kb0)
-      {
-         kb0 = kb;
-         nkb--;
-      }
-   }
-   else
-   {
-      nkb = 0;
-      kb = kb0 = K;
-   }
-   KB0 = ((kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    szA = nnu*ATL_SYRKK_NU;
    k = (Uplo == AtlasUpper) ? Mmax(kb,N) : kb;
    szA *= k;
@@ -37025,7 +37026,7 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
       int cpflag, ib, ia;
       char cpr = pre;
       char bn[4] = {'1', 'N', 'X', '0'};
-      cpflag = 0;
+      cpflag = (pre == 's' || pre == 'c') ? (1<<CPF_SINGLE) : 0;
       if (FLAG_IS_SET(mp->flag, MMF_COMPLEX))
          cpr = (pre == 's') ? 'c' : 'z';
       else
@@ -37078,7 +37079,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    FILE *fp;
    const int ntr = (pre == 'd' || pre == 's') ? 2 : 4;
    int ial, ibe, itr, flg;
-   const char be[3] = {'0', '1', 'N'};
+   const char be[3] = {'0', '1', 'n'};
    char bes[4] = {'1', 'N', 'X', '0'};
    char trs[4] = {'N', 'T', 'C', 'H'};
    char rcs[4] = {'c', 'r', 'c', 'r'};
@@ -37118,6 +37119,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
 @skip   cb = AddMMUniqueACopyFromMMNodes(pre, 'T', mb, NULL);
    flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
    flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
+   flg |= (pre == 'c' || pre == 's') ? (1<<CPF_SINGLE):0;
    cb = GetCopyNodeFromMM(flg, mb);
    cb->rout = GetCopyName(cb, 0);
    fprintf(fp, "#define ATL_%ca2blk_syrkN %s\n",
