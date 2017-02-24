@@ -5042,7 +5042,8 @@ void ATL_DoWorkMM(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 @ROUT ATL_tNumGemmThreads
 #include "atlas_misc.h"
 #include "atlas_tlvl3.h"
-#include Mstr(Mjoin(ATLAS_PRE,ipge_perf.h))
+#include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
+#include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
 
 #if 1
 /*
@@ -5063,9 +5064,9 @@ size_t Mjoin(PATL,GetAmmmNthr)(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
          return(1);
    #endif
 
-   nmblks = (M >= ATL_geAMM_66MB) ? M/ATL_geAMM_66MB : 1;
-   nnblks = (N >= ATL_geAMM_66NB) ? N/ATL_geAMM_66NB : 1;
-   nkblks = (K >= ATL_geAMM_66KB) ? K/ATL_geAMM_66KB : 1;
+   nmblks = (M >= ATL_VWipgen_66MB) ? M/ATL_VWipgen_66MB : 1;
+   nnblks = (N >= ATL_VWipgen_66NB) ? N/ATL_VWipgen_66NB : 1;
+   nkblks = (K >= ATL_VWipgen_66KB) ? K/ATL_VWipgen_66KB : 1;
 /*
  * Any shape with two degenerate dimensions causes a lot of bus traffic,
  * with very little computation to overcome threading overheads,
@@ -5077,7 +5078,7 @@ size_t Mjoin(PATL,GetAmmmNthr)(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
 /*
  * If it is a rank-K update, ask to have 4 big blocks of C
  */
-   if (K <= ATL_rkAMM_LASTKB)
+   if (K <= ATL_VWopgen_MAX_KB)
    {
       nnblks=N/ATL_rkAMM_LASTNB, nmblks=M/ATL_rkAMM_LASTMB;
       return((nnblks*nmblks)>>2);
@@ -8232,6 +8233,7 @@ void Mjoin(PATL,t@(rt))
       return;
    }
 //   if (Uplo == AtlasLower && N > ATL_sqAMM_LASTNB)
+   #if 0
    if (K > 3)
    {
       void Mjoin(PATL,t@(rt)_amm)
@@ -8241,8 +8243,10 @@ void Mjoin(PATL,t@(rt))
       Mjoin(PATL,t@(rt)_amm)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
       return;
    }
+   #endif
 @ROUT ATL_tsyrk ATL_therk
 
+   #if 0
    nb = ATL_sqAMM_LASTLCMU;
    if (K > (N<<ATL_NTHRPOW2) && (((size_t)N)*N*sizeof(TYPE) <= ATL_PTMAXMALLOC))
    {
@@ -8251,6 +8255,7 @@ void Mjoin(PATL,t@(rt))
 @ROUT ATL_therk `      Mjoin(PATLU,zero)(N, C+1, lda+lda+2);  /* zero imag on diag */`
       return;
    }
+   #endif
 @beginskip
 #if 0 && ATL_NTHREADS == (1<<ATL_NTHRPOW2)
    np = ATL_t@(rt)_N(Uplo, Trans, N, K, SADD alpha, A, lda, 
@@ -8259,7 +8264,7 @@ void Mjoin(PATL,t@(rt))
 @endskip
    np = ATL_t@(rt)_M(Uplo, Trans, N, K, SADD alpha, A, lda, 
                      SADD beta, C, ldc);
-   if (np < 2)
+@skip   if (np < 2)
    {
 DOSERIAL:
 @ROUT ATL_tsyrk `      Mjoin(PATL,@(rt))(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);`
@@ -12597,6 +12602,7 @@ DONE:
 #define ATL_ESTNCTR 1
 #include "atlas_level1.h"
 #include "atlas_tlvl3.h"
+#include Mstr(Mjoin(ATLAS_PRE,ipdmn_view.h))
 
 #ifdef TCPLX
 static void INLINE Mjoin(PATL,amm_tMN_k)
@@ -12957,10 +12963,12 @@ int Mjoin(PATL,tammm_tMN)
    TYPE *wC;
 
 /*
- * Special case for tiny N&K, and large M
+ * Special case for tiny N&K, and large M.  Note that the K comparison
+ * will need to updated later take into account the size of M&N: when they
+ * are large, parallel speedup is expected even with short KB!
  */
-   if (N > ATL_geAMM_LASTNB || M > ATL_geAMM_LASTMB ||
-       K < Mmin(8,ATL_NTHREADS)*ATL_geAMM_LASTKB)
+   if (N > ATL_VWipdmn_LAST_NB || M > ATL_VWipdmn_LAST_MB ||
+       K < Mmin(4,ATL_NTHREADS)*ATL_VWipdmn_LAST_KB)
       return(1);
 /*
  * Not uncommon to recur and hit this degenerate case that's a dot product
@@ -13718,7 +13726,12 @@ int Mjoin(PATL,ttrsm_amm)
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
 #include "atlas_cbc.h"
+#include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
+@ROUT ATL_tgemm_amm
+#include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
+#include Mstr(Mjoin(ATLAS_PRE,ipdmn_view.h))
 
+@ROUT ATL_tgemm_amm ATL_tammm_tNK ATL_tammm_G ATL_tammm_tK ATL_tammm_sK
 @ROUT ATL_tammm_tNK
 void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
@@ -13838,7 +13851,7 @@ int Mjoin(PATL,tammm_tNK)
    size_t nmblks;
    void *vp;
 
-   if (N >= ATL_rkAMM_LASTNB || K >= ATL_rkAMM_LASTKB || M < ATL_rkAMM_LASTMB ||
+   if (N >= ATL_rkAMM_LASTNB || K >= ATL_VWopgen_MAX_KB || M < ATL_rkAMM_LASTMB ||
        M < Mmin(8,ATL_NTHREADS)*ATL_rkAMM_LASTMB)
       return(1);
    tnk.P = Mjoin(PATL,tGetopinfo_tNK)(&rki, ATL_NTHREADS, TA, TB, M, N, K, 
@@ -14145,8 +14158,13 @@ int Mjoin(PATL,tammm_tK)
    size_t nmblks, nnblks, szAp, szBb, sz;
    void *vp=NULL;
 
-   tnk.P = Mjoin(PATL,tGetopinfo_tK)(&rki, ATL_NTHREADS, TA, TB, M, N, K, 
-                                     lda, ldb, ldc, alpha, beta);
+@skip   tnk.P = Mjoin(PATL,tGetopinfo_tK)(&rki, ATL_NTHREADS, TA, TB, M, N, K, 
+@skip                                     lda, ldb, ldc, alpha, beta);
+   Mjoin(PATL,opinfo)(&rki, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+   {
+      sz = rki.nfmblks * rki.nfnblks;
+      tnk.P = Mmin(ATL_NTHREADS, sz);
+   }
 @skip   tnk.P = 1;
    if (tnk.P < 2)
    {
@@ -14829,12 +14847,15 @@ int Mjoin(PATL,tammm_G)
                          p4 = nthr>>2, p4_2 = nthr+nthr, p4_3 = p4_2+p4;
    #endif
 
+   #if 1
+   Mjoin(PATL,ipgenInfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+   #else
    idx = Mjoin(PATL,tGetParCIndx)(&ip, ATL_NTHREADS, M, N, K);
    Mjoin(PATL,geFillInIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
                               alpha, beta, 
                               ip.nfmblks, ip.npmblks, ip.mb, ip.pmb, 
                               ip.nfnblks, ip.npnblks, ip.nb, ip.pnb);
-
+   #endif
 //   if (ip.kb > K)
 //      return(1);
 
@@ -15242,6 +15263,7 @@ int Mjoin(PATL,ammm_REC)
    return(0);
 }
 
+@ROUT ATL_tgemm_amm
 int Mjoin(PATL,tammm)
 (
    enum ATLAS_TRANS TA,
@@ -15265,41 +15287,49 @@ int Mjoin(PATL,tammm)
  */
    if (K <= 2 || M < 2 || N < 2)
       return(1);  /* signal failure */
-   if (M <= ATL_geAMM_LASTMB && N <= ATL_geAMM_LASTNB &&
-       K <= ATL_geAMM_LASTKB)
+   #if 0  /* need diff views before this makes a lot of sense */
+   if (M <= ATL_VWopgen_BEST_MB && N <= ATL_VWopgen_BEST_NB &&
+       K <= ATL_VWopgen_BEST_KB)
       return(1);
+   #endif
 /*
  * _tNK & _tMN require minimal wrkspc, so just return if they fail
  */
-   if (N <= ATL_rkAMM_LASTNB && K <= ATL_rkAMM_LASTKB)
+   #if 0  /* Need opdNK view for this! */
+   if (N <= ATL_rkAMM_LASTNB && K <= ATL_VWopgen_MAX_KB)
       return(Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
-   if (N <= ATL_geAMM_LASTNB && M <= ATL_geAMM_LASTMB &&
-       K > (ATL_geAMM_LASTKB<<2))
+   #endif
+/*
+ * Eventually, need to rule out general case isn't better for large M/N,
+ * but for now, use this case anytime it would work
+ */
+   if (N <= ATL_VWipdmn_LAST_NB && M <= ATL_VWipdmn_LAST_MB && 
+       K > (ATL_VWipdmn_LAST_KB<<1))
       return(Mjoin(PATL,tammm_tMN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
 /*
  * Routines that copy one entire matrix may need to cut varying dims in order
  * to fit within workspace requirements.  Use ammm_REC for this.
  */
-   if (K <= ATL_rkAMM_LASTKB)  /* outer product / rank-K with N > LASTNB */
+   if (K <= ATL_VWopgen_MAX_KB)  /* outer product / rank-K with N > LASTNB */
    {
 @skip      if (((double)M)*N*K < 
-@skip          2.0*ATL_rkAMM_LASTMB*ATL_rkAMM_LASTNB*ATL_rkAMM_LASTKB)
+@skip          2.0*ATL_rkAMM_LASTMB*ATL_rkAMM_LASTNB*ATL_VWopgen_MAX_KB)
 @skip         return(1);
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc, 1, Mjoin(PATL,tammm_tK)));
    }
 
-   if (N < (ATL_geAMM_LASTNB<<2) && K < (ATL_geAMM_LASTKB<<2) &&  
-       (M>>ATL_NTHRPOW2) > ATL_geAMM_LASTMB)
+   if (N < (ATL_VWipgen_BEST_NB<<2) && K < (ATL_VWipgen_BEST_KB<<2) &&  
+       (M>>ATL_NTHRPOW2) > ATL_VWipgen_BEST_MB)
          return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                      beta, C, ldc, 6, Mjoin(PATL,tammm_sNK)));
-   if (M < (ATL_geAMM_LASTMB<<2) && K < (ATL_geAMM_LASTKB<<2) &&  
-       (N>>ATL_NTHRPOW2) > ATL_geAMM_LASTNB)
+   if (M < (ATL_VWipgen_BEST_MB<<2) && K < (ATL_VWipgen_BEST_KB<<2) &&  
+       (N>>ATL_NTHRPOW2) > ATL_VWipgen_BEST_NB)
          return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                      beta, C, ldc, 5, Mjoin(PATL,tammm_sMK)));
-   if (K >= ATL_geAMM_LASTKB && M >= 12 && N >= 12)
+   if (K >= ATL_VWipgen_BEST_KB && M >= 12 && N >= 12)
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc, 63, Mjoin(PATL,tammm_G)));
    return(1);
@@ -15313,6 +15343,8 @@ int Mjoin(PATL,tammm)
 #include "atlas_gatmctr.h"
 #include "atlas_tperf.h"
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+#include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
+#include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
 #ifdef Conj_
    #define syrkBlk Mjoin(PATL,herkBlk)
    #define syrk_K Mjoin(PATL,herk_KLoop)
@@ -16743,36 +16775,36 @@ DO_SERIAL:
          pd.pansz0 = (size_t)IdxAw_ip(&ip, NULL, 1, 0);
          if (SCALAR_IS_NONE(alpha))
          {
-            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+            pd.syblk2c_b1 = Mjoin(PATL,SyrkIntoC_aNb1);
             if (SCALAR_IS_ONE(beta))
-               pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b1);
+               pd.syblk2c = Mjoin(PATL,SyrkIntoC_aNb1);
             else if (SCALAR_IS_NONE(beta))
-               pd.syblk2c = Mjoin(PATL,syblk2cmat_an_bn);
+               pd.syblk2c = Mjoin(PATL,SyrkIntoC_aNbN);
             else 
                pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
-                  Mjoin(PATL,syblk2cmat_an_b0) : Mjoin(PATL,syblk2cmat_an_bX);
+                  Mjoin(PATL,SyrkIntoC_aNb0) : Mjoin(PATL,SyrkIntoC_aNbX);
          }
          else if (SCALAR_IS_ONE(alpha))
          {
-            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+            pd.syblk2c_b1 = Mjoin(PATL,SyrkIntoC_a1b1);
             if (SCALAR_IS_ONE(beta))
-               pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b1);
+               pd.syblk2c = Mjoin(PATL,SyrkIntoC_a1b1);
             else if (SCALAR_IS_NONE(beta))
-               pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_bn);
+               pd.syblk2c = Mjoin(PATL,SyrkIntoC_a1bN);
             else 
                pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
-                  Mjoin(PATL,syblk2cmat_a1_b0) : Mjoin(PATL,syblk2cmat_a1_bX);
+                  Mjoin(PATL,SyrkIntoC_a1b0) : Mjoin(PATL,SyrkIntoC_a1bX);
          }
          else
          {
-            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+            pd.syblk2c_b1 = Mjoin(PATL,SyrkIntoC_aXb1);
             if (SCALAR_IS_ONE(beta))
-               pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b1);
+               pd.syblk2c = Mjoin(PATL,SyrkIntoC_aXb1);
             else if (SCALAR_IS_NONE(beta))
-               pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_bn);
+               pd.syblk2c = Mjoin(PATL,SyrkIntoC_aXbN);
             else 
                pd.syblk2c = SCALAR_IS_ZERO(beta) ? 
-                  Mjoin(PATL,syblk2cmat_aX_b0) : Mjoin(PATL,syblk2cmat_aX_bX);
+                  Mjoin(PATL,SyrkIntoC_aXb0) : Mjoin(PATL,SyrkIntoC_aXbX);
          }
       }
       else
@@ -16780,18 +16812,18 @@ DO_SERIAL:
          pd.pansz0 = (size_t)IdxBw_ip(&ip, NULL, 0, 1);
          if (SCALAR_IS_NONE(alpha))
          {
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_an_b0);
-            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+            pd.syblk2c = Mjoin(PATL,SyrkIntoC_aNb0);
+            pd.syblk2c_b1 = Mjoin(PATL,SyrkIntoC_aNb1);
          }
          else if (SCALAR_IS_ONE(alpha))
          {
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_a1_b0);
-            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+            pd.syblk2c = Mjoin(PATL,SyrkIntoC_a1b0);
+            pd.syblk2c_b1 = Mjoin(PATL,SyrkIntoC_a1b1);
          }
          else
          {
-            pd.syblk2c = Mjoin(PATL,syblk2cmat_aX_b0);
-            pd.syblk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+            pd.syblk2c = Mjoin(PATL,SyrkIntoC_aXb0);
+            pd.syblk2c_b1 = Mjoin(PATL,SyrkIntoC_aXb1);
          }
       }
    }
@@ -16914,24 +16946,24 @@ void tsyrk_amm
 /*
  *  Recur on K until tsyrk_amm can allocate enough space 
  */
-    if (tsyrk_amm_N(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc))
-    {
-       unsigned int kL = K>>1, kR=K-kL;
-       const TYPE *a = A + kL*kmul;
+   if (tsyrk_amm_N(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc))
+   {
+      unsigned int kL = K>>1, kR=K-kL;
+      const TYPE *a = A + kL*kmul;
 /*
- *     This stopping criteria should never happen, but it's here in case
- *     we have a system where you can't malloc much of anything, where we'll
- *     just try serial
+ *    This stopping criteria should never happen, but it's here in case
+ *    we have a system where you can't malloc much of anything, where we'll
+ *    just try serial
  */
 @skip       if (kL < 32 || kR < 32)
-       if (kL <= ATL_sqAMM_LASTKB)
-       {
-           Mjoin(PATL,syrk_IP)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
-           return;
-       }
+      if (kL <= ATL_sqAMM_LASTKB)
+      {
+         Mjoin(PATL,syrk)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
+         return;
+      }
       tsyrk_amm(Uplo, Trans, N, kL, alpha, A, lda, beta, C, ldc);
       tsyrk_amm(Uplo, Trans, N, kR, alpha, a, lda, ONE,  C, ldc);
-    }
+   }
 }
 #ifndef TCPLX
    #undef ONE
@@ -19018,6 +19050,8 @@ int Mjoin(PATL,tammm_sNK)
 
    snk.beta = beta;
    #if 1
+   Mjoin(PATL,ipgenInfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+   #elif 1
    idx = Mjoin(PATL,tGetParCIndx)(&ip, ATL_NTHREADS, M, N, K);
    Mjoin(PATL,geFillInIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
                               alpha, beta, 
@@ -19054,7 +19088,7 @@ int Mjoin(PATL,tammm_sNK)
       Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
       return(0);
    }
-   #if 0
+   #if 1
 printf("snk:P=%d, M=(%d,%d; %d,%d) N=(%d,%d; %d,%d)\n",
        P, (int)ip.nfmblks, (int)ip.npmblks, ip.mb, ip.pmb,
        (int)ip.nfnblks, (int)ip.npnblks, ip.nb, ip.pnb);
@@ -19397,6 +19431,8 @@ int Mjoin(PATL,tammm_sMK)
 
    smk.beta = beta;
 #if 1
+   Mjoin(PATL,ipgenInfo)(&ip, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+#elif 1
    idx = Mjoin(PATL,tGetParCIndx)(&ip, ATL_NTHREADS, M, N, K);
    Mjoin(PATL,geFillInIPInfo)(&ip, idx, TA, TB, M, N, K, lda, ldb, ldc,
                               alpha, beta, 
@@ -19671,7 +19707,7 @@ int Mjoin(PATL,tammm_gK)
 #include "atlas_misc.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
-#include Mstr(Mjoin(ATLAS_PRE,opsq_perf.h))
+#include Mstr(Mjoin(ATLAS_PRE,ipdmn_view.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #define ATL_ESTNCTR 1
 #include "atlas_tlvl3.h"
@@ -19826,11 +19862,11 @@ static void DoWork(void *vpp, int rank, int vrank)
          ATL_CSZT ldc=pd->ldc;
          ATL_UINT k, APPBETA=0;
    
-         if (blk2c == Mjoin(PATL,syblk2cmat_a1_b1))
-         blk2c = Mjoin(PATL,syblk2cmat_a1_b0);
+         if (blk2c == Mjoin(PATL,SyrkIntoC_a1_b1))
+         blk2c = Mjoin(PATL,SyrkIntoC_a1_b0);
          else 
-            blk2c = (blk2c == Mjoin(PATL,syblk2cmat_an_b1)) ? 
-               Mjoin(PATL,syblk2cmat_an_b0) : Mjoin(PATL,syblk2cmat_aX_b0);
+            blk2c = (blk2c == Mjoin(PATL,SyrkIntoC_an_b1)) ? 
+               Mjoin(PATL,SyrkIntoC_an_b0) : Mjoin(PATL,SyrkIntoC_aX_b0);
          #ifdef TCPLX
          #else
             blk2c(N, N, pd->alpha, wC, ATL_rzero, wc, N);
@@ -19886,6 +19922,8 @@ static void DoWork(void *vpp, int rank, int vrank)
    }  /* end of if we did work */
 }
 #undef one
+
+@extract -b @(topd)/atlas-amm rout=N2Idx
 
 #ifdef Conj_
 void Mjoin(PATL,therk_tN)
@@ -19972,34 +20010,29 @@ void Mjoin(PATL,tsyrk_tN)
        return;
    }
    #endif
-/*
- * Choose a KB that is a multiple of KU.  Usually, we like near-square sizes,
- * but for small problems, you want to expand KB to avoid having vector
- * reduction (KVEC) and C store dominate cost.  There's some advantage to
- * containing one or more operands in the L1: on some systems, this results
- * in better max perf, but on all systems it helps to reduce bandwidth demands
- * for parallel operations.  So, don't expand kb beyond L1 if a square problem
- * could fit (since longer than NB KB has only marginal benefit, that might
- * prevent a more substantial in-L1 benefit).  If problem is really tiny,
- * may make sense to contain both C & A in the cache.  We ignore the case
- * where, C/A and the col-major A all fit, as that is super-tiny
- */
+   idx = N2Idx(NN);
+   kb = ATL_GetVWsyrkKB(idx);
    szC = ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
          * ATL_SYRKK_VLEN;
    szC *= ((nnu+1)*nnu)>>1;  /* only need lower tri blks, not full nnu*nnu */
-   if (szC < ATL_L1elts)  /* If we can't fit C in L1, no square block can */
+   if (K > kb)
    {
-      szE = ATL_L1elts - szC;  /* szE = elts in L1 after C stored there */
-      kb = (szE>>1) / NN;      /* fit A, Ac & C all in L1 */
-      if (kb < N)
-         kb = ATL_L1elts / N;  /* fill L1 with just A */
-      kb = (kb/ATL_SYRKK_KU)*ATL_SYRKK_KU;
-      if (kb < N)              /* if we can't make at least square */
-         kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+      nkb = K / kb;
+      pd.kb0 = K - nkb*kb;
+      if (!kb0)
+      {
+         pd.kb0 = kb;
+         nkb--;
+      }
+      KB0 = ((pd.kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    }
-   else  /* just use kb that worked for out-of-L1 best GEMM case */
-      kb = (ATL_sqAMM_LASTKB/ATL_SYRKK_KU)*ATL_SYRKK_KU;
-   ATL_assert(kb);
+   else
+   {
+      nkb = 0;
+      pd.kb0 = K;
+      kb = KB0 = ((pd.kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   }
+   #if 0
 /*
  * Now, see if we need to reduce kb to enhance parallelism, or if we have full
  */
@@ -20013,16 +20046,10 @@ void Mjoin(PATL,tsyrk_tN)
       }
       while (nkb < ATL_NTHREADS && kb > ATL_sqAMM_66KB);
    }
+   #endif
    pd.kb = kb;
    pd.nnu = nnu;
    pd.szC = szC;
-   pd.KB0 = pd.kb0 = K - nkb*kb;
-   if (pd.kb0)
-   {
-      #if ATL_SYRKK_KVEC > 1
-         pd.KB0 = ((pd.kb0+ATL_SYRKK_KVEC-1)/ATL_SYRKK_KVEC)*ATL_SYRKK_KVEC;
-      #endif
-   }
 /*
  * Compute the number of jobs (consisting of multiple kblks) and number of
  * k blocks given out individually (for load balancing)
@@ -20141,45 +20168,45 @@ void Mjoin(PATL,tsyrk_tN)
    {
       if (SCALAR_IS_NONE(alpha))
       {
-         pd.blk2c_b1 = Mjoin(PATL,syblk2cmat_an_b1);
+         pd.blk2c_b1 = Mjoin(PATL,SyrkIntoC_aNb1);
          if (SCALAR_IS_ONE(beta))
-            pd.blk2c = Mjoin(PATL,syblk2cmat_an_b1);
+            pd.blk2c = Mjoin(PATL,SyrkIntoC_aNb1);
          else if (SCALAR_IS_NONE(beta))
-            pd.blk2c = Mjoin(PATL,syblk2cmat_an_bn);
+            pd.blk2c = Mjoin(PATL,SyrkIntoC_aNbN);
          else
-            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,syblk2cmat_an_b0) :
-                       Mjoin(PATL,syblk2cmat_an_bX);
+            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,SyrkIntoC_an_b0) :
+                       Mjoin(PATL,SyrkIntoC_aNbX);
       }
       else if (SCALAR_IS_ONE(alpha))
       {
-         pd.blk2c_b1 = Mjoin(PATL,syblk2cmat_a1_b1);
+         pd.blk2c_b1 = Mjoin(PATL,SyrkIntoC_a1b1);
          if (SCALAR_IS_ONE(beta))
-            pd.blk2c = Mjoin(PATL,syblk2cmat_a1_b1);
+            pd.blk2c = Mjoin(PATL,SyrkIntoC_a1b1);
          else if (SCALAR_IS_NONE(beta))
-            pd.blk2c = Mjoin(PATL,syblk2cmat_a1_bn);
+            pd.blk2c = Mjoin(PATL,SyrkIntoC_a1bN);
          else
-            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,syblk2cmat_a1_b0) :
-                       Mjoin(PATL,syblk2cmat_a1_bX);
+            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,SyrkIntoC_a1b0) :
+                       Mjoin(PATL,SyrkIntoC_a1bX);
       }
       else /* alpha = X */
       {
-         pd.blk2c_b1 = Mjoin(PATL,syblk2cmat_aX_b1);
+         pd.blk2c_b1 = Mjoin(PATL,SyrkIntoC_aXb1);
          if (SCALAR_IS_ONE(beta))
-            pd.blk2c = Mjoin(PATL,syblk2cmat_aX_b1);
+            pd.blk2c = Mjoin(PATL,SyrkIntoC_aXb1);
          else if (SCALAR_IS_NONE(beta))
-            pd.blk2c = Mjoin(PATL,syblk2cmat_aX_bn);
+            pd.blk2c = Mjoin(PATL,SyrkIntoC_aXbN);
          else
-            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,syblk2cmat_aX_b0) :
-                       Mjoin(PATL,syblk2cmat_aX_bX);
+            pd.blk2c = SCALAR_IS_ZERO(beta) ?  Mjoin(PATL,SyrkIntoC_aX_b0) :
+                       Mjoin(PATL,SyrkIntoC_aX_bX);
       }
    }
    else 
    {
       if (SCALAR_IS_NONE(alpha))
-         pd.blk2c = Mjoin(PATL,syblk2cmat_an_b0);
+         pd.blk2c = Mjoin(PATL,SyrkIntoC_an_b0);
       else
          pd.blk2c = SCALAR_IS_ONE(alpha) ?
-                 Mjoin(PATL,syblk2cmat_a1_b0):Mjoin(PATL,syblk2cmat_aX_b0);
+                 Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
    }
 
    ATL_goParallel(P, DoWork, NULL, &pd, NULL);
