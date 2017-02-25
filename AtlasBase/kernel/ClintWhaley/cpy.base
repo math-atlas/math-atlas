@@ -1188,10 +1188,76 @@ void ATL_USERCPMM(const size_t K, const size_t D, const SCALAR alpha,
    }
    if (Dr)
    {
-      const size_t D4 = Dr>>2, Drr=Dr-(D4<<2);
-      #define Dr Drr
-      @beginindent 3 3
-@ROUT ATL_cpAN2blk4_avx2.c ATL_cpAN2blk12_avx2.c
+      const ATL_VTYPE z0={ATL_rzero,ATL_rzero,ATL_rzero,ATL_rzero};
+      ATL_VTYPE vmsk;
+      const TYPE *pA=A;
+      const size_t D4 = Dr>>2, Drr=Dr-(D4<<2), ZPAD = 3 - ((Dr+3)>>2);
+      size_t k;
+      #ifdef SREAL
+         int msk[4];
+         #define NONE -1
+      #else
+         long long int msk[4];
+         #define NONE -1L
+      #endif
+      if (Drr)
+      {
+         msk[0] = msk[1] = msk[2] = msk[3] = 0;
+         switch(Drr)
+         {
+         case 3:
+            msk[2] = NONE;
+         case 2:
+            msk[1] = NONE;
+         case 1:
+            msk[0] = NONE;
+         default:;
+         }
+         ATL_vuld(vmsk, (void*)msk);
+      }
+      #undef NONE
+      for (k=0; k < K; k++)
+      {
+         ATL_VTYPE a0, a1;
+         switch(D4)
+         {
+         case 2:
+            ATL_vgather(a0, A+k, off);
+            ATL_vgather(a1, A4+k, off);
+            #if defined(ALPHAN) || defined(ALPHAX)
+               ATL_vmul(a0, a0, valp);
+               ATL_vmul(a1, a1, valp);
+            #endif
+            ATL_vst(b, a0);
+            ATL_vst(b+4, a1);
+            b += 8;
+            pA = A8;
+            break;
+         case 1:
+            ATL_vgather(a0, A+k, off);
+            #if defined(ALPHAN) || defined(ALPHAX)
+               ATL_vmul(a0, a0, valp);
+            #endif
+            ATL_vst(b, a0);
+            b += 4;
+            pA = A4;
+         default:;
+         }
+         if (Drr)
+         {
+            ATL_vmskgat(a0, pA+k, off, vmsk);
+            #if defined(ALPHAN) || defined(ALPHAX)
+               ATL_vmul(a0, a0, valp);
+            #endif
+            ATL_vst(b, a0);
+            b += 4;
+         }
+         for (j=0; j < ZPAD; j++, b += 4)
+            ATL_vst(b, z0);
+      }
+   }
+}
+@ROUT ATL_cpAN2blk4_avx2.c
    for (j=0; j < D4; j++, A += lda4)
    {
       size_t k;
@@ -1241,8 +1307,4 @@ void ATL_USERCPMM(const size_t K, const size_t D, const SCALAR alpha,
          b += 4;
       }
    }
-@ROUT ATL_cpAN2blk12_avx2.c
-   @endindent
-   }
-@ROUT ATL_cpAN2blk4_avx2.c ATL_cpAN2blk12_avx2.c
 }
