@@ -654,7 +654,7 @@ void ATL_@(pre)therk
 #endif
 #ifndef ATL_TGEMM_THRESH_MF
    #define ATL_TGEMM_THRESH_MF \
-  ((((2.0*(ATL_TGEMM_XOVER))*ATL_geAMM_LASTLCMU)*ATL_geAMM_LASTLCMU)*ATL_geAMM_LASTLCMU)
+  ((((2.0*(ATL_TGEMM_XOVER))*ATL_VWipgen_66MB)*ATL_VWipgen_66MB)*ATL_VWipgen_66MB)
 #endif
 /*
  * This is the minimal number of flops each thread requires once THRESH
@@ -662,7 +662,7 @@ void ATL_@(pre)therk
  */
 #ifndef ATL_TGEMM_PERTHR_MF
    #define ATL_TGEMM_PERTHR_MF \
-      ((((2.0*ATL_TGEMM_ADDP)*ATL_geAMM_LASTLCMU)*ATL_geAMM_LASTLCMU)*ATL_geAMM_LASTLCMU)
+      ((((2.0*ATL_TGEMM_ADDP)*ATL_VWipgen_BEST_LCMN)*ATL_VWipgen_BEST_LCMN)*ATL_VWipgen_BEST_KB)
 #endif
 /*
  * For debugging, can define ATL_SERIAL_COMBINE, and then it any required
@@ -5318,9 +5318,11 @@ void Mjoin(PATL,InitTMMNodes)
    }
    for (i=0; i < ATL_NTHREADS; i++)
    {
-      ptmms[i].mb = Mmin(ATL_geAMM_LASTLCMU, ATL_geAMM_LASTMB);
-      ptmms[i].nb = Mmin(ATL_geAMM_LASTLCMU, ATL_geAMM_LASTNB);
-      ptmms[i].kb = ATL_geAMM_LASTKB;
+@skip      ptmms[i].mb = Mmin(ATL_geAMM_LASTLCMU, ATL_geAMM_LASTMB);
+@skip      ptmms[i].nb = Mmin(ATL_geAMM_LASTLCMU, ATL_geAMM_LASTNB);
+      ptmms[i].mb = ATL_VWipgen_BEST_MB;
+      ptmms[i].nb = ATL_VWipgen_BEST_NB;
+      ptmms[i].kb = ATL_VWipgen_BEST_KB;
       ptmms[i].gemmK = gemmK;
       ptmms[i].eltsz = ATL_sizeof;
       ptmms[i].eltsh = Mjoin(PATL,shift);
@@ -6700,7 +6702,12 @@ void Mjoin(PATL,t@(rt))
  * sizes).  Other problems will experience cancelation under the serial order,
  * so AFAIK, neither is more correct numerically.
  */
-   if (N < 3*ATL_sqAMM_LASTLCMU && K < 3*ATL_sqAMM_LASTLCMU)
+   #if (3*ATL_VWipdmn_BEST_LCMU > ATL_VWipdmn_BEST_KB)
+      #define ATL_MIN_KB_2K ATL_VWipdmn_BEST_KB
+   #else
+      #define ATL_MIN_KB_2K 3*ATL_VWipdmn_BEST_LCMU
+   #endif
+   if (N < 3*ATL_VWipdmn_BEST_LCMN && K < ATL_MIN_KB_2K)
    {
 @ROUT ATL_tsyr2k
       Mjoin(PATL,syr2k)(Uplo, Trans, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
@@ -6710,6 +6717,7 @@ void Mjoin(PATL,t@(rt))
 @ROUT ATL_tsyr2k ATL_ther2k
       return;
    }
+   #undef ATL_MIN_KB_2K
 @ROUT ATL_tsyr2k
    sy.alpha2 = sy.alpha = SADD alpha;
    sy.beta  = SADD beta;
@@ -8089,7 +8097,8 @@ static int ATL_t@(rt)_M
    ATL_TSYRK_M_t syp[ATL_NTHREADS];
    int i, p;
    p = ATL_tsyrkdecomp_M(syp, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc,
-                         ATL_sqAMM_LASTLCMU, ATL_sqAMM_LASTMU, Mjoin(PATL,shift), 
+                         ATL_VWipdmn_BEST_MB, ATL_VWipdmn_BEST_MU, 
+                         Mjoin(PATL,shift), 
                          (TA == AtlasNoTrans) ? @(TRANS) : AtlasNoTrans,
                          ATL_TGEMM_PERTHR_MF, (TA == AtlasNoTrans) ? 
                          Mjoin(PATL,tsvgemmN@(TAC)):Mjoin(PATL,tsvgemm@(TAC)N),
@@ -8142,7 +8151,7 @@ static int ATL_t@(rt)_N
    psy[0].K = K;
    psy[0].lda = lda;
    psy[0].ldc = ldc;
-   psy[0].nb = ATL_sqAMM_66KB;
+   psy[0].nb = ATL_VWipdmn_66KB;
    psy[0].eltsh = Mjoin(PATL,shift);
    psy[0].Uplo = Uplo;
    psy[0].TA = Trans;
@@ -8204,7 +8213,7 @@ void Mjoin(PATL,t@(rt))
  * around for now
  */
    #if 0
-   if (N <= ATL_sqAMM_LASTNB)
+   if (N <= ATL_VWipdmn_BEST_NB)
    {
 @ROUT ATL_therk
       Mjoin(PATL,therk_tN)(Uplo, Trans, N, K, alpha0, A, lda, beta0, C, ldc);
@@ -8234,7 +8243,6 @@ void Mjoin(PATL,t@(rt))
 @ROUT ATL_tsyrk ATL_therk
       return;
    }
-//   if (Uplo == AtlasLower && N > ATL_sqAMM_LASTNB)
    #if 0
    if (K > 3)
    {
@@ -12792,8 +12800,8 @@ int Mjoin(PATL,tammm_tMN)
    ATL_tamm_tMN_t pd;
    ipinfo_t ip;
 
-   if (M > ATL_geAMM_LASTMB || N > ATL_geAMM_LASTNB ||
-       K < Mmin(ATL_NTHREADS,8)*ATL_geAMM_LASTKB)
+   if (M > ATL_VWipgen_LAST_MB || N > ATL_VWipgen_LAST_NB ||
+       K < Mmin(ATL_NTHREADS,8)*ATL_VWipgen_LAST_KB)
       return(2);  /* not correct shape! */
 
    P = Mjoin(PATL,tGetIPInfo_tMN)(&ip, ATL_NTHREADS, TA, TB, M, N, K, alpha,
@@ -12986,7 +12994,7 @@ int Mjoin(PATL,tammm_tMN)
          *C = alpha * dot + beta * (*C);
       return(0);
    }
-   nkblks = K / ATL_sqAMM_66KB;
+   nkblks = K / ATL_VWipgen_66KB;
    mb = Mjoin(PATL,tGetAmmmInfo)(&mminfo, Mmin(nkblks, ATL_NTHREADS), TA,
                                  TB, M, N, K, alpha, beta);
 
@@ -13023,7 +13031,7 @@ int Mjoin(PATL,tammm_tMN)
    else
    {
       nkblks++;
-      #if ATL_geAMM_MAXKVEC > 1
+      #if ATL_VWipgen_NKVEC
          if (ATL_AMMFLG_KMAJOR(mminfo.flag))
          {
             KB0 = ((kb0+ku-1)/ku)*ku;
