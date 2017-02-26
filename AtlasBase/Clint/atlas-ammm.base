@@ -35815,17 +35815,46 @@ int opWorkSetOK(unsigned long csz, ATL_mmnode_t *mp, int mb, int nb, int kb)
 
 void do_opdek(int verb, char pre, int NEK)
 {
-   ATL_mmnode_t *mp, *mb;
+   ATL_mmnode_t *mp, *mb=NULL;
    int tflag = 4;
-   unsigned int U;
+   unsigned int i, U, N;
    if (NEK)
       tflag |= 1<<31;
    mp = ReadMMFileWithPath(pre, "res", "opASYMP.sum");
    mp->mflop[0] = 0;
    assert(mp);
    MMExpandNK(verb, pre, tflag, 1, mp);
+   U = mp->ku;
+   if (NEK)
+   {
+      U = ATL_ilcm(U, mp->nu);
+      N = mp->nbB;
+   }
+   else
+   {
+      U = ATL_ilcm(U, mp->mu);
+      N = mp->mbB;
+   }
+   U = (U == 1 || U == 2) ? 4 : U;
+   for (i=U; i < N; i += U)
+   {
+      ATL_mmnode_t *p;
+      unsigned int b;
+      p = CloneMMNode(mp);
+      if (NEK)
+         p->nbB = mp->kbB = i;
+      else
+         p->mbB = mp->kbB = i;
+      ExpandMorN(verb, pre, tflag, 1, mp, !NEK, 512);
+      p->next = mb;
+      mb = p;
+   }
+   mp->next = mb;
    mb = mp;
+   mb = ReverseMMQ(mb);
+   MMPruneMflopTol(mb, 0, 1.0);
    WriteMMFileWithPath(pre, "res", NEK?"opnek.sum":"opmek.sum", mb);
+   KillAllMMNodes(mb);
 }
 
 /*
