@@ -35816,23 +35816,35 @@ int opWorkSetOK(unsigned long csz, ATL_mmnode_t *mp, int mb, int nb, int kb)
 void do_opdek(int verb, char pre, int NEK)
 {
    ATL_mmnode_t *mp, *mb=NULL;
-   int tflag = 4;
+   int tflag = 0;
    unsigned int i, U, N;
-   if (NEK)
-      tflag |= 1<<31;
+   const char ch=NEK?'N':'M';
+
    mp = ReadMMFileWithPath(pre, "res", "opASYMP.sum");
+   if (NEK)
+   {
+      mp->flag = (mp->flag&(~MMF_MVSET)) | 
+                 ((1<<MMF_MVC)|(1<<MMF_CPC)|(1<<MMF_MVA));
+      tflag |= 1<<31;
+   }
+   else
+      mp->flag = (mp->flag&(~MMF_MVSET)) | 
+                 ((1<<MMF_MVC)|(1<<MMF_CPC)|(1<<MMF_MVB));
    mp->mflop[0] = 0;
    assert(mp);
+   printf("FINDING BEST CASE FOR %c=K OUTER PRODUCT:\n", ch);
    MMExpandNK(verb, pre, tflag, 1, mp);
+   printf("BEST %c=K: ID=%u, B=(%u,%u,%u), mf=.2f\n\n", ch, mp->ID, 
+          mp->mbB, mp->nbB, mp->kbB);
    U = mp->ku;
    if (NEK)
    {
-      U = ATL_ilcm(U, mp->nu);
+      U = ATL_iLCM(U, mp->nu);
       N = mp->nbB;
    }
    else
    {
-      U = ATL_ilcm(U, mp->mu);
+      U = ATL_iLCM(U, mp->mu);
       N = mp->mbB;
    }
    U = (U == 1 || U == 2) ? 4 : U;
@@ -35840,12 +35852,15 @@ void do_opdek(int verb, char pre, int NEK)
    {
       ATL_mmnode_t *p;
       unsigned int b;
+      printf("   FINDING BEST CASE FOR %c=K=%u:\n", ch, i);
       p = CloneMMNode(mp);
       if (NEK)
-         p->nbB = mp->kbB = i;
+         p->nbB = p->kbB = i;
       else
-         p->mbB = mp->kbB = i;
-      ExpandMorN(verb, pre, tflag, 1, mp, !NEK, 512);
+         p->mbB = p->kbB = i;
+      MMExpandMorN(verb, pre, tflag, 1, p, !NEK, 512);
+      printf("   BEST CASE FOR %c=K=%u: B=(%u,%u,%u), mf=%.2f\n", ch, i, 
+             p->mbB, p->nbB, p->kbB, p->mflop[0]);
       p->next = mb;
       mb = p;
    }
