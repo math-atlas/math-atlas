@@ -436,16 +436,6 @@ int UpdateIndexRef(BLIST *scope, short I, int ur)
                   /*ip->next->inst[3] = STiconstlookup(val);*/
                   k = STiconstlookup(val);
                   ip->next->inst[3] = k;
-/*
- *                FIXME: 
- *                OL_NEINC collide with the index of val !!!!!
- *                as OL_NEINC is changed so the val!!!
- */
-#if 0                  
-                  fprintf(stderr, "%s val = %d, k = [%d]%d, ol=%d\n", 
-                          STname[ip->next->myblk->ilab-1], 
-                          val, k, SToff[k-1].i, OL_NEINC);
-#endif
                   changes++;
                }
             }
@@ -711,7 +701,7 @@ struct ptrinfo *FindConstMovingPtr(BBLOCK *bp)
    BLIST *bl;
 
    bl = NewBlockList(bp, NULL);
-   pi0 = FindMovingPointersAllFlags(bl); // new implementation
+   pi0 = FindMovingPointersAllFlags(bl); /* new implementation */
 
    picon = NULL;
    for (pi=pi0; pi; pi=pi->next)
@@ -854,15 +844,11 @@ short *UpdateDeref(INSTQ *ip, int ireg, int inc)
          #endif
          if (SToff[ST].sa[0] == -ireg)
          {
-#if 0
-            k = SToff[ST].sa[3];
-            k = k + inc;
-            if (k > 32767) /* short (16 bit) is kept to store the index! */
-               fko_error(__LINE__, "index of array overflows");
-#else
+/*
+ *          NOTE: added new table to save offset larger than short 
+ */
             k = GetDTcon(SToff[ST].sa[3]);
             k = k + inc;
-#endif
             inst[i] = AddDerefEntry(-ireg, SToff[ST].sa[1], SToff[ST].sa[2], k,
                                     STpts2[ST]);
          }
@@ -872,16 +858,17 @@ short *UpdateDeref(INSTQ *ip, int ireg, int inc)
    }
    return(inst);
 }
-void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
+void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR, int unroll)
 /*
  * Finds all loads of pointers in pbase, and adds UR*size to their deref
  */
 {
    BLIST *bl;
-   INSTQ *ip;
+   INSTQ *ip, *ip0, *ipnext=NULL;
    struct ptrinfo *pi;
    short *pst, *sp;
    int i, n, inc;
+   int ispref, npref=0;
    short k;
 
    if (!pbase || !scope)
@@ -899,17 +886,14 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
  *    all remaining loads should be for reads.  All reads of pointers must be
  *    either pointer arithmetic or dereferencing
  */
-      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      for (ip=bl->blk->ainst1; ip; ip = ipnext) 
       {
-         if (IS_LOAD(ip->inst[0]))
+         ipnext = ip->next;
+         if (IS_LOAD(ip->inst[0]) )
          {
             k = ip->inst[2];
-            //assert(k > 0);
-            if (k <= 0)
-            {
-               PrintThisInst(stderr,0,ip);
-               assert(k > 0);
-            }
+            assert(k > 0);
+            
             k = STpts2[k-1];
             if (!k) continue;
 /*
@@ -918,7 +902,7 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
             for (i=0; i != n && pst[i] != k; i++);
             if (i == n) continue;
 /*
- *          Now that we've got a moving pointer, determing unrolling increment
+ *          Now that we've got a moving pointer, determine unrolling increment
  *          NOTE: we are updating the inc with actual unroll factor * pi->upst
  *          the correctness of this code depeneds on the correct value of 'uri'
  *          parameter. 
@@ -937,7 +921,6 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
             for (pi=pbase; i && pi->ptr != k; pi=pi->next,i--)
                ;
             assert(pi);
-#if 1
 /*
  *          unrolling increment also depends on the const, the Ptr is updated
  *          by
@@ -945,7 +928,6 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
             assert(pi->flag & PTRF_CONSTINC); /* haven't implemented other yet*/
             if (pi->flag & PTRF_CONSTINC)
                inc = inc * SToff[pi->upst-1].i;
-#endif
             if (!(pi->flag & PTRF_INC))
                inc = -inc;
 /*
@@ -965,21 +947,55 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
                   break;
             }
             assert(ip && BitVecCheck(ip->use, k-1));
-#if 0
-            PrintThisInst(stderr, 1, ip);
-#endif
+            ipnext = ip->next;
+/*
+ *          calc inc for pref inst so that no two prefetches point the same 
+ *          cache line and delete unnecessary prefetch
+ */
+            ispref = IS_PREF(ip->inst[0]) ? 1: 0;
+            if (ispref)
+            {
+               i = SToff[ip->inst[3]-1].i;
+               if (i >= NCACHE)
+                  fko_error(__LINE__, "Prefetch in cache level %d," 
+                            " but nchache is defined as %d!!!\n", i+1, NCACHE);
+               npref = (inc * unroll) / (UR * LINESIZE[i]);
+               if (npref < unroll)
+               {
+                  inc = UR * LINESIZE[i];
+/*
+ *                delete prefetch where i > npref
+ */
+                  if (UR > npref)
+                  {
+                     ipnext = ip->next;
+                     ip0 = FindFirstLILforHIL(ip);
+                     ipnext->prev = ip0->prev;
+                     while (ip0 != ipnext)
+                     {
+                        /*PrintThisInst(stderr, 0, ip0);*/
+                        ip0 = DelInst(ip0);
+                     }
+                  }
+               }
+               else
+                  inc = (inc + LINESIZE[i] -1)/LINESIZE[i];  
+            }
 /*
  *          Presently not allowing ptr0 = ptr1 + ptr2, so no explicit ref
  */
-            assert(k != -ip->inst[2] && k != -ip->inst[3]);
-            sp = UpdateDeref(ip, k, inc);
-            if (sp)
+            if (!ispref || npref >= UR )
             {
-               for (k=0; k < 4; k++)
-                  ip->inst[k] = sp[k];
+               assert(k != -ip->inst[2] && k != -ip->inst[3]);
+               sp = UpdateDeref(ip, k, inc);
+               if (sp)
+               {
+                  for (k=0; k < 4; k++)
+                     ip->inst[k] = sp[k];
+               }
+               else
+                  InsNewInst(bl->blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
             }
-            else
-               InsNewInst(bl->blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
          }
       }
    }
@@ -1031,9 +1047,6 @@ void KillLoopControl(LOOPQ *lp)
  */
    if (!ip)
    {
-#if 0      
-      fprintf(stderr, "EXTENDING SEARCH FOR KILLLOOPCONTROL!!\n");
-#endif
 /*
  *    must have only one predecessor of pre-header and it's for cleanup 
  *    checking
@@ -1388,11 +1401,10 @@ void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *ippost,
 #if 1 /* to support new loop control */
       if (!ipl)
       {
-         /*fprintf(stderr, "EXTENDING SERACH IN ADDLOOPCONTROL \n");*/
          assert(lp->preheader && lp->preheader->preds && 
                 !lp->preheader->preds->next);
          ipl = FindCompilerFlag(lp->preheader->preds->blk, CF_LOOP_INIT);
-         //assert(ipl);
+         /*assert(ipl);*/
       }
 #endif      
       assert(ipl);
@@ -1479,7 +1491,7 @@ void SetLoopControlFlag(LOOPQ *lp, int NeedKilling)
  *    optimized where as the clean up doesn't follow it.
  *    I fixed this issue using existing L_IREF_BIT flag.
  *    
- *    HERE HERE, when this is true, it true for all loop. But what happens if
+ *    HERE HERE, when this is true, it is true for all loop. But what happens if
  *    we create transformation which changes the scenario!!!
  */
       /*fprintf(stderr, "\n\n\nlp->end = %s, lp->beg = %s \n", 
@@ -1573,18 +1585,7 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
       ForwardLoop(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
    else
-   {
-      /*fprintf(stderr, "\nLoop good for SimpleLC!!!\n\n");*/
       SimpleLC(lp, unroll, &ipinit, &ipupdate, &iptest);
-   }
-#if 0
-   fprintf(stderr, "Loop init:\n");
-   if(ipinit) PrintThisInstQ(stderr, ipinit);
-   fprintf(stderr, "Loop test:\n");
-   if(iptest) PrintThisInstQ(stderr, iptest);
-   else 
-      fprintf(stderr, "NO Loop test!!!\n");
-#endif
 /*
  * FIXED: if user throughs NO_CLEANUP markup, we need to skip the cleanup 
  * test too. but need initialization of index variable. did it SimpleLC
@@ -1717,12 +1718,8 @@ BBLOCK *DupCFScope(INT_BVI ivscp0, /* original scope */
                    /*int dupnum,*/   /* number of duplication, starting at 1 */
                    BBLOCK *head) /* block being duplicated */
 {
-#if 1
    static int dnum=0;
    return (DupCFScope0(ivscp0, ivscp, dnum++, head));
-#else
-   return (DupCFScope0(ivscp0, ivscp, dupnum, head));
-#endif
 }
 
 BLIST *CF2BlockList(BLIST *bl, INT_BVI bvblks, BBLOCK *head)
@@ -1784,9 +1781,6 @@ static BLIST *FindAllFallHeads0(BLIST *ftheads, INT_BVI iscope, BBLOCK *head,
                                 INT_BVI visitedblks)
 {
    BBLOCK *bp;
-#if 0
-   fprintf(stderr, "enter blk = %d\n", head->bnum);
-#endif   
 /*
  * If we've added all blocks in scope, or head is already in, or head is not
  * in scope, stop recursion
@@ -1972,9 +1966,6 @@ void GenCleanupLoop(LOOPQ *lp)
    SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    iv = BitVecCopy(iv, lp->blkvec);
    dupblks = CF2BlockList(NULL, iv, newCF);
-#if 0
-   fprintf(stderr, "Dupblks = %s\n", PrintBlockList(dupblks));
-#endif
 /*
  * Find all fall-thru path headers in loop; iv becomes blocks we have already
  * added
@@ -1983,9 +1974,6 @@ void GenCleanupLoop(LOOPQ *lp)
    ivtails = BlockList2BitVec(lp->tails);
    ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
    ftheads = ReverseBlockList(ftheads);
-#if 0
-   fprintf(stderr, "ftheads = %s\n", PrintBlockList(ftheads));
-#endif
 /*
  * Add new cleanup loop (minus I init) at end of rout, one fall-thru path at
  * a time
@@ -1997,11 +1985,6 @@ void GenCleanupLoop(LOOPQ *lp)
          if (!BitVecCheck(lp->blkvec, bp->bnum-1))
             break;
          bp0->down = FindBlockInListByNumber(dupblks, bp->bnum);
-#if 0
-         //PrintThisBlockInst(stderr, bp0->down);
-         fprintf(stderr, "blk added = %d\n", bp0->down->bnum);
-         fflush(stderr);
-#endif
          bp0->down->up = bp0;
          bp0 = bp0->down;
          if (BitVecCheck(ivtails, bp->bnum-1))
@@ -2016,10 +1999,6 @@ void GenCleanupLoop(LOOPQ *lp)
       }
       bp0->down = NULL;
    }
-#if 0
-   PrintLoop(stderr,lp);
-   fflush(stderr);
-#endif
 /*
  * Form temporary new loop struct for cleanup loop
  */
@@ -2303,7 +2282,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  *       Find all lds of moving ptrs, and add unrolling factor to them
  */
          /*UpdatePointerLoads(dupblks[i-1], pi, i*URmul);*/
-         UpdatePointerLoads(dupblks[i-1], pi, i);
+         UpdatePointerLoads(dupblks[i-1], pi, i, unroll);
          KillAllPtrinfo(pi);
       }
 /*
@@ -2398,33 +2377,14 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  */
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 
-#if 0
-   fprintf(stdout, "LIL just after unroll\n");
-   PrintInst(stdout, bbbase);
-   ShowFlow("ursv.dot", bbbase);
-   exit(0);
-#endif
-
-#if 0
-   RemoveLoopFromQ(optloop);
-   optloop->depth = 0;
-   KillAllLoops();
-#else
    InvalidateLoopInfo();
-#endif
    NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
-#if 0
-   fprintf(stdout, "LIL after unroll\n");
-   PrintInst(stdout, bbbase);
-   ShowFlow("ur.dot", bbbase);
-   exit(0);
-#endif   
    FindLoops();  /* need to setup optloop for this */
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
 }
-
+#if 0
 void findDTentry(BLIST *scope, short ptr)
 {
    BLIST *bl;
@@ -2473,6 +2433,7 @@ void findDTentry(BLIST *scope, short ptr)
    }
 
 }
+#endif
 
 int CountMemDT(BLIST *scope, short sta)
 /*
@@ -2574,10 +2535,6 @@ ILIST **AddPrefInsIlistFromDT(LOOPQ *lp, short sta, int pid, int npf,
          {
             op = ip->inst[2];
             colptr = STpts2[ip->inst[2]-1];
-#if 0
-            PrintThisInst(stderr, ip);
-            fprintf(stderr, "colptr=%s\n",STname[colptr-1]);
-#endif
             /*ipn = ip;*/
             ip1 = ip->prev;
             ip0 = ip->prev->prev;
@@ -2623,13 +2580,6 @@ ILIST **AddPrefInsIlistFromDT(LOOPQ *lp, short sta, int pid, int npf,
                *ic = j;
                return ils2d;
             }
-#endif
-#if 0
-            fprintf(stderr, "DT(%d): %4d%4d%4d%4d\n",op, SToff[dt-1].sa[0],
-                        SToff[dt-1].sa[1],
-                        SToff[dt-1].sa[2],
-                        SToff[dt-1].sa[3]);
-            PrintThisInstQ(stderr, ipp);
 #endif
          }
       }
@@ -2729,13 +2679,7 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
       npf = SToff[pb->upst-1].i; 
       npf *= type2len(FLAG2TYPE(flag));
 #endif
-#if 0
-      fprintf(stderr, "npf = %d\n", npf);
-#endif
       npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
-#if 0
-      fprintf(stderr, "final npf = %d\n", npf);
-#endif
       sta = STarrlookup(ptr);   
 /*
  *    for opt 2D array, we don't have pointers for all columns but we want to
@@ -2828,27 +2772,6 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
 #endif      
    }
    GetReg(-1);
-
-#if 0
-/*
- *    print and check before copying them to final list
- */   
-   fprintf(stderr, "Printing the prefetch insts: \n");
-   fprintf(stderr, "=============================\n");
-   fprintf(stderr, "m=%d, npf=%d \n", m, npf);
-   for (i=0; i < m; i++)
-   {
-      ilbase = ils[i]; 
-      fprintf(stderr, "mem-access=%d",i);
-      while(ilbase)
-      {
-         PrintThisInstQ(stderr, ilbase->inst);
-         ilbase=ilbase->next;
-      }
-   }
-   //exit(0);
-#endif
-
 /*
  * Create master list of pref inst, ordering by taking one pref from
  * each array in ascending order
@@ -3477,11 +3400,6 @@ void AddPrefetch(LOOPQ *lp, int unroll)
  * NOTE: assumes called after loop unrolling, but before repeatable opt
  */
 {
-
-#if 0
-   ShowFlow("ShowFlow.txt",bbbase);
-#endif
-
 #if 1
    ILIST *il;
    il = GetPrefetchInst(lp, unroll);
@@ -4004,95 +3922,6 @@ int VarIsMin(BLIST *scope, short var)
       }
    }
    return (0);
-}
-#endif
-
-#if 0
-void UpdateOptLoopWithMaxMinVars()
-/*
- * Note: it is not used anymore in new program states
- */
-{
-   int i, j, N, n, m;
-   short *scal, *spmax, *spmin;
-   LOOPQ *lp;
-   
-#if 0   
-   InvalidateLoopInfo();
-   bbbase = NewBasicBlocks(bbbase);
-   CheckFlow(bbbase, __FILE__, __LINE__);
-   FindLoops();
-   CheckFlow(bbbase, __FILE__, __LINE__); 
-   lp = optloop; 
-#else
-   GenPrologueEpilogueStubs(bbbase, 0);
-   NewBasicBlocks(bbbase);
-   FindLoops();
-   CheckFlow(bbbase,__FILE__,__LINE__);
-   lp = optloop;
-#endif
-   
-   scal = FindAllScalarVars(lp->blocks);   
-   N = scal[0];
-   spmax = malloc(sizeof(short)*(N+1));
-   assert(spmax);
-   spmin = malloc(sizeof(short)*(N+1));
-   assert(spmin);
-
-   for (i=1, m=0, n=0; i <= N; i++)
-   {
-      /*fprintf(stderr, " var = %s(%d)\n",STname[scal[i]-1], scal[i] );*/
-      if (VarIsMax(lp->blocks, scal[i]))
-      {
-         spmax[++m] = scal[i];
-         /*fprintf(stderr, " Max var = %s\n",STname[scal[i]-1] );*/
-      }
-      else if (VarIsMin(lp->blocks, scal[i]))
-      {
-         spmin[++n] = scal[i];
-         /*fprintf(stderr, " Min var = %s\n",STname[scal[i]-1] );*/
-      }
-   }
-/*
- * Update with max vars
- */
-   if (m)
-   {
-      if (lp->maxvars) free(lp->maxvars);
-      lp->maxvars = malloc(sizeof(short)*(m+1));
-      assert(lp->maxvars);
-      lp->maxvars[0] = m;
-      for (i=1; i <=m ; i++)
-         lp->maxvars[i] = spmax[i];
-   }
-   else
-   {
-      if (lp->maxvars) free(lp->maxvars);
-      lp->maxvars = NULL;
-   }
-/*
- * update with min vars
- */
-   if (n)
-   {
-      if (lp->minvars) free(lp->minvars);
-      lp->minvars = malloc(sizeof(short)*(n+1));
-      assert(lp->minvars);
-      lp->minvars[0] = n;
-      for (i=1; i <=n ; i++)
-         lp->minvars[i] = spmin[i];
-   }
-   else
-   {
-      if (lp->minvars) free(lp->minvars);
-      lp->minvars = NULL;
-   }
-/*
- * free all temporaries
- */
-   if (scal) free(scal);
-   if (spmax) free(spmax);
-   if (spmin) free(spmin);
 }
 #endif
 
@@ -5656,9 +5485,6 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
  * Shadow initialization actuallly depends on instruction type 
  * ACCUM -> 0 but for Max/Min -> init value 
  */
-#if 0   
-   fprintf(stderr, "inst = %s\n", instmnem[inst]);
-#endif
 /*
  * Zero shadow accumulators in loop header
  */
@@ -5862,12 +5688,6 @@ int DoAllScalarExpansion(LOOPQ *lp, int unroll, int vec)
                   (lp->ses[i-1][0]+1));
       ipb = GetSEHeadTail(lp, se, lp->ses[i-1][0]+1, lp->ses[i-1], vec, 
                           lp->seflag[i]);
-#if 0
-      fprintf(stderr, "insts for SE (preheader )\n\n");
-      PrintThisInstQ(stderr, ipb->prev);
-      fprintf(stderr, "insts for SE (posttail)\n\n");
-      PrintThisInstQ(stderr, ipb->next);
-#endif      
       AddInstToPrehead(lp, ipb->prev, ipb->inst[0], ipb->inst[1], 0);
       KillAllInst(ipb->prev);
       AddInstToPosttail(lp, ipb->next, ipb->inst[0],ipb->inst[1],ipb->inst[2]);
@@ -5877,7 +5697,6 @@ int DoAllScalarExpansion(LOOPQ *lp, int unroll, int vec)
       KillThisInst(ipb);
    }
    CFUSETU2D = INUSETU2D = INDEADU2D = 0;
-/*   fprintf(stderr, "SCLEXP, nchanges=%d\n\n", nchanges); */
    return(nchanges);
 }
 
@@ -6609,11 +6428,6 @@ int MovMaxMinVarsOut(int movmax, int movmin)
       CheckFlow(bbbase, __FILE__, __LINE__);
       FindLoops();
       CheckFlow(bbbase, __FILE__, __LINE__);
-#if 0
-      fprintf(stderr, "LIL: \n");
-      PrintInst(stderr, bbbase);
-      ShowFlow("cfg.dot", bbbase);
-#endif
       return (changes);
    }
 
@@ -7472,16 +7286,6 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    if(ifblk) inewvars = UpdateBlkWithNewVar(ifblk, 1, isetvars);
    if (elseblk) enewvars = UpdateBlkWithNewVar(elseblk, 2, esetvars);
 
-#if 0
-   //sp = isetvars;
-   //sp = esetvars;
-   sp = icmvars;
-   fprintf(stderr, "vars set [ifblk]: ");
-   for (N=sp[0], i=1; i <=N; i++)
-      fprintf(stderr, "%s[%d] ", STname[sp[i]-1], sp[i]-1);
-   fprintf(stderr, "\n");
-#endif
-
 /*
  * Update the conditional branch of split blk with VCMPW updating a mask. 
  * Conditional branch is deleted.
@@ -7509,12 +7313,6 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
       iv = BitVecComb(iv, iv, Array2BitVec(ecmvars[0], ecmvars+1, TNREG-1),'|');
    sp = BitVec2Array(iv, 1-TNREG);
 
-#if 0
-   fprintf(stderr, "vars set [union]: ");
-   for (N=sp[0], i=1; i <=N; i++)
-      fprintf(stderr, "%s[%d] ", STname[sp[i]-1], sp[i]-1);
-   fprintf(stderr, "\n");
-#endif
 /*
  * Figure out which var is in which blk
  * NOTE: 1 => if only blk  2=> else only blk    3=> in both blks
@@ -7540,14 +7338,6 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
       else
          vpos[i] = IN_ELSE_ONLY;
    }
-
-#if 0
-   fprintf(stderr, "vars set [union]: ");
-   for (N=sp[0], i=1; i <=N; i++)
-      fprintf(stderr, "%s[%d] = %d ", STname[sp[i]-1], sp[i]-1, vpos[i]);
-   fprintf(stderr, "\n");
-   exit(0);
-#endif
 
 /*
  * Add select operations. two cases:
@@ -7734,7 +7524,8 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
                ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -ICC0 );
             else
             {
-               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, SToff[codemask-1].sa[2], 0);
+               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, 
+                               SToff[codemask-1].sa[2], 0);
                ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -reg2 );
             }
             ip = InsNewInst(bp, ip, NULL, st, SToff[sp[i]-1].sa[2], -reg0, 0);
@@ -7771,7 +7562,8 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
                ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -ICC0 );
             else
             {
-               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, SToff[codemask-1].sa[2], 0);
+               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, 
+                               SToff[codemask-1].sa[2], 0);
                ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -reg2 );
             }
             ip = InsNewInst(bp, ip, NULL, st, SToff[sp[i]-1].sa[2], -reg0, 0);
@@ -7806,7 +7598,8 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
                ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -ICC0 );
             else
             {
-               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, SToff[codemask-1].sa[2], 0);
+               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, 
+                               SToff[codemask-1].sa[2], 0);
                ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -reg2 );
             }
             ip = InsNewInst(bp, ip, NULL, st, SToff[sp[i]-1].sa[2], -reg0, 0);
@@ -7879,117 +7672,6 @@ BLIST *FindConditionalHeaders(BBLOCK *head, INT_BVI iscope, INT_BVI tails)
    KillBitVec(visitedblks);
    return(headers);
 }
-#if 0
-/*
- * This function is replaced by DelRcBlk() 
- */
-void DelIfElseBlk(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
-/*
- * this function deletes the if and else blk from the CFG keeping the 
- * up, dpwn, usucc, csucc updated.
- */
-{
-   BLIST *delblks, *dbl;
-   BBLOCK *bp;
-   extern BBLOCK *bbbase;
-   extern LOOPQ *optloop;
-/*
- * delete the ifblk and elseblk from CFG 
- * NOTE: 
- * 1. Make sure if/elseblk doesn't have predecessor other  than cond header
- *    It can only happen if irregular GOTO statement is used. Normal if/else
- *    should not create that problem.
- */
-   delblks = NULL;
-   delblks = AddBlockToList(delblks, ifblk);
-   if (elseblk)
-      delblks = AddBlockToList(delblks, elseblk);
-
-   for (dbl = delblks; dbl; dbl = dbl->next)
-   {
-      bp = dbl->blk;
-/*
- *    preds of this blk should only be the cond header /splitblk
- */
-      assert((splitblk == bp->preds->blk) && !bp->preds->next);
-/*
- *    if it is a usucc (elseblk), make the usucc of elseblk as the usucc of 
- *    split blk. It it is a ifblk, make the csucc of split blk as NULL
- *    NOTE: Updating the usucc is not enough, need to change the inst also.
- */
-      if (splitblk->usucc == bp)
-      {
-#if 0           
-         fprintf(stderr, "split=%d, bp=%d, bp->usucc=%d\n", splitblk->bnum, 
-               bp->bnum, bp->usucc->bnum);
-#endif   
-         if (splitblk->down != bp->usucc)
-         {
-/*
- *          Normally mergeblk should have a label, otherwise how can the 
- *          if blk jump to it
- */
-            assert(GET_INST(bp->usucc->ainst1->inst[0]) == LABEL);
-            InsNewInst(splitblk, splitblk->ainstN, NULL, JMP, -PCREG, 
-                       bp->usucc->ainst1->inst[1], 0);
-         }
-         splitblk->usucc = bp->usucc; 
-         bp->usucc->preds = AddBlockToList(bp->usucc->preds, splitblk);
-#if 0
-         fprintf(stderr, "add %d as preds to %d\n", splitblk->bnum, 
-                 bp->usucc->bnum);
-#endif
-      }
-      else
-      {
-/*
- *       NOTE: RC already changed the conditional branch
- */
-         splitblk->csucc = NULL;
-      }
-/*
- *    remove blk fro CFG
- */
-      if (bp->up)
-      {
-         bp->up->down = bp->down;
-         if (bp->down)
-            bp->down->up = bp->up;
-      }
-/*
- *    Update the preds of other blks 
- */
-#if 0
-      fprintf(stderr, "blist=%s \nbp = %d bp->usucc=%d\n", 
-              PrintBlockList(bp->usucc->preds), bp->bnum, bp->usucc->bnum);
-#endif
-      if (bp->usucc)
-         bp->usucc->preds = RemoveBlockFromList(bp->usucc->preds, bp);
-      if (bp->csucc)
-         bp->csucc->preds = RemoveBlockFromList(bp->csucc->preds, bp);
-      assert(bp->usucc->preds);
-      
-/*
- *    delete this if it is in optloop->blocks, optloop->tails
- *    NOTE: for a single tail of loop, tail should never be deleted
- *    NOTE: must re-assign the list as list itself may changed.
- *    NOTE: still looking ... whether blk ref is used any where else!
- */
-     optloop->blocks = RemoveBlockFromList(optloop->blocks, bp); 
-     /*RemoveBlockFromList(optloop->tails, bp);*/
-/*
- *    Now delete the blk
- */
-      KillAllInst(bp->inst1);
-      KillBlockList(bp->preds);
-#if 0
-      fprintf(stderr, "DELBLK = %d\n", bp->bnum);
-#endif
-      free(bp);
-   }
-   KillBlockList(delblks);
-}
-#endif
 /*
  * Generalize delblk for if/else/merge blk
  */
@@ -8001,9 +7683,6 @@ void DelRcBlk(BBLOCK *delblk, BBLOCK *splitblk)
  */
    if( !delblk || !splitblk) return; 
 
-#if 0
-   fprintf(stderr, "delblk = %d\n", delblk->bnum);
-#endif
 /*
  * preds of the blk should only be cond header/ split blk
  */
@@ -8181,9 +7860,6 @@ int IterativeRedCom()
 /*
  *          merge blk can be merged with splitblk        
  */
-#if 0
-            fprintf(stderr, "mergeblk=%d\n", mergeblk->bnum);
-#endif
             MovInstFromBlkToBlk(mergeblk, splitblks->blk);
             DelRcBlk(mergeblk, splitblks->blk); /* generalize later */
          }
@@ -8202,14 +7878,10 @@ int IterativeRedCom()
  *    FIXED: update optloop->blocks just after deleting the blks in DelRcBlk
  */
       lp = optloop; /* optloop info may be changed! */
-#if 0
-      PrintLoop(stderr, optloop);
-#endif      
       /*pi0 = FindMovingPointers(lp->tails);*/
       pi0 = FindMovingPointers(optloop->tails);
       ippu = KillPointerUpdates(pi0,1);
       /*OptimizeLoopControl(lp, 1, 0, NULL);*/
-      //OptimizeLoopControl(lp, 1, 0, ippu);
       OptimizeLoopControl(optloop, 1, 0, ippu);
       KillAllPtrinfo(pi0);
 /*
@@ -8227,70 +7899,11 @@ int IterativeRedCom()
       CheckFlow(bbbase, __FILE__, __LINE__);
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
-#if 0
-      fprintf(stdout, "Iteration %d: \n", i);
-      PrintInst(stdout, bbbase);
-      fflush(stdout);
-      sprintf(ln, "rc%d.dot", i);
-      i++;
-      ShowFlow(ln, bbbase);
-#endif      
    }
    while (CHANGES);
-#if 0
-   fprintf(stdout, "Final LIL after RC\n");
-   PrintInst(stdout, bbbase);
-   exit(0);
-#endif
-   return(err);
-}
-
-/*
- * this function is replaced by IterativeRedCom()
- */
-#if 0
-int IfConvWithRedundantComp()
-/*
- * this function will kill the loop control and call the function to RC xform
- * and add back the loopcontrol before return.
- */
-{
-   int err;
-   LOOPQ *lp;
-   INSTQ *ippu;
-   struct ptrinfo *pi0;
-   extern BBLOCK *bbbase;
    
-   lp = optloop;
-   KillLoopControl(lp);
-   err = RedundantScalarComputation(lp);
-#if 1
-   pi0 = FindMovingPointers(lp->tails);
-   ippu = KillPointerUpdates(pi0,1);
-   /*OptimizeLoopControl(lp, 1, 0, NULL);*/
-   OptimizeLoopControl(lp, 1, 0, ippu);
-   KillAllPtrinfo(pi0);
-#endif
-
-#if 1
-   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
-   InvalidateLoopInfo();
-   bbbase = NewBasicBlocks(bbbase);
-   CheckFlow(bbbase, __FILE__, __LINE__);
-   FindLoops();
-   CheckFlow(bbbase, __FILE__, __LINE__);
-#endif
-
-#if 0
-   ShowFlow("rc.dot", bbbase);
-   fprintf(stdout,"LIL after RC\n");
-   PrintInst(stdout, bbbase);
-   exit(0);
-#endif
-
    return(err);
 }
-#endif
 
 int Get_OL_NEINC()
 {
@@ -8342,168 +7955,8 @@ int CountUnrollFactor(LOOPQ *lp)
          ur++;
 #endif
 
-#if 0
-   fprintf(stderr, "unroll = %d\n", ur);
-#endif
    return(ur);
 }
-#if 0
-int UnrollAll(LOOPQ *lp, int unroll)
-{
-   int i;
-   INT_BVI iv;
-   BBLOCK *newCF;
-   ILIST *il;
-   INSTQ *ip, *ipn, *ippost;
-   struct ptrinfo *pi, *pi0;
-   int UsesPtrs=1;
-   BLIST **dupblks, *bl, *ntails=NULL;
-   enum comp_flag kbeg, kend;
-   extern INT_BVI FKO_BVTMP;
-   extern BBLOCK *bbbase;
-/*
- * kill all loop control, won't need them later
- */
-   KillLoopControl(lp);
-/*
- * We don't allow use of index right now
- */
-   il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
-   if (il) 
-   {
-      KillIlist(il);
-      return(0);
-   }
-/*
- * analyze moving ptrs
- */
-   pi0 = FindMovingPointers(lp->blocks);
-   if (!pi0)
-      UsesPtrs = 0;
-
-   dupblks = malloc(sizeof(BLIST*)*unroll);
-   assert(dupblks);   
-/*
- * Duplicate all of loop's CF
- */
-   SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
-   kbeg = CF_LOOP_INIT;
-   for (i=1; i < unroll; i++)
-   {
-/*
- *    Duplicate original loop body for unroll i
- */
-      FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
-      
-      newCF = DupCFScope(lp->blkvec, iv, lp->header);
-      iv = BitVecCopy(iv, lp->blkvec);
-/*
- *    Use CF to produce a block list of duped blocks
- */
-      SetVecBit(iv, lp->header->bnum-1, 1);
-      dupblks[i-1] = CF2BlockList(NULL, iv, newCF);
-/*
- *    Kill the appropriate loop markup in the blocks (so we don't increment
- *    i multiple times, test it multiple times, etc)
- */
-      kend = (i != unroll-1) ? CF_LOOP_END : CF_LOOP_BODY;
-      KillCompflagInRange(dupblks[i-1], kbeg, kend);
-      if (UsesPtrs)
-      {
-/*
- *       Find the moving pointers used in unrolled loop
- */
-         pi = FindMovingPointers(dupblks[i-1]);
-         assert(pi);
-/*
- *       Kill pointer updates in loop, and get ptr inc code to add to EOL
- */
-         ip = KillPointerUpdates(pi, i);
-         assert(ip);
-         for (; ip; ip = ipn)
-         {
-            ipn = ip->next;
-            free(ip);
-         }
-/*
- *       Find all lds of moving ptrs, and add unrolling factor to them
- */
-         UpdatePointerLoads(dupblks[i-1], pi, i);
-         KillAllPtrinfo(pi);
-      }
-   }
-   
-   if (pi0)
-   {
-      /*ippost = KillPointerUpdates(pi0, UR);*/
-      ippost = KillPointerUpdates(pi0, unroll);
-      KillAllPtrinfo(pi0);
-      assert(ippost);
-   }
-   SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
-   KillCompflagInRange(lp->blocks, CF_LOOP_UPDATE, CF_LOOP_END);
-/*
- * Put duplicated blocks into program at correct location; this means that
- * the blocks [up,down] links are correct, but CF is messed up
- */
-   InsertUnrolledCode(lp, unroll, dupblks);
-/*
- * Fix the tails info for OptimizeLoopControl
- */
-   iv = BlockList2BitVec(lp->tails);
-   for (bl=dupblks[unroll-2]; bl; bl = bl->next)
-   {
-/*
- *    If last unrolling blk is a former tail, add it to new tails
- */
-      if (BitVecCheck(iv, bl->blk->bnum-1))
-         ntails = AddBlockToList(ntails, bl->blk);
-   }
-   KillBlockList(lp->tails);
-   lp->tails = ntails;
-
-   for (bl=lp->tails; bl; bl=bl->next)
-   {
-      ipn = bl->blk->instN;
-      for (ip = ippost; ip; ip=ip->next)
-      {
-         ipn = InsNewInst(bl->blk, ipn, NULL, ip->inst[0], ip->inst[1], 
-               ip->inst[2], ip->inst[3]);
-      }
-   }
-
-   //InvalidateLoopInfo();
-   NewBasicBlocks(bbbase);
-   CheckFlow(bbbase, __FILE__, __LINE__);
-   //FindLoops();  /* need to setup optloop for this */
-   CheckFlow(bbbase, __FILE__, __LINE__);
-
-#if 0
-   fprintf(stdout, "unrolled loop: \n");
-   PrintInst(stdout, bbbase);
-   exit(0);
-#endif
-   
-   return(1);
-}
-
-int UnrollAllTheWay()
-{
-   int ur;
-   extern LOOPQ *optloop;
-
-   ur = CountUnrollFactor(optloop);
-#if 1
-   fprintf(stderr, "all the way unroll factor = %d\n", ur);
-   //exit(0);
-#endif
-   if (!ur) 
-      return(0);
-   
-   UnrollAll(optloop, ur);
-
-}
-#endif
 
 int IsIndexRefInBody(LOOPQ *lp)
 {
@@ -8544,10 +7997,6 @@ int DelLoopControl(LOOPQ *lp)
  * Main idea: we will delete loop init and loop control (lp->I) if index
  * is never used inside the loop body, only branching otherwise
  */
-#if 0
-   fprintf(stdout, "before delloop\n");
-   PrintInst(stdout, bbbase);
-#endif
 /*
  * NOTE: we can't use FindIndexRef here.. it works only after killing the 
  * loop control... we are not willing to do that here
@@ -8567,13 +8016,7 @@ int DelLoopControl(LOOPQ *lp)
  */
       ip = ip->next;
       while(ip)
-      {
-#if 0         
-         fprintf(stderr, "*************Deleted inst: \n");
-         PrintThisInst(stderr, 0, ip);
-#endif
          ip = DelInst(ip);
-      }
    }
    else /* loop index is only used to control loop*/
    {
@@ -8589,13 +8032,7 @@ int DelLoopControl(LOOPQ *lp)
  */
       ip = ip->next;
       while(ip && (ip!=ipn))
-      {
-#if 0         
-         fprintf(stderr, "*************Deleted inst: \n");
-         PrintThisInst(stderr, 0, ip);
-#endif
          ip = DelInst(ip);
-      }
       
       assert(lp->tails && !lp->tails->next);
       bp = lp->tails->blk;
@@ -8603,13 +8040,7 @@ int DelLoopControl(LOOPQ *lp)
       assert(ip);
       ip = ip->next;
       while(ip)
-      {        
-#if 0         
-         fprintf(stderr, "*************Deleted inst: \n");
-         PrintThisInst(stderr, 0, ip);
-#endif
          ip = DelInst(ip);
-      }
    }
 /*
  * recompute cfg 
@@ -8619,10 +8050,6 @@ int DelLoopControl(LOOPQ *lp)
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();  /* need to setup optloop for this */
    CheckFlow(bbbase, __FILE__, __LINE__);
-#if 0 
-   fprintf(stderr, "before delloop\n");
-   PrintInst(stderr, bbbase);
-#endif
    return(0);
 }
 
