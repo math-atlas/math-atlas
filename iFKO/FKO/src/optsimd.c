@@ -4077,7 +4077,7 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
  *    the moving ptr now!!! Must be passed from outside!!!
  */
       if (pi)
-         UpdatePointerLoads(bl, pi, i*Type2Vlen(FLAG2TYPE(lp->vflag)));
+         UpdatePointerLoads(bl, pi, i*Type2Vlen(FLAG2TYPE(lp->vflag)), unroll);
 /*
  *    change the mask inst and deleted the branch    
  */
@@ -6247,7 +6247,7 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
                ipn = ip->next;
                free(ip);
             }
-            UpdatePointerLoads(dupblks[i], pi, i);
+            UpdatePointerLoads(dupblks[i], pi, i, dups);
             KillAllPtrinfo(pi);
          }
 /*
@@ -10227,12 +10227,6 @@ int RcVectorization(LOOPQ *lp)
 
    /*lp = optloop;*/
    fstat = 1;
-#if 0
-   //PrintLoopInfo();
-   fprintf(stdout, "Before RC VEC\n");
-   PrintInst(stdout,bbbase);
-   //exit(0);
-#endif
 /*
  * we may fail to vectorize the loop after RC. Due to shadow RC, we relax our
  * analysis. Be sure to check error after transformation. 
@@ -10240,22 +10234,6 @@ int RcVectorization(LOOPQ *lp)
    if (!RcVecTransform(lp))
       fstat = 0;
    KillPathTable();
-#if 0
-/*
- * To print code here, should call FinalizeVectorCleanup first
- */
-   FinalizeVectorCleanup(lp, 1);
-   InvalidateLoopInfo();
-   bbbase = NewBasicBlocks(bbbase);
-   CheckFlow(bbbase, __FILE__,__LINE__);
-   FindLoops();
-   CheckFlow(bbbase, __FILE__, __LINE__);
-   //PrintST(stdout);
-   PrintInst(stdout,bbbase);
-   //fprintf(stderr, "\n\n OL_NEINC=%d\n", Get_OL_NEINC());
-
-   exit(0);
-#endif
    return (fstat);
 }
 
@@ -10488,13 +10466,6 @@ void UnalignLoopSpecialization(LOOPQ *lp)
       aptrs[i] = s[i];
    free(s);
 #endif
-
-#if 1
-   fprintf(stderr, "Aligned PTR=");
-   for (n=aptrs[0], i=1; i <= n; i++)
-      fprintf(stderr, "%s ", STname[aptrs[i]-1]);
-   fprintf(stderr, "\n");
-#endif
 /*
  * for any loop specialization, we need to consider following issues:
  * 1. where from: need to figure out the condition to switch to this new loop
@@ -10518,7 +10489,7 @@ void UnalignLoopSpecialization(LOOPQ *lp)
    k = STiconstlookup(halign);
    lsAlabel = STlabellookup("_FKO_LOOP_SPEC_ALIGN"); 
    rvar = InsertNewLocal("_RES_ALIGN",T_INT);
-   //bp = lp->preheader;
+   /*bp = lp->preheader;*/
    for (bl=lp->preheader->preds; bl; bl=bl->next)
    {
       bp = bl->blk;
@@ -10539,9 +10510,6 @@ void UnalignLoopSpecialization(LOOPQ *lp)
          }
 #endif
          ptr = lp->varrs[i]; 
-#if 0
-         fprintf(stderr, "Check PTR=%s\n", STname[ptr-1]);
-#endif
          ip = PrintComment(bp, ip, NULL, "Checking for alignment for" 
                      " loop specialization");
          reg0 = GetReg(T_INT);
@@ -10568,9 +10536,6 @@ void UnalignLoopSpecialization(LOOPQ *lp)
          }
 #endif
          ptr = lp->varrs[i]; 
-#if 0
-         fprintf(stderr, "Check PTR=%s\n", STname[ptr-1]);
-#endif
          reg0 = GetReg(T_INT);
          reg1 = GetReg(T_INT);
          ip = InsNewInst(bp, ip, NULL, LD, -reg0, SToff[ptr-1].sa[2], 0);
@@ -10586,11 +10551,6 @@ void UnalignLoopSpecialization(LOOPQ *lp)
       ip = InsNewInst(bp, ip, NULL, JNE, -PCREG, -ICC0 ,lsAlabel);
       GetReg(-1);
    }
-#if 0
-      fprintf(stderr, "alignment checkingi blk:");
-      PrintThisBlockInst(stderr, bp);
-      //exit(0);
-#endif
 /*
  *                step 2
  * ===========================================================================
@@ -10618,7 +10578,7 @@ void UnalignLoopSpecialization(LOOPQ *lp)
       DelInst(bp->ainst1);
    }
    bp0->down = bp;
-   //bp->up = bp0;
+   /*bp->up = bp0;*/
    bp0 = bp;
 /*
  * duplicate the loop 
@@ -10656,12 +10616,8 @@ void UnalignLoopSpecialization(LOOPQ *lp)
    assert(lp->posttails && !lp->posttails->next);
    bp0 = FindBlockInListByNumber(dupblks, lp->tails->blk->bnum);
    bp = DupBlock(lp->posttails->blk);
-#if 0
-   fprintf(stderr, "copy of posttail blk\n");
-   PrintThisBlockInst(stderr, bp);
-#endif
    bp0->down = bp;
-   //bp->up = bp0;
+   /*bp->up = bp0;*/
    bp0 = bp;
 /*
  * jump to the usucc of posttail 
@@ -10710,27 +10666,12 @@ void UnalignLoopSpecialization(LOOPQ *lp)
       ip = InsNewInst(bp, NULL, NULL, JMP, -PCREG, jBlabel, 0);
    }
 #endif   
-#if 0
-   for(bl=dupblks; bl; bl=bl->next)
-   {
-      PrintThisBlockInst(stderr, bl->blk);
-   }
-   PrintThisBlockInst(stderr, bp);
-#endif
 
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__,__LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__,__LINE__); 
-   /*ShowFlow("lscfg.dot",bbbase);*/
-#if 0
-   fprintf(stdout, "LIL after loop specialiazation\n");
-   PrintInst(stdout, bbbase);
-   PrintST(stdout);
-   ShowFlow("lscfg.dot",bbbase);
-   exit(0);
-#endif
 }
 
 void UpdateVecLoop(LOOPQ *lp)
@@ -10775,13 +10716,6 @@ void UpdateVecLoop(LOOPQ *lp)
    SetVecBit(iv, STderef+TNREG-1, 0);
    
    sp = BitVec2Array(iv, 1-TNREG);
-#if 0
-   for ( i=1, N=sp[0]; i <= N; i++)
-   {
-         fprintf(stderr,"%s[%d] ",STname[sp[i]-1],STflag[sp[i]-1]);
-   }
-   fprintf(stderr, "\n");
-#endif
    vflag = 0;
    for (N=sp[0],n=0,i=1; i <= N; i++)
    {
@@ -10806,20 +10740,6 @@ void UpdateVecLoop(LOOPQ *lp)
    for (i=1; i <= n; i++)
       s[i] = sp[i-1];
    lp->vvscal = s;
-#if 0  
-   fprintf(stderr, "vflag=%d\n", lp->vflag);
-   if (n)
-   {
-      fprintf(stderr, "Vars: ");
-      for (i=0; i < n ; i++)
-      {
-         fprintf(stderr,"%s[%d] ",STname[sp[i]-1],sp[i]-1);
-      }
-      fprintf(stderr, "\n");
-   }
-   else
-      fprintf(stderr, "No Var!\n");
-#endif
 /*
  * finding moving pointer
  */
@@ -10831,19 +10751,6 @@ void UpdateVecLoop(LOOPQ *lp)
    for (i=1, p=pbase; p; p=p->next, i++)
       s[i] = p->ptr;
    lp->varrs = s;
-#if 0  
-   if (N)
-   {
-      fprintf(stderr, "Varrays: ");
-      for (i=1; i <= N ; i++)
-      {
-         fprintf(stderr,"%s[%d] ",STname[s[i]-1],s[i]-1);
-      }
-      fprintf(stderr, "\n");
-   }
-   else
-      fprintf(stderr, "No Var!\n");
-#endif
    if (pbase) KillAllPtrinfo(pbase);
    if (sp) free(sp);
 }
@@ -10881,7 +10788,7 @@ int FindPtrInfoFromDT(INSTQ *ip, short *ptr, short *lda, int *offset, int *mul)
 
    assert(ip->prev); /*ip has DT, must have a pred */
    
-   *offset = GetDTcon(SToff[dt-1].sa[3]); // off*sizeof 
+   *offset = GetDTcon(SToff[dt-1].sa[3]); /* off*sizeof */
    *mul = SToff[dt-1].sa[2];
    reg1 = SToff[dt-1].sa[0];
    reg2 = SToff[dt-1].sa[1];
@@ -10915,7 +10822,8 @@ ILIST **GetIlist(ILIST **ilam, int oldN, int nN)
    ILIST **ilb;
    ILIST *il;
 
-   ilb = malloc(nN * sizeof(ILIST*));
+   /*ilb = malloc(nN * sizeof(ILIST*));*/
+   ilb = calloc(sizeof(ILIST*), nN);
    assert(ilb);
 
    for (i=0; i < oldN; i++)
@@ -11006,13 +10914,10 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
                   }
                   if (!il1)
                   {
-                     /*fprintf(stderr, "%d offset added at the beginning\n",
-                               offset);*/
                      ilam[i] = NewIlist(ip, ilam[i]);
                   }
                   else
                   {
-                     /*fprintf(stderr, "%d offset added in between\n",offset);*/
                      NewIlistInBetween(ip, il1, il2);
                   }
                   break;
@@ -11020,10 +10925,6 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
             }
             else
             {
-               /*fprintf(stderr, "*****inserting (ptr,lda,mul,off)=(%s,%s,%d,%d)"
-                       " in index=%d\n", 
-                     STname[ptr-1], lda ? STname[lda-1] : "NULL", mul, offset,
-                     i);*/
                ilam[i] = NewIlist(ip, ilam[i]);
                break;
             }
@@ -11066,7 +10967,6 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
  * check whether memory access are adjacent. Split and keep adj mem access in 
  * one list
  */
-
    for (i=0, j=0; i < m; i++)
    {
       il = ilam[i];
@@ -11121,7 +11021,7 @@ ILIST **FindAdjMemAccess(INSTQ *ipscope, int nptr, int *na, int isload)
       if (ilb[i] && ilb[i]->next) /* potential one*/
          ilb[j++] = ilb[i];
       else /*if (ilb[i] && !ilb[i]->next)*/ /* single entry */
-         KillIlist(ilb[i]);
+         if(ilb[i]) KillIlist(ilb[i]);
 
    }
    *na = j;
@@ -11210,32 +11110,6 @@ ILIST **FindAdjMem(INSTQ *ipscope, int *npt)
    
    if (!cpt)
       return(NULL);
-
-#if 0
-   {
-      short ptr, lda;
-      int offset, mul;
-      fprintf(stderr, "\nPrinting the ilists: \n");
-      fprintf(stderr, "---------------------\n");
-      for (i=0; i < m; i++)
-      {
-         il = ilam[i];
-         if (il && il->inst)
-         {
-            FindPtrInfoFromDT(il->inst, &ptr, &lda, &offset, &mul);
-            fprintf(stderr, " %s(%s) : ", STname[ptr-1], 
-                  lda ? STname[lda-1]: "NULL");
-            while (il)
-            {
-               fprintf(stderr, "%d ", SToff[il->inst->inst[2]-1].sa[3]);
-               il = il->next;
-            }
-            fprintf(stderr, "\n");
-         }
-         else break;
-      }
-   }
-#endif
 /*
  * copy the exact cpt ilists
  * FIXME: sort the ilists based on number adj access
@@ -11330,9 +11204,6 @@ int IsSameInst(INSTQ *ip0, INSTQ *ip1)
             dt1 = ip1->inst[i];
             if (NonLocalDeref(dt0) && NonLocalDeref(dt1))
             {
-#if 0               
-               fprintf(stderr, "DT0=%d, DT1=%d\n", dt0, dt1);
-#endif
                if ( SToff[dt0-1].sa[0] != SToff[dt1-1].sa[0]
                      || SToff[dt0-1].sa[1] != SToff[dt1-1].sa[1]
                      || SToff[dt0-1].sa[2] != SToff[dt1-1].sa[2]
@@ -11353,11 +11224,6 @@ int IsSameInst(INSTQ *ip0, INSTQ *ip1)
    }
    else
    {
-#if 0      
-      fprintf(stderr, "ip0 and ip1 are same\n");
-      PrintThisInst(stderr, 1, ip0);
-      PrintThisInst(stderr, 2, ip1);
-#endif
       return(1);
    }
 }
@@ -11373,13 +11239,6 @@ INSTQ *DelMatchInstQ(INSTQ *instq, INSTQ* delq)
    int del = 0;
    /*int dt0, dt1;*/
    INSTQ *ip0, *ip1, *ipd, *ip;
-#if 0
-   fprintf(stderr, "deleted inst:\n");
-   PrintThisInstQ(stderr, delq);
-   fprintf(stderr, "----------\n");
-   PrintThisInstQ(stderr, instq);
-   fprintf(stderr, "----------\n");
-#endif
 /*
  * brute force algo: complexity : m x n
  */
@@ -11448,7 +11307,6 @@ INSTQ *DelMatchInstQ(INSTQ *instq, INSTQ* delq)
                   ip->prev->next = ip->next;
                if (ip->next) 
                   ip->next->prev = ip->prev;
-               //PrintThisInst(stderr, 777, ip);  
                if (ip == ip0) /* matching at top, update instq ptr*/
                {
                   ip = KillThisInst(ip);
@@ -11460,7 +11318,6 @@ INSTQ *DelMatchInstQ(INSTQ *instq, INSTQ* delq)
             else  /* instq in a block */
             {
                ip = DelInst(ip);
-               //instq = ip; 
                instq = ip; 
             }
             ipd = ipd->next; 
@@ -11729,29 +11586,6 @@ INSTQ *FinalizePack(PACK *pk, INSTQ *uinst, int *change)
    KillBitVec(uses);
    KillBitVec(sets);
    KillBitVec(puses);
-#if 0
-   {
-      int i;
-      fprintf(stderr, "Printing Packq:\n");
-      for (i=0; i < NPACK; i++)
-      {
-         if (PACKS[i]) 
-         {
-            fprintf(stderr, "***PACK %d: \n", i);
-            fprintf(stderr, "len=%d\n", PACKS[i]->vlen);
-            il = PACKS[i]->sil;
-            while (il)
-            {
-               fprintf(stderr, "print instq :\n");
-               PrintThisInstQ(stderr, il->inst);
-               il = il->next;
-            }
-         }
-      }
-      fprintf(stderr, "\nPrinting uPackq:\n");
-      PrintThisInstQ(stderr, uinst); 
-   }
-#endif
    return(uinst);
 }
 
@@ -11767,29 +11601,6 @@ INSTQ *InitPack(ILIST **ilam, int nptr, INSTQ *uinst, short **pts)
    INT_BVI iv, uses, sets;
    INT_BVI puses;
    extern INT_BVI FKO_BVTMP;
-#if 0
-   fprintf(stderr, "\nPrinting the ilists: \n");
-   fprintf(stderr, "---------------------\n");
-   for (i=0; i < nptr; i++)
-   {
-      il = ilam[i];
-      if (il && il->inst)
-      {
-         FindPtrInfoFromDT(il->inst, &ptr, &lda, &offset, &mul);
-         fprintf(stderr, " %s(%s,%d) : ", STname[ptr-1], 
-               lda ? STname[lda-1]: "NULL", mul);
-         while (il)
-         {
-            fprintf(stderr, "%d ", SToff[il->inst->inst[2]-1].sa[3]);
-            il = il->next;
-         }
-         fprintf(stderr, "\n");
-      }
-      else break;
-   }
-   exit(0);
-#endif
-   
 /*
  * create packs based on the memory access
  */
@@ -11955,26 +11766,6 @@ INSTQ *InitPack(ILIST **ilam, int nptr, INSTQ *uinst, short **pts)
    sp = BitVec2Array(puses, 1-TNREG);
    *pts = sp;
    KillBitVec(puses);
-#if 0
-   fprintf(stderr, "Printing Packq after InitPack:\n");
-   for (i=0; i < NPACK; i++)
-   {
-      if (PACKS[i]) 
-      {
-         fprintf(stderr, "***PACK %d: \n", i);
-         fprintf(stderr, "len=%d\n", PACKS[i]->vlen);
-         il = PACKS[i]->sil;
-         while (il)
-         {
-            fprintf(stderr, "print instq :\n");
-            PrintThisInstQ(stderr, il->inst);
-            il = il->next;
-         }
-      }
-   }
-   //fprintf(stderr, "\nPrinting uPackq:\n");
-   //PrintThisInstQ(stderr, uinst); 
-#endif
    return(uinst);
 }
 
@@ -12015,12 +11806,10 @@ int CheckDupPackError(int ipack, int npack)
    {
       pki = PACKS[i];
       if (!pki) continue;
-      /*fprintf(stderr, "****** Checking packs %d with:\n", i);*/
       for (j=i+1; j < npack; j++)
       {
          pkj = PACKS[j]; 
          if (!pkj) continue;
-         /*fprintf(stderr, " %d ", j);*/
          for (ili=pki->sil, ilj=pkj->sil; ili && ilj; 
                ili=ili->next, ilj=ilj->next)
          {
@@ -12030,10 +11819,6 @@ int CheckDupPackError(int ipack, int npack)
             {
                if (!IsSameInst(ipi, ipj))
                {
-#if 0
-                  PrintThisInst(stderr, 1, ipi);
-                  PrintThisInst(stderr, 1, ipj);
-#endif
                   same = 0;;
                   break;
                }
@@ -12042,7 +11827,6 @@ int CheckDupPackError(int ipack, int npack)
                return(1);
          }
       }
-      /*fprintf(stderr, "\n");*/
    }
    return(0);
 }
@@ -12057,7 +11841,6 @@ int IsIsomorphicInst(INSTQ *ip1, INSTQ *ip2)
  */
    if (ip1->inst[0] != ip2->inst[0])
    {
-      /*fprintf(stderr, "Operation not match!\n");*/
       fko_warn(__LINE__, "Operation not match!\n");
       return(0);
    }
@@ -12067,15 +11850,12 @@ int IsIsomorphicInst(INSTQ *ip1, INSTQ *ip2)
       {
          if (ip2->inst[i] <= 0 )
          {
-            /*fprintf(stderr, "Operand=%d (%d, %d) not match!\n", i, ip1->inst[i],
-                     ip2->inst[i]);*/
             fko_warn(__LINE__, "Operand=%d (%d, %d) not match!\n", i, ip1->inst[i],
                      ip2->inst[i]);
             return(0);
          }
          else if (STflag[ip1->inst[i]-1] != STflag[ip2->inst[i]-1])
          {
-            /*fprintf(stderr, "Flag of Operand=%d not match!\n", i);*/
             fko_warn(__LINE__, "Flag of Operand=%d not match!\n", i);
             return(0);
          }
@@ -12085,7 +11865,6 @@ int IsIsomorphicInst(INSTQ *ip1, INSTQ *ip2)
       {
          if (ip2->inst[i] != 0)
          {
-            /*fprintf(stderr, "Operand=%d not zero!\n", i);*/
             fko_warn(__LINE__, "Operand=%d not zero!\n", i);
             return(0);
          }
@@ -12094,7 +11873,6 @@ int IsIsomorphicInst(INSTQ *ip1, INSTQ *ip2)
       {
          if (ip2->inst[i] >= 0)
          {
-            /*fprintf(stderr, "Operand=%d not reg!\n", i);*/
             fko_warn(__LINE__, "Operand=%d not reg!\n", i);
             return(0);
          }
@@ -12115,7 +11893,6 @@ INSTQ *InstdefsVar(INT_BVI bvvar, INSTQ *upackq)
    {
       if (BitVecCheckComb(bvvar, ip->set, '&'))
       {
-         /*PrintThisInst(stderr, 1, ip);*/
          return(FindFirstLILforHIL(ip));
       }
       ip = ip->next;
@@ -12157,22 +11934,6 @@ INSTQ *FollowUseDefs(PACK *pk, INSTQ *upackq, int *change)
  * in this pack. need to consider the order to create pack, so can't use pk->def
  * here.
  */
-#if 0
-   iv = BitVecCopy(iv, pk->uses);
-   FilterOutRegs(iv);
-   sp = BitVec2Array(iv, 1-TNREG);
-   fprintf(stderr, "****** uses var count = %d\n", sp[0]);
-   for (i=1, n=sp[0]; i <= n; i++)
-      fprintf(stderr, "%s\n", STname[sp[i]-1]);
-   fprintf(stderr, "======================================\n");
-
-#endif
-#if 0
-   fprintf(stderr, "Print seed Pack before extending\n");
-   fprintf(stderr, "======================================\n");
-   PrintPack(stderr, pk);
-   fprintf(stderr, "======================================\n");
-#endif
 /*
  * find out number of uses 
  */
@@ -12202,13 +11963,6 @@ INSTQ *FollowUseDefs(PACK *pk, INSTQ *upackq, int *change)
             ip = ip->next;
          }
          FilterOutRegs(iv);
-#if 0
-         PrintVars(stderr, "all uses: ", iv);
-         //fprintf(stderr, "upackq :\n");
-         //fprintf(stderr, "==========================\n");
-         //PrintThisInstQ(stderr, upackq);
-         //fprintf(stderr, "==========================\n");
-#endif
 /*
  *       FIXME: ip->use can be multiple variables. We need to exlore all of them
  *       consequitively, like: all 1st operand then all 2nd operand, etc.
@@ -12218,7 +11972,6 @@ INSTQ *FollowUseDefs(PACK *pk, INSTQ *upackq, int *change)
          SetVecAll(iv, 0); 
          SetVecBit(iv, sp[i] + TNREG-1, 1); /* STderef = 0 otherwise add this */
          free(sp);
-         /*PrintVars(stderr, "working var: ", iv);*/
          ipu = InstdefsVar(iv, upackq);
          if (ipu)
          {
@@ -12339,13 +12092,6 @@ INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
          ip = ip->next;
       }
       FilterOutRegs(iv);
-#if 0
-      PrintVars(stderr, "all sets: ", iv);
-      fprintf(stderr, "upackq :\n");
-      fprintf(stderr, "==========================\n");
-      PrintThisInstQ(stderr, upackq);
-      fprintf(stderr, "==========================\n");
-#endif
 /*
  *    NOTE: there should be only one set var... so, we may extend one pack
  */
@@ -12414,11 +12160,6 @@ INSTQ *FollowDefUses(PACK *pk, INSTQ *upackq, int *change)
  * check for consecutive memory access too 
  */
       upackq = FinalizePack(new, upackq, change); 
-#if 0
-      if (*change)
-         fprintf(stderr, "Extending pack=%d from pack=%d by def-use\n", 
-                 new->pnum, pk->pnum);
-#endif
    }
    return(upackq);
 }
@@ -12440,11 +12181,11 @@ int IsInitPackInUse(PACK *ipk)
    for (i=0; i < NPACK; i++)
    {
       pk = PACKS[i];
-      if (pk) //&& !(pk->pktype & PK_INIT))
+      if (pk) /*&& !(pk->pktype & PK_INIT))*/
       {
          
          if (!BitVecCheckComb(iv, pk->uses, '-') )
-               // || !BitVecCheckComb(iv, pk->defs, '-')) 
+               /* || !BitVecCheckComb(iv, pk->defs, '-')) */
          {
 
             return(1);
@@ -12498,7 +12239,6 @@ int IsPackInConflict(PACK *pk0)
          }
       }
       iv = FilterOutRegs(iv);
-      /*PrintVars(stderr,"after st" ,iv);*/
    }
    free(sp);
 
@@ -12517,12 +12257,6 @@ int IsPackInConflict(PACK *pk0)
             {
                fko_warn(__LINE__, "*****pack-%d is in conflict with %d!!!", 
                      pk0->pnum, pk->pnum);
-#if 0
-               iv = BitVecComb(iv, iv, pk->uses, '-');
-               PrintVars(stderr, "common: ", iv);
-               PrintPack(stderr, pk);
-               PrintPack(stderr, pk0);
-#endif
                return(1);
             }
          }
@@ -12710,11 +12444,6 @@ INSTQ *ExtendPack(INSTQ *upackq, int ipk)
          {
             if (IsPackInConflict(pk))
             {
-#if 0
-               fprintf(stderr, "*****************Killing pack: %d\n", pk->pnum);
-               PrintPack(stderr, pk);
-               //exit(0);
-#endif
                KillPack(pk);
             }
             else
@@ -12722,26 +12451,6 @@ INSTQ *ExtendPack(INSTQ *upackq, int ipk)
          }
       }
    }
-
-#if 0   
-   fprintf(stderr, "Packq After Extending :\n");
-   for (i=0; i < NPACK; i++)
-   {
-      ILIST *il;
-      if (PACKS[i]) 
-      {
-         fprintf(stderr, "***PACK %d: \n", i);
-         fprintf(stderr, "len=%d\n", PACKS[i]->vlen);
-         il = PACKS[i]->sil;
-         while (il)
-         {
-            fprintf(stderr, "print instq :\n");
-            PrintThisInstQ(stderr, il->inst);
-            il = il->next;
-         }
-      }
-   }
-#endif
    return (upackq);
 }
 
@@ -12824,37 +12533,10 @@ PACK *FindPackFromInst(INSTQ *ipuse, int ipk)
                   while (ipu && !ACTIVE_INST(ipu->inst[0]))
                      ipu = ipu->prev;
                }
-#if 0
-               fprintf(stderr, "===================================\n");
-               if(ip)
-               {
-                  PrintThisInst(stderr, 1, ip);
-                  if (ip->next)
-                  {
-                     PrintThisInst(stderr, 2, ip->next);
-                     if (ip->next->next)
-                        PrintThisInst(stderr, 3, ip->next->next);
-                  }
-               }
-               fprintf(stderr, "---------------------------------\n");
-               if (ipu)
-               {
-                  PrintThisInst(stderr, 1, ipu);
-                  if (ipu->next)
-                  {
-                     PrintThisInst(stderr, 2, ipu->next);
-                     if (ipu->next->next)
-                        PrintThisInst(stderr, 2, ipu->next->next);
-                  }
-               }
-               fprintf(stderr, "===================================\n");
-#endif
                while (ip) /* match all inst from queue */
                {
                   if (!IsSameInst(ip, ipu)) 
                   {
-                     //PrintThisInst(stderr, 1, ip);
-                     //if(ipu) PrintThisInst(stderr, 2, ipu);
                      nosame = 1;
                      break;
                   }
@@ -12868,14 +12550,12 @@ PACK *FindPackFromInst(INSTQ *ipuse, int ipk)
                }
                if (!nosame)
                {
-                  //fprintf(stderr, "*****Found\n");
                   return(PACKS[i]);
                }
             }
          }
       }
    }
-   //fprintf(stderr, "**************Not Found\n");
    return(NULL);
 }
 
@@ -12902,16 +12582,7 @@ void UpdateDep(INSTQ *bip, int ipk)
       bvvars = BitVecComb(bvvars, bvvars, ip->use, '|'); 
    }
    FilterOutRegs(bvvars);
-#if 0
-   PrintVars(stderr, "all vars", iv);
-   exit(0);
-#endif
    sp = BitVec2Array(bvvars, 1-TNREG);
-#if 0
-   for (n=sp[0], i=1 ; i <= n; i++ )
-      fprintf(stderr, "%d ", sp[i]);
-   fprintf(stderr, "\n");
-#endif
    n = sp[0];
    vars = sp + 1; /* point from the vars */
 /*
@@ -12937,26 +12608,12 @@ void UpdateDep(INSTQ *bip, int ipk)
             {
                if (ils[k-1])
                {
-#if 0
-                  //PrintThisInst(stderr, 77, il[k-1]->inst);
-                  fprintf(stderr, "------------------\n");
-                  PrintThisInst(stderr, 0, ip);
-                  if (ip->next) 
-                     PrintThisInst(stderr, 0, ip->next);
-                  if (ip->next->next) 
-                     PrintThisInst(stderr, 0, ip->next->next);
-                  if (ip->next->next->next) 
-                     PrintThisInst(stderr, 0, ip->next->next->next);
-                  if (ip->next->next->next->next) 
-                     PrintThisInst(stderr, 0, ip->next->next->next->next);
-#endif
 /*
  *                find pack which has this ip inst
  */
                   pk = FindPackFromInst(ip, ipk);
                   if (pk)
                   {
-                  /*fprintf(stderr, "******Found the pack = %d\n", pk->pnum);*/
                      il = pk->depil;
                      while (il)
                      {
@@ -12969,7 +12626,7 @@ void UpdateDep(INSTQ *bip, int ipk)
 /*
  *                   now, point the dependencies 
  */
-                     /*while(ip && !IS_STORE(ip->inst[0])) // assuming no jump
+                     /*while(ip && !IS_STORE(ip->inst[0]))
                         ip = ip->next;*/
                   }
                   else
@@ -12982,7 +12639,6 @@ void UpdateDep(INSTQ *bip, int ipk)
                else
                {
                   /*fprintf(stderr, "Not defined: ");*/
-                  /*PrintThisInst(stderr, 999, ip);*/
                }
             }
          }
@@ -13006,32 +12662,6 @@ void UpdateDep(INSTQ *bip, int ipk)
          }
       }
    }
-
-#if 0
-   fprintf(stderr, "\nn=%d\n", n);
-   for (i=0; i < sp[0]; i++)
-      if (ils[i])
-         PrintThisInst(stderr, 1, ils[i]->inst);
-#endif
-#if 0   
-   fprintf(stderr, "Pack info:\n");
-   for (i=ipk; i < NPACK; i++)
-   {
-      if (PACKS[i])
-      {
-         il = PACKS[i]->depil;
-         if (il)
-         {
-            fprintf(stderr, "pack%d depends on following insts:\n", i);
-            while (il)
-            {
-               PrintThisInst(stderr, 0, il->inst);
-               il = il->next;
-            }
-         }
-      }
-   }
-#endif
 /*
  * delete all temp data/storage 
  */
@@ -13108,7 +12738,6 @@ void UpdateMemUseSet(PACK *pk, int isload )
    iv = NewBitVec(32);
    iv = BitVecCopy(iv, pk->uses);
    iv = FilterOutRegs(iv);
-   //PrintVars(stderr, "------use: ",iv);
    sp = BitVec2Array(iv, 1-TNREG);
    N = sp[0];
    pk->scuse = malloc((N+1)*sizeof(short));
@@ -13137,7 +12766,6 @@ void UpdateMemUseSet(PACK *pk, int isload )
    
    iv = BitVecCopy(iv, pk->defs);
    iv = FilterOutRegs(iv);
-   //PrintVars(stderr, "def: ",iv);
    sp = BitVec2Array(iv, 1-TNREG);
    N = sp[0];
    pk->scdef = malloc((N+1)*sizeof(short));
@@ -13633,7 +13261,6 @@ void AddGatherInst(BBLOCK *vbp, short vec, short sv, int vlen, SLP_VECTOR *vlist
       /*AddVarScatterInstFromVec(vbp, vl, sv);*/
       assert(HasSVar(vbp, sv));
    }
-
    
    styp = FLAG2TYPE(STflag[sv-1]);
    vtyp = FLAG2TYPE(STflag[vec-1]);
@@ -13655,8 +13282,10 @@ void AddGatherInst(BBLOCK *vbp, short vec, short sv, int vlen, SLP_VECTOR *vlist
    }
    
    vreg0 = GetReg(vtyp);
+#ifdef SLPCOMMENTS
    PrintComment(vbp, NULL, NULL, "Broadcast %s from %s", STname[sv-1], 
          STname[vec-1]);
+#endif
    InsNewInst(vbp, NULL, NULL, vlds, -vreg0, SToff[sv-1].sa[2], 0);
    InsNewInst(vbp, NULL, NULL, vshuf, -vreg0, -vreg0, STiconstlookup(0));
    InsNewInst(vbp, NULL, NULL, vst, SToff[vec-1].sa[2], -vreg0, 0);
@@ -13722,16 +13351,10 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
       vl = FindVectorByVec(pk->vsc[i], vlist);
       scal[i] = vl->svars[1]; /* always the 1st scalar*/
    }
-#if 0
-   fprintf(stderr, "+++++++++ vars: \n");
-   for (i=1; i <= n; i++)
-   {
-      fprintf(stderr, "%s -> %s\n", STname[scal[i]-1], STname[vscal[i]-1]);
-   }
-#endif
-   ip = pk->sil->inst;  /* analysis only the 1st ilist, all other are isomorphic*/
-   
-   PrintComment(vbp, NULL, NULL, "Vetcorizing pack = %d", pk->pnum);
+   ip = pk->sil->inst;/*analysis only the 1st ilist, all other are isomorphic*/
+   #ifdef SLPCOMMENTS 
+      PrintComment(vbp, NULL, NULL, "Vetcorizing pack = %d", pk->pnum);
+   #endif
    for (; ip; ip=ip->next) 
    {
       inst = GET_INST(ip->inst[0]); 
@@ -13778,16 +13401,6 @@ void AddVectorInst(BBLOCK *vbp, PACK *pk, SLP_VECTOR *vlist)
                            if (NonLocalDeref(op))
                            {
                               k = op-1;
-                              #if 0 
-                                 fprintf(stderr, 
-                                    "NonLocalDeref(%s) = (%d,%d,%d,%d)\n",
-                                        STname[STpts2[k]-1],
-                                        SToff[k].sa[0], 
-                                        SToff[k].sa[1], 
-                                        SToff[k].sa[2], 
-                                        SToff[k].sa[3] 
-                                        );
-                              #endif
                               ipop[j-1] = AddDerefEntry(SToff[k].sa[0], 
                                                         SToff[k].sa[1], 
                                                         SToff[k].sa[2], 
@@ -14026,7 +13639,10 @@ int MemBroadcast(BBLOCK *blk, short var, short vec, int *err)
       vtype = T_VDOUBLE;
    }
    else
-      fko_error(__LINE__, "type not supported in slp");
+   {
+      fko_error(__LINE__, "type=%d (var=%s) not supported in slp", type, 
+            STname[var-1]);
+   }
 /*
  * search from last inst to first 
  */
@@ -14079,13 +13695,13 @@ int MemBroadcast(BBLOCK *blk, short var, short vec, int *err)
 /*
  *    FIXME: not sure whether it's possible. return error for now!
  */
+#if 0
       fprintf(stderr, "Load inst not found for %s = %s(%d, %d)\n", 
               STname[vec-1], 
               STname[var-1], 
               ptr, ismemb);
       PrintThisInstQ(stderr, blk->inst1);
-      /*fko_error(__LINE__, 
-            "should have one load to broadcast!!! double check!");*/
+#endif
       fko_warn(__LINE__, "should have one load to broadcast!!!");
       *err = 1;
       return(1);
@@ -14169,25 +13785,10 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
       else
          pt = MEM_LOAD;
    }
-#if 0
-   FilterOutRegs(pk->uses);
-   PrintVars(stderr, "uses: ", pk->uses);
-   FilterOutRegs(pk->defs);
-   PrintVars(stderr, "defs: ", pk->defs);
-#endif
 
    if (pt == MEM_LOAD)
    {
       UpdateMemUseSet(pk, 1);
-#if 0
-      n = pk->scdef[0];
-      fprintf(stderr, "++++++ Mem load(%d): ", n);
-      for (i=1; i <= n; i++)
-      {
-         fprintf(stderr, "%s, ", STname[pk->scdef[i]-1]);
-      }
-      fprintf(stderr, "\n");
-#endif
       if (pk->pktype & PK_MEM_BROADCAST)
          vd = FindVectorFromSingleScalar(pk->scdef[1], vlist);
       else
@@ -14199,14 +13800,6 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
          assert(vd);
       } 
       vd->isused = 1; /* marked as used */
-#if 0      
-      if (pk->pktype & PK_MEM_BROADCAST)
-      {
-         fprintf(stderr, "***** broadcast vector = %s (%s)\n", 
-               STname[vd->vec-1], STname[pk->scdef[1]-1]);
-         PrintVectors(stderr, vlist);
-      }
-#endif
 #if 0      
       ip = pk->sil->inst;
       for ( ; ip; ip = ip->next)
@@ -14237,19 +13830,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
  */
          iv = BitVecCopy(iv, pk->uses);
          FilterOutRegs(iv);
-#if 0
-         PrintVars(stderr, "uses: ",iv);
-#endif
          assert(!BitVecCheckComb(iv, livein, '-'));
-#if 0
-         n = pk->scuse[0];
-         fprintf(stderr, "++++++ Mem store(%d): ", n);
-         for (i=1; i <= n; i++)
-         {
-            fprintf(stderr, "%s, ", STname[pk->scuse[i]-1]);
-         }
-         fprintf(stderr, "\n");
-#endif
          vlist = CreateVector(vlist, pk->vflag,pk->vlen, pk->scuse, 1, 0);
          vs1 = FindVectorFromScalars(pk->scuse, vlist);
          assert(vs1);
@@ -14284,7 +13865,6 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
  */
          for (ip=il->inst, j=0; ip; ip=ip->next)
          {
-            //PrintThisInst(stderr, 111, ip);
             for (i=1; i < 4; i++)
             {
                if (ip->inst[i] > 0 && IS_DEREF(STflag[ip->inst[i]-1]))
@@ -14321,7 +13901,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
                assert(vd);
                if ( NeedBroadcast(sp))
                {
-                  #if defined(ArchHasMemBroadcast) //&& 0
+                  #if defined(ArchHasMemBroadcast) /*works for sse as well*/
                   if (MemBroadcast(vbp, sp[1], vd->vec, &fail) )
                      vd->flag |= SLP_VBROADCAST;
                   else
@@ -14330,12 +13910,6 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
                }
                else if (BitVecCheckComb(iv, pk->uses, '&') )
                {
-#if 0
-                  PrintVars(stderr, "vars in use: ", iv);
-                  FilterOutRegs(pk->uses);
-                  PrintVectors(stderr, vlist);
-                  PrintVars(stderr, "pk->uses: ", pk->uses);
-#endif
                   fko_warn(__LINE__, "used vector must be livein " 
                             "Or, must be formed by broadcast");
                   fail = 1;
@@ -14376,23 +13950,6 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
          vd->isused = 1; /* marked as used */
          pk->vsc[i+1] = vd->vec;
       }
-
-#if 0
-      PrintVectors(stderr, vlist);
-      for (i=0; i < n; i++)
-      {
-         fprintf(stderr, " op %d: ", i);
-         for (k=0; k < sclil; k++)
-         {
-            if (scals[i][k])
-            {
-               fprintf(stderr, "%s ", STname[scals[i][k]-1]);
-            }
-         }
-         fprintf(stderr, "\n");
-      }
-      exit(0);
-#endif
 /*
  *    free memory
  */
@@ -14404,9 +13961,6 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
 
    }
 
-#if 0
-      PrintVectors(stderr, vlist);
-#endif
 /*
  * convert and insert vector insts  
  */
@@ -14455,7 +14009,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
    /*ILIST *iln;*/
    PACK *pk;
    SLP_VECTOR *vl, *vls;
-   /*SLP_VECTOR *vlist = NULL;*/
 /*
  * NOTE:
  * we want to keep all inactive inst, like: CMPFLAG, intact. So, used inst1 
@@ -14493,24 +14046,9 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
 /*
  *    find pack from inst
  */
-#if 0
-      fprintf(stderr, "Handling inst: \n");
-      fprintf(stderr, "----------------\n");
-      PrintThisInst(stderr, 111, ip);
-      fprintf(stderr, "----------------\n");
-#endif
       pk = FindPackFromInst(ip, ipk);
       if (pk)  
       {
-#if 0
-         fprintf(stderr, "Pack-%d found while scheduling\n", pk->pnum);
-         il = pk->sil;
-         while (il)
-         {
-            PrintThisInstQ(stderr, il->inst);
-            il = il->next;
-         }
-#endif
          il = pk->depil;
          while (il)
          {
@@ -14523,15 +14061,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
             if (IsInstInQueue(nsbp->inst1, il->inst))
             {
                nosch = 1;
-#if 0
-               fprintf(stderr, "Unscheduled dependent inst\n");
-               PrintThisInst(stderr, 123, il->inst);
-               fprintf(stderr, "inst to schedule\n");
-               PrintThisInstQ(stderr, pk->sil->inst);
-               fprintf(stderr, "printing nsbp\n");
-               PrintThisInstQ(stderr, nsbp->ainst1);
-               exit(0);
-#endif
                break;
             }
             il = il->next;
@@ -14546,7 +14075,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
  *          FIXED: what if biq becomes invalid due to deleting the top inst
  *          to solve this, we always start from the beginning.
  */
-            /*fprintf(stderr, "pack=%d, start scheduling ... ...\n", pk->pnum);*/
 #if 0
             iln = pk->sil;
             while (iln)
@@ -14558,12 +14086,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
             SchInstQ(pk, nsbp, sbp, ip);
             /*ip = nsbp->ainst1;*/ 
             ip = nsbp->inst1; /* start from top again*/
-#if 0
-            fprintf(stderr, "biq: \n");
-            PrintThisInstQ(stderr,nsbp->ainst1);
-            fprintf(stderr, "sbiq: \n");
-            PrintThisInstQ(stderr,sbp->ainst1);
-#endif
 /*
  *          now, insert vector inst
  */
@@ -14584,13 +14106,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
  */
             /*fko_error(__LINE__, "Dependent inst not scheduled yet!!!");*/
             fko_warn(__LINE__, "Dependent inst not scheduled yet!!!");
-#if 0
-            PrintThisInst(stderr, 0, ip);
-            PrintThisInst(stderr, 1, pk->depil->inst);
-            for (i=0; i < NPACK; i++)
-               if(PACKS[i]) 
-                  PrintPack(stderr, PACKS[i]);
-#endif
             *err = 1;
             return(vlist);
          }
@@ -14603,26 +14118,11 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
  *       execute this standalone inst. Since we avoid scatter/gather all 
  *       together, vectorization fails. Making the vector dead won't work!!!
  */
-         //ip0 = ip;
+         /*ip0 = ip;*/
          isstore = 0;
-         PrintComment(vbp, NULL, NULL, "Schedule as standalone inst");
-#if 0         
-         PrintThisInst(stderr, 100, ip);
-         if(ip->next) PrintThisInst(stderr, 101, ip->next);
-         if(ip->next && ip->next->next) 
-         {
-            PrintThisInst(stderr, 102, ip->next->next);
-            if (IS_STORE(ip->next->next->inst[0]) 
-                  && STpts2[ip->next->next->inst[1]-1] == FindVarFromName("rA0"))
-            {
-               fprintf(stderr, "biq: \n");
-               PrintThisInstQ(stderr, nsbp->ainst1);
-            }
-         }
-#endif
-#if 0
-         fprintf(stderr, "*** standalone inst:\n");
-#endif
+         #ifdef SLPCOMMENTS
+            PrintComment(vbp, NULL, NULL, "Schedule as standalone inst");
+         #endif
 /*
  *       NOTE: copied the inst and then check whether it conflicts with 
  *       existing vlist. resolved one such conflict with mem broadcast!
@@ -14667,7 +14167,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
                   ip->inst[3]);
             InsNewInst(vbp, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
                   ip->inst[3]);
-            /*PrintThisInst(stderr, 1, ip);*/
             ip = DelInst(ip);
             if (isstore)
                break;
@@ -14714,16 +14213,6 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
             }
             KillVlist(vls);
          }
-
-#if 0
-         fprintf(stderr, "************\n");
-#endif
-#if 0         
-         fprintf(stderr, "sbiq: \n");
-         PrintThisInstQ(stderr, sbp->ainst1);
-         fprintf(stderr, "biq: \n");
-         PrintThisInstQ(stderr, nsbp->ainst1);
-#endif
       }
    }
 /*
@@ -14794,16 +14283,22 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "ACC Vector init: %s", 
-                            STname[vl->vec-1]);
+                                    STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
                      InsNewInst(blk, NULL, iph, VDST, vec, -vr0, 0);
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp, iptn,"ACC Vector init: %s", 
                                          STname[vl->vec-1]);
                      iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+                  #else
+                     iptp = InsNewInst(blk, iptp, iptn, VDLDS, -vr0, s0, 0);
+                  #endif
                      iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0); 
                   }
                }
@@ -14812,8 +14307,10 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector init: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
                      InsNewInst(blk, NULL, iph, VDSHUF, -vr0, -vr0, 
                                 STiconstlookup(0));
@@ -14821,9 +14318,13 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                   }
                   else
                   {
+                  #ifdef SLPCOMMENTS
                      iptp = PrintComment(blk, iptp, iptn, "Vector init: %s", 
                                          STname[vl->vec-1]);
                      iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+                  #else
+                     iptp = InsNewInst(blk, iptp, iptn, VDLDS, -vr0, s0, 0);
+                  #endif
                      iptp = InsNewInst(blk, iptp, NULL, VDSHUF, -vr0, -vr0, 
                                        STiconstlookup(0));
                      iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0); 
@@ -14840,8 +14341,10 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
  */
             if (endpos)
             {
+            #ifdef SLPCOMMENTS
                PrintComment(blk, NULL, iph, "Vector init: %s", 
                             STname[vl->vec-1]);
+            #endif
                InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
                InsNewInst(blk, NULL, iph, VDLDS, -vr1, s1, 0);
                InsNewInst(blk, NULL, iph, VDSHUF, -vr0, -vr1, 
@@ -14856,9 +14359,13 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             else /* at the begining of a blk*/
             {
+            #ifdef SLPCOMMENTS
                iptp = PrintComment(blk, iptp, iptn, "Vector init: %s", 
                                    STname[vl->vec-1]);
                iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+            #else
+               iptp = InsNewInst(blk, iptp, iptn, VDLDS, -vr0, s0, 0);
+            #endif
                iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr1, s1, 0);
                iptp = InsNewInst(blk, iptp, NULL, VDSHUF, -vr0, -vr1, 
                                  STiconstlookup(0x3240));
@@ -14886,16 +14393,22 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "ACC Vector init: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
                      InsNewInst(blk, NULL, iph, VDST, vec, -vr0, 0);
                   }
                   else
                   {
+                  #ifdef SLPCOMMENTS
                      iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
                                          STname[vl->vec-1]);
                      iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+                  #else
+                     iptp = InsNewInst(blk, iptp, iptn, VDLDS, -vr0, s0, 0);
+                  #endif
                      iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0); 
                   }
                }
@@ -14903,8 +14416,10 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENST
                      PrintComment(blk, NULL, iph, "Vector init: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
                      InsNewInst(blk, NULL, iph, VDSHUF, -vr0, -vr0, 
                             STiconstlookup(0));
@@ -14912,9 +14427,13 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                   }
                   else
                   {
+                  #ifdef SLPCOMMENTS
                      iptp = PrintComment(blk, iptp, iptn, "Vector init: %s", 
                                          STname[vl->vec-1]);
                      iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+                  #else
+                     iptp = InsNewInst(blk, iptp, iptn, VDLDS, -vr0, s0, 0);
+                  #endif
                      iptp = InsNewInst(blk, iptp, NULL, VDSHUF, -vr0, -vr0,
                             STiconstlookup(0));
                      iptp = InsNewInst(blk, iptp, NULL, VDST, vec, -vr0, 0); 
@@ -14928,8 +14447,10 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
  */
             if (endpos)
             {
+            #ifdef SLPCOMMENTS
                PrintComment(blk, NULL, iph, "Vector init: %s", 
                            STname[vl->vec-1]);
+            #endif
                InsNewInst(blk, NULL, iph, VDLDS, -vr0, s0, 0);
                InsNewInst(blk, NULL, iph, VDLDS, -vr1, s1, 0);
                InsNewInst(blk, NULL, iph, VDSHUF, -vr0, -vr1, 
@@ -14938,9 +14459,13 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             else
             {
+            #ifdef SLPCOMMENTS
                iptp = PrintComment(blk, iptp, iptn, "Vector init: %s", 
                                    STname[vl->vec-1]);
                iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr0, s0, 0);
+            #else
+               iptp = InsNewInst(blk, iptp, iptn, VDLDS, -vr0, s0, 0);
+            #endif
                iptp = InsNewInst(blk, iptp, NULL, VDLDS, -vr1, s1, 0);
                iptp = InsNewInst(blk, iptp, NULL, VDSHUF, -vr0, -vr1, 
                                  STiconstlookup(0x20));
@@ -14977,15 +14502,22 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "ACC Vector init: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
                      InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp, iptn,"ACC Vector init: %s", 
                                          STname[vl->vec-1]);
+                     iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s0, 0);
+                  #else
+                     iptp = InsNewInst(blk, iptp, iptn, VFLDS, -vr0, s0, 0);
+                  #endif
                      iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s0, 0);
                      iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0); 
                   }
@@ -14994,8 +14526,10 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector init: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
                      InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr0, 
                             STiconstlookup(0));
@@ -15003,9 +14537,13 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp, iptn,"ACC Vector init: %s", 
                                          STname[vl->vec-1]);
                      iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s0, 0);
+                  #else
+                     iptp = InsNewInst(blk, iptp, iptn, VFLDS, -vr0, s0, 0);
+                  #endif
                      iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr0, 
                                        STiconstlookup(0));
                      iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0); 
@@ -15019,8 +14557,10 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
  */
             if (endpos)
             {
+            #ifdef SLPCOMMENTS
                PrintComment(blk, NULL, iph, "Vector init: %s", 
                             STname[vl->vec-1]);
+            #endif
                InsNewInst(blk, NULL, iph, VFLDS, -vr0, s6, 0);
                InsNewInst(blk, NULL, iph, VFLDS, -vr1, s7, 0);
                InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr1, 
@@ -15052,9 +14592,13 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             else
             {
+            #ifdef SLPCOMMENTS
                iptp = PrintComment(blk, iptp, iptn, "Vector init: %s", 
                                    STname[vl->vec-1]);
                iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s6, 0);
+            #else
+               iptp = InsNewInst(blk, iptp, iptn, VFLDS, -vr0, s6, 0);
+            #endif
                iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr1, s7, 0);
                iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr1, 
                                  STiconstlookup(0x76549180));
@@ -15102,25 +14646,33 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "ACC Vector init: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
                      InsNewInst(blk, NULL, iph, VFST, vec, -vr0, 0);
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp, iptn,"ACC Vector init: %s", 
                                          STname[vl->vec-1]);
                      iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s0, 0);
+                  #else
+                     iptp = InsNewInst(blk, iptp, iptn, VFLDS, -vr0, s0, 0);
+                  #endif
                      iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0); 
                   }
                }
-               else if /*(vl->flag & NSLP_SCAL)*/
+               else /*if (vl->flag & NSLP_SCAL)*/
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector init: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VFLDS, -vr0, s0, 0);
                      InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr0, 
                             STiconstlookup(0));
@@ -15128,9 +14680,13 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "ACC Vector init: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp, iptn,"ACC Vector init: %s", 
                                          STname[vl->vec-1]);
                      iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s0, 0);
+                  #else
+                     iptp = InsNewInst(blk, iptp, iptn, VFLDS, -vr0, s0, 0);
+                  #endif
                      iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr0, -vr0, 
                                        STiconstlookup(0));
                      iptp = InsNewInst(blk, iptp, NULL, VFST, vec, -vr0, 0); 
@@ -15141,8 +14697,10 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             if (endpos)
             {
+            #ifdef SLPCOMMENTS
                PrintComment(blk, NULL, iph, "Vector init: %s", 
                             STname[vl->vec-1]);
+            #endif
                InsNewInst(blk, NULL, iph, VFLDS, -vr1, s2, 0);
                InsNewInst(blk, NULL, iph, VFLDS, -vr0, s3, 0);
                InsNewInst(blk, NULL, iph, VFSHUF, -vr1, -vr0, 
@@ -15157,9 +14715,13 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             else
             {
+            #ifdef SLPCOMMENTS
                iptp = PrintComment(blk, iptp, iptn, "Vector init: %s", 
                                    STname[vl->vec-1]);
                iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr1, s2, 0);
+            #else
+               iptp = InsNewInst(blk, iptp, iptn, VFLDS, -vr1, s2, 0);
+            #endif
                iptp = InsNewInst(blk, iptp, NULL, VFLDS, -vr0, s3, 0);
                iptp = InsNewInst(blk, iptp, NULL, VFSHUF, -vr1, -vr0, 
                                  STiconstlookup(0x5140));
@@ -15236,8 +14798,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
  */
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector reduction: %s", 
                                  STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VDLD, -vr0, vec, 0);
                      InsNewInst(blk, NULL, iph, VDSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x3276));
@@ -15249,15 +14813,17 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "Vector reduction: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk,iptp,iptn, "Vector reduction: %s", 
                                  STname[vl->vec-1]);
+                  #endif
                      iptp = InsNewInst(blk, iptp, iptn, VDLD, -vr0, vec, 0);
                      iptp = InsNewInst(blk, iptp, iptn, VDSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x3276));
-                     iptp = InsNewInst(blk, iptp, iptn, VDADD, -vr0, -vr0, -vr1);
-                     iptp = InsNewInst(blk, iptp, iptn, VDSHUF, -vr1, -vr0, 
+                     iptp = InsNewInst(blk, iptp,iptn, VDADD, -vr0, -vr0, -vr1);
+                     iptp = InsNewInst(blk, iptp,iptn, VDSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x3715));
-                     iptp = InsNewInst(blk, iptp, iptn, VDADD, -vr0, -vr0, -vr1);
+                     iptp = InsNewInst(blk, iptp,iptn, VDADD, -vr0, -vr0, -vr1);
                      iptp = InsNewInst(blk, iptp, iptn, VDSTS, s0, -vr0, 0);
                   }
                }
@@ -15265,15 +14831,19 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector reduction: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VDLD, -vr0, vec, 0);
                      InsNewInst(blk, NULL, iph, VDSTS, s0, -vr0, 0);
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp,iptn,"Scatter of vector %s", 
                                          STname[vl->vec-1]);
+                  #endif
                      iptp = InsNewInst(blk, iptp, iptn, VDLD, -vr0, vec, 0);
                      iptp = InsNewInst(blk, iptp, iptn, VDSTS, s0, -vr0, 0);
                   }
@@ -15286,8 +14856,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
  */
             if (endpos)
             {
+            #ifdef SLPCOMMENTS
                PrintComment(blk, NULL, iph, "Scatter of vector %s", 
                            STname[vl->vec-1]);
+            #endif
 #if 1
                InsNewInst(blk, NULL, iph, VDLD, -vr0, vec, 0);
                InsNewInst(blk, NULL, iph, VDSTS, s0, -vr0, 0);
@@ -15324,8 +14896,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             else
             {
+            #ifdef SLPCOMMENTS
                iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
                         STname[vl->vec-1]);
+            #endif
 #if 1
                iptp = InsNewInst(blk, iptp, iptn, VDLD, -vr0, vec, 0);
                iptp = InsNewInst(blk, iptp, iptn, VDSTS, s0, -vr0, 0);
@@ -15374,8 +14948,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector reduction: %s", 
                                  STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VDLD, -vr0, vec, 0);
                      InsNewInst(blk, NULL, iph, VDSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x33));
@@ -15384,12 +14960,14 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "Vector reduction: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp,iptn,"Vector reduction: %s", 
                                  STname[vl->vec-1]);
+                  #endif
                      iptp = InsNewInst(blk, iptp, iptn, VDLD, -vr0, vec, 0);
                      iptp = InsNewInst(blk, iptp, iptn, VDSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x33));
-                     iptp = InsNewInst(blk, iptp, iptn, VDADD, -vr0, -vr0, -vr1);
+                     iptp = InsNewInst(blk, iptp,iptn, VDADD, -vr0, -vr0, -vr1);
                      iptp = InsNewInst(blk, iptp, iptn, VDSTS, s0, -vr0, 0);
                   }
                }
@@ -15397,15 +14975,19 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector reduction: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VDLD, -vr0, vec, 0);
                      InsNewInst(blk, NULL, iph, VDSTS, s0, -vr0, 0);
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp,iptn,"Scatter of vector %s", 
                                          STname[vl->vec-1]);
+                  #endif
                      iptp = InsNewInst(blk, iptp, iptn, VDLD, -vr0, vec, 0);
                      iptp = InsNewInst(blk, iptp, iptn, VDSTS, s0, -vr0, 0);
                   }
@@ -15418,8 +15000,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
  */
             if (endpos)
             {
+            #ifdef SLPCOMMENTS
                PrintComment(blk, NULL, iph, "Scatter of vector %s", 
                         STname[vl->vec-1]);
+            #endif
 #if 1
                InsNewInst(blk, NULL, iph, VDLD, -vr0, vec, 0);
                InsNewInst(blk, NULL, iph, VDSTS, s0, -vr0, 0);
@@ -15438,8 +15022,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             else
             {
+            #ifdef SLPCOMMENTS
                iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
                         STname[vl->vec-1]);
+            #endif
 #if 1
                iptp = InsNewInst(blk, iptp, iptn, VDLD, -vr0, vec, 0);
                iptp = InsNewInst(blk, iptp, iptn, VDSTS, s0, -vr0, 0);
@@ -15486,8 +15072,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector reduction: %s", 
                                  STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VFLD, -vr0, vec, 0);
                      InsNewInst(blk, NULL, iph, VFSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x7654FEDC));
@@ -15502,18 +15090,20 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "Vector reduction: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp,iptn,"Vector reduction: %s", 
                                  STname[vl->vec-1]);
+                  #endif
                      iptp = InsNewInst(blk, iptp, iptn, VFLD, -vr0, vec, 0);
                      iptp = InsNewInst(blk, iptp, iptn, VFSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x7654FEDC));
-                     iptp = InsNewInst(blk, iptp, iptn, VFADD, -vr0, -vr0, -vr1);
-                     iptp = InsNewInst(blk, iptp, iptn, VFSHUF, -vr1, -vr0, 
+                     iptp = InsNewInst(blk, iptp,iptn, VFADD, -vr0, -vr0, -vr1);
+                     iptp = InsNewInst(blk, iptp,iptn, VFSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x765432BA));
-                     iptp = InsNewInst(blk, iptp, iptn, VFADD, -vr0, -vr0, -vr1);
+                     iptp = InsNewInst(blk, iptp,iptn, VFADD, -vr0, -vr0, -vr1);
                      iptp = InsNewInst(blk, iptp, iptn, VFSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x76CD3289));
-                     iptp = InsNewInst(blk, iptp, iptn, VFADD, -vr0, -vr0, -vr1);
+                     iptp = InsNewInst(blk, iptp,iptn, VFADD, -vr0, -vr0, -vr1);
                      iptp = InsNewInst(blk, iptp, iptn, VFSTS, s0, -vr0, 0);
                   }
                }
@@ -15521,15 +15111,19 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector reduction: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VFLD, -vr0, vec, 0);
                      InsNewInst(blk, NULL, iph, VFSTS, s0, -vr0, 0);
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn,"Scatter of vector %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp,iptn,"Scatter of vector %s", 
                                          STname[vl->vec-1]);
+                  #endif
                      iptp = InsNewInst(blk, iptp, iptn, VFLD, -vr0, vec, 0);
                      iptp = InsNewInst(blk, iptp, iptn, VFSTS, s0, -vr0, 0);
                   }
@@ -15542,8 +15136,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
  */
             if (endpos)
             {
+            #ifdef SLPCOMMENTS
                PrintComment(blk, NULL, iph, "Scatter of vector %s", 
                         STname[vl->vec-1]);
+            #endif
                InsNewInst(blk, NULL, iph, VFLD, -vr0, vec, 0);
                InsNewInst(blk, NULL, iph, VFSTS, s0, -vr0, 0);
                InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr0, 
@@ -15570,8 +15166,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             else
             {
+            #ifdef SLPCOMMENTS
                iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
                         STname[vl->vec-1]);
+            #endif
                iptp = InsNewInst(blk, iptp, iptn, VFLD, -vr0, vec, 0);
                iptp = InsNewInst(blk, iptp, iptn, VFSTS, s0, -vr0, 0);
                iptp = InsNewInst(blk, iptp, iptn, VFSHUF, -vr0, -vr0, 
@@ -15614,8 +15212,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector reduction: %s", 
                                  STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VFLD, -vr0, vec, 0);
                      InsNewInst(blk, NULL, iph, VFSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x3276));
@@ -15627,15 +15227,17 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "Vector reduction: %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk,iptp,iptn, "Vector reduction: %s", 
                                  STname[vl->vec-1]);
+                  #endif
                      iptp = InsNewInst(blk, iptp, iptn, VFLD, -vr0, vec, 0);
                      iptp = InsNewInst(blk, iptp, iptn, VFSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x3276));
-                     iptp = InsNewInst(blk, iptp, iptn, VFADD, -vr0, -vr0, -vr1);
+                     iptp = InsNewInst(blk, iptp,iptn, VFADD, -vr0, -vr0, -vr1);
                      iptp = InsNewInst(blk, iptp, iptn, VFSHUF, -vr1, -vr0, 
                                        STiconstlookup(0x5555));
-                     iptp = InsNewInst(blk, iptp, iptn, VFADD, -vr0, -vr0, -vr1);
+                     iptp = InsNewInst(blk, iptp,iptn, VFADD, -vr0, -vr0, -vr1);
                      iptp = InsNewInst(blk, iptp, iptn, VFSTS, s0, -vr0, 0);
                   }
                }
@@ -15643,15 +15245,19 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
                {
                   if (endpos)
                   {
+                  #ifdef SLPCOMMENTS
                      PrintComment(blk, NULL, iph, "Vector reduction: %s", 
                             STname[vl->vec-1]);
+                  #endif
                      InsNewInst(blk, NULL, iph, VFLD, -vr0, vec, 0);
                      InsNewInst(blk, NULL, iph, VFSTS, s0, -vr0, 0);
                   }
                   else
                   {
-                     iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
+                  #ifdef SLPCOMMENTS
+                     iptp = PrintComment(blk, iptp,iptn,"Scatter of vector %s", 
                                          STname[vl->vec-1]);
+                  #endif
                      iptp = InsNewInst(blk, iptp, iptn, VFLD, -vr0, vec, 0);
                      iptp = InsNewInst(blk, iptp, iptn, VFSTS, s0, -vr0, 0);
                   }
@@ -15664,8 +15270,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
  */
             if (endpos)
             {
+            #ifdef SLPCOMMENTS
                PrintComment(blk, NULL, iph, "Scatter of vector %s", 
                         STname[vl->vec-1]);
+            #endif
                InsNewInst(blk, NULL, iph, VFLD, -vr0, vec, 0);
                InsNewInst(blk, NULL, iph, VFSTS, s0, -vr0, 0);
                InsNewInst(blk, NULL, iph, VFSHUF, -vr0, -vr0, 
@@ -15680,8 +15288,10 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             }
             else
             {
+            #ifdef SLPCOMMENTS
                iptp = PrintComment(blk, iptp, iptn, "Scatter of vector %s", 
                         STname[vl->vec-1]);
+            #endif
                iptp = InsNewInst(blk, iptp, iptn, VFLD, -vr0, vec, 0);
                iptp = InsNewInst(blk, iptp, iptn, VFSTS, s0, -vr0, 0);
                iptp = InsNewInst(blk, iptp, iptn, VFSHUF, -vr0, -vr0, 
@@ -15759,7 +15369,6 @@ short *FindPtrFromPack(ILIST **ilam, int nptr)
       }
       else break;
    }
-   //exit(0);
 #endif
 /*
  * add all pointers in sp 
@@ -15785,12 +15394,6 @@ short *FindPtrFromPack(ILIST **ilam, int nptr)
       }
    }
    sp[0] = npt;
-#if 0
-   fprintf(stderr, "SP(%d) : ", sp[0]);
-   for (i=1; i <= sp[0]; i++)
-      fprintf(stderr, " %s,", STname[sp[i]-1]);
-   fprintf(stderr, "\n");
-#endif
 /*
  * filter out those which don't belong to init packs
  */
@@ -15807,13 +15410,6 @@ short *FindPtrFromPack(ILIST **ilam, int nptr)
    }
    bvp = BitVecComb(bvp, bvp, bvi, '&');
    pt = BitVec2Array(bvp, 1-TNREG);
-#if 0
-   fprintf(stderr, "PTR(%d) : ", pt[0]);
-   for (i=1; i <= pt[0]; i++)
-      fprintf(stderr, " %s,", STname[pt[i]-1]);
-   fprintf(stderr, "\n");
-#endif
-
 }
 #endif
 
@@ -15853,16 +15449,6 @@ void SortPackBasedOnPtr(short *pts, int inpack)
    short ptr;
    PACK *pk;
 
-#if 0
-   fprintf(stderr, "intit pack = ");
-   for (i=0; i < NPACK; i++)
-   {
-      if (PACKS[i])
-         fprintf(stderr, "%d(%d) ", i, PACKS[i]->pnum);
-   }
-   fprintf(stderr, "\n");
-#endif
-
    for (i=1, j=inpack, n=pts[0]; i <= n; i++)
    {
       ptr = pts[i];
@@ -15890,11 +15476,6 @@ void SortPackBasedOnPtr(short *pts, int inpack)
          }
       }
    }
-}
-
-int KillPackBasedOnPtr()
-{
-
 }
 
 INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
@@ -15943,8 +15524,6 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
             }
             if (k)
             {
-               /*fprintf(stderr, "*** %s is a candidate of boardcast\n", 
-                     STname[vl->svars[1]-1]);*/
                assert(IS_LOAD(ipu->inst[0]));
                ipdup = ip0 = NULL;
                do
@@ -16001,7 +15580,6 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
  *          FZEROD reg;
  *          FSTD var, reg
  */
-         //assert(IS_LOAD(ipu->inst[0]));
          ipdup = ip0 = NULL;
          do
          {
@@ -16017,9 +15595,6 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
          while(ipdup->prev) ipdup = ipdup->prev;
          iln = NewIlistAtEnd(ipdup, iln);
          k++;
-#if 0
-         PrintThisInstQ(stderr, ipdup);
-#endif
       }
       else /* no pack using this vector, don't report error, just return*/
       {
@@ -16062,9 +15637,6 @@ INSTQ *FindInitPackFromVlist(INSTQ *upackq, SLP_VECTOR *vl, int *change)
    new = NewPack(iln, k);
    new->vflag = vl->flag; /* vl->flag == pk->vflag*/
    new->pktype = PK_INIT_VLIST;
-#if 0
-   fprintf(stderr, "vl->flag = %d\n", vl->flag);
-#endif
    upackq = FinalizePack(new, upackq, change); 
    return(upackq);
 }
@@ -16096,14 +15668,6 @@ int FindRedVarN(BBLOCK *blk, short *svars)
    int *scount; 
    INSTQ *ip, *ip0;
 
-#if 0
-   fprintf(stderr, "svars: ");
-   for (i=1, n=svars[0]; i <= n; i++)
-      fprintf(stderr, "%s ", STname[svars[i]-1]);
-   fprintf(stderr, "\n");
-   exit(0);
-#endif
-   
    n = svars[0];
    scount = calloc((n+1), sizeof(int));
    assert(scount);
@@ -16427,7 +15991,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    vreg1 = GetReg(T_VFLOAT);
    vreg2 = GetReg(T_VFLOAT);
 
-   //ns0 = HADD(s0, s1);  rd, rs1, rs2 
+   /*ns0 = HADD(s0, s1);  rd, rs1, rs2 */
    ip = ip0 = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -16436,7 +16000,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //ns2 = HADD(s2, s3);
+   /*ns2 = HADD(s2, s3);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[3]-1].sa[2], 0);
@@ -16446,7 +16010,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns2-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //ns4 = HADD(s4, s5);
+   /*ns4 = HADD(s4, s5);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[4]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[5]-1].sa[2], 0);
@@ -16456,7 +16020,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns4-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
    
-   //ns6 = HADD(s6, s7);
+   /*ns6 = HADD(s6, s7);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[6]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[7]-1].sa[2], 0);
@@ -16466,7 +16030,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns6-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
   
-   //ns0 = HADD (ns0, ns2);
+   /*ns0 = HADD (ns0, ns2);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns2-1].sa[2], 0);
@@ -16476,7 +16040,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
 
-   //ns4 = HADD (ns4, ns6);
+   /*ns4 = HADD (ns4, ns6);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns4-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns6-1].sa[2], 0);
@@ -16486,7 +16050,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns4-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
 
-   //ns1 = PERMUTE2f128(ns0, ns4, 0x31);
+   /*ns1 = PERMUTE2f128(ns0, ns4, 0x31);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns4-1].sa[2], 0);
@@ -16496,7 +16060,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns1-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //ns0 = PERMUTE2f128(ns0, ns4, 0x20);
+   /*ns0 = PERMUTE2f128(ns0, ns4, 0x20);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns4-1].sa[2], 0);
@@ -16506,7 +16070,7 @@ INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
 
-   //vs = VADD(ns0, ns1);
+   /*vs = VADD(ns0, ns1);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns1-1].sa[2], 0);
@@ -16581,7 +16145,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    vreg1 = GetReg(T_VDOUBLE);
    vreg2 = GetReg(T_VDOUBLE);
 
-   //ns0 = HADD(s0, s1);  rd, rs1, rs2 
+   /*ns0 = HADD(s0, s1);  rd, rs1, rs2 */
    ip = ip0 = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -16590,7 +16154,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns0-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //ns2 = HADD(s2, s3);
+   /*ns2 = HADD(s2, s3);*/
    ip->next= NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[s[2]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[3]-1].sa[2], 0);
@@ -16600,7 +16164,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns2-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
    
-   //ns1 = PERMUTE2F128(ns0, ns2, 0x31);
+   /*ns1 = PERMUTE2F128(ns0, ns2, 0x31);*/
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns2-1].sa[2], 0);
@@ -16610,7 +16174,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns1-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //ns0 = PERMUTE2F128(ns0, ns2, 0x20);
+   /*ns0 = PERMUTE2F128(ns0, ns2, 0x20);*/
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns2-1].sa[2], 0);
@@ -16620,7 +16184,7 @@ INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
    
-   //vs = VADD(ns0, ns1);
+   /*vs = VADD(ns0, ns1);*/
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns1-1].sa[2], 0);
@@ -16705,7 +16269,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
 
 #if defined(AVX)
 
-   //ns0 = HADD(s0, s1); rd, rs1, rs2
+   /*ns0 = HADD(s0, s1); rd, rs1, rs2*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -16714,7 +16278,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //ns2 = HADD(s2, s3);
+   /*ns2 = HADD(s2, s3);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[3]-1].sa[2], 0);
@@ -16724,7 +16288,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns2-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //ns0 = HADD(ns0, ns2);
+   /*ns0 = HADD(ns0, ns2);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns2-1].sa[2], 0);
@@ -16734,7 +16298,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
    
-/* ns1 = PERMUTE2f128(ns0, ns0, 0x31); */
+   /*ns1 = PERMUTE2f128(ns0, ns0, 0x31); */
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHIHALF, -vreg1, -vreg0, -vreg0);
@@ -16742,7 +16306,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns1-1].sa[2], -vreg1, 0); 
    ip = ip->next;  
 
-/* ns0 = PERMUTE2f128(ns0, ns0, 0x20); */
+   /*ns0 = PERMUTE2f128(ns0, ns0, 0x20); */
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLOHALF, -vreg0, -vreg0, -vreg0);
@@ -16750,7 +16314,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
 
-   //vs = VADD(ns0, ns1);
+   /*vs = VADD(ns0, ns1);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns1-1].sa[2], 0);
@@ -16762,7 +16326,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
 
 #elif defined(SSE3)
    
-   //ns0 = HADD(s0, s1);
+   /*ns0 = HADD(s0, s1);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -16771,7 +16335,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
 
-   //ns2 = HADD(s2, s3);
+   /*ns2 = HADD(s2, s3);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[s[2]-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[3]-1].sa[2], 0);
@@ -16781,7 +16345,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns2-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
 
-   //vs = HADD(ns0, ns2);
+   /*vs = HADD(ns0, ns2);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns2-1].sa[2], 0);
@@ -16863,7 +16427,7 @@ INSTQ *DVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
 
 #if defined(AVX)
    
-   //ns0 = HADD(s0, s1);
+   /*ns0 = HADD(s0, s1);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -16872,7 +16436,7 @@ INSTQ *DVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns0-1].sa[2], -vreg2, 0); 
    ip = ip->next;         
 
-   //ns1 = PERMUTE2f128(ns0, s1, 0x31);
+   /*ns1 = PERMUTE2f128(ns0, s1, 0x31);*/
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[1]-1].sa[2], 0);
@@ -16882,7 +16446,7 @@ INSTQ *DVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns1-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //vs = VADD(ns0, ns1);
+   /*vs = VADD(ns0, ns1);*/
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns1-1].sa[2], 0);
@@ -16894,7 +16458,7 @@ INSTQ *DVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
 
 #elif defined(SSE3)
    
-   //vs = HADD(s0,s1);
+   /*vs = HADD(s0,s1);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -16975,7 +16539,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    vreg2 = GetReg(T_VFLOAT);
 
 #if defined(AVX)
-   //ns0 = HADD(s0, s1);
+   /*ns0 = HADD(s0, s1);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -16984,7 +16548,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //ns0 = HADD(ns0, ns0);
+   /*ns0 = HADD(ns0, ns0);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
@@ -16992,7 +16556,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
    
-   //ns1 = PERMUTE2f128(ns0, ns0, 0x31);
+   /*ns1 = PERMUTE2f128(ns0, ns0, 0x31);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHIHALF, -vreg1, -vreg0, -vreg0);
@@ -17000,7 +16564,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns1-1].sa[2], -vreg1, 0); 
    ip = ip->next;  
 
-   //ns0 = PERMUTE2f128(ns0, ns0, 0x20);
+   /*ns0 = PERMUTE2f128(ns0, ns0, 0x20);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLOHALF, -vreg0, -vreg0, -vreg0);
@@ -17008,7 +16572,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;         
 
-   //vs = VADD(ns0, ns1);
+   /*vs = VADD(ns0, ns1);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns1-1].sa[2], 0);
@@ -17019,7 +16583,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
 #elif defined(SSE3)
-   //ns0 = HADD(s0, s1);
+   /*ns0 = HADD(s0, s1);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[s[1]-1].sa[2], 0);
    ip = ip->next;          
@@ -17028,7 +16592,7 @@ INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
    
-   //vs = HADD(ns0, ns0);
+   /*vs = HADD(ns0, ns0);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
@@ -17098,26 +16662,25 @@ INSTQ *DVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
 
 #if defined(AVX)
    
-   //ns0 = HADD(s0, s0);
+   /*ns0 = HADD(s0, s0);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VDHADD, -vreg1, -vreg0, -vreg0);
    ip = ip->next;          
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns0-1].sa[2], -vreg1, 0); 
    ip = ip->next;         
 
-   //ns1 = PERMUTE2f128(ns0, s0, 0x31);
-   //ns1 = PERMUTE2f128(ns0, ns0, 0x31);
+   /*ns1 = PERMUTE2f128(ns0, s0, 0x31);*/
+   /*ns1 = PERMUTE2f128(ns0, ns0, 0x31);*/
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[s[0]-1].sa[2], 0);
    ip = ip->next;          
    ip->next = NewInst(NULL, ip, NULL, VDHIHALF, -vreg2, -vreg0, -vreg1);
-   //ip->next = NewInst(NULL, ip, NULL, VDHIHALF, -vreg2, -vreg0, -vreg0);
    ip = ip->next;          
    ip->next = NewInst(NULL, ip, NULL, VDST, SToff[ns1-1].sa[2], -vreg2, 0); 
    ip = ip->next;          
 
-   //vs = VADD(ns0, ns1);
+   /*vs = VADD(ns0, ns1);*/
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, SToff[ns1-1].sa[2], 0);
@@ -17129,7 +16692,7 @@ INSTQ *DVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
 
 #elif defined(SSE3)
    
-   //vs = HADD(s0,s0);
+   /*vs = HADD(s0,s0);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VDLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VDHADD, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
@@ -17201,14 +16764,14 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    vreg1 = GetReg(T_VFLOAT);
 
 #if defined(AVX)
-   //ns0 = HADD(s0, s0);
+   /*ns0 = HADD(s0, s0);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg1, -vreg0, -vreg0);
    ip = ip->next;          
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg1, 0); 
    ip = ip->next;          
 
-   //ns0 = HADD(ns0, ns0);
+   /*ns0 = HADD(ns0, ns0);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
@@ -17216,7 +16779,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
    
-   //ns1 = PERMUTE2f128(ns0, ns0, 0x31);
+   /*ns1 = PERMUTE2f128(ns0, ns0, 0x31);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHIHALF, -vreg1, -vreg0, -vreg0);
@@ -17224,7 +16787,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns1-1].sa[2], -vreg1, 0); 
    ip = ip->next;  
 
-   //ns0 = PERMUTE2f128(ns0, ns0, 0x20);
+   /*ns0 = PERMUTE2f128(ns0, ns0, 0x20);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLOHALF, -vreg0, -vreg0, -vreg0);
@@ -17232,7 +16795,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;         
 
-   //vs = VADD(ns0, ns1);
+   /*vs = VADD(ns0, ns1);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, SToff[ns1-1].sa[2], 0);
@@ -17243,14 +16806,14 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    ip = ip->next;          
 
 #elif defined(SSE3)
-   //ns0 = HADD(s0, s0);
+   /*ns0 = HADD(s0, s0);*/
    ip = ip0 = NewInst(NULL, NULL, NULL, VFLD, -vreg0, SToff[s[0]-1].sa[2], 0);
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
    ip = ip->next;          
    ip->next = NewInst(NULL, ip, NULL, VFST, SToff[ns0-1].sa[2], -vreg0, 0); 
    ip = ip->next;          
    
-   //vs = HADD(ns0, ns0);
+   /*vs = HADD(ns0, ns0);*/
    ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, SToff[ns0-1].sa[2], 0);
    ip = ip->next;
    ip->next = NewInst(NULL, ip, NULL, VFHADD, -vreg0, -vreg0, -vreg0);
@@ -17273,9 +16836,6 @@ INSTQ *InstVVRSUM(SLP_VECTOR *rvl, int len, SLP_VECTOR *vd)
    short type;
    INSTQ *ip = NULL;
 
-#if 0
-   fprintf(stderr, "Applying VVRSUM_%d\n", len);
-#endif
    type = FLAG2TYPE(rvl->flag);
    if (type == T_FLOAT  || type == T_VFLOAT)
    {
@@ -17450,8 +17010,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             s3 = SToff[vl->svars[4]-1].sa[2];
                
             vr0 = GetReg(T_VDOUBLE);
-            //PrintComment(blk, NULL, NULL, "Scatter of vector %s", 
-            //            STname[vl->vec-1]);
+            /*PrintComment(blk, NULL, NULL, "Scatter of vector %s", 
+                           STname[vl->vec-1]);*/
             if (nelem > 0)
             {
                ip->next = NewInst(NULL, ip, NULL, VDLD, -vr0, vec, 0);
@@ -17490,8 +17050,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             s1 = SToff[vl->svars[2]-1].sa[2];
             vr0 = GetReg(T_VDOUBLE);
             
-            //PrintComment(NULL, NULL, NULL, "Scatter of vector %s", 
-            //            STname[vl->vec-1]);
+            /*PrintComment(NULL, NULL, NULL, "Scatter of vector %s", 
+                           STname[vl->vec-1]);*/
             if (nelem > 0)
             {
                ip->next = NewInst(NULL, ip, NULL, VDLD, -vr0, vec, 0);
@@ -17524,8 +17084,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             s7 = SToff[vl->svars[8]-1].sa[2];
             vr0 = GetReg(T_VFLOAT);
                
-            //PrintComment(blk, NULL, NULL, "Scatter of vector %s", 
-            //            STname[vl->vec-1]);
+            /*PrintComment(blk, NULL, NULL, "Scatter of vector %s", 
+                           STname[vl->vec-1]);*/
             if (nelem > 0)
             {
                ip->next = NewInst(NULL, ip, NULL, VFLD, -vr0, vec, 0);
@@ -17597,8 +17157,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             s2 = SToff[vl->svars[3]-1].sa[2];
             s3 = SToff[vl->svars[4]-1].sa[2];
             vr0 = GetReg(T_VFLOAT);
-            //PrintComment(blk, NULL, NULL, "Scatter of vector %s", 
-            //            STname[vl->vec-1]);
+            /*PrintComment(blk, NULL, NULL, "Scatter of vector %s", 
+                           STname[vl->vec-1]);*/
             if (nelem > 0)
             {
                ip->next = NewInst(NULL, ip, NULL, VFLD, -vr0, vec, 0);
@@ -17749,7 +17309,6 @@ int PreSLPchecking(LOOPQ *lp)
  */
    if (!lp->posttails || lp->posttails->next)
    {
-      /*fprintf(stderr, "only one posttails is considered in SLP\n");*/
       fko_warn(__LINE__, "only one posttails is considered in SLP\n");
       return(1);
    }
@@ -17758,7 +17317,6 @@ int PreSLPchecking(LOOPQ *lp)
  */
    if (!lp->blocks || lp->blocks->next)
    {
-      /*fprintf(stderr, "only one block is considered in SLP\n");*/
       fko_warn(__LINE__, "only one block is considered in SLP\n");
       return(1);
    }
@@ -17880,12 +17438,6 @@ int MemUnalign2Align(LOOPQ *lp)
    for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
       if (IS_FP(STflag[pi->ptr-1]))
          s[i] = pi->ptr;
-#if 0
-   fprintf(stderr, "ptrs: \n");
-   for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
-      fprintf(stderr, "%s ", STname[s[i]-1]);
-   fprintf(stderr, "\n");
-#endif
 /*
  * NOTE: 2D array aligned means all col ptrs are aligned.
  */
@@ -17978,24 +17530,8 @@ int MemUnalign2Align(LOOPQ *lp)
       fko_warn(__LINE__, "no ptr meet alignment requirement!!!\n");
       return(1);
    }
-
-#if 0
-   fprintf(stderr, "ALIGNED ptrs: \n");
-   for (i=1, n=pts[0]; i <= n; i++)
-      fprintf(stderr, "%s ", STname[pts[i]-1]);
-   fprintf(stderr, "\n");
-#endif
    free(s); 
    KillAllPtrinfo(pbase);
-
-#if 0
-   fprintf(stderr, "aligned ptr = ");
-   for (i=1, n=pts[0]; i <= n; i++)
-   {
-      fprintf(stderr, "%s ", STname[pts[i]-1]);
-   }
-   fprintf(stderr, "\n");
-#endif
 /*
  * convert all related mem access to aligned/unaligned access based on markup
  * some vec method may assume aligned access all the time.. so, make it 
@@ -18118,12 +17654,6 @@ int ScopeMemUnalign2Align(BLIST *bscope, short *aaligned, short *abalign )
    for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
       if (IS_FP(STflag[pi->ptr-1]))
          s[i] = pi->ptr;
-#if 0
-   fprintf(stderr, "ptrs: \n");
-   for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
-      fprintf(stderr, "%s ", STname[s[i]-1]);
-   fprintf(stderr, "\n");
-#endif
 /*
  * NOTE: 2D array aligned means all col ptrs are aligned.
  */
@@ -18182,12 +17712,6 @@ int ScopeMemUnalign2Align(BLIST *bscope, short *aaligned, short *abalign )
    }
    free(s); 
    KillAllPtrinfo(pbase);
-#if 0
-   fprintf(stderr, "ALIGNED ptrs: \n");
-   for (i=1, n=pts[0]; i <= n; i++)
-      fprintf(stderr, "%s ", STname[pts[i]-1]);
-   fprintf(stderr, "\n");
-#endif
 /*
  * convert all related mem access to aligned/unaligned access based on markup
  * some vec method may assume aligned access all the time.. so, make it 
@@ -18284,12 +17808,6 @@ int ScopeMemAlign2Unalign(BLIST *bscope, short *aaligned, short *abalign )
    for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
       if (IS_FP(STflag[pi->ptr-1]))
          s[i] = pi->ptr;
-#if 0
-   fprintf(stderr, "ptrs: \n");
-   for (i=1, n=s[0], pi=pbase; i <= n; i++, pi=pi->next)
-      fprintf(stderr, "%s ", STname[s[i]-1]);
-   fprintf(stderr, "\n");
-#endif
 /*
  * NOTE: 2D array aligned means all col ptrs are aligned.
  */
@@ -18349,12 +17867,6 @@ int ScopeMemAlign2Unalign(BLIST *bscope, short *aaligned, short *abalign )
 #endif
    free(s); 
    KillAllPtrinfo(pbase);
-#if 0
-   fprintf(stderr, "ALIGNED ptrs: \n");
-   for (i=1, n=pts[0]; i <= n; i++)
-      fprintf(stderr, "%s ", STname[pts[i]-1]);
-   fprintf(stderr, "\n");
-#endif
 /*
  * convert all related mem access to aligned/unaligned access based on markup
  * some vec method may assume aligned access all the time.. so, make it 
@@ -18452,10 +17964,6 @@ int BlkPrivateVariableRename(BBLOCK *blk)
    iv = BitVecComb(iv, iv, blk->outs, '-');
    
    FilterOutRegs(iv);
-#if 0
-   fprintf(stderr, "blk-%d :\n", blk->bnum);
-   PrintVars(stderr, "Local vars", iv);
-#endif
    sp = BitVec2Array(iv, 1-TNREG);
    n = sp[0];
    
@@ -18466,12 +17974,6 @@ int BlkPrivateVariableRename(BBLOCK *blk)
    }
    nv = calloc(n+1, sizeof(int)); /* all 0 */
    assert(nv);
-#if 0
-   fprintf(stderr, "Local vars: ");
-   for(i=1; i <= n; i++)
-      fprintf(stderr, "%s ", STname[sp[i]-1]);
-   fprintf(stderr, "\n");
-#endif
    for (ip=blk->ainst1; ip; ip=ip->next)
    {
       for (i=1; i <= n; i++)
@@ -18484,17 +17986,7 @@ int BlkPrivateVariableRename(BBLOCK *blk)
             for (k=2; k < 4; k++)
             {
                if (ip->inst[k] > 0 && STpts2[ip->inst[k]-1] == sp[i])
-               {
-                  //ip->inst[k] = SToff[sp[i]-1].sa[2];
-#if 0
-                  fprintf(stderr, "***updating USE of %s with %s (%d)\n", 
-                        STname[STpts2[ip->inst[k]-1]-1],
-                        STname[vp-1],
-                        SToff[vp-1].sa[2]
-                        );
-#endif
                   ip->inst[k] = SToff[vp-1].sa[2];
-               }
             }
             CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 /*
@@ -18514,18 +18006,6 @@ int BlkPrivateVariableRename(BBLOCK *blk)
                vp = InsertNewLocal(vnam, FLAG2TYPE(STflag[sp[i]-1]));
             assert(ip->inst[1] > 0);
             assert(STpts2[ip->inst[1]-1] == sp[i]);
-            /*if (STpts2[ip->inst[1]-1] != sp[i])
-            {
-               fprintf(stderr, "%d ----> %d\n", STpts2[ip->inst[1]-1], sp[i]);
-               assert(STpts2[ip->inst[1]-1] == sp[i]);
-            }*/
-#if 0
-            fprintf(stderr, "***updating DEF of %s with %s(%d)\n", 
-                  STname[STpts2[ip->inst[1]-1]-1],
-                  STname[vp-1],
-                  SToff[vp-1].sa[2]
-                  );
-#endif
             ip->inst[1] = SToff[vp-1].sa[2];
             CFUSETU2D = INDEADU2D = 0;
          }
@@ -18632,28 +18112,10 @@ int PreSlpAccumExpans(LOOPQ *lp)
       free(sp);
       return(0);
    }
-#if 0
-   fprintf(stderr, "Local vars: ");
-   for(i=1; i <= n; i++)
-      fprintf(stderr, "%s ", STname[sp[i]-1]);
-   fprintf(stderr, "\n");
-#endif
    nac = calloc(n+1, sizeof(int)); /* all 0 */
    assert(nac);
    for (i=1; i <= n; i++ )
-   {
       nac[i] = FindNumAccVar(lp->blocks, sp[i]);
-   }
-#if 0
-   fprintf(stderr, "Acc vars: ");
-   for(i=1; i <= n; i++)
-   {
-      if (nac[i])
-         fprintf(stderr, "%s(%d) ", STname[sp[i]-1], nac[i]);
-   }
-   fprintf(stderr, "\n");
-   exit(0);
-#endif
 
    for (i=1; i <= n; i++)
    {
@@ -18689,15 +18151,7 @@ int PreSlpAccumExpans(LOOPQ *lp)
       }
    }
    if (nchanges)
-   {
       CFUSETU2D = INDEADU2D = INUSETU2D = 0;  
-#if 0
-      extern BBLOCK *bbbase;
-      fprintf(stdout, "After ACCUM EXP: ");
-      PrintInst(stdout, bbbase);
-      exit(0);
-#endif
-   }
    return(nchanges);
 }
 
@@ -18866,10 +18320,6 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
                   DelRedCodeFromRvars(bp, vl->svars, vl->redvar);
             }
          }
-#if 0
-         fprintf(stderr, "postails: \n");
-         PrintThisInstQ(stderr, bp->inst1);
-#endif
       }
 /*
  *    create init pack from vector list
@@ -18940,12 +18390,6 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
             NPACK = inpack;
          }
          KillVlist(visr);
-
-#if 0
-         for (i=0; i < NPACK; i++)
-            if(PACKS[i]) 
-               PrintPack(stderr, PACKS[i]);
-#endif
       }
    }
 /*
@@ -18967,24 +18411,11 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
       *err = 1;
       return(NULL);
    }
-#if 0
-   fprintf(stderr, "*************************Before Extending: %d\n", NPACK);
-   for (i=inpack; i < NPACK; i++)
-      if(PACKS[i]) 
-         PrintPack(stderr, PACKS[i]);
-#endif
 /*
  * step: 2
  * ========
  * extend pack using def-use chain
  */
-#if 0
-   fprintf(stderr, "*************************After sorting: %d\n", NPACK);
-   for (i=inpack; i < NPACK; i++)
-      if(PACKS[i]) 
-         PrintPack(stderr, PACKS[i]);
-   exit(1);
-#endif
    upackq = ExtendPack(upackq, inpack);
    if (CheckDupPackError(inpack, NPACK))
    {
@@ -19009,12 +18440,6 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
    nsbp = DupInstQInBlock(nsbp, bp->inst1);
    UpdateDep(nsbp->inst1, inpack);
 
-#if 0
-   fprintf(stderr, "************************* After Extending: %d\n", NPACK);
-   for (i=inpack; i < NPACK; i++)
-      if(PACKS[i]) 
-         PrintPack(stderr, PACKS[i]);
-#endif
 /*
  * step: 4
  * ========
@@ -19041,12 +18466,6 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
       for (vl=vr; vl; vl=vl->next)
          SetVecBit(livein, vl->redvar+TNREG-1, 1);
    }
-#if 0
-   fprintf(stderr, "BLK before scheduling:\n");
-   fprintf(stderr, "==================================\n");
-   PrintThisInstQ(stderr, nsbp->inst1);
-   fprintf(stderr, "==================================\n");
-#endif
    vo = SchVectorInst(nsbp, sbp, vbp, livein, vo, inpack, err);
 /*
  * delete temporaries    
@@ -19122,10 +18541,7 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
  */
    else
       FinalizeVecBlock(bp, vbp);
-#if 0
-   fprintf(stderr, "After SLP: \n");
-   PrintThisInstQ(stderr, bp->inst1);
-#endif
+   
    KillAllInst(vbp->inst1);
    free(vbp);
 /*
@@ -19190,11 +18606,6 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
       vli = NULL;
       vs = NULL;
       ipvrsums = ipv = NULL;
-#if 0
-      //fprintf(stderr, "output vectors:\n");
-      //PrintVectors(stderr, vo);
-      PrintVectors(stderr, vi);
-#endif
       for (vl=vo; vl; vl=vl->next)
       {
          if (vl->islivein && !(vl->flag & NSLP_ACC)
@@ -19333,12 +18744,6 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
       if (vr) KillVlist(vr);
    } // end of hasredcode if
 
-#if 0 
-   fprintf(stderr, "Vectorized code for block: %d\n", blk->bnum);
-   fprintf(stderr, "***********************************\n");
-   PrintThisInstQ(stderr, blk->inst1);
-   fprintf(stderr, "***********************************\n");
-#endif
    return(vo);
 }
 
@@ -19451,23 +18856,10 @@ int IsSlpConsistent(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2,
  * recompute CFG and it will destroy the loop structure... we need to figure
  * out live-out vectors without recomputing data-flow.
  */
-   /*fprintf(stderr, "++++++checking consistency at prehead -> loop\n");*/
    res = IsSlpFlowConsistent(loop->preheader, loop->header, v1, v0, 
             loop->header->ins, loop->preheader->outs);
-#if 0
-   fprintf(stderr, "------vector used on loop:\n");
-   for (vl=v0; vl; vl=vl->next)
-      if (vl->isused)
-         PrintThisVector(stderr,vl);
-   fprintf(stderr, "------vector used on posttail:\n");
-   for (vl=v2; vl; vl=vl->next)
-      if (vl->isused)
-         PrintThisVector(stderr,vl);
-#endif
-   /*fprintf(stderr, "+++++checking consistency at loop -> posttail\n");*/
    res += IsSlpFlowConsistent(loop->tails->blk, loop->posttails->blk, v0, v2, 
             loop->posttails->blk->ins, loop->tails->blk->outs);
-   /*fprintf(stderr, "+++++checking consistency at posttail -> prehead\n");*/
    res += IsSlpFlowConsistent(loop->posttails->blk, loop->preheader, v2, v1, 
             loop->preheader->ins, loop->posttails->blk->outs);
 
@@ -19480,21 +18872,6 @@ int IsSlpConsistent(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2,
    }
    else
       safe = 1;
-#if 0
-   fprintf(stderr, "------vector used on loop:\n");
-   for (vl=v0; vl; vl=vl->next)
-      if (vl->isused)
-         PrintThisVector(stderr,vl);
-   fprintf(stderr, "------vector used on prehead:\n");
-   for (vl=v1; vl; vl=vl->next)
-      if (vl->isused)
-         PrintThisVector(stderr,vl);
-   fprintf(stderr, "------vector used on posttail:\n");
-   for (vl=v2; vl; vl=vl->next)
-      if (vl->isused)
-         PrintThisVector(stderr,vl);
-   exit(0);
-#endif
    return(safe);
 }
 
@@ -19588,18 +18965,6 @@ int IsSlpConsistent0(SLP_VECTOR *v0, SLP_VECTOR *v1, SLP_VECTOR *v2,
    free(sp);
    KillVlist(vlist);
    
-#if 0
-   PrintVars(stderr, "***set :", ivset);
-   fprintf(stderr, "\n");
-   //PrintVars(stderr, "vuse", ivvuse);
-   PrintVars(stderr, "set&vuse", BitVecComb(ivset, ivset, ivvuse, '&'));      
-   PrintVars(stderr, "use&vset", BitVecComb(ivuse, ivuse, ivvset, '&'));      
-   //fprintf(stderr, "---%d ", BitVecCheckComb(ivset, ivvuse, '&'));
-   //fprintf(stderr, "---%d \n", BitVecCheckComb(ivuse, ivvset, '&'));
-   
-   exit(0);
-#endif
-
    if ( BitVecCheckComb(ivset, ivvuse, '&') 
          || BitVecCheckComb(ivuse, ivvset, '&') )
       safe = 0;
@@ -19681,7 +19046,6 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
          assert(lpl->loop->blocks && !lpl->loop->blocks->next); //single blk
          if (PreSLPchecking(lpl->loop)) /* needed for other optimizations */
          {
-            /*fprintf(stderr, "Prechecking failed for SLP\n");*/
             fko_warn(__LINE__, "Prechecking failed for SLP\n");
             *err = 1;
             (*vres) = 0;
@@ -19696,7 +19060,6 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
          KillBitVec(ins);
          if (*err)
          {
-            /*fprintf(stderr, "SLP fails in optloop!\n");*/
             fko_warn(__LINE__, "SLP fails in optloop!\n");
             KillVlist(vo);
             (*vres) = 0;
@@ -19753,11 +19116,6 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
  */  
    lp = lpl->next->loop;
    vo = DoLoopNestVec(lpl->next, ptrs, err, vres); 
-#if 0
-   fprintf(stderr, "output vectors: \n");
-   PrintVectors(stderr, vo);
-#endif
-
 /*
  * vectorize prehead and posttail 
  */
@@ -19785,21 +19143,11 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
       if ( BitVecCheckComb(iv, outs, '&') )
          v2 = AddVectorInList(v2, vl, 1, 1); 
    }
-#if 0
-   fprintf(stderr, "Livein vectors:\n");
-   PrintVectors(stderr, v1);
-   fprintf(stderr, "Liveout vectors:\n");
-   PrintVectors(stderr, v2);
-#endif
-   /*fprintf(stderr, "Applying SLP on prehead\n");
-   fprintf(stderr, "=========================\n");*/
 
    ins = BitVecCopy(ins, lp->preheader->ins);
    FilterOutRegs(ins);
    vo1 = DoSingleBlkSLP(preblk, ins, v1, ptrs, &err0, 0);
    
-   /*fprintf(stderr, "Applying SLP on posttail\n");
-   fprintf(stderr, "=========================\n");*/
    ins = BitVecCopy(ins, lp->posttails->blk->ins);
    FilterOutRegs(ins);
    vo2 = DoSingleBlkSLP(postblk, ins, v2, ptrs, &err1, 1);
@@ -19947,10 +19295,6 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
       if (v1 || v2) 
          fprintf(stderr, "live in/out vectors!!!");
 #endif
-      //fprintf(stderr, "******in vectors: ");
-      //PrintVectors(stderr, v1);
-      //fprintf(stderr, "******out vectors: ");
-      //PrintVectors(stderr, v2);
       AddSlpPrologue(lp->preheader, v1, 1); 
       AddSlpEpilogue(lp->posttails->blk, v2, 0); 
       (*vres) <<= 2;
@@ -19999,9 +19343,6 @@ int LoopNestVec(short *ptrs, int *bvlpl)
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
-#if 0
-   PrintLoop(stderr, loopq);
-#endif
 /*
  * Find suitable loopnest for vectorization, list from upper to inner loopq
  */
@@ -20038,7 +19379,6 @@ int LoopNestVec(short *ptrs, int *bvlpl)
  */
    if (PreSlpAccumExpans(optloop))
    {
-      /*fprintf(stderr, "pre slp accum expansion applied\n");*/
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
@@ -20047,7 +19387,6 @@ int LoopNestVec(short *ptrs, int *bvlpl)
  */
    if (ll)
       vo = DoLoopNestVec(ll, ptrs, &err, &vres);
-   /*PrintSlpResult(stderr, vres, ll);*/
    *bvlpl = vres;
 #if 0
    fprintf(stderr, "loop nest vect error = %d (%p)\n", err, &err);
@@ -20090,12 +19429,6 @@ int LoopNestVec(short *ptrs, int *bvlpl)
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
-#if 0
-   fprintf(stdout, "vectorized code: \n");
-   PrintInst(stdout, bbbase);
-   PrintSymtabStaticMember(stderr);
-   exit(0);
-#endif
    return(err);
 }
 /*=============================================================================
@@ -20128,7 +19461,6 @@ int LoopNestOpt()
       lpnest = FindLoopNest(optloop);
       if (optloop && IsLoopUnswitchable(lpnest))
       {
-         /*fprintf(stderr, "Loop unswitchable!!\n");*/
          fko_warn(__LINE__, "Loop unswitchable!!\n");
          LoopUnswitch(lpnest);
          InvalidateLoopInfo();
@@ -20154,7 +19486,6 @@ int LoopNestOpt()
       lpnest = FindLoopNest(optloop);
       if (IsPtrMinPossible(lpnest->loop->blocks)) /* blocks of outermost loop */
       {
-         /*fprintf(stderr, "MPU possible!\n");*/
          LocalMinPtrUpdate(lpnest->loop->blocks);
          if (!CFUSETU2D )
          {
@@ -20204,10 +19535,6 @@ short *OrderedVecPtrAccess(LOOPQ *lp)
       if (il && il->inst)
       {
          FindPtrInfoFromDT(il->inst, &ptr, &lda, &offset, &mul);
-#if 0         
-         fprintf(stderr, " %s(%s,%d) : ", STname[ptr-1], 
-               lda ? STname[lda-1]: "NULL", mul);
-#endif
          type = FLAG2TYPE(STflag[ptr-1]); 
          if (type == T_FLOAT)
             vtype = T_VFLOAT;
@@ -20219,15 +19546,9 @@ short *OrderedVecPtrAccess(LOOPQ *lp)
          k=0;
          while (il)
          {
-#if 0            
-            fprintf(stderr, "%d ", SToff[il->inst->inst[2]-1].sa[3]);
-#endif
             k++;
             il = il->next;
          }
-#if 0         
-         fprintf(stderr, "\n");
-#endif
          if (k >= nelem)
          {
             if (!FindInShortList(j, ptrs+1, ptr))  
@@ -20241,10 +19562,6 @@ short *OrderedVecPtrAccess(LOOPQ *lp)
 /*
  * can be shorted ptr list alphabetically later
  */
-#if 0
-   for (i=1; i <= j; i++)
-   fprintf(stderr, "ptr=%s\n", STname[ptrs[i]-1]);
-#endif
    for (i=0; i < nptr; i++)
       if (ilb[i])
          KillAllIlist(ilb[i]);
@@ -20671,12 +19988,6 @@ int VecInfo(int bvec_only)
          break;
       }
    }
-#if 0      
-      fprintf(stderr, "lvl(%d) : ", lvl[0]);
-      for (i=1; i <= nway; i++)
-         fprintf(stderr, "%d ", lvl[i]);
-      fprintf(stderr, "\n");
-#endif
    for (i=1, nvway=0; i <= nway; i++)
    {
       if (lvl[i] && i != WSV) /* count vec except SV*/
@@ -20735,7 +20046,7 @@ int VecInfo(int bvec_only)
       {
          for (i=1; i <= nway; i++)
          {
-            if (slvl[i] == 1 && i != WSV) /* skip SV */
+            if (slvl && slvl[i] == 1 && i != WSV) /* skip SV */
             {
                bvb = GetVecNumber(i, WLVL, WMRLVL, WRCLVL, WSV, WSLP);
                break;

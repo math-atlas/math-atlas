@@ -697,7 +697,7 @@ void DoArith(short dest, short src0, char op, short src1)
          else
             InsNewInst(NULL, NULL, NULL, LD, -rs1, SToff[src1-1].sa[2], 0);
          InsNewInst(NULL, NULL, NULL, DIV, -rd, -rs0, -rs1);
-         fprintf(stderr, "DIV %d, %d, %d\n", -rd, -rs0, -rs1);
+         /*fprintf(stderr, "DIV %d, %d, %d\n", -rd, -rs0, -rs1);*/
          LocalStore(dest, rd);
          GetReg(-1);
          return;

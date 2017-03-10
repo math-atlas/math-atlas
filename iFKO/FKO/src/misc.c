@@ -336,7 +336,7 @@ void fko_error(int errno, ...)
    vfprintf(stderr, form, argptr);
    va_end(argptr);
    fprintf(stderr, "\nExiting iFKO with error number %d\n", errno);
-#if 0
+#if 1
    exit(errno); 
 #else
     while(1);

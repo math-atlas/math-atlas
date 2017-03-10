@@ -415,7 +415,6 @@ void PrintThisInst(FILE *fpout, int i, INSTQ *ip)
  *    This is to print LIL without live-vars. To enable live-vars prints,
  *    enable the #if and enable header prints in PrintInst function
  */   
-      //fprintf(stderr,"%d->%s\n",inst,instmnem[inst]);
       fprintf(fpout, shortform, i, instmnem[inst], op1, op2str(op1),
               op2, op2str(op2), op3, op2str(op3));
 #endif
