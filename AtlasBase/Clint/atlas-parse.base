@@ -8645,16 +8645,13 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
       cp->mu = 1;
       if (FLAG_IS_SET(mp->flag, MMF_KVEC))  /* KVEC only cleans to vlen */
          cp->mu = mp->vlen;
-      else /* For M/N-VEC, see if we need zero-padded copy support */
-      {
-         const unsigned int kr = mp->kbB % mp->ku;
-         if (kr)
-            cp->mu = mp->ku;
-         #define TMPFLG ((1<<MMF_KCLN)|(1<<MMF_KRUNTIME))
-         else if (mp->blask || ((mp->flag) & TMPFLG))
-            cp->mu = mp->ku;
-         #undef TMPFLG
-      }
+      else if (mp->blask) /* non-gemm kernels always pad to ku */
+         cp->mu = mp->ku; /* so can handle all K in face of unrolling */
+/*
+ *    runtime-K kernels padded to ku if ku <= 4, compile time keep no-pad
+ */
+      else if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME) && mp->ku <= 4)
+         cp->mu = mp->ku;
    }
    return(cp);
 }
