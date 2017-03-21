@@ -7494,7 +7494,7 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 #define BLK1  60
 #define FSTR1 1.005 /* 0.5% faster before expanding blk larger than BLK1 */
 #define BLK2  120
-#define FSTR2 1.010 /* 1.0% faster before expanding blk larger BLK2 */
+#define FSTR2 1.1   /* 1.0% faster before expanding blk larger BLK2 */
 #define BLK3  240
 #define FSTR3 1.015 /* 1.5% faster before expanding blk larger than BLK3 */
 #define FSTR4 1.020 /* 2.0% faster before expanding blk larger than BLK4 */
@@ -7506,6 +7506,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
  * Assume U=LCM(MU,NU,KU), this search startes at KB=MB=NB=U, and then tries
  * increasing M,N,K and picks whichever provides the greatest speedup.  
  * Continues expanding MB,NB,KB in this way until perf drops by around 3%.
+ * If maxB is non-zero, then it sets inclusive limit on growth of MB,NB,KB.
  * Once we have stopped expanding each by U, consider all MU,NU,KU < U as well.
  * RETURNS: mflop for best MB,NB,KB which is given in mp->(mbB,nbB,kbB).
  */
@@ -7530,15 +7531,26 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          double mfM, mfN, mfK, mf;
          int mbN=mb+MU, nbN=nb+NU, kbN=kb+KU;
          int MOK, NOK, KOK;
-         double fstrK, fstrN, fstrM;
+         double fstrK0, fstrN0, fstrM0, fstrK, fstrN, fstrM;
 
          @whiledef d K N M
          if (@low@(d)b <= BLK1)
-            fstr@(d) = FSTR0;
+            fstr@(d)0 = fstr@(d) = FSTR0;
          else if (@low@(d)b <= BLK2)
+         {
+            fstr@(d)0 = FSTR1;
             fstr@(d) = FSTR2;
+         }
+         else if (@low@(d)b <= BLK3)
+         {
+            fstr@(d)0 = FSTR2;
+            fstr@(d) = FSTR3;
+         }
          else
-            fstr@(d) = (@low@(d)b <= BLK3) ? FSTR3 : FSTR4;
+         {
+            fstr@(d)0 = FSTR3;
+            fstr@(d) = FSTR4;
+         }
          @endwhile
          if (sz && wrkSetOK)
          {
@@ -7583,7 +7595,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          {
             mf = mfK;
             kb = kbN;
-            if (mfK >= fstrK*mfB)
+            if (fstrK0*mfK >= fstrK*mfB)
             {
                printf(" --> INC KB TO %u!\n", kbN);
                kbB = kbN;
@@ -7596,7 +7608,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          {
             mf = mfN;
             nb = nbN;
-            if (mfN >= fstrN*mfB)
+            if (fstrN0*mfN >= fstrN*mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
@@ -7609,7 +7621,161 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= fstrN*mfB)
+            if (fstrM0*mfM >= fstrN*mfB)
+            {
+               printf(" --> INC MB TO %u!\n", mbN);
+               mbB = mbN;
+               mfB = mfM;
+               FASTER = 1;
+               nfut = 0;
+            }
+         }
+         if (!FASTER)
+         {
+            FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
+            printf(" --> SLOWDOWN of %.4f\n", mf/mfB);
+            nfut++;
+         }
+      }
+      while (FASTER);
+   if (MU != mu || NU != nu || KU != ku)
+   {
+      printf("\n   REFINEMENT SEARCH B=(%d,%d,%d), mf=%.2f\n", mbB, nbB, kbB, 
+             mfB);
+      mb = mbB;
+      nb = nbB;
+      kb = kbB;
+      MU = mu;
+      NU = nu;
+      KU = ku;
+      goto AGAIN;
+   }
+
+   mp->mbB = mbB;
+   mp->nbB = nbB;
+   mp->kbB = kbB;
+   mp->mflop[0] = mfB;
+   return(mfB);
+}
+
+double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
+                    int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int),
+                    const int maxB, ATL_mmnode_t *mp)
+/*
+ * Assume U=LCM(MU,NU,KU), this search startes at KB=MB=NB=U, and then tries
+ * increasing M,N,K and picks whichever provides the greatest speedup.  
+ * Continues expanding MB,NB,KB in this way until perf drops by around 3%.
+ * maxB must be > 0, and it sets inclusive limit on growth of MB,NB.
+ * Once we have stopped expanding each by U, consider all MU,NU,KU < U as well.
+ * RETURNS: mflop for best MB,NB,KB which is given in mp->(mbB,nbB,kbB).
+ */
+{
+   const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
+   unsigned int MU, NU, KU;
+   int mbB, nbB, kbB, mb, nb, kb;
+   int FASTER=0, nfut;
+   double mfB;
+
+   NU = ATL_iLCM(mu, nu);
+   NU = ATL_iLCM(NU, ku);
+   kb = mb = nb = kbB = mbB = nbB = MU = KU = NU;
+   mfB = TimeMMKernel(verb, tflag, mp, pre, mbB, nbB, kb, beta, 0, -1);
+   printf("      ID=%d : B=(%u,%u,%u) maxB=%d mf=%.2f\n", mp->ID, 
+          mbB, nbB, kbB, maxB, mfB);
+
+   AGAIN:
+      nfut = 0;
+      do   /* loop to check that best of M/N expansion improved performance */
+      {
+         double mfM, mfN, mfK, mf;
+         int mbN=mb+MU, nbN=nb+NU, kbN=kb+KU;
+         int MOK, NOK, KOK;
+         double fstrK0, fstrN0, fstrM0, fstrK, fstrN, fstrM;
+
+         @whiledef d K N M
+         if (@low@(d)b <= BLK1)
+            fstr@(d)0 = fstr@(d) = FSTR0;
+         else if (@low@(d)b <= BLK2)
+         {
+            fstr@(d)0 = FSTR1;
+            fstr@(d) = FSTR2;
+         }
+         else if (@low@(d)b <= BLK3)
+         {
+            fstr@(d)0 = FSTR2;
+            fstr@(d) = FSTR3;
+         }
+         else
+         {
+            fstr@(d)0 = FSTR3;
+            fstr@(d) = FSTR4;
+         }
+         @endwhile
+         if (sz && wrkSetOK)
+         {
+            MOK = wrkSetOK(sz, mp, mbN, nb, kb);
+            NOK = wrkSetOK(sz, mp, mb, nbN, kb);
+            KOK = wrkSetOK(sz, mp, mb, nb, kbN);
+            if (!(MOK|NOK|KOK))
+               break;
+         }
+         else 
+            MOK = NOK = KOK = 1;
+
+         if (!NOK)
+            mfK = 0.0;
+         else
+         {
+            mfK = TimeMMKernel(verb, tflag, mp, pre, mb, nb, kbN, beta, 0, -1);
+            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n",mp->ID,mb,nb,kbN,mfK);
+         }
+         if (maxB && nbN > maxB)
+            mfN = 0.0;
+         else
+         {
+            mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
+            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n",mp->ID,mb,nbN,kb,mfN);
+         }
+         if (maxB && mbN > maxB)
+            mfM = 0.0;
+         else
+         {
+            mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kb, beta, 0, -1);
+            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb,kb,mfM);
+         }
+
+         FASTER = 0;
+         if (mfK*fstrM >= mfM*fstrK && mfK*fstrN >= mfN*fstrK)
+         {
+            mf = mfK;
+            kb = kbN;
+            if (fstrK0*mfK >= fstrK*mfB)
+            {
+               printf(" --> INC KB TO %u!\n", kbN);
+               kbB = kbN;
+               mfB = mfK;
+               FASTER = 1;
+               nfut = 0;
+            }
+         }
+         else if (mfN*fstrM >= mfM*fstrN)
+         {
+            mf = mfN;
+            nb = nbN;
+            if (mfN*fstrN0 >= fstrN*mfB)
+            {
+               printf(" --> INC NB TO %u!\n", nbN);
+               nbB = nbN;
+               mfB = mfN;
+               FASTER = 1;
+               nfut = 0;
+            }
+         }
+         else
+         {
+            mf = mfM;
+            mb = mbN;
+            if (fstrM0*mfM >= fstrM*mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;

@@ -35621,7 +35621,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
 {
    ATL_mmnode_t *tb, *mp, *mpB, *mpU, *mpD;
    double mfB, mf;
-   unsigned int mbB, nbB, kbB, maxD=240, D;
+   unsigned int mbB, nbB, kbB, maxD=240, D, iD;
    char upr = pre;
 
    mp = TimeMMFileWithPath(pre, "res", "ipASYMP.sum", 0, 0, 0, 1, 0, -1);
@@ -35676,18 +35676,19 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
       mpU = CloneMMNode(mpD);
    }
 
-   maxD = Mmax(mpU->kbB,mpU->mbB);
-   maxD = Mmax(maxD, mpU->nbB);
-   for (D=32; D < maxD; D += D);
-   maxD = D >> 1;  /* largest pow2 smaller than max D found in best kern */
-   printf("LOOKING FOR BEST KERNS WITH D < %d:\n", maxD);
+   iD = ATL_iLCM(mmb->mu, mmb->nu);
+   maxD = Mmax(mpU->mbB, mpU->nbB) - iD;
+   while (iD < 24)
+      iD += iD;
+   printf("LOOKING FOR BEST KERNS WITH RESTRICTED M&N < %u, STEPS=%u:\n", 
+          maxD, iD);
    mmb = mpU;
    mmb->flag |= (1<<MMF_KCLN);
-   for (D=maxD; D >= 32; D = D>>1)
+   for (D=maxD; D >= iD; D -= iD)
    {
-      printf("   LOOKING FOR BEST KERNS WITH D < %d:\n", D);
+      printf("   LOOKING FOR BEST KERNS WITH M&N < %d:\n", D);
       mp = CloneMMNode(mpD);
-      mf = MMExpandMNK(verb, pre, 0, 0, 0, NULL, D, mp);
+      mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, D, mp);
       mp->flag |= (1<<MMF_KCLN);
       mp->next = mmb;
       mmb = mp;
@@ -35695,14 +35696,6 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
              mp->nbB, mp->kbB, mp->mflop[0]);
    }
    printf("DONE LOOKING FOR RESTRICTED D KERNELS.\n");
-@beginskip
-   if (mpU)
-   {
-      mpU->next = mmb;
-      mmb = mpU;
-   }
-   mmb = ReverseMMQ(mmb);
-@endskip
    MMWinnowByOrder(mmb, 0, 1.0);
    WriteMMFileWithPath(pre, "res", "ipASYMP.sum", mmb);
 
