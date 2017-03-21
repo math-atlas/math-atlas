@@ -7497,7 +7497,40 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 #define FSTR2 1.1   /* 1.0% faster before expanding blk larger BLK2 */
 #define BLK3  240
 #define FSTR3 1.015 /* 1.5% faster before expanding blk larger than BLK3 */
+#define BLK4  480
 #define FSTR4 1.020 /* 2.0% faster before expanding blk larger than BLK4 */
+@beginproc setFast d_
+         if (@low@(d_)bN <= BLK1)
+            fstr@(d_)0 = fstr@(d_) = FSTR0;
+         else if (@low@(d_)bN <= BLK2)
+         {
+            fstr@(d_)0 = FSTR0;
+            fstr@(d_) = FSTR1;
+         }
+         else if (@low@(d_)b <= BLK3)
+         {
+            fstr@(d_)0 = (@low@(d_)b <= BLK1) ? FSTR0 : FSTR1;
+            fstr@(d_) = FSTR2;
+         }
+         else if (@low@(d_)b <= BLK4)
+         {
+            if (@low@(d_)b <= BLK1)
+               fstr@(d_)0 = FSTR0;
+            else
+               fstr@(d_)0 = (@low@(d_)b <= BLK2) ? FSTR1 : FSTR2;
+            fstr@(d_) = FSTR3;
+         }
+         else
+         {
+            if (@low@(d_)b <= BLK1)
+               fstr@(d_)0 = FSTR0;
+            else if (@low@(d_)b <= BLK2)
+               fstr@(d_)0 = FSTR1;
+            else
+               fstr@(d_)0 = (@low@(d_)b <= BLK3) ? FSTR2 : FSTR3;
+            fstr@(d_) = FSTR4;
+         }
+@endproc
 
 double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
                    int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int),
@@ -7533,25 +7566,9 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          int MOK, NOK, KOK;
          double fstrK0, fstrN0, fstrM0, fstrK, fstrN, fstrM;
 
-         @whiledef d K N M
-         if (@low@(d)b <= BLK1)
-            fstr@(d)0 = fstr@(d) = FSTR0;
-         else if (@low@(d)b <= BLK2)
-         {
-            fstr@(d)0 = FSTR1;
-            fstr@(d) = FSTR2;
-         }
-         else if (@low@(d)b <= BLK3)
-         {
-            fstr@(d)0 = FSTR2;
-            fstr@(d) = FSTR3;
-         }
-         else
-         {
-            fstr@(d)0 = FSTR3;
-            fstr@(d) = FSTR4;
-         }
-         @endwhile
+         @callproc setFast M
+         @callproc setFast N
+         @callproc setFast K
          if (sz && wrkSetOK)
          {
             MOK = wrkSetOK(sz, mp, mbN, nb, kb);
@@ -7591,7 +7608,8 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          }
 
          FASTER = 0;
-         if (mfK*fstrM >= mfM*fstrK && mfK*fstrN >= mfN*fstrK)
+         if (mfK*fstrK0-mfB*fstrK >= mfM*fstrM0-mfB*fstrM && 
+             mfK*fstrK0-mfB*fstrK >= mfN*fstrN0-mfB*fstrN)
          {
             mf = mfK;
             kb = kbN;
@@ -7604,7 +7622,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
                nfut = 0;
             }
          }
-         else if (mfN*fstrM >= mfM*fstrN)
+         else if (mfN*fstrN0-mfB*fstrN >= mfM*fstrM0-mfB*fstrM)
          {
             mf = mfN;
             nb = nbN;
@@ -7621,7 +7639,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          {
             mf = mfM;
             mb = mbN;
-            if (fstrM0*mfM >= fstrN*mfB)
+            if (fstrM0*mfM >= fstrM*mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
@@ -7666,16 +7684,19 @@ double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
  * increasing M,N,K and picks whichever provides the greatest speedup.  
  * Continues expanding MB,NB,KB in this way until perf drops by around 3%.
  * maxB must be > 0, and it sets inclusive limit on growth of MB,NB.
+ * maxKB will be set to MAX(2*maxB,240).
  * Once we have stopped expanding each by U, consider all MU,NU,KU < U as well.
  * RETURNS: mflop for best MB,NB,KB which is given in mp->(mbB,nbB,kbB).
  */
 {
    const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
-   unsigned int MU, NU, KU;
+   unsigned int MU, NU, KU, maxKB;
    int mbB, nbB, kbB, mb, nb, kb;
    int FASTER=0, nfut;
    double mfB;
 
+   maxKB = maxB + maxB;
+   maxKB = Mmax(240,maxKB);
    NU = ATL_iLCM(mu, nu);
    NU = ATL_iLCM(NU, ku);
    kb = mb = nb = kbB = mbB = nbB = MU = KU = NU;
@@ -7692,25 +7713,9 @@ double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
          int MOK, NOK, KOK;
          double fstrK0, fstrN0, fstrM0, fstrK, fstrN, fstrM;
 
-         @whiledef d K N M
-         if (@low@(d)b <= BLK1)
-            fstr@(d)0 = fstr@(d) = FSTR0;
-         else if (@low@(d)b <= BLK2)
-         {
-            fstr@(d)0 = FSTR1;
-            fstr@(d) = FSTR2;
-         }
-         else if (@low@(d)b <= BLK3)
-         {
-            fstr@(d)0 = FSTR2;
-            fstr@(d) = FSTR3;
-         }
-         else
-         {
-            fstr@(d)0 = FSTR3;
-            fstr@(d) = FSTR4;
-         }
-         @endwhile
+         @callproc setFast M
+         @callproc setFast N
+         @callproc setFast K
          if (sz && wrkSetOK)
          {
             MOK = wrkSetOK(sz, mp, mbN, nb, kb);
@@ -7722,7 +7727,13 @@ double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
          else 
             MOK = NOK = KOK = 1;
 
-         if (!NOK)
+         if (kbN > maxKB)
+         {
+            if (mbN > maxB && nbN > maxB)
+               break;
+            mfK = 0.0;
+         }
+         else if (!NOK)
             mfK = 0.0;
          else
          {
@@ -7745,7 +7756,8 @@ double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
          }
 
          FASTER = 0;
-         if (mfK*fstrM >= mfM*fstrK && mfK*fstrN >= mfN*fstrK)
+         if (mfK*fstrK0-mfB*fstrK >= mfM*fstrM0-mfB*fstrM && 
+             mfK*fstrK0-mfB*fstrK >= mfN*fstrN0-mfB*fstrN)
          {
             mf = mfK;
             kb = kbN;
@@ -7758,7 +7770,7 @@ double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
                nfut = 0;
             }
          }
-         else if (mfN*fstrM >= mfM*fstrN)
+         else if (mfN*fstrN0-mfB*fstrN >= mfM*fstrM0-mfB*fstrM)
          {
             mf = mfN;
             nb = nbN;
