@@ -35620,8 +35620,8 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
  */
 {
    ATL_mmnode_t *tb, *mp, *mpB, *mpU, *mpD;
-   double mfB, mf;
-   unsigned int mbB, nbB, kbB, maxD=240, D, iD;
+   double mfB, mf, t0;
+   unsigned int mbB, nbB, kbB, maxD=240, D, iD, iD0;
    char upr = pre;
 
    mp = TimeMMFileWithPath(pre, "res", "ipASYMP.sum", 0, 0, 0, 1, 0, -1);
@@ -35661,26 +35661,39 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
          }
          else
             printf("   NOT BEST: (%u,%u,%u), mf=%.2f, spdup=%.2f\n",
-                   mp->mbB, mp->nbB, mp->kbB, mfN, mfN/mf);
+                   mp->mbB, mp->nbB, mp->kbB, mfN, mfN/mfB);
       }
    }
-   printf("CHOSEN: ID=%d %s (%u,%u,%u), mf=%.2f\n", mpB->ID, 
+   printf("CHOSEN: ID=%d %s (%u,%u,%u), mf=%.2f\n\n", mpB->ID, 
            GetMMLabelName(pre, mpB), mbB, nbB, kbB, mfB);
    mpD = CloneMMNode(mpB);
    KillAllMMNodes(mmb);
+   mpD->mflop[0] = mfB;
+   mpD->mbB = mbB;
+   mpD->nbB = nbB;
+   mpD->kbB = kbB;
+   printf("CHOSEN2: ID=%d %s (%u,%u,%u), mf=%.2f\n\n", mpD->ID, 
+           GetMMLabelName(pre, mpD), mpD->mbB, mpD->nbB, mpD->kbB, mpD->mflop[0]);
    mpU = CloneMMNode(mpD);
-   mf = MMExpandMNK(verb, pre, 0, 0, 0, NULL, 0, mpU);
+   printf("FINDING LARGE BLOCK FACTORS FOR CHOSEN KERNEL:\n");
+   mf = MMExpandMNK(verb, pre, 0, 0, 0, NULL, 480, mpU);
    if (mf < mfB)
    {
       KillMMNode(mpU);
       mpU = CloneMMNode(mpD);
    }
+   printf("LRGBLK CHOSEN: ID=%d %s (%u,%u,%u), mf=%.2f\n\n", mpU->ID, 
+           GetMMLabelName(pre, mpU), mpU->mbB, mpU->nbB, mpU->kbB, mf);
 
-   iD = ATL_iLCM(mpU->mu, mpU->nu);
-   maxD = Mmax(mpU->mbB, mpU->nbB) - iD;
-   while (iD < 24)
-      iD += iD;
-   printf("LOOKING FOR BEST KERNS WITH RESTRICTED M&N < %u, STEPS=%u:\n", 
+   iD0 = ATL_iLCM(mpU->mu, mpU->nu);
+   maxD = Mmax(mpU->mbB, mpU->nbB);
+   iD = maxD / iD0;
+   if (iD*iD0 == maxD)
+      maxD -= iD0;
+   else
+      maxD = iD*iD0;
+   for (iD=iD0; iD < 24; iD += iD);
+   printf("LOOKING FOR BEST KERNS WITH RESTRICTED M&N <= %u, STEPS=%u:\n", 
           maxD, iD);
    mmb = mpU;
    mmb->flag |= (1<<MMF_KCLN);
@@ -35694,6 +35707,35 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
       mmb = mp;
       printf("   FOUND ID=%d : B=(%d,%d,%d) mf=%.2f\n",  mp->ID, mp->mbB, 
              mp->nbB, mp->kbB, mp->mflop[0]);
+   }
+   if (iD != iD0)
+   {
+      for (D=D+iD-iD0; D >= iD0; D -= iD0)
+      {
+         printf("   LOOKING FOR BEST KERNS WITH M&N < %d:\n", D);
+         mp = CloneMMNode(mpD);
+         mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, D, mp);
+         mp->flag |= (1<<MMF_KCLN);
+         mp->next = mmb;
+         mmb = mp;
+         printf("   FOUND ID=%d : B=(%d,%d,%d) mf=%.2f\n",  mp->ID, mp->mbB, 
+                mp->nbB, mp->kbB, mp->mflop[0]);
+      }
+      if (iD0 > 16) /* didn't get small enough with LCM! */
+      {
+         iD = Mmax(mpU->mu, mpU->nu);
+         for (D=iD0-iD; D >= iD; D -= iD)
+         {
+            printf("   LOOKING FOR BEST KERNS WITH M&N < %d:\n", D);
+            mp = CloneMMNode(mpD);
+            mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, D, mp);
+            mp->flag |= (1<<MMF_KCLN);
+            mp->next = mmb;
+            mmb = mp;
+            printf("   FOUND ID=%d : B=(%d,%d,%d) mf=%.2f\n",  mp->ID, mp->mbB, 
+                   mp->nbB, mp->kbB, mp->mflop[0]);
+         }
+      }
    }
    printf("DONE LOOKING FOR RESTRICTED D KERNELS.\n");
    MMWinnowByOrder(mmb, 0, 1.0);

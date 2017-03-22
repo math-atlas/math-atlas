@@ -7489,70 +7489,80 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-#define NFUT  100  /* max # of futile expansion tries */
-#define FSTR0 1.0
+#define NFUT  24   /* max # of futile expansion tries */
 #define BLK1  60
-#define FSTR1 1.005 /* 0.5% faster before expanding blk larger than BLK1 */
+#define B1PEN 1.0  /* no penalty for D <= BLK1 */
 #define BLK2  120
-#define FSTR2 1.1   /* 1.0% faster before expanding blk larger BLK2 */
-#define BLK3  240
-#define FSTR3 1.015 /* 1.5% faster before expanding blk larger than BLK3 */
-#define BLK4  480
-#define FSTR4 1.020 /* 2.0% faster before expanding blk larger than BLK4 */
-@beginproc setFast d_
-         if (@low@(d_)bN <= BLK1)
-            fstr@(d_)0 = fstr@(d_) = FSTR0;
-         else if (@low@(d_)bN <= BLK2)
-         {
-            fstr@(d_)0 = FSTR0;
-            fstr@(d_) = FSTR1;
-         }
-         else if (@low@(d_)b <= BLK3)
-         {
-            fstr@(d_)0 = (@low@(d_)b <= BLK1) ? FSTR0 : FSTR1;
-            fstr@(d_) = FSTR2;
-         }
-         else if (@low@(d_)b <= BLK4)
-         {
-            if (@low@(d_)b <= BLK1)
-               fstr@(d_)0 = FSTR0;
-            else
-               fstr@(d_)0 = (@low@(d_)b <= BLK2) ? FSTR1 : FSTR2;
-            fstr@(d_) = FSTR3;
-         }
+#define B2PEN 0.998 /* 0.2% penalty for BLK1 < D <= BLK2 */
+#define BLK3  240 
+#define B3PEN 0.995 /* 0.5% penalty for BLK2 < D <= BLK3 */
+#define BLK4  480 
+#define B4PEN 0.990 /* 1.0% penalty for BLK3 < D <= BLK4 */
+#define B5PEN 0.970 /* 3.0% penalty for D > BLK4 */
+@beginproc setFast d_ kb_
+   @mif d_ = "M
+         maxD = Mmax(nbB, @(kb_));
+   @endmif
+   @mif d_ = "N
+         maxD = Mmax(mbB, @(kb_));
+   @endmif
+   @mif d_ = "K
+         maxD = Mmax(mbB, nbB);
+   @endmif
+         maxD = Mmax(maxD, @low@(d_)bN);
+         if (maxD <= BLK1)
+            pen@(d_) = B1PEN;
          else
          {
-            if (@low@(d_)b <= BLK1)
-               fstr@(d_)0 = FSTR0;
-            else if (@low@(d_)b <= BLK2)
-               fstr@(d_)0 = FSTR1;
+            if (maxD <= BLK2)
+               pen@(d_) = B2PEN;
+            else if (maxD <= BLK3)
+               pen@(d_) = B3PEN;
+            else if (maxD <= BLK4)
+               pen@(d_) = B4PEN;
             else
-               fstr@(d_)0 = (@low@(d_)b <= BLK3) ? FSTR2 : FSTR3;
-            fstr@(d_) = FSTR4;
+               pen@(d_) = B5PEN;
+            if (pen@(d_) == penB)
+               pen@(d_) = 0.998; /* 0.2% penalty for any expansion */
+            else
+               pen@(d_) /= penB;
          }
 @endproc
 
-double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
-                   int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int),
-                   const int maxB, ATL_mmnode_t *mp)
+@whiledef nm MNK MN_K
+double MMExpand@(nm)
+   (int verb, char pre, int tflag, int beta, unsigned long sz,
+    int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int), 
+    const int maxB, ATL_mmnode_t *mp)
 /*
  * Assume U=LCM(MU,NU,KU), this search startes at KB=MB=NB=U, and then tries
  * increasing M,N,K and picks whichever provides the greatest speedup.  
  * Continues expanding MB,NB,KB in this way until perf drops by around 3%.
+@mif nm = "MNK
  * If maxB is non-zero, then it sets inclusive limit on growth of MB,NB,KB.
+@endmif
+@mif nm = "MN_K
+ * maxB must be > 0, and it sets inclusive limit on growth of MB,NB.
+@endmif
  * Once we have stopped expanding each by U, consider all MU,NU,KU < U as well.
  * RETURNS: mflop for best MB,NB,KB which is given in mp->(mbB,nbB,kbB).
  */
 {
    const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
    unsigned int MU, NU, KU;
-   int mbB, nbB, kbB, mb, nb, kb;
+@mif nm = "MN_K
+   const unsigned int maxKB = Mmax(240,maxB+maxB);
+@endmif
+@mif nm = "MNK
+   const unsigned int maxKB = maxB;
+@endmif
+   int mbB, nbB, kbB, mb, nb, kb, maxDB, maxD;
    int FASTER=0, nfut;
-   double mfB;
+   double mfB, penB=B1PEN;
 
    NU = ATL_iLCM(mu, nu);
    NU = ATL_iLCM(NU, ku);
-   kb = mb = nb = kbB = mbB = nbB = MU = KU = NU;
+   maxDB = kb = mb = nb = kbB = mbB = nbB = MU = KU = NU;
    mfB = TimeMMKernel(verb, tflag, mp, pre, mbB, nbB, kb, beta, 0, -1);
    printf("      ID=%d : B=(%u,%u,%u) maxB=%d mf=%.2f\n", mp->ID, 
           mbB, nbB, kbB, maxB, mfB);
@@ -7564,11 +7574,12 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          double mfM, mfN, mfK, mf;
          int mbN=mb+MU, nbN=nb+NU, kbN=kb+KU;
          int MOK, NOK, KOK;
-         double fstrK0, fstrN0, fstrM0, fstrK, fstrN, fstrM;
+         double penM, penN, penK;
 
-         @callproc setFast M
-         @callproc setFast N
-         @callproc setFast K
+         @callproc setFast M kbB
+         @callproc setFast N kbB
+         @callproc setFast K kbB
+         mfM = mfN = mfK = mf = 0.0;
          if (sz && wrkSetOK)
          {
             MOK = wrkSetOK(sz, mp, mbN, nb, kb);
@@ -7579,7 +7590,7 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          }
          else 
             MOK = NOK = KOK = 1;
-         if (maxB && kbN > maxB)
+         if (maxKB && kbN > maxKB)
          {
             if (mbN > maxB && nbN > maxB)
                break;
@@ -7590,14 +7601,18 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          else
          {
             mfK = TimeMMKernel(verb, tflag, mp, pre, mb, nb, kbN, beta, 0, -1);
-            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n",mp->ID,mb,nb,kbN,mfK);
+            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f",mp->ID,mb,nb,kbN,mfK);
+            if (!maxB || mbN <= maxB || nbN <= maxB)
+               printf("\n");
          }
          if (maxB && nbN > maxB)
             mfN = 0.0;
          else
          {
             mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
-            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n",mp->ID,mb,nbN,kb,mfN);
+            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f",mp->ID,mb,nbN,kb,mfN);
+            if (!maxB || mbN <= maxB)
+               printf("\n");
          }
          if (maxB && mbN > maxB)
             mfM = 0.0;
@@ -7608,29 +7623,33 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          }
 
          FASTER = 0;
-         if (mfK*fstrK0-mfB*fstrK >= mfM*fstrM0-mfB*fstrM && 
-             mfK*fstrK0-mfB*fstrK >= mfN*fstrN0-mfB*fstrN)
+         if (mfK*penK-mfB >= mfM*penM-mfB && 
+             mfK*penK-mfB >= mfN*penN-mfB)
          {
             mf = mfK;
             kb = kbN;
-            if (fstrK0*mfK >= fstrK*mfB)
+            if (penK*mfK >= mfB)
             {
                printf(" --> INC KB TO %u!\n", kbN);
                kbB = kbN;
                mfB = mfK;
+               penB = penK;
+               maxDB = Mmax(maxDB, kbB);
                FASTER = 1;
                nfut = 0;
             }
          }
-         else if (mfN*fstrN0-mfB*fstrN >= mfM*fstrM0-mfB*fstrM)
+         else if (mfN*penN-mfB >= mfM*penM-mfB)
          {
             mf = mfN;
             nb = nbN;
-            if (fstrN0*mfN >= fstrN*mfB)
+            if (penN*mfN >= mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
                mfB = mfN;
+               penB = penN;
+               maxDB = Mmax(maxDB, nbB);
                FASTER = 1;
                nfut = 0;
             }
@@ -7639,18 +7658,22 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
          {
             mf = mfM;
             mb = mbN;
-            if (fstrM0*mfM >= fstrM*mfB)
+            if (penM*mfM >= mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
                mfB = mfM;
+               penB = penM;
+               maxDB = Mmax(maxDB, mbB);
                FASTER = 1;
                nfut = 0;
             }
          }
          if (!FASTER)
          {
-            FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
+            mf = Mmax(mfM, mfN);
+            mf = Mmax(mf, mfK);
+            FASTER = (nfut < NFUT);
             printf(" --> SLOWDOWN of %.4f\n", mf/mfB);
             nfut++;
          }
@@ -7675,7 +7698,9 @@ double MMExpandMNK(int verb, char pre, int tflag, int beta, unsigned long sz,
    mp->mflop[0] = mfB;
    return(mfB);
 }
+@endwhile
 
+@BEGINSKIP
 double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
                     int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int),
                     const int maxB, ATL_mmnode_t *mp)
@@ -7738,14 +7763,18 @@ double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
          else
          {
             mfK = TimeMMKernel(verb, tflag, mp, pre, mb, nb, kbN, beta, 0, -1);
-            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n",mp->ID,mb,nb,kbN,mfK);
+            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f",mp->ID,mb,nb,kbN,mfK);
+            if (!maxB || mbN <= maxB || nbN <= maxB)
+               printf("\n");
          }
          if (maxB && nbN > maxB)
             mfN = 0.0;
          else
          {
             mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
-            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n",mp->ID,mb,nbN,kb,mfN);
+            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f",mp->ID,mb,nbN,kb,mfN);
+            if (!maxB || mbN <= maxB)
+               printf("\n");
          }
          if (maxB && mbN > maxB)
             mfM = 0.0;
@@ -7798,7 +7827,7 @@ double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
          }
          if (!FASTER)
          {
-            FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
+            FASTER = (nfut < NFUT);
             printf(" --> SLOWDOWN of %.4f\n", mf/mfB);
             nfut++;
          }
@@ -7823,6 +7852,7 @@ double MMExpandMN_K(int verb, char pre, int tflag, int beta, unsigned long sz,
    mp->mflop[0] = mfB;
    return(mfB);
 }
+@ENDSKIP
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -7949,11 +7979,11 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
 {
    const unsigned int mu=mp->mu, nu=mp->nu, MB0=mp->mbB, NB0=mp->nbB;
    unsigned int MU, NU;
-   int kb=mp->kbB, mbB, nbB, mb, nb;
+   int kb=mp->kbB, mbB, nbB, mb, nb, maxD, maxDB;
    int FASTER=0, nfut;
-   double mfB;
+   double mfB, penB=B1PEN;
 
-   mb = nb = mbB = nbB = MU = NU = ATL_iLCM(mu, nu);
+   maxDB = mb = nb = mbB = nbB = MU = NU = ATL_iLCM(mu, nu);
    mfB = TimeMMKernel(verb, tflag, mp, pre, mbB, nbB, kb, beta, 0, -1);
    printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mbB, nbB, kb, mfB);
 
@@ -7961,17 +7991,11 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
       nfut = 0;
       do   /* loop to check that best of M/N expansion improved performance */
       {
-         double mfM, mfN, mf=0.0, fstrM, fstrN;
+         double mfM, mfN, mf=0.0, penM, penN;
          int mbN=mb+MU, nbN=nb+NU;
 
-         @whiledef d N M
-         if (@low@(d)bN <= BLK1)
-            fstr@(d) = FSTR0;
-         else if (@low@(d)bN <= BLK2)
-            fstr@(d) = FSTR2;
-         else
-            fstr@(d) = (@low@(d)bN <= BLK3) ? FSTR3 : FSTR4;
-         @endwhile
+         @callproc setFast M kb
+         @callproc setFast N kb
 
          mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
          printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kb,mfN);
@@ -7979,15 +8003,17 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kb,mfM);
 
          FASTER = 0;
-         if (mfN*fstrM >= mfM*fstrN)
+         if (mfN*penN-mfB >= mfM*penN-mfB)
          {
             mf = mfN;
             nb = nbN;
-            if (mfN > fstrN*mfB)
+            if (mfN*penN > mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                nbB = nbN;
                mfB = mfN;
+               penB = penN;
+               maxDB = Mmax(maxDB, nbB);
                FASTER = 1;
                nfut = 0;
             }
@@ -7996,11 +8022,13 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= fstrM*mfB)
+            if (mfM*penM >= mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
                mfB = mfM;
+               penB = penM;
+               maxDB = Mmax(maxDB, mbB);
                FASTER = 1;
                nfut = 0;
             }
@@ -8008,7 +8036,7 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          if (!FASTER)
          {
             nfut++;
-            FASTER = (mf*1.03 > mfB) && (nfut < NFUT);
+            FASTER = (nfut < NFUT);
             printf(" --> SLOWDOWN of %.4f\n", mf/mfB);
          }
       }
@@ -8056,9 +8084,9 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    unsigned int MB0=mp->mbB, NB0=mp->nbB, KB0=mp->kbB;
    unsigned int MU, NU;
    const int NK=(tflag>>31)&1;
-   int kb=mp->kbB, mbB, nbB, kbB, mb, nb;
+   int kb=mp->kbB, mbB, nbB, kbB, mb, nb, maxD, maxDB;
    int FASTER=0, nfut=0;
-   double mfB;
+   double mfB, penB=B1PEN;
 
    if (NK)
    {
@@ -8077,6 +8105,8 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    mbB = mb;
    nbB = nb;
    kbB = kb;
+   maxDB = Mmax(mbB, nbB);
+   maxDB = Mmax(maxD, kbB);
    
    mfB = TimeMMKernel(verb, tflag, mp, pre, mb, nb, kb, beta, 0, -1);
    printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mbB, nbB, kb, mfB);
@@ -8084,35 +8114,31 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    AGAIN:
       do   /* loop to check that best of M/N expansion improved performance */
       {
-         double mfM, mfN, mf=0.0, fstrM, fstrN;
+         double mfM, mfN, mf=0.0, penM, penN;
          int mbN=mb+MU, nbN=nb+NU;
          const unsigned int kbm = (NK) ? nb : mbN, kbn = (NK) ? nbN : mb;
 
-         @whiledef d N M
-         if (@low@(d)bN <= BLK1)
-            fstr@(d) = FSTR0;
-         else if (@low@(d)bN <= BLK2)
-            fstr@(d) = FSTR2;
-         else
-            fstr@(d) = (@low@(d)bN <= BLK3) ? FSTR3 : FSTR4;
-         @endwhile
+         @callproc setFast M kbm
+         @callproc setFast N kbn
          mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kbn, beta, 0, -1);
          printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kbn,mfN);
          mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kbm, beta, 0, -1);
          printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kbm,mfM);
 
          FASTER = 0;
-         if (mfN*fstrM >= mfM*fstrN)
+         if (mfN*penM-mfB >= mfM*penM-mfB)
          {
             mf = mfN;
             nb = nbN;
-            if (mfN >= fstrN*mfB)
+            if (mfN*penN >= mfB)
             {
                printf(" --> INC NB TO %u!\n", nbN);
                mbB = mb;
                nbB = nbN;
                mfB = mfN;
                kbB = kbn;
+               penB = penN;
+               maxDB = Mmax(maxDB, nbB);
                FASTER = 1;
                nfut = 0;
             }
@@ -8121,13 +8147,15 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          {
             mf = mfM;
             mb = mbN;
-            if (mfM >= fstrM*mfB)
+            if (mfM*penM >= mfB)
             {
                printf(" --> INC MB TO %u!\n", mbN);
                mbB = mbN;
                nbB = nb;
                mfB = mfM;
                kbB = kbm;
+               penB = penM;
+               maxDB = Mmax(maxDB, mbB);
                FASTER = 1;
                nfut = 0;
             }
