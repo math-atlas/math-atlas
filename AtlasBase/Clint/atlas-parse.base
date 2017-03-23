@@ -157,9 +157,9 @@ struct CPNode
 #ifndef  FLAG_IS_SET
    #define FLAG_IS_SET(field_, bit_) ( ((field_) & (1<<(bit_))) != 0 )
 #endif
-#define ATL_MMF_MVGET(field_) (((field_) >> MMF_MVA) & 7)
+#define ATL_MMF_MVGET(field_) (((field_) >> MMF_MVA) & 0xF)
 #define ATL_MMF_MVPUT(field_, v_) \
-   (field_) = ( ((field_) & ~MMF_MVSET) | (((v_) & 7) << MMF_MVA) )
+   (field_) = ( ((field_) & ~MMF_MVSET) | (((v_) & 0xF) << MMF_MVA) )
 
 typedef struct MMStg ATL_mmstg_t;
 struct MMstg
@@ -7286,17 +7286,19 @@ int kernWorksThisCaseK(ATL_mmnode_t *mp, int kb)
  */
 {
    const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku, vlen=mp->vlen;
-   unsigned int kgap=4, KB;
-
-   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-      kgap = Mmax(kgap, mp->vlen);
+   unsigned int KB;
 
    if (mp->kbmin && kb < mp->kbmin)
       return(0);
    if (mp->kbmax && kb > mp->kbmax )
       return(0);
    KB = ((kb+ku-1)/ku)*ku;
-   if (KB-kb > kgap)
+   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   {
+      if (KB-kb > mp->vlen)
+         return(0);
+   }
+   else if (mp->ku > 4 && KB != kb)
       return(0);
    return(KB);
 }
@@ -7967,7 +7969,8 @@ int MMExpandK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
+double MMExpandMN(int verb, char pre, int tflag, int beta, int maxB, 
+                  ATL_mmnode_t *mp)
 /*
  * Assume U=LCM(MU,NU), this search startes at MB=NB=U, and then tries
  * increasing M and N, and picks whichever provides the greatest speedup.  
@@ -7997,10 +8000,26 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          @callproc setFast M kb
          @callproc setFast N kb
 
-         mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
-         printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kb,mfN);
-         mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kb, beta, 0, -1);
-         printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kb,mfM);
+         if (maxB && nbN > maxB && mbN > maxB)
+            break;
+         if (maxB && nbN > maxB)
+            mfN = 0.0;
+         else
+         {
+            mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kb, beta, 0, -1);
+            printf("      ID=%d : B=(%d,%d,%d) mf=%.2f", mp->ID,mb, nbN,
+                   kb, mfN);
+            if (!maxB || mbN <= maxB)
+               printf("\n");
+         }
+         if (maxB && mbN > maxB)
+            mfM = 0.0;
+         else
+         {
+            mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kb, beta, 0, -1);
+            printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, 
+                   kb, mfM);
+         }
 
          FASTER = 0;
          if (mfN*penN-mfB >= mfM*penN-mfB)
@@ -8036,7 +8055,7 @@ double MMExpandMN(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          if (!FASTER)
          {
             nfut++;
-            FASTER = (nfut < NFUT);
+            FASTER = (nfut < 5);
             printf(" --> SLOWDOWN of %.4f\n", mf/mfB);
          }
       }

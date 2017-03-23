@@ -35494,6 +35494,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 #include "atlas_mmtesttime.h"
 #include <math.h>
 
+static unsigned int FULLSRCH=0;
 void PrintUsage(char *name, int ierr, char *flag)
 {
    if (ierr > 0)
@@ -35503,6 +35504,7 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags:\n", name);
    fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -F 0/1: don't/do do full search (default 0) \n");
 }
 
 char GetFlags(int nargs, char **args)
@@ -35518,6 +35520,11 @@ char GetFlags(int nargs, char **args)
 
       switch(args[i][1])
       {
+      case 'F':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         FULLSRCH = atoi(args[i]);
+         break;
       case 'p':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -35536,7 +35543,7 @@ void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout,
 {
    int L, i;
    char *ln;
-   L = strlen(fout) + 36;
+   L = strlen(fout) + 45;
    L += strlen(fin);
    L += NumDecDigits(K0);
    L += NumDecDigits(KN);
@@ -35545,7 +35552,13 @@ void do_bfi(char pre, int K0, int KN, int iK, char *fin, char *fout,
       L += 16;
    ln = malloc(L*sizeof(char));
    assert(ln);
-   i = sprintf(ln, "./xbfisrch -p %c -i %s -o res/%c%s", pre, fin, pre, fout);
+@ROUT opsrch
+   i = sprintf(ln, "./xbfisrch -p %c -s p O R -i %s -o res/%c%s", 
+               pre, fin, pre, fout);
+@ROUT ipsrch
+   i = sprintf(ln, "./xbfisrch -p %c -s p i R -i %s -o res/%c%s", 
+               pre, fin, pre, fout);
+@ROUT opsrch ipsrch
    assert(i < L);
    if (K0 && KN && iK)
       i += sprintf(ln+i, " -Bk %u %u %u", K0, KN, iK);
@@ -35624,7 +35637,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    unsigned int mbB, nbB, kbB, maxD=240, D, iD, iD0;
    char upr = pre;
 
-   mp = TimeMMFileWithPath(pre, "res", "ipASYMP.sum", 0, 0, 0, 1, 0, -1);
+   mp = TimeMMFileWithPath(pre, "res", "ipgen.sum", 0, 0, 0, 1, 0, -1);
    if (mp)
    {
       KillAllMMNodes(mmb);
@@ -35739,7 +35752,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    }
    printf("DONE LOOKING FOR RESTRICTED D KERNELS.\n");
    MMWinnowByOrder(mmb, 0, 1.0);
-   WriteMMFileWithPath(pre, "res", "ipASYMP.sum", mmb);
+   WriteMMFileWithPath(pre, "res", "ipgen.sum", mmb);
 
 @skip   tb = NULL;
 @skip   MMSplitByFlagAny((1<<MMF_KUISKB), &mmb, &tb); /* tb gets fully unrolled K */
@@ -35761,7 +35774,7 @@ void srch_dMN(char pre, int verb)
       KillAllMMNodes(bp);
       return;
    }
-   bp = ReadMMFileWithPath(pre, "res", "ipASYMP.sum");
+   bp = ReadMMFileWithPath(pre, "res", "ipgen.sum");
    assert(bp);
    while (bp->next)
       bp = KillMMNode(bp);
@@ -35914,6 +35927,73 @@ void do_opdek(int verb, char pre, int NEK)
    KillAllMMNodes(mb);
 }
 
+ATL_mmnode_t *opsrch_rng
+   (int verb, char pre, int flag, double runBon, int kb0, int kbN, int maxB,
+    unsigned long sz, int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int),
+    ATL_mmnode_t *mpB, /* best kernel for top of this range */
+    ATL_mmnode_t *mmb) /* list of other kerns to try */
+/*
+ * Does (relatively) quick search for outer product in range K=[kb0,kbN].
+ * It will first choose a kernel for kbN.  This kernel will then be blindly
+ * used for all K%ku==0 cases.  If ku <= 4, we will consider using it for
+ * *all* cases.  We will try K=kBn-(ku-1), and if it wins, this one kernel
+ * will be used for call cases, otherwise the winning kernel is chosen for
+ * all % = ku-1 cases, and now we check ku-2, and so on.
+ * RETURNS: list of kerns with specialized MB,NB for each [kb0,kbN], sorted
+ *          in increasing KB order.
+ */
+{
+   unsigned int KU=mpB->ku, kbB=mpB->kbB, k;
+   ATL_mmnode_t *mp, *mkb=NULL;
+   ATL_mmnode_t **bKs;
+
+   bKs = calloc(KU, sizeof(ATL_mmnode_t*));
+   assert(bKs);
+   *bKs = mpB;
+   printf("SEARCHING FOR DEFAULT CASES FOR ALL KU=%u REMAINDER CASES\n", KU);
+   for (k=1; k < KU; k++) /* remainders */
+   {
+      int kb = kbB - k;
+      printf("   FINDING BEST AMM KERNEL FOR KB=%u, REMAINDER=%u\n", kb, k);
+      bKs[k] = bestNearMNK(pre, verb, mmb, mpB->mbB, mpB->nbB, kb, 4, 0, 1.015);
+      mp = bKs[k];
+      printf("   BEST ID=%d, '%s', B=(%d,%d,%d) mf=%.2f\n", mp->ID,
+             GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB,mp->mflop[0]);
+   }
+   printf("DONE SEARCH OF ALL KU=%u CASES\n\n", KU);
+
+   printf("SEARCHING FOR TUNED M&N FOR ALL %u <= K <= %u:\n", kb0, kbN); 
+   for (k=kbN; k >= kb0; k--)
+   {
+      mp = CloneMMNode(bKs[k%KU]);
+      printf("   FINDING BEST M/N-B FOR KB=%u\n", k);
+      mp->kbB = k;
+      MMExpandMN(verb, pre, 4, 0, maxB, mp);
+      printf("   BEST ID=%d, '%s', B=(%d,%d,%d) mf=%.2f\n", mp->ID,
+             GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB,mp->mflop[0]);
+      mp->next = mkb;
+      mkb = mp;
+   }
+   printf("DONE TUNING FOR ALL %u <= K <= %u.\n\n", kb0, kbN); 
+   for (k=1; k < KU; k++)
+      KillMMNode(bKs[k]);
+   free(bKs);
+@BEGINSKIP
+   mmb = SortListByIval_G2L(mmb, GetOffset(mmb, &mmb->next), 
+                            GetOffset(mmb, &mmb->ku);
+   if (mpB->ku > 4) /* find a candidate that can be padded to all K */
+   {
+      int kb = mpB-> kbB;
+      kb = (kb > 4) ? (kb & (~0x3)) : 4;
+      for (mp=mmb; mp && mp->ku > 4; mp = mp->next);
+      mp4 = bestNearMNK(pre, verb, mp, mpB->mbB, mpB->nbB, kb, 4, 0, 1.015);
+   }
+   for (i=4; i < KU; i += 4)
+      bKs[i] = mp4;
+@ENDSKIP
+   return(mkb);
+}
+
 /*
  * This search forms the backbone of ATLAS outer-product support.  It will
  * find all the kernels needed to support 3 categories of degenerate dims:
@@ -36014,11 +36094,11 @@ void do_opdek(int verb, char pre, int NEK)
  */
 void do_opk(int verb, char pre, char *fnam, int maxK)
 {
-   long i, nelt_llc, nelt=L1C_SZ>>3;
+   long i, nelt_llpc, nelt_llc, nelt=L1C_SZ>>3;
    unsigned int b0=60;   /* largest kb where we brute-force search */
    unsigned int bP;      /* largest square block fitting in LLPC */
    unsigned int bL;      /* largest square block fitting in LLC */
-   unsigned int MB, NB, KB;
+   unsigned int MB, NB, KB, maxB;
    unsigned int eltsh=0;
    double mf;
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
@@ -36169,8 +36249,11 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    else
       KillMMNode(mpB);
 
-   WriteMMFileWithPath(pre, "res", "opASYMP.sum", mp);
-   KillMMNode(mp);
+   mpB = mp;
+   WriteMMFileWithPath(pre, "res", "opASYMP.sum", mpB);
+   maxB = mp->mbB;
+   maxB = Mmax(maxB, mp->nbB);
+   maxB = Mmax(maxB, mp->kbB);
 /*
  * Get temporary queue, eliminate kerns not providing unique KU speedup,
  * then do search for all problems between [bP,bL]
@@ -36181,14 +36264,26 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    {
       tb = CloneMMQueue(mb);
       tb = MMWinnowByKU(tb, bP, 1.05);
-      WriteMMFile("res/tmp.sum", mb);
-      printf("FINDING BEST RANK-K KERNELS FOR LLC:\n");
-      do_bfi(pre, bP+1, KB, 1, "res/tmp.sum", "opLLC.sum", 1.015);
-      printf("DONE\n");
+      if (FULLSRCH)
+      {
+         WriteMMFile("res/tmp.sum", mb);
+         printf("FINDING BEST RANK-K KERNELS FOR LLC:\n");
+         do_bfi(pre, bP+1, KB, 1, "res/tmp.sum", "opLLC.sum", 1.015);
+         printf("DONE\n");
+      }
+      else
+      {
+         ATL_mmnode_t *rb;
+         rb = opsrch_rng(verb, pre, 4, 1.015, bP+1, KB, maxB, nelt_llc,
+                         opWorkSetOK, mpB, tb);
+         WriteMMFileWithPath(pre, "res", "opLLC.sum", rb);
+         KillAllMMNodes(rb);
+      }
+      KillAllMMNodes(tb);
    }
    else
       assert(0);
-   KillAllMMNodes(tb);
+   KillMMNode(mpB);
 /*
  * Finally, find best-performing kernels in LLPC region.  Do our winnowing
  * search on problem well-within LLPC
@@ -36211,7 +36306,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
  */
       printf("   FINDING BEST MAX BLOCK FACTORS, current=(%d,%d,%d):\n", 
              mp->mbB, mp->nbB, mp->kbB);
-      MMExpandMN(verb, pre, 4, 0, mp);
+      MMExpandMN(verb, pre, 4, 0, maxB, mp);
       MB = mp->mbB; NB = mp->nbB; KB = mp->kbB;
       printf("   BEST B=(%d,%d,%d), mf=%.2f, speedup=%.2f\n", MB, NB, KB, 
              mp->mflop[0], mp->mflop[0] / mf);
@@ -36231,7 +36326,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
          mp = mpB;
          printf("   FINDING BEST MAX BLOCK FACTORS, current=(%d,%d,%d):\n", 
                 mp->mbB, mp->nbB, mp->kbB);
-         MMExpandMN(verb, pre, 4, 0, mp);
+         MMExpandMN(verb, pre, 4, 0, maxB, mp);
          MB = mp->mbB; NB = mp->nbB; KB = mp->kbB;
          printf("   BEST B=(%d,%d,%d), mf=%.2f, speedup=%.2f\n", MB, NB, KB, 
                 mp->mflop[0], mp->mflop[0] / mf);
@@ -36240,11 +36335,28 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       }
       else
          KillMMNode(mpB);
+      mpB = mp;
       mb = MMWinnowByKU(mb, b0, 1.10);
-      WriteMMFile("res/tmp.sum", mb);
-      printf("FINDING BEST RANK-K KERNELS FOR LLPC:\n");
-      do_bfi(pre, b0+1, bP, 1, "res/tmp.sum", "opLLPC.sum", 1.015);
-      printf("DONE\n");
+      if (FULLSRCH)
+      {
+         WriteMMFile("res/tmp.sum", mb);
+         printf("FINDING BEST RANK-K KERNELS FOR LLPC:\n");
+         do_bfi(pre, b0+1, bP, 1, "res/tmp.sum", "opLLPC.sum", 1.015);
+         printf("DONE\n");
+      }
+      else
+      {
+         ATL_mmnode_t *rb;
+         tb = CloneMMQueue(mb);
+         tb = MMWinnowByKU(tb, bP, 1.05);
+         nelt_llpc = (pre == 'd' || pre == 'z') ? (LLPC_SZ>>3) : (LLPC_SZ>>2);
+         rb = opsrch_rng(verb, pre, 4, 1.015, b0+1, bP, maxB, nelt_llpc,
+                         opWorkSetOK, mpB, tb);
+         KillAllMMNodes(tb);
+         WriteMMFileWithPath(pre, "res", "opLLPC.sum", rb);
+         KillAllMMNodes(rb);
+      }
+      KillMMNode(mpB);
    }
    #endif
    KillAllMMNodes(mb);
@@ -36702,6 +36814,15 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
       else /* add to queue, and set it to use selected search type */
       {
          ATL_mmnode_t *nxt=ob->next;
+         ob->flag &= ~MMF_MVSET;
+@ROUT trsmsrch
+         ob->flag |= (1<<MMF_MVC) | (1<<MMF_MVA);
+@ROUT bfisrch
+         if (flag&((1<<FLG_OPCPY)|(1<<FLG_OP)))
+            ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVC) | (1<<MMF_CPC);
+         else
+            ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVB);
+@ROUT bfisrch trsmsrch
          if (!ob->ID)
          {
             if (ob->genstr)
@@ -36712,15 +36833,6 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             if (ob->rout)
                free(ob->rout);
             ob->rout = DupString("ATL_tmp.c");
-            ob->flag &= ~MMF_MVSET;
-@ROUT trsmsrch
-            ob->flag |= (1<<MMF_MVC) | (1<<MMF_MVA);
-@ROUT bfisrch
-            if (flag&((1<<FLG_OPCPY)|(1<<FLG_OP)))
-               ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVC) | (1<<MMF_CPC);
-            else
-               ob->flag |= (1<<MMF_MVA) | (1<<MMF_MVB);
-@ROUT bfisrch trsmsrch
             if (flag&(1<<FLG_MKCOMP)) /* want to try run- & compile-time K */
             {
                ATL_mmnode_t *np=NULL;
@@ -36792,7 +36904,7 @@ void DoSrchD(char pre, int flag, int KB, char *fnin, int idx, char *fnout)
           mp->mflop ? mp->mflop[0]:0.0);
    GetMMLabelName(pre, NULL);
    if (KB)
-      mf = MMExpandMN(verb, pre, flg, 0, mp);
+      mf = MMExpandMN(verb, pre, flg, 0, 512, mp);
    else
       mf = MMExpandMNK(verb, pre, flg, 0, 0, NULL, 512, mp);
    printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mp->kbB, mf);
@@ -36914,7 +37026,7 @@ void opsrch(char pre, int flag, char *outnm, int *KBs, double runBon)
           GetMMLabelName(pre, mp), mf);
    printf("   TUNING M/NB FOR BEST KERN, PRESENT B=(%u,%u):\n", 
           mp->mbB, mp->nbB);
-   mfB = MMExpandMN(verb, pre, flg, 0, mp);
+   mfB = MMExpandMN(verb, pre, flg, 0, 512, mp);
    printf("   B=(%u,%u,%u) GIVES SPEEDUP: %.2f\n", mp->mbB, mp->nbB, mp->kbB,
           mfB/mf);
    KillMMNode(mp);
@@ -36936,7 +37048,7 @@ void opsrch(char pre, int flag, char *outnm, int *KBs, double runBon)
              GetMMLabelName(pre, mp), mf);
       printf("   TUNING M/NB FOR BEST KERN, PRESENT B=(%u,%u):\n", 
              mp->mbB, mp->nbB);
-      mfB = MMExpandMN(verb, pre, flg, 0, mp);
+      mfB = MMExpandMN(verb, pre, flg, 0, 512, mp);
       printf("   B=(%u,%u,%u) GIVES SPEEDUP: %.2f\n", mp->mbB, mp->nbB, mp->kbB,
              mfB/mf);
       mp->next = bb;
@@ -36974,7 +37086,7 @@ int main(int nargs, char **args)
 
    fnout = GetFlags(nargs, args, &pre, &flag, &maxKU, &reqVL, &fnin, 
                     &MBs, &NBs, &KBs, &runBon);
-   assert(flag & (1<<FLG_FUZZY)); /* currently only supporte srch type */
+@skip   assert(flag & (1<<FLG_FUZZY)); /* currently only supporte srch type */
 
    if (KBs)
    {
