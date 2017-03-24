@@ -266,7 +266,6 @@ int Reg2Regstate(int k)
       fko_error(__LINE__, "Unknown register index %d, file=%s\n",
                   k, __FILE__);
 #endif
-// fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    return(iv);
 }
 
@@ -297,19 +296,15 @@ int FindLiveregs(INSTQ *here)
          SetAllTypeReg(mask, T_DOUBLE);
          SetAllTypeReg(mask, T_VFLOAT);
          SetAllTypeReg(mask, T_VDOUBLE);
-#ifdef VIREGBEG         
-         SetAllTypeReg(mask, T_VINT);
-#endif
+         #ifdef VIREGBEG         
+            SetAllTypeReg(mask, T_VINT);
+         #endif
          SetVecBit(mask, REG_SP-1, 0);
          #ifdef X86_32
 /*
  *          FIXED:  Reg2Int always return -ve index!!! -- Majedul 
  */
-            #if 0
-               SetVecBit(mask, Reg2Int("@st")-1, 0);
-            #else
-               SetVecBit(mask, -Reg2Int("@st")-1, 0);
-            #endif
+            SetVecBit(mask, -Reg2Int("@st")-1, 0);
          #endif
       }
       else
@@ -374,9 +369,6 @@ int GetRegForAsg(int type, INT_BVI iv, INT_BVI livereg)
       SetVecBit(iv, FRETREG-1, 0);
       SetVecBit(iv, DRETREG-1, 0);
    #endif
-#if 0
-      fprintf(stderr, "available regs = %s\n", BV2VarNames(iv));
-#endif
    return(AnyBitsSet(iv));
 }
 
@@ -435,10 +427,6 @@ void KillIGTableEntries()
          IG[i] = NULL;
       }
    }
-#if 0   
-   void PrintNIG(FILE *fout);
-   PrintNIG(stderr);
-#endif   
    NIG = 0;
 }
 
@@ -468,10 +456,6 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
                  NULL;
    if (blk)
    {
-/*
- *    FIXME: although NewBitVec() returns int, myblkvec is short. So, when 
- *    it returns 65536, it is trancated into 0 in myblkvec.
- */
       new->myblkvec = NewBitVec(blk->bnum);
       assert(new->myblkvec);
       SetVecBit(new->myblkvec, blk->bnum-1, 1);
@@ -490,17 +474,7 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
       {
          assert(IS_VAR(STflag[var-1])); 
          new->deref = SToff[var-1].sa[2];
-#if 0         
          assert(new->deref > 0);
-#else    /* to debug ... ... */
-         if (new->deref <= 0)
-         {
-            fprintf(stderr, "\nALART ALART !!!\n");
-            fprintf(stderr, "deref=%d, var=%d, blk=%d\n", new->deref, var, 
-                    blk->bnum);
-            assert(0);
-         }
-#endif         
       }
    }
    else new->deref = 0;
@@ -655,20 +629,18 @@ void CalcBlockIG(BBLOCK *bp)
             for (j=nn-1; j >= 0; j--)
                if (myIG[j] && myIG[j]->var == k) break;
             assert(j >= 0);
-#if 0
-            fprintf(stderr, "******dead var = %s ignode=%d\n", STname[k-1], j);
-#endif
 /*
  *          If dying range ends with a write, indicate it
  */
             if (BitVecCheck(ip->set, k+TNREG-1))
             {
-              fprintf(stderr,
+              /*fprintf(stderr,
                        "Inst dead on write, block=%d, inst='%s %s %s %s'!\n",
                        bp->bnum, instmnem[ip->inst[0]], op2str(ip->inst[1]),
                        op2str(ip->inst[2]), op2str(ip->inst[3]));
                fprintf(stderr, "k=%d, STentry=%d\n", k, k+TNREG-1);
-               PrintInst(fopen("err.l", "w"), bbbase); exit(-1);
+               PrintInst(fopen("err.l", "w"), bbbase); exit(-1);*/
+               fko_error(__LINE__, "inst dead on write???");
                myIG[j]->nwrite++;
             }
 /*
@@ -732,7 +704,7 @@ void CalcBlockIG(BBLOCK *bp)
                node->nwrite++;
             }
 /*
- *          FIXME: already live but set, there may be no read of the live-range.
+ *          NOTE: already live but set, there may be no read of the live-range.
  *          When the value is set before being used, node->nread is zero. RegAsg
  *          may incorrectly skip that ig node. 
  *          useless expression elimination should delete them.
@@ -743,10 +715,6 @@ void CalcBlockIG(BBLOCK *bp)
                      && strcmp(STname[myIG[j]->var-1], "_NONLOCDEREF")
                      && !myIG[j]->nread)
                {
-#if 0
-                  fprintf(stderr, "%s(%d) set already exists, ignode = %d\n",
-                          STname[myIG[j]->var-1], myIG[j]->var, j);
-#endif
                   fko_error(__LINE__, "Live range of %s(%d) is set again without "
                            "being used! Need to apply useless expression "
                            "elimination first!", STname[myIG[j]->var-1], 
@@ -887,11 +855,6 @@ void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
 /*
  * If both blocks are in scope, attempt to combine their live ranges
  */
-#if 0
-   fprintf(stderr, "scoping pred=%d, succ=%d\n", pred->bnum, succ->bnum);
-   fprintf(stderr, "pred->conout=%s\n", PrintVecList(pred->conout, 0));
-   fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
-#endif
    if (BitVecCheck(scopeblks, succ->bnum-1) && 
        BitVecCheck(scopeblks, pred->bnum-1) )
    {
@@ -1147,6 +1110,56 @@ int CalcScopeIG(BLIST *scope)
    }
 }
 
+#if 0
+int IsConflictMoreThanNRegs(int N, IGNODE **igarr)
+{
+   int i, j, n, max=0;
+   short *sp;
+   IGNODE *ig, *igv, *igm=NULL;
+#if 1
+   extern BBLOCK *bbbase;
+   PrintInst(stdout, bbbase);
+#endif
+   for (i=0; i < N; i++)
+   {
+      ig = igarr[i];
+      sp = BitVec2StaticArray(ig->conflicts); 
+#if 1 
+      if (sp)
+      {
+         fprintf(stderr, "[%d]*****%s -> conflicts(%d) = ", sp[0],
+               STname[ig->var-1], sp[0]);
+         for (j=1, n=sp[0]; j <=n; j++)
+         {
+            igv = igarr[j];
+            fprintf(stderr, "%s(%d), ", 
+                  STname[igv->var-1]? STname[igv->var-1]:"NULL", igv->var);
+         }
+         fprintf(stderr, "\n\n");
+      }
+#endif
+      if (sp && sp[0] > max && FLAG2TYPE(STflag[ig->var-1])==T_DOUBLE )
+      {
+         max = sp[0];
+         igm = ig;
+      }
+   }
+   fprintf(stderr, "Max number of conflicts = %d\n", max);
+   if (igm)
+   {
+      fprintf(stderr, "   TYPE = %d, var=%s\n", FLAG2TYPE(STflag[igm->var-1]), 
+               STname[igm->var-1]? STname[igm->var-1]:"NULL");
+      sp = BitVec2StaticArray(igm->conflicts); 
+      fprintf(stderr, "conflicts = ");
+      for (i=1, n=sp[0]; i <=n; i++)
+         fprintf(stderr, "%s(%d), ", 
+               STname[sp[i]-1]? STname[sp[i]-1]:"NULL", sp[i]);
+      fprintf(stderr, "\n");
+   }
+   exit(0);
+}
+#endif
+
 void SortUnconstrainedIG(int N, IGNODE **igarr)
 /*
  * Given an N-length contiguous array if IGNODEs, sorts them by nref using
@@ -1179,7 +1192,176 @@ void SortUnconstrainedIG(int N, IGNODE **igarr)
       }
    }
 }
+#if 0
+int FindInstPos(INSTQ *inst)
+{
+   int i;
+   BBLOCK *bp;
+   INSTQ *ip;
+   extern BBLOCK *bbbase;
+   
+   if (!inst)
+      return(0);
 
+   for (i=0, bp=bbbase; bp; bp=bp->down)
+   {
+      for (ip=bp->ainst1; ip; ip=ip->next, i++)
+      {
+         if (ip == inst)
+            return(i+1);
+      }
+   }
+   return(0);
+}
+
+INSTQ *FindIpFromIG(IGNODE *ig, int isbeg)
+{
+   int i, minb;
+   INSTQ *ip;
+   BLIST *bl, *minbl;
+/*
+ * find bl with min bnum
+ * FIXME: bnum is set by block->down which doesn't always mean it would be a 
+ * predecessor!
+ */
+   ip = NULL;
+   minb = 0;
+   if (isbeg)
+      bl = ig->blkbeg;
+   else
+      bl = ig->blkend;
+   if (bl)
+   {
+      minb = bl->blk->bnum;
+      minbl = bl;
+      while (bl)
+      {
+         i = bl->blk->bnum;
+         if (i < minb)
+         {
+            minb = i;
+            minbl = bl;
+         }
+         bl = bl->next;
+      }
+/*
+ *    now findout the index of the ip of this minbp
+ */
+      ip = minbl->ptr; 
+   }
+   return(ip);
+}
+
+void DoSortIGsByInst(int end, int start, IGNODE **igarr)
+{
+   int i, j, imin;
+   int iip, iipmin;
+   IGNODE *igp;
+/*
+ * simple selection sort
+ */
+   for (i=start; i < end-1; i++)
+   {
+      iipmin = FindInstPos(FindIpFromIG(igarr[i], 0)); 
+      imin = i;
+      for (j=i+1; j < end; j++)
+      {
+         iip = FindInstPos(FindIpFromIG(igarr[j], 0)); 
+         if (iip < iipmin)
+         {
+            imin = j;
+            iipmin = iip;
+         }
+      }
+      if (imin != i)
+      {
+         igp = igarr[imin];
+         igarr[imin] = igarr[i];
+         igarr[i] = igp;
+      }
+   }
+}
+
+void SortIGsByInstPosition(int N, IGNODE **igarr)
+{
+   int i, j, k, nref;
+   IGNODE *igp;
+   int iip;
+
+   i= 0;
+   while (i < N-1)
+   {
+      nref = igarr[i]->nread + igarr[i]->nwrite;
+      k = j = i + 1;
+      while (k < N && nref == (igarr[k]->nread + igarr[k]->nwrite) ) 
+         k++;
+      if (i != (k+1))
+         DoSortIGsByInst(i, k, igarr);
+      i = k;
+   }
+}
+
+int FindDistDead2Alive(IGNODE *ig1, IGNODE *ig2)
+{
+   int dist;
+   INSTQ *iplive, *ipdead;
+   
+   ipdead = FindIpFromIG(ig1, 0);
+   iplive = FindIpFromIG(ig2, 1);
+   
+   if (ipdead && iplive)
+      dist = FindInstPos(iplive) - FindInstPos(ipdead); 
+   else
+      dist = -1; /* either one is out of scope */
+   
+   return(dist);
+}
+
+IGNODE *FindEarliestAliveIGFromThisDead(int N, IGNODE **igarr, IGNODE *tig)
+{
+   int i, dist, dmin=0;
+   IGNODE *igd=NULL;
+   
+   for (i=0; i < N; i++)
+   {
+      if (tig == igarr[i])
+         continue;
+      if (FLAG2TYPE(STflag[tig->var-1]) != FLAG2TYPE(STflag[igarr[i]->var-1]))
+         continue;
+      dist = FindDistDead2Alive(tig, igarr[i]); 
+      if (dist > 0 && dist < dmin)
+      {
+         dmin = dist;
+         igd = igarr[i];
+      }
+   }
+   return(igd);
+}
+
+IGNODE *FindEarliestDeadUpFromThisAlive(int N, IGNODE **igarr, IGNODE *tig)
+{
+   int i, dist, dmin=0;
+   IGNODE *igd=NULL;
+  
+   for (i=0; i < N; i++)
+   {
+      if (tig == igarr[i])
+         continue;
+      if (FLAG2TYPE(STflag[tig->var-1]) != FLAG2TYPE(STflag[igarr[i]->var-1]))
+         continue;
+/*
+ *    since dead code is on up, dest is negative
+ */
+      dist = -FindDistDead2Alive(igarr[i], tig); 
+      if (dist > 0 && dist < dmin)
+      {
+         dmin = dist;
+         igd = igarr[i];
+      }
+   }
+   return(igd);
+}
+#endif
 
 void KeepVarTogether(int N, IGNODE **igarr)
 /*
@@ -1373,16 +1555,12 @@ IGNODE **SortIG(int *N, int thresh)
         igarr[ncon++] = ig;
      }
    }
-#if 0
-   fprintf(stderr, "SORT IG: ncon=%d, uncon=%d\n", ncon, n-ncon);
-#endif
    SortConstrainedIG(ncon, igarr);
-#if 1
 /*
  * keep live ranges of same variable (which access count are same) together
  */
    KeepVarTogether(ncon, igarr);
-#endif
+   /*SortIGsByInstPosition(ncon, igarr);*/
    SortUnconstrainedIG(n-ncon, igarr+ncon);
    *N = n;
    return(igarr);
@@ -1416,12 +1594,6 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
    {
       ig = igs[i];
       ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
-#if 0
-      fprintf(stderr, "**********reg assignment for: %s\n", STname[ig->var-1]);
-      fprintf(stderr, "liveregs = %s\n", BV2VarNames(ig->liveregs));
-      if (ig->reg) 
-         fprintf(stderr, "%s : %s\n", STname[ig->var-1], Int2Reg0(-ig->reg));
-#endif
       if (ig->reg)
       {
          ivused = Reg2Regstate(ig->reg);
@@ -1444,21 +1616,56 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
          iret++;
       }
       else
-#if 1         
       {
          fko_warn(__LINE__, "NO FREE REGISTER FOR LR %d of VAR %s!!!\n", 
                ig->ignum, STname[ig->var-1]);
          nspill[FLAG2PTYPE(STflag[ig->var-1])]++; /* update spilling */
       }
-#else
-      {
-         fprintf(stderr, "No Free Reg for LR %d of var %s!!!\n", ig->ignum, 
-                 STname[ig->var-1]);
-      }
-#endif
    }
    return(iret);
 }
+
+#if 0
+short FindRegFromEarliestDead(int N, IGNODE **igs, IGNODE *ig)
+{
+   short reg = 0;
+   IGNODE *iig;
+
+   iig = FindEarliestDeadUpFromThisAlive(N, igs, ig);
+   if (ig->reg)
+      reg = ig->reg;
+   return(reg);
+}
+
+void UpdateConflicts(short reg, IGNODE *ig)
+{
+   int j, n;
+   INT_BVI ivused;
+   IGNODE *ig2;
+   short *sp;
+   
+   if (!reg)
+      return;
+
+   ivused = Reg2Regstate(ig->reg);
+   ig->reg--;
+   BitVecComb(ig->liveregs, ig->liveregs, ivused, '|');
+   assert(ig->reg+1 != REG_SP);
+/*
+ * Add assigned register to liveregs of conflicting IGNODEs
+ */
+   sp = BitVec2StaticArray(ig->conflicts);
+   if (sp)
+   {
+      for (j=1, n=sp[0]; j <= n; j++)
+      {
+         ig2 = IG[sp[j]];
+         BitVecComb(ig2->liveregs, ig2->liveregs, ivused, '|');
+      }
+   }
+   ig->reg++;
+}
+#endif
 
 int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
 /*
@@ -1590,8 +1797,6 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             break;
       #endif
          default:
-            /*fprintf(stderr,"\n\nWARNING(%s,%d): inst %d being var2reged!!\n\n",
-                    __FILE__, __LINE__, ip->inst[0]);*/
             fko_warn(__LINE__,"\n\ninst %d being var2reged!!\n\n", ip->inst[0]);
          }
          CalcThisUseSet(ip);
@@ -1782,9 +1987,6 @@ int DoRegAsgTransforms(IGNODE *ig)
          assert(ig->deref > 0);
       #endif
       ip = InsNewInst(bl->blk, bl->ptr, NULL, ld, -ig->reg, ig->deref, 0);
-#if 0
-      PrintThisInst(stderr,ip);
-#endif      
       CalcThisUseSet(ip);
       CHANGE++;
    }
@@ -1806,9 +2008,6 @@ int DoRegAsgTransforms(IGNODE *ig)
  *    applied
  *    FIXED: see CalcScopeIG
  */
-#if 0
-      PrintThisInst(stderr,ip);
-#endif      
       CalcThisUseSet(ip);
       CHANGE++;
    }
@@ -1846,31 +2045,9 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig, int *nspill)
  */
    assert(scope);
    *tnig = CalcScopeIG(scope);
-#if 0
-   fprintf(stderr, "\nIG without sorting: \n");
-   DumpIG(stderr, NIG, IG);
-#endif
    igs = SortIG(&N, thresh);
    nret = DoIGRegAsg(N, igs, nspill);
-#if 0
-   fprintf(stderr, "scope=%s\n", PrintBlockList(scope));
-   fprintf(stderr, "no. of spilling = %d\n", *nspill);
-#endif
    CheckIG(N, igs);
-#if 0
-   fprintf(stderr, "NIG=%d N=%d\n", *tnig, N);
-   DumpIG(stderr, N, igs);
-#endif
-#if 0
-   /*fprintf(stderr,"IG ");
-   //DumpIG(stderr,N,igs);
-   sprintf(file, "ig-cfg-%d.dot", ++nc);
-   //ShowFlow(file, bbbase);
-   ShowFlow("ig-cfg.dot", bbbase);*/
-   DumpIG(stderr, N, igs);
-   fprintf(stdout,"IG ");
-   DumpIG(stdout,N,igs);
-#endif 
    if (fpIG)
    {
       DumpIG(fpIG, N, igs);
@@ -2125,25 +2302,9 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
          }
          else
          {
-            /*PrintST(stderr);*/
-#if 0
-            /*fprintf(stderr, "m=%d, n=%d, k=%d\n", m, n, k);*/
-            fprintf(stderr,"\nvariable list: \n");
-            for (j=1; j <= sa[0]; j++)
-            {
-               fprintf(stderr,"%s[%d], ", 
-                       STname[sa[j]-1-TNREG] ? STname[sa[j]-1-TNREG]: "null", 
-                       sa[j]);
-            }
-            fprintf(stderr,"\n\n");
-            fko_error(__LINE__, 
-                      "Out of regs in global asg, id=%d, var=%s, file=%s\n",
-                      sa[i]-TNREG, STname[sa[i]-1-TNREG], __FILE__);
-#else
             fko_warn(__LINE__, 
                       "Out of regs in global asg, id=%d, var=%s, file=%s\n",
                       sa[i]-TNREG, STname[sa[i]-1-TNREG], __FILE__);
-#endif
             return(1);
          }
 #endif
@@ -2215,19 +2376,6 @@ void FindInitRegUsage(BLIST *bp, short *iregs, short *fregs, short *dregs)
       }
    }
    free(sp);
-#if 0
-fprintf(stderr, "\n%s(%d): reg usage:\n", __FILE__, __LINE__);
-fprintf(stderr, "   iregs =");
-for (i=0; i < IREGEND-IREGBEG; i++)
-   fprintf(stderr, " %d,", iregs[i]);
-fprintf(stderr, "\n   fregs =");
-for (i=0; i < FREGEND-FREGBEG; i++)
-   fprintf(stderr, " %d,", fregs[i]);
-fprintf(stderr, "\n   dregs =");
-for (i=0; i < DREGEND-DREGBEG; i++)
-   fprintf(stderr, " %d,", dregs[i]);
-fprintf(stderr, "\n\n");
-#endif
 }
 
 int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
@@ -2332,28 +2480,10 @@ int DoLoopGlobalRegAssignment(LOOPQ *loop)
    short *vars, *regs;
 
    FindInitRegUsage(loop->blocks, iregs, fregs, dregs);
-#if 0
-fprintf(stderr, "\n%s(%d): reg usage:\n", __FILE__, __LINE__);
-fprintf(stderr, "   iregs =");
-for (i=0; i < IREGEND-IREGBEG; i++)
-   fprintf(stderr, " %d,", iregs[i]);
-fprintf(stderr, "\n   fregs =");
-for (i=0; i < FREGEND-FREGBEG; i++)
-   fprintf(stderr, " %d,", fregs[i]);
-fprintf(stderr, "\n   dregs =");
-for (i=0; i < DREGEND-DREGBEG; i++)
-   fprintf(stderr, " %d,", dregs[i]);
-fprintf(stderr, "\n\n");
-#endif
-
-#if 0
-   assert(!AsgGlobalLoopVars(loop, iregs, fregs, dregs));
-#else 
 /*
  * let the code continue though not all variables got a register to assign
  */
    AsgGlobalLoopVars(loop, iregs, fregs, dregs); 
-#endif
 /*
  * Find total number of global assignments done, and allocate space to hold
  * mapping
@@ -2397,7 +2527,6 @@ fprintf(stderr, "\n\n");
    }
    iret = i = LoadStoreToMove(loop->blocks, n, vars, regs);
    free(regs);
-/*fprintf(stderr, "Removed %d LD/ST using global register assignment!\n", i);*/
 /*
  * Insert appopriate LD in preheader, and ST in post-tails
  */
@@ -2618,11 +2747,6 @@ int CopyPropTrans0(int SRCLIVE, BLIST *scope, INT_BVI scopeblks, BBLOCK *blk,
    bl = FindInList(scope, blk);
    if (bl->ptr)
       change = 1;
-#if 0
-fprintf(stderr, "blk=%d, SRCLIVE=%d, dest(%d)=%s", blk->bnum, SRCLIVE, 
-        dest, Int2Reg(-dest));
-fprintf(stderr, ", src(%d)=%s\n", src, Int2Reg(-src));
-#endif
    ivdst = FKO_BVTMP = BitVecCopy(FKO_BVTMP, Reg2Regstate(dest));
    ivsrc = Reg2Regstate(src);
 
@@ -2887,7 +3011,10 @@ INSTQ *CopyPropTrans(BLIST *scope, INT_BVI scopeblks, BBLOCK *blk, INSTQ *ipret)
    else 
       change = CopyPropTrans0(1, scope, scopeblks, blk, ipret, mov, dest, src);
    if (change)
+   {
+      /*PrintThisInst(stderr, -1, ipret );*/
       ipret = DelInst(ipret);
+   }
    else
       ipret = NULL;
    return(ipret);
@@ -2937,18 +3064,7 @@ int DoCopyProp(BLIST *scope)
  *             the next inst of ip->next is NULL !!! 
  */
                else
-               {
-#if 0                  
-                  /*fprintf(stderr,"%p ip->inst = %s\t%d %d %d\n", ip,
-                          instmnem[ip->inst[0]], ip->inst[1], ip->inst[2],
-                          ip->inst[3]);*/
-                  fprintf(stderr, "%p\n",ip);
-                  fflush(stderr);                  
-                  assert(ip);
-                  ip = ip->next;
-#endif
                   ip = ipnext;
-               }
             }
          }
          while(ip);
@@ -2997,22 +3113,11 @@ int DoRevCopyPropTrans(INSTQ *ipsrc,  /* inst where src is set */
             }
          }
          CalcThisUseSet(ip);
-#if 0
-         fprintf(stderr, "UP: ");
-         PrintThisInst(stderr, ip);
-         fprintf(stderr, "UP-USE: %s\n",BV2VarNames(ip->use));
-#endif
          nseen++;
       }
    }
 /*      ipdst->inst[2] = -dest;
         CalcThisUseSet(ipdst); */      
-#if 0
-      fprintf(stderr, "DEL:[%p] ",ipdst);
-      PrintThisInst(stderr, ipdst);
-      //CalcInsOuts(bbbase);
-      //CalcAllDeadVariables();
-#endif
       DelInst(ipdst);
    return(1);
 }
@@ -3032,9 +3137,6 @@ int DoReverseCopyProp(BLIST *scope)
       CalcAllDeadVariables();
    else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
       CalcInsOuts(bbbase);
-#if 0
-   fprintf(stderr, "%s\n",PrintBlockList(scope));
-#endif
    for (bl=scope; bl; bl = bl->next)
    {
       for (ip=bl->blk->ainstN; ip; ip = ipp)
@@ -3069,7 +3171,6 @@ int DoReverseCopyProp(BLIST *scope)
  *              FIXED: why don't we traverse upward to find out the set of src!
  *              We only check previous inst and go to the next .... !!!!
  */
-                //for (ips=ip->prev; ips; ips = ips->next)
                 for (ips=ip->prev; ips; ips = ipps)
                 {
                    ipps = ips->prev;
@@ -3095,14 +3196,21 @@ int DoReverseCopyProp(BLIST *scope)
 /*
  *             FIXED: incase of DIV or UDIV, we have restrictions on register
  *             we can't apply reverse copy prop on them.
- *             FIXME: need to see what we can in that case to minimize the 
- *             effect on such registers
  */
                #ifdef X86
                   if (ips->inst[0] == DIV || ips->inst[0] == UDIV)
                   {
-                     ips = NULL;
-                     break;
+/*
+ *                   for idiv, we can't change dest and src1 (rax, rdx) at all
+ */
+                  #if 1
+                     if (src == -ips->inst[1] || src == -ips->inst[2] 
+                           || dest == -ips->inst[1] || dest == -ips->inst[2])
+                  #endif
+                     {
+                        ips = NULL;
+                        break;
+                     }
                   }
                #endif
                    if (BitVecCheck(ips->set, src-1) && 
@@ -3150,7 +3258,7 @@ int DoReverseCopyProp(BLIST *scope)
    }
    if (nchanges)
       CFUSETU2D = INDEADU2D = 0;
-//   fprintf(stderr, "RCP: nchanges=%d\n", nchanges);
+   /*fprintf(stderr, "RCP: nchanges=%d\n", nchanges);*/
    return(nchanges);
 }
 int DoEnforceLoadStore(BLIST *scope)
@@ -3359,7 +3467,77 @@ int DoRemoveOneUseLoads(BLIST *scope)
    }
    if (nchanges)
       CFUSETU2D = INDEADU2D = 0;
-//   fprintf(stderr, "U1: nchanges=%d\n", nchanges);
+   /*fprintf(stderr, "U1: nchanges=%d\n", nchanges);*/
+   return(nchanges);
+}
+
+int DoOptArchSpecInst(BLIST *scope)
+/*
+ * we replace SHL/ADD with LEA here, can be extended later  
+ */
+{
+   int i, k;
+   INSTQ *ip, *ip1, *ipn;
+   BLIST *bl;
+   BBLOCK *bp;
+   enum inst inst;
+   int nchanges = 0;
+
+/*
+ * only X86 supports LEA 
+ */
+   #ifndef X86
+      return(0);
+   #endif
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+      CalcInsOuts(bbbase);
+/*
+ * if scope not defined, add all block list
+ */
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ipn)
+      {
+         ipn = ip->next;
+         if (ip->inst[0] == SHL && ip->next->inst[0] == ADD)
+         {
+            ip1 = ip->next;
+            assert(ip->inst[1] == ip->inst[2]);
+            k = -ip->inst[2];
+            if (k == -ip1->inst[3] && BitVecCheck(ip1->deads, k-1) 
+                  && IS_CONST(STflag[ip->inst[3]-1]))
+            {
+               i = SToff[ip->inst[3]-1].i;
+               if (i ==1 || i == 2 || i == 3 )
+               {
+                  switch(i)
+                  {
+                     case 1:  // 2
+                        ip->inst[0] = LEA2;
+                        break;
+                     case 2:  // 4
+                        ip->inst[0] = LEA4;
+                        break;
+                     case 3:  // 8
+                        ip->inst[0] = LEA8;
+                        break;
+                  }
+                  ip->inst[1] = ip1->inst[1];
+                  ip->inst[2] = ip1->inst[2];
+                  ip->inst[3] = ip1->inst[3];
+                  CalcThisUseSet(ip);
+                  ipn = ip1->next; 
+                  DelInst(ip1);
+                  nchanges++;
+               }
+            }
+         }
+      }
+   }
+   if (nchanges)
+      CFUSETU2D = INDEADU2D = 0;
    return(nchanges);
 }
 

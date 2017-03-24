@@ -19,24 +19,16 @@
  *
  */
 #include "fko.h"
-#define CHUNKSIZE 512 /* should be large as the LIL increased */
 
-#if 0
-static int nvalloc=0,      /* # of slots allocated for bit vectors*/
-           nvused=0,       /* # of slots presently in use */
-           **bvecs=NULL,   /* ptr to individual bit vectors */
-           *ni=NULL;       /* # of integers required by this bit vector */
-#else
-static INT_BVI nvalloc = 0,
-               nvused = 0;
+/*#define CHUNKSIZE 512 */ 
+static INT_BVI CHUNKSIZE=512; /* should be large as the LIL increased */
 
-static INT32 **bvecs = NULL,
-             *ni = NULL;
-#endif
+static INT_BVI nvalloc = 0,   /* # of slots allocated for bit vectors*/
+               nvused = 0;    /* # of slots presently in use */
+static INT32 **bvecs = NULL,  /* ptr to individual bit vectors */
+             *ni = NULL;      /* # of integers required by this bit vector */
 
-/*int FKO_BVTMP=0;*/
 INT_BVI FKO_BVTMP = 0;
-
 
 static void NewVecChunk(int increase)
 {
@@ -51,23 +43,6 @@ static void NewVecChunk(int increase)
       newv[i] = bvecs[i];
       newni[i] = ni[i];
    }
-/*
- * Majedul:
- *    bvecs[nvused] to bvecs[nvalloc] contains garbage values
- *    why not we initialize it with NULL, otherwise how can we free mem!
- *    If we want to kill all the bitvectors, it will be neccessary
- *    
- *    NOTE: Nullify this is not necessary! we have nvused!
- *    It may optimize the code by not having the extra assignment.
- */
-#if 0   
-   for (i=nvused; i < nvalloc; i++)
-   {
-      newv[i] = NULL;
-      newni[i] = 0;
-   }
-#endif
-
    if (bvecs) free(bvecs);
    if (ni) free(ni);
    bvecs = newv;
@@ -77,19 +52,26 @@ static void NewVecChunk(int increase)
 
 static INT_BVI GetUnusedBVI()
 /*
- * NOTE: for extreme large bit vector, this function wastes huge time
+ * NOTE: for extreme large bit vector, this is very expensive
  * FIXME: We can keep a table to point unused index to reduce time of this
  * function. We can use fixed-size table(or, queue) for this and update the 
  * table for each kill of bvec. When there are no unused bvec, we can search
  * the bvec table to update this table. It should reduce the computation time.
- * FIXME: for a code with huge unroll factor, this function wastes most of the 
- * time!
  */
 {
    INT_BVI i;
    for (i=0; i < nvused; i++)
       if (!ni[i]) return(i);
+#if 0
    if (nvused == nvalloc) NewVecChunk(CHUNKSIZE);
+#else
+   if (nvused == nvalloc)
+   {
+      CHUNKSIZE <<= 1;
+      assert(CHUNKSIZE > 0); /* limit the value of CHUNKSIZE*/ 
+      NewVecChunk(CHUNKSIZE);
+   }
+#endif
    return(nvused++);
 }
 
@@ -106,20 +88,8 @@ INT_BVI NewBitVec(int size)
    nv = (size+32) >> 5;
    v = calloc(nv, sizeof(INT32));
    assert(v);
-/*
- * Why not we free the memory if it is occupied yet
- * But before that make sure that all uninitialize ptr is init with NULL
- * 
- * NOTE: as we avoid initialize by NULL, bvecs[i] points to garbage value!
- * so, we can't free them. There can be 2 cases:
- * case-1: i is return from already freed position.Make sure it is already free
- * case-2: i is return from newly created bvecs. so, it is by default not alloc
- */
    bvecs[i] = v;
    ni[i] = nv;
-#if 0
-   fprintf(stderr, "new bvec created = %d\n", i);
-#endif   
    return(i+1);
 }
 
@@ -156,6 +126,7 @@ void KillAllBitVec()
    bvecs=NULL;
    ni=NULL;  
    FKO_BVTMP=0; /* need to init with 0 so that new bitvec will be allocated */
+   CHUNKSIZE=512;
 }
 
 INT32 *ExtendBitVec(INT_BVI iv, INT32 nwords)
@@ -214,23 +185,7 @@ void SetVecAll(INT_BVI iv, int val)
 
    if (val) val = -1;
    v = bvecs[--iv];
-#if 0
-/*
- * Majedul: Is there anyway where we want to set a bit vector but is not 
- * allocated yet or freed before!!! 
- * It will work if it is freed as ni[iv] would be 0
- */
-   if (!v)
-   {
-      fprintf(stderr,"bvec[%d] not created yet! check the caller!\n\n", iv);
-      return;
-   }
-#else
-/*
- * Should not applied on already freed bvec 
- */
    assert(v);
-#endif
 
    n = ni[iv];
    for (i=0; i < n; i++) v[i] = val;
@@ -243,15 +198,7 @@ void SetVecBit(INT_BVI iv, int ibit, int val)
 {
    INT32 *v;
    INT32 i;
-#if 1   
    assert(iv); /* should applied on existing one */
-#else
-   if (iv <= 0 )
-   {
-      fko_error(__LINE__,"iv=%d, ibit=%d, val=%d\n nvalloc=%d, nvused=%d\n", 
-               iv, ibit, val, nvalloc, nvused);
-   }
-#endif
    iv--;
    i = ibit >> 5;
 /*
@@ -271,7 +218,7 @@ int BitVecCheck(INT_BVI iv, int ibit)
 {
    INT32 n, k;
 /*
- * Majedul: add additional checking! iv != 0 and iv !=nvused
+ * Majedul: added additional checking! iv != 0 and iv !=nvused
  */
    assert(iv>0 && iv<=nvused);
 /*
@@ -284,22 +231,13 @@ int BitVecCheck(INT_BVI iv, int ibit)
    k = ibit >> 5; 
    ibit -= k << 5;
 /*
- * Majedul: there is an invalid read reported by valgrind when is called from
- * VarUse2RegUse(optreg.c:1208), CombineLiveRanges(optreg.c:736)
- * FIXME: 
- *       k=5, n=5, ibit=160 (0) !!! off-by-one error!! for 160, n should be 6
- *       k=3, n=2, ibit=31 !!! 
- */
-/*
- * FIXME: k should be < n. 
+ * FIXED: k should be < n. 
  *        (k >= n) means we want to set a bit but it is not allocated yet!
  * keep in mind: argument iv starts from 1 but ibit starts from 0.
- * 
- * Oneway to solve this issue is to extend the bit vector and returns false.
- * the logic behind this is that this position may be set afterward as a bit 
- * vector keep increasing from its default size of 32 anyway.
+ * NOTE: One way to solve this issue is to extend the bit vector and returns 
+ * false. The logic behind this is that this position may be set afterward as a 
+ * bit vector keep increasing from its default size of 32 anyway.
  */
-#if 1
    if (k >= n) 
    {
 /*
@@ -309,7 +247,6 @@ int BitVecCheck(INT_BVI iv, int ibit)
       /*ExtendBitVec(iv+1, k+1);*/
       return 0;
    }
-#endif
    return(bvecs[iv][k] & (1<<ibit));
 }
 
@@ -494,9 +431,10 @@ char *PrintVecList(INT_BVI iv, int ioff)
  */
 {
 /*
- * Majedul: as the bvec increases beyond 2048 while applying blind unroll after
- * sepculative vectorization, this limit is increased
- */
+ * Majedul: bit vector may be beyond 4096 when unrolling factor is large. We
+ * only print bitvec in debug code. Release code should not have this problem.
+ * 
+ * */
    static char ln[4096];
    char *sptr;
    int i, j, k, n;

@@ -18,7 +18,8 @@
          fprintf(stderr, \
                  "\n\nassertion '%s' failed on line %d of %s, hanging:\n\n", \
                  Mstr(arg_), __LINE__, __FILE__);\
-         while(1); \
+         /*while(1);*/ \
+         exit(-1); \
       } \
    }
    #define assert MyAssert
@@ -86,6 +87,7 @@
 #define IFF_OPT2DPTR     0x800 /* optimize 2d array access with min reg & ptr */
 #define IFF_NODDE        0x1000 /* optimize 2d array access with min reg & ptr */
 #define IFF_BESTVEC      0x2000 /*analyze all vector methods and apply best one*/
+#define IFF_SHOWCOMMENTS 0x4000  /* show all comments in code, by default off */
 /*
  * Majedul: 
  *    As we will introduce more and more new optimizations, I will keep 

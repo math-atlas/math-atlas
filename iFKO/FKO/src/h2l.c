@@ -658,20 +658,17 @@ void Handle2dArrayPtrArith(short dest, short src0, char op, short src1)
    }
 }
 
-
 void DoArith(short dest, short src0, char op, short src1)
 {
-   short rd, rs0, rs1, type;
+   short rd, rs0, rs1, rs2, type;
    enum inst inst;
    extern int DTnzerod, DTnzero, DTabs, DTabsd;
 
    if (IS_PTR(STflag[dest-1]))
    {
-#if 1
       if (SToff[dest-1].sa[3]) /* 2D array pointer? */
          Handle2dArrayPtrArith(dest, src0, op, src1);
       else
-#endif
          HandlePtrArith(dest, src0, op, src1);
       return;
    }
@@ -700,13 +697,58 @@ void DoArith(short dest, short src0, char op, short src1)
          else
             InsNewInst(NULL, NULL, NULL, LD, -rs1, SToff[src1-1].sa[2], 0);
          InsNewInst(NULL, NULL, NULL, DIV, -rd, -rs0, -rs1);
-         fprintf(stderr, "DIV %d, %d, %d\n", -rd, -rs0, -rs1);
+         /*fprintf(stderr, "DIV %d, %d, %d\n", -rd, -rs0, -rs1);*/
          LocalStore(dest, rd);
          GetReg(-1);
          return;
       }
    #endif
-   rd = rs0 = LocalLoad(src0);
+/*
+ * if 3 operands supported and dest != src0, use separate regs for destination
+ * NOTE: for MAC, dest is also in use, so load dest later
+ */
+   rs0 = LocalLoad(src0);
+   if (op != 'm' && dest != src0)
+   {
+      switch (type)
+      {
+         case T_INT:
+            #ifdef ArchHasINTthreeOps
+               rd = GetReg(type);
+            #else
+               rd = rs0;
+            #endif
+            break;
+         case T_FLOAT: case T_DOUBLE: 
+            #ifdef ArchHasFPthreeOps
+               rd = GetReg(type);
+            #else
+               rd = rs0;
+            #endif
+            break;
+         case T_VINT:
+            #ifdef ArchHasVINTthreeOps
+               rd = GetReg(type);
+            #else
+               rd = rs0;
+            #endif
+            break;
+         case T_VFLOAT: case T_VDOUBLE:
+            #ifdef ArchHasVFPthreeOps
+               rd = GetReg(type);
+            #else
+               rd = rs0;
+            #endif
+            break;
+         default: 
+            fko_error(__LINE__, "Unknown type!!!");
+      }
+   }
+   else
+      rd = rs0;
+/*
+ * 2nd src
+ */
    if (op != 'n' && op != 'a')
    {
       if (src0 != src1)
@@ -720,6 +762,9 @@ void DoArith(short dest, short src0, char op, short src1)
    if ( (op == '%' || op == '>' || op == '<') && 
         (type != T_INT && type != T_SHORT) )
       fko_error(__LINE__,"modulo and shift not defined for non-integer types");
+/*
+ * find appropriate inst
+ */
    switch(op)
    {
    case '+': /* dest = src0 + src1 */
@@ -734,14 +779,12 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_DOUBLE:
          inst = FADDD;
          break;
-#if 1
       case T_VFLOAT:
          inst = VFADD;
          break;
       case T_VDOUBLE:
          inst = VDADD;
          break;
-#endif
       }
       break;
    case '-': /* dest = src0 - src1 */
@@ -756,14 +799,12 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_DOUBLE:
          inst = FSUBD;
          break;
-#if 1
       case T_VFLOAT:
          inst = VFSUB;
          break;
       case T_VDOUBLE:
          inst = VDSUB;
          break;
-#endif
       }
       break;
    case '*': /* dest = src0 * src1 */
@@ -778,14 +819,12 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_DOUBLE:
          inst = FMULD;
          break;
-#if 1
       case T_VFLOAT:
          inst = VFMUL;
          break;
       case T_VDOUBLE:
          inst = VDMUL;
          break;
-#endif
       }
       break;
    case '/': /* dest = src0 / src1 */
@@ -800,14 +839,12 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_DOUBLE:
          inst = FDIVD;
          break;
-#if 1
       case T_VFLOAT:
          inst = VFDIV;
          break;
       case T_VDOUBLE:
          inst = VDDIV;
          break;
-#endif
       }
       break;
    case '%': /* dest = src0 % src1 */
@@ -827,48 +864,56 @@ void DoArith(short dest, short src0, char op, short src1)
          #ifdef ArchHasMAC
             rd = LocalLoad(dest);
             if (type == T_FLOAT) inst = FMAC;
-#if 1            
             else if (type == T_DOUBLE) inst = FMACD;
             else if (type == T_VFLOAT) inst = VFMAC;
             else if (type == T_VDOUBLE) inst = VDMAC;
             else 
                fko_error(__LINE__, "MAC not supported with this type!");
-#else
-            else inst = FMACD; /*Majedul: was a typo, corrected it. */
-#endif
          #else
-            if (type == T_FLOAT)
+            switch(type)
             {
-               InsNewInst(NULL, NULL, NULL, FMUL, -rs0, -rs0, -rs1);
-               inst = FADD;
+               case T_FLOAT: 
+                  #ifdef ArchHasFPthreeOps
+                     rs2 = GetReg(type);
+                  #else
+                     rs2 = rs0;
+                  #endif
+                  InsNewInst(NULL, NULL, NULL, FMUL, -rs2, -rs0, -rs1);
+                  inst = FADD;
+                  break;
+               case T_DOUBLE:
+                  #ifdef ArchHasFPthreeOps
+                     rs2 = GetReg(type);
+                  #else
+                     rs2 = rs0;
+                  #endif
+                  InsNewInst(NULL, NULL, NULL, FMULD, -rs2, -rs0, -rs1);
+                  inst = FADDD;
+                  break;
+               case T_VFLOAT: 
+                  #ifdef ArchHasVFPthreeOps
+                     rs2 = GetReg(type);
+                  #else
+                     rs2 = rs0;
+                  #endif
+                  InsNewInst(NULL, NULL, NULL, VFMUL, -rs2, -rs0, -rs1);
+                  inst = VFADD;
+               case T_VDOUBLE:
+                  #ifdef ArchHasVFPthreeOps
+                     rs2 = GetReg(type);
+                  #else
+                     rs2 = rs0;
+                  #endif
+                  InsNewInst(NULL, NULL, NULL, VDMUL, -rs2, -rs0, -rs1);
+                  inst = VDADD;
+                  break;
+               default: 
+                  fko_error(stderr, "MAC not supported with this type!");
             }
-#if 1
-            else if (type == T_DOUBLE)
-            {
-               InsNewInst(NULL, NULL, NULL, FMULD, -rs0, -rs0, -rs1);
-               inst = FADDD;
-            }
-            else if (type == T_VFLOAT)
-            {
-               InsNewInst(NULL, NULL, NULL, VFMUL, -rs0, -rs0, -rs1);
-               inst = VFADD;
-            }
-            else if (type == T_VDOUBLE)
-            {
-               InsNewInst(NULL, NULL, NULL, VDMUL, -rs0, -rs0, -rs1);
-               inst = VDADD;
-            }
-            else
-               fko_error(__LINE__, "MAC not supported with this type!");
-
-#else
-            else
-            {
-               InsNewInst(NULL, NULL, NULL, FMULD, -rs0, -rs0, -rs1);
-               inst = FADDD;
-            }
-#endif            
-            rs1 = rs0;
+/*
+ *          for addition, dest is also src0
+ */
+            rs1 = rs2;
             rs0 = rd = LocalLoad(dest);
          #endif
       }

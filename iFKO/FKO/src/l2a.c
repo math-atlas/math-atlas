@@ -1281,6 +1281,41 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
    #ifdef X86_64
+      case LEAS2: LEAS4: LEAS8:
+         fko_error(__LINE__, "Not implemented LEA for short!!");
+         break;
+   #endif
+   #ifdef X86  
+/*
+ *    HERE HERE, we implement LEA for only following specific cases where we can
+ *    reduce register usage using this special instruction:
+ *       1) pA += incA;
+ *       2) pA = pA0 + incA;
+ *    NOTE: it's not a general implementation of lea in x86
+ */
+      case LEA2:
+         assert(op1 < 0 && op2 < 0 && op3 < 0);
+         ap->next = PrintAssln("\tlea\t(%s, %s, 2), %s\n", 
+                                  archiregs[-IREGBEG-op2], 
+                                  archiregs[-IREGBEG-op3], 
+                                  archiregs[-IREGBEG-op1]);
+         break;
+      case LEA4:
+         assert(op1 < 0 && op2 < 0 && op3 < 0);
+         ap->next = PrintAssln("\tlea\t(%s, %s, 4), %s\n", 
+                                  archiregs[-IREGBEG-op2], 
+                                  archiregs[-IREGBEG-op3], 
+                                  archiregs[-IREGBEG-op1]);
+         break;
+      case LEA8:
+         assert(op1 < 0 && op2 < 0 && op3 < 0);
+         ap->next = PrintAssln("\tlea\t(%s, %s, 8), %s\n", 
+                                  archiregs[-IREGBEG-op2], 
+                                  archiregs[-IREGBEG-op3], 
+                                  archiregs[-IREGBEG-op1]);
+         break;
+   #endif
+   #ifdef X86_64
       case CVTSI: /* convert 32bit to 64 bit int*/
 /*
  *    Majedul: we are using  movslq for this 
@@ -1872,12 +1907,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                if (op3 < 0 )
                   ap->next = PrintAssln("\tvaddss\t%s,%s,%s\n", 
                                         archxmmregs[GetDregID(op3)],
-	                                archxmmregs[-FREGBEG-op1],
+	                                archxmmregs[-FREGBEG-op2],
 	                                archxmmregs[-FREGBEG-op1]);
                else
                   ap->next = PrintAssln("\tvaddss\t%s,%s,%s\n", 
                                         GetDregOrDeref(op3),
-	                                archxmmregs[-FREGBEG-op1],
+	                                archxmmregs[-FREGBEG-op2],
 	                                archxmmregs[-FREGBEG-op1]);
 
             #else
@@ -3212,7 +3247,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*
  *       Allow scalar to vector reg to reg move
  *       two variation :
- * 1. VDMOVS vr0, sr, vr1  // vr0[0] = vr2[0], vr0[vlen-1: 1] = vr1[vlen-1: 1]
+ * 1. VDMOVS vr0, sr, vr1  // vr0[0] = sr, vr0[vlen-1: 1] = vr1[vlen-1: 1]
  * 2. VDMOVS sr, vr, 0     // sr = vr[0]
  *       here vr0 and vr1 should be vector register
  */
@@ -4696,6 +4731,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *          7654 3211
  *          7654 3322
  *          7654 3232
+ *          
+ *          FIXME: legacy SSE may get converted into VEX.128 instruction using
+ *          -mavx. But all VEX.128 zeros the upper-half of the YMM register
  */
             /* 7654 7654 */
             if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4 &&
