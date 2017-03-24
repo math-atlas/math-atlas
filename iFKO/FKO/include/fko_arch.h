@@ -127,6 +127,9 @@
    #endif
    #ifdef AVX
       #define ArchHasMemBroadcast
+      #define ArchHasFPthreeOps
+      #define ArchHasVFPthreeOps
+      #define ArchHasVINTthreeOps
       #define FP_VEC
       #define FKO_SVLEN 8
       #define DP_VEC
@@ -137,6 +140,10 @@
    #else /* by default SSE4.1*/
       /*#define INT_VEC*/
       /*#define FKO_IVLEN 4*/
+/*
+ *    added synthetic inst in SSE to support mem broadcast
+ */
+      #define ArchHasMemBroadcast
       #define SSE3   /* sse4.1 includes sse3 */
       #define FP_VEC
       #define FKO_SVLEN 4
@@ -706,7 +713,7 @@
    #endif
 #else
    #ifdef X86_64
-      #define HAMMER
+      #define COREI
    #endif
    #ifdef PIII
       #define NCACHE 2
@@ -729,11 +736,25 @@
       #else
          extern short LINESIZE[NCACHE];
       #endif
-   #else /* P4/P4E defaults */
+   #elif defined(p4) /* P4/P4E */
       #define NCACHE 1
       #ifdef ARCH_DECLARE
          /*short LINESIZE[NCACHE] = {128};*/
          short LINESIZE[NCACHE] = {64};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
+   #elif defined(COREI) /* corei, AMD defaults */
+      #define NCACHE 3
+      #ifdef ARCH_DECLARE
+         short LINESIZE[NCACHE] = {64,64,64};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
+   #else /* defaults */
+      #define NCACHE 2
+      #ifdef ARCH_DECLARE
+         short LINESIZE[NCACHE] = {64,64};
       #else
          extern short LINESIZE[NCACHE];
       #endif

@@ -74,6 +74,9 @@ enum inst
    CMPAND,                      /* cc0, r1, r2/c : set [cc] based on r1 & r2 */
    CMP,                         /* cc#, r1, r2/c: set [cc] based on r1 - r2 */
    NEG,                         /* [r0], [r1] : r0 = -r1 */
+   LEA2,                        /* lea r0, [r1, r2, 2] */ 
+   LEA4,                        /* lea r0, [r1, r2, 4] */ 
+   LEA8,                        /* lea r0, [r1, r2, 8] */ 
 /*   ABS, ; abs commented out because not widely supported */
 /*
  * 32-bit integer (64-bit systems only)
@@ -95,7 +98,10 @@ enum inst
    CMPS,                        /* set [cc](r0) based on r1 - r2 */
    MOVS,                        /* [r0], [r1] : r0 = r1 */
    NEGS,                        /* [r0], [r1] : r0 = -r1 */
-   ABSS,
+   LEAS2,                        /* lea r0, [r1, r2, 2] */ 
+   LEAS4,                        /* lea r0, [r1, r2, 4] */ 
+   LEAS8,                        /* lea r0, [r1, r2, 8] */ 
+   /*ABSS,*/
 /*
  * Jump instructions
  */
@@ -502,6 +508,9 @@ char *instmnem[] =
    "CMPAND",
    "CMP",
    "NEG",
+   "LEA2",
+   "LEA4",
+   "LEA8",
 /*   ABS, ; abs commented out because not widely supported */
 /*
  * 32-bit integer (64-bit systems only)
@@ -523,7 +532,10 @@ char *instmnem[] =
    "UDIVS",
    "CMPS",
    "NEGS",
-   "ABSS",
+   "LEAS2",
+   "LEAS4",
+   "LEAS8", 
+   /*"ABSS",*/
 /*
  * Jump instructions
  */
@@ -960,7 +972,8 @@ char *instmnem[] =
                       (i_) == FCMOVD1 || (i_) == FCMOVD2 || (i_) == VFCMOV1 || \
                       (i_) == VFCMOV2 || (i_) == VDCMOV1 || (i_) == VDCMOV2 || \
                       (i_) == CMOV1 || (i_) == CMOV2 || (i_) == VSCMOV1 || \
-                      (i_) == VSCMOV2 || (i_) == VICMOV1 || (i_) == VICMOV2 )
+                      (i_) == VSCMOV2 || (i_) == VICMOV1 || (i_) == VICMOV2 || \
+                      (i_) == LEA2 || (i_) == LEA4 || (i_) == LEA8 )
 /*
  * NOTE: FMA4 in AMD can be re ordered, src2 can be mem. need to consider
  * this again while implemting other FMAC like: FMA3 ... 
@@ -974,8 +987,9 @@ char *instmnem[] =
  * Majedul: These are the instructions where destination is inherently used as
  * one of the sources. This is due to map 4 operands instruction into our 
  * three operand LIL instruction.
- * NOTE: SHUFFLE and ireg2vreg instructions may keep the destination unchanged
+ * NOTE: 1. SHUFFLE and ireg2vreg instructions may keep the destination unchanged
  * at certain positions. So, destination is also implicitly used for them
+ *       2. DIV, UDIV, DIVS, UDIVS : handled specially 
  */
 #define IS_DEST_INUSE_IMPLICITLY(i_) ((i_) == FMAC || (i_) == FMACD || \
                                       (i_) == VFMAC || (i_) == VDMAC || \
@@ -1007,7 +1021,7 @@ char *instmnem[] =
                               (i_) == MULS   || (i_) == UMULS || \
                               (i_) == DIVS   || (i_) == UDIVS || \
                               (i_) == CMPS   || (i_) == MOVS || \
-                              (i_) == NEGS   || (i_) == ABSS )
+                              (i_) == NEGS  )
 
 #define IS_SHUFFLE_OP(i_)   ( (i_) == VFSHUF   || (i_) == VDSHUF || \
                               (i_) == VSSHUF   || (i_) == VISHUF )

@@ -19,4 +19,5 @@ int DoRemoveOneUseLoads(BLIST *scope);
 int DoLastUseLoadRemoval(BLIST *scope);
 int DoReverseCopyProp(BLIST *scope);
 int DoEnforceLoadStore(BLIST *scope);
+int DoOptArchSpecInst(BLIST *scope);
 #endif

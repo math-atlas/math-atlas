@@ -17,7 +17,6 @@
  *    already freed)
  *
  */
-
 char **STname;
 union valoff *SToff;
 int *STflag;
@@ -34,9 +33,10 @@ static int nviloc=0;
 
 int LOCSIZE=0, LOCALIGN=0, NPARA=0;
 
-#define STCHUNK 1024    /* increased for safety ...*/
+#define STCHUNK 1024 
 #define DTCHUNK 1024
 #define DCCHUNK 256
+#define MAXENTRY 32767 
 
 static void GetNewSymtab(int chunk)
 {
@@ -86,6 +86,9 @@ static short STnew(char *name, int flag, union valoff off)
    STflag[N] = flag;
    SToff[N] = off;
    STpts2[N] = 0;
+#if 1
+   assert(N!=MAXENTRY);
+#endif
    return(++N);
 }
 
@@ -154,6 +157,9 @@ short AddSTarr(short ptr, short ndim, short *ldas)
  */
    STarr[Narr].cldas = NULL; 
    STarr[Narr].colptrs = NULL; 
+#if 1
+   assert(Narr!=MAXENTRY);
+#endif
    return (++Narr);
 }
 
@@ -202,6 +208,9 @@ static int DTCnew(INT_DTC val)
    if (Ndc == TNdc)
       GetNewDtcTable(DCCHUNK);
    DTcon[Ndc] = val;
+#if 1
+   assert(Ndc!=MAXENTRY);
+#endif
    return(++Ndc);
 }
 

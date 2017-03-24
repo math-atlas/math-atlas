@@ -266,10 +266,15 @@ void PrintOptTree(FILE *fpout, struct optblkq *optree)
       for(i=0; i < optree->nopt; i++)
          fprintf(fpout, "%s ", optabbr[optree->opts[i]]);
       
-      fprintf(fpout, "(");
-      for (i=0; i < NTYPES; i++)
-         fprintf(fpout, "%d,", optree->nspill[i]);
-      fprintf(fpout, ")\n");
+      if (optree->nspill)
+      {
+         fprintf(fpout, "(");
+         for (i=0; i < NTYPES; i++)
+            fprintf(fpout, "%d,", optree->nspill[i]);
+         fprintf(fpout, ")\n");
+      }
+      else
+         fprintf(fpout, "\n");
    }
 
    if (optree->next)
@@ -767,9 +772,14 @@ struct optblkq *GetFlagsN(int nargs, char **args,
          case 'o':
             fout = args[++i];
             break;
+/*
+ *       Majedul: we changed the logic here.. by default, we won't show the 
+ *       comments in code anymore, introduced IFF_SHOWCOMMENTS to show them. 
+ */
          case 'K':
             j = atoi(args[++i]);
             if (!j) FKO_FLAG |= IFF_KILLCOMMENTS;
+            else FKO_FLAG |= IFF_SHOWCOMMENTS;
             break;
          case 'L':
             if (args[i][2] && args[i][3] && args[i][4] && args[i][2] == 'N' 
@@ -1891,7 +1901,6 @@ int GetNumLoopScopes()
 
    if (!CFLOOP)
       FindLoops();
-
    lpq = loopq;
    i = 0;
    while(lpq)
@@ -1924,7 +1933,8 @@ BLIST *GetLoopScopebyNum(int id)
    {
       if (i == id)
       {
-         scope = CopyBlockList(lpq->blocks);
+         /*scope = CopyBlockList(lpq->blocks);*/
+         scope = NewReverseBlockList(lpq->blocks);
          return(scope);
       }
       i++;
@@ -1935,6 +1945,7 @@ BLIST *GetLoopScopebyNum(int id)
    {
       for (scope=NULL,bp=bbbase; bp; bp = bp->down)
          scope = AddBlockToList(scope, bp);
+      scope = ReverseBlockList(scope);
    }
    else /* invalid id*/
    {
@@ -2027,9 +2038,10 @@ int CheckPreheaderPosttails(BLIST *scope)
                   || (blp->blk->csucc && blp->blk->csucc != bp) )
             {
                nerr++;
-               /*fprintf(stderr,"preheader blk-%d has successor other header-%d\n", 
+            /*fprintf(stderr,"preheader blk-%d has successor other header-%d\n", 
                        blp->blk->bnum, bp->bnum);*/
-               fko_warn(__LINE__,"preheader blk-%d has successor other header-%d\n",
+               fko_warn(__LINE__,
+                     "preheader blk-%d has successor other header-%d\n",
                        blp->blk->bnum, bp->bnum);
             }
          }
@@ -2217,8 +2229,10 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int **nspill)
    BBLOCK *bp;
    static short nlab=0, labs[4];
    /*static int iopt = 0, bv = 0;*/ /* Majedul: for opt logger, bv -> */
+   static int iopt = 0, bv = 0;
    /*extern LOOPQ *optloop;*/
    extern BBLOCK *bbbase;;
+  
 /*
  * Form scope based on global setting
  */
@@ -2258,8 +2272,12 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int **nspill)
    {
       for (scope=NULL,bp=bbbase; bp; bp = bp->down)
          scope = AddBlockToList(scope, bp);
+      scope = ReverseBlockList(scope);
    }
-
+#if 0
+   fprintf(stderr, "DoOpt scope = %s\n",PrintBlockList(scope));
+   fprintf(stderr, "******************************************\n\n");
+#endif
 /*
  * NOTE: Need a way to eliminate _IFKO_EPILOGUE iff this is last optimization
  */
@@ -2514,6 +2532,7 @@ int PerformOptN(struct optblkq *optblks)
    }
    else
       nc = DoOptBlock(n, -1, optblks); /* -1 means no loop scope */ 
+      /*nc = DoOptBlock(n, 0, optblks);*/
 
    INDEADU2D = CFUSETU2D = 0; /* is it necessary? */
    return(nc);
@@ -2696,11 +2715,14 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       CalcAllDeadVariables();
    if (!CFLOOP)
       FindLoops();
-   AddBlockComments(bbbase);
-   AddLoopComments();
-#if 0
-   AddSetUseComments(bbbase);   
-   AddDeadComments(bbbase); 
+#if 1
+   if (FKO_FLAG & IFF_SHOWCOMMENTS)
+   {
+      AddBlockComments(bbbase);
+      AddLoopComments();
+      AddSetUseComments(bbbase);   
+      AddDeadComments(bbbase); 
+   }
 #endif
    i = FinalizePrologueEpilogue(bbbase, SAVESP);
    KillAllLocinit(ParaDerefQ);
@@ -2756,45 +2778,46 @@ struct optblkq *DefaultOptBlocks(void)
  *     -L 1 0 4 ls 2 3 4  
  *     -G 2 10 3 bc uj ul 
  *     -L 3 10 5 ra cp rc u1 lu
- *     -G 4 10 5 ra cp rc u1 lu 
+ *     -G 4 10 5 ra cp rc u1 lu // 
  *     -G 5 10 3 bc uj ul 
  */
 {
+   int i = 1;
    struct optblkq *base, *op;
 
 /*
  * use encapsulated blk so that sprout node can gen the tree on next
  */
-   op = base = NewOptBlock(1, 0, 5, IOPT_SCOP);
+   op = base = NewOptBlock(i++, 0, 5, IOPT_SCOP);
    op->opts[0] = EnforceLoadStore;
    op->opts[1] = MaxOpt+2;
    op->opts[2] = MaxOpt+3;
    op->opts[3] = MaxOpt+4;
    op->opts[4] = MaxOpt+5;
    
-   op->next = NewOptBlock(2, 10, 3, IOPT_GLOB);
+   op->next = NewOptBlock(i++, 20, 3, IOPT_GLOB);
    op = op->next;
    op->opts[0] = BranchChain;
    op->opts[1] = UselessJmpElim;
    op->opts[2] = UselessLabElim;
 
-   op->next = NewOptBlock(3, 10, 5, IOPT_SCOP); /* this is for optloop */
+   op->next = NewOptBlock(i++, 20, 5, IOPT_SCOP);
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
    op->opts[2] = ReverseCopyProp;
    op->opts[3] = RemoveOneUseLoads;
    op->opts[4] = LastUseLoadRemoval;
-   
-   op->next = NewOptBlock(4, 10, 5, IOPT_GLOB); /* this is for optloop */
+#if 1 
+   op->next = NewOptBlock(i++, 20, 5, IOPT_GLOB);
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
    op->opts[2] = ReverseCopyProp;
    op->opts[3] = RemoveOneUseLoads;
    op->opts[4] = LastUseLoadRemoval;
-   
-   op->next = NewOptBlock(5, 10, 3, IOPT_GLOB);
+#endif   
+   op->next = NewOptBlock(i++, 20, 3, IOPT_GLOB);
    op = op->next;
    op->opts[0] = BranchChain;
    op->opts[1] = UselessJmpElim;
@@ -3315,6 +3338,10 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
 #endif
 
 void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
+/*
+ * FIXME: not working fine with current PerformOptN structure if we have more 
+ * than one loop in loopnest; overwritten by the data of uppermost loop !!!
+ */
 {
    int i, ln;
    struct optblkq *op;
@@ -3402,6 +3429,11 @@ struct optblkq *PerformRepeatableOpts(struct optblkq *optblks)
  * Perform repeatable optimizations based on optblks 
  */
 #if 0
+   PrintSymtabStaticMember(stderr);
+   PrintST(stdout);
+   exit(0);
+#endif
+#if 0
       fprintf(stdout, "\n LIL Repeatable opt\n");
       PrintInst(stdout,bbbase);
       exit(0);
@@ -3427,28 +3459,33 @@ void GenAssembly(FILE *fpout)
       CalcAllDeadVariables();
    if (!CFLOOP)
       FindLoops();
-#if 0  
-   AddBlockComments(bbbase);
-   AddLoopComments();   
-#endif   
-#if 0
-      fprintf(stdout, "\n LIL Before FinalizePrologueEpilogue\n");
-      PrintInst(stdout,bbbase);
-      exit(0);
-#endif
+/*
+ * add comments in code if requested
+ */
+   if (FKO_FLAG & IFF_SHOWCOMMENTS)
+   {
+      AddBlockComments(bbbase);
+      AddLoopComments();
+      /*AddSetUseComments(bbbase);*/   
+      /*AddDeadComments(bbbase); */
+   }
+/*
+ * finalize prologue epilogue
+ */
    i = FinalizePrologueEpilogue(bbbase,0 );
    KillAllLocinit(ParaDerefQ);
    ParaDerefQ = NULL;
    if (i)
       fprintf(stderr, "ERR from PrologueEpilogue\n");
    CheckFlow(bbbase, __FILE__,__LINE__);
-#if 0
-   //PrintST(stdout);
-   fprintf(stdout, "Final LIL \n");
-   PrintInst(stdout, bbbase);
-   exit(0);
-#endif   
-   //DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
+/*
+ * add repeatable opts log if requested
+ */
+   if ( (FKO_FLAG & IFF_VERBOSE) && 0) /* skipped for now */
+      DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
+/*
+ * LIL to assembly 
+ */
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
    bbbase=NULL;                  /* whenever Kill it here, make it NULL */
@@ -3461,6 +3498,10 @@ void FinalStage(FILE *fpout, struct optblkq *optblks)
  * final stage to generate assembly after performing repeatable optimizations
  */
 {
+#ifdef X86
+   BLIST *bl;
+   BBLOCK *bp;
+#endif
 /*
  * Need to reveal arch mem uses before DeadDefElim, otherwise, those defs would
  * be deleted from prologue
@@ -3479,6 +3520,21 @@ void FinalStage(FILE *fpout, struct optblkq *optblks)
  */
    if (!(FKO_FLAG & IFF_NODDE) )
       DoDeadDefElim();
+
+#if defined(X86) && 1
+/*
+ * peephole optimization: replace shl/add with lea
+ */
+   for (bp=bbbase, bl=NULL; bp; bp=bp->down)
+      bl = AddBlockToList(bl, bp);
+   DoOptArchSpecInst(bl);
+   KillBlockList(bl);
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+#endif
 /*
  * perform repeatable optimization
  */
@@ -3507,132 +3563,6 @@ void FinalStage(FILE *fpout, struct optblkq *optblks)
    KillAllGlobalData(optblks); 
 }
 
-#if 0
-void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
-/*
- * NOTE: this is used temporarily to genarate assembly and test the output
- * will formalize later ... fpout, optblks, abase
- */
-{
-   int i; 
-   struct assmln *abase;
-   extern struct locinit *ParaDerefQ;
-
-   CalcInsOuts(bbbase);
-   CalcAllDeadVariables();
-/*
- * NOTE: optblks for repeateble optimization now depends on the updated CFG. 
- * So, we shifted the optblks generation after all fundamental optimizations
- */
-   if (!optblks)
-      optblks = DefaultOptBlocks();
-   optblks = OptBlockQtoTree(optblks);
-
-#if 0
-   PrintST(stdout);
-   fprintf(stdout, "LIL before Reveal ARCH MEM  \n");
-   PrintInst(stdout, bbbase);
-   //exit(0);
-#endif  
-
-#ifdef X86 
-   RevealArchMemUses(); /* to handle ABS in X86 */
-   if (!CFUSETU2D)
-   {
-      CalcInsOuts(bbbase);
-      CalcAllDeadVariables();
-   }
-#endif
-
-#if 0
-   PrintInst(stdout, bbbase);
-   PrintInst(stdout, bbbase);
-   //exit(0);
-#endif  
-
-   /*PerformOptN(0, optblks);*/
-   PerformOptN(optblks);
-/*
- * if -ra is applied, send back the live-range spilling info and die/return
- */
-   if (fpLRSINFO)
-   {
-      FeedbackLValSpill(fpLRSINFO, optblks);
-      /*KillAllOptBlocks(optblks);*/ /* kill in KillAllGlobalData */
-#if 0
-      fprintf(stdout, "\n Scope by scope:\n");
-      fprintf(stdout, "------------------\n");
-      PrintOptTree(stdout, optblks);
-#endif
-      return;
-   }
-
-
-#if 0
-   fprintf(stderr, "BVEC after OPTN\n\n");
-   PrintBVecInfo(stderr);
-#endif   
-
-#if 0
-   PrintST(stdout);
-   fprintf(stdout, "LIL after Repeatable Opt \n");
-   PrintInst(stdout, bbbase);
-   ShowFlow("cfg.dot", bbbase);
-   {
-      extern LOOPQ *loopq;
-      PrintLoop(stderr, loopq);
-   }
-   exit(0);
-#endif   
-
-
-/*
- * Non Temporal write
- */
-   if (NWNT)
-   {
-      NAWNT = DoStoreNT(NULL);
-/*
- * Need to free ???? 
- */
-   }
-
-   INUSETU2D = INDEADU2D = CFUSETU2D = 0;
-   if (!INDEADU2D)
-      CalcAllDeadVariables();
-   if (!CFLOOP)
-      FindLoops();
-#if 0  
-   AddBlockComments(bbbase);
-   AddLoopComments();   
-#endif   
-#if 0
-      //PrintST(stderr);
-      fprintf(stdout, "\n LIL Before FinalizePrologueEpilogue\n");
-      PrintInst(stdout,bbbase);
-      //exit(0);
-#endif
-   i = FinalizePrologueEpilogue(bbbase,0 );
-   KillAllLocinit(ParaDerefQ);
-   ParaDerefQ = NULL;
-   if (i)
-      fprintf(stderr, "ERR from PrologueEpilogue\n");
-   CheckFlow(bbbase, __FILE__,__LINE__);
-#if 0
-   //PrintST(stdout);
-   fprintf(stdout, "Final LIL \n");
-   PrintInst(stdout, bbbase);
-   exit(0);
-#endif   
-   DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
-   abase = lil2ass(bbbase);
-   KillAllBasicBlocks(bbbase);
-   bbbase=NULL;                  /* whenever Kill, make it NULL */
-   dump_assembly(fpout, abase);
-   KillAllAssln(abase);
-}
-#endif
-
 int IsControlFlowInLoop(BLIST *lpblks, BBLOCK *header)
 {
    BLIST *bl;
@@ -3659,12 +3589,6 @@ void AddOptWithOptimizeLC(LOOPQ *lp)
  * killed the loop control to make the analysis easier, we will update the
  * loop control with OptimizeLoopControl again!
  */
-#if 0
-   fprintf(stdout, "lil\n");
-   PrintInst(stdout, bbbase);
-   exit(0);
-#endif
-
    KillLoopControl(optloop);
    pi0 = FindMovingPointers(lp->blocks);
    for (n=0,pi=pi0; pi; pi=pi->next,n++);
@@ -3966,6 +3890,7 @@ int main(int nargs, char **args)
    char *fin;
    struct optblkq *optblks;
    BBLOCK *bp;
+   BLIST *bl;
    /*int RCapp;*/
    LPLIST *lpnest;
    short *ptrs, *aptr;
@@ -4042,13 +3967,6 @@ int main(int nargs, char **args)
       KillAllGlobalData(optblks); 
       exit(0);
    }
-#if 0
-   if (FKO_FLAG & IFF_GENINTERM && state0) /*flag state0 is not impl yet */
-   {
-      SaveFKOState(0);
-      exit(0);
-   }
-#endif   
 /*
  * if we want to apply compiler's suggested best vectorization methods, analyze
  * it and set flags
@@ -4253,7 +4171,6 @@ int main(int nargs, char **args)
             assert(aptr);
             aptr[0] = 1;
             aptr[1] = ptrs[IWAY-STN_VEC_SLP];
-            /*fprintf(stderr, "ptr = %s(%d)\n", STname[aptr[1]-1], IWAY);*/
             assert(!LoopNestVec(aptr, &bvlpl));
             free(ptrs);
             free(aptr);
@@ -4293,7 +4210,6 @@ int main(int nargs, char **args)
          ReshapeFallThruCode(); 
          /* FKO_UR = 1;*/  /* forced to unroll factor 1*/
       }
-      
       else /*if(RCapp)*/ /* use RcVec as a general pupose vec method*/
       {
          VECT_FLAG &= ~VECT_SV;
@@ -4302,47 +4218,14 @@ int main(int nargs, char **args)
          assert(!RcVectorization(optloop));
          FinalizeVectorCleanup(optloop, 1);
       }
-#if 0      
-      else
-      {
-         VECT_FLAG &= ~VECT_SV;
-         VECT_FLAG |= VECT_NCONTRL;
-         /*VectorAnalysis();*/
-         assert(!RcVectorAnalysis());
-        // assert(!SpeculativeVectorAnalysis());
-         RcVectorization();
-         //Vectorization();
-         FinalizeVectorCleanup(optloop, 1);
-      }
-#endif
 /*
- *    NOTE:
- *    old UnrollCleanup will not work anymore after calling this function.
- *    new UnrollCleanup should recognize the changes and update accordingly
- *    NOTE: as this cleanup updates the loopcontrol, must invalidate the old 
- *    one.
+ *    recompute the optloop and CFG
  */
-#if 0      
-      if (FKO_UR <= 1)
-      {
-         InvalidateLoopInfo();
-         bbbase = NewBasicBlocks(bbbase);
-         CheckFlow(bbbase, __FILE__,__LINE__);
-         FindLoops();
-         CheckFlow(bbbase, __FILE__, __LINE__);
-      }
-#else
       InvalidateLoopInfo();
       bbbase = NewBasicBlocks(bbbase);
       CheckFlow(bbbase, __FILE__,__LINE__);
       FindLoops();
       CheckFlow(bbbase, __FILE__, __LINE__);
-#endif
-#if 0
-      fprintf(stdout, "LIL AFTER Vectorization \n");
-      PrintInst(stdout, bbbase);
-      exit(0);
-#endif
    }
 /*=============================================================================
  *    STATE3 : Transformation and optimization which should be applied after 
@@ -4435,7 +4318,6 @@ int main(int nargs, char **args)
  *       FIXED: Scalar Expansion can't be applied for SV and Shadow VRC.
  *       need to check for shadow VRC to skip SE
  */
-         /*fprintf(stderr, "se!\n");*/
          if (IsControlFlowInLoop(optloop->blocks, optloop->header) && 
              !( (STATE1_FLAG & IFF_ST1_RC) || (STATE1_FLAG & IFF_ST1_MMR)) )
          {
@@ -4493,13 +4375,10 @@ int main(int nargs, char **args)
    {
       /*UnrollAllTheWay();*/
       DelLoopControl(optloop);
-#if 0
-      fprintf(stdout, "LIL after unroll all the way\n");
-      PrintInst(stdout, bbbase);
-#endif
    }
 /*
  * FINAL STAGE: 
+ *    0. Apply arch specific peep hole optimization
  *    1. Apply repeatable optimization
  *    2. Non Temporal writes if requested
  *    3. Finalize the prologue epilogue
