@@ -14042,8 +14042,10 @@ int Mjoin(PATL,ammmABC)
    @define rt @Mjoin(PATL,ammm_IP)@
 #include "atlas_misc.h"
 #include "atlas_amm.h"
-@skip #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+#include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
 @ROUT ATL_ammm_IP ATL_cammm_IP
+#include "atlas_cache.h"
+#include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 /*
  * This routine handles M <= MAXM && N <= MAXN && very long K, or
  * the inner-product GEMM form.  It appears in the GEMM-based SYRK, which
@@ -15653,13 +15655,33 @@ int Mjoin(PATL,ammm_IP)
 {
    ipinfo_t ip;
    TYPE *a, *b, *c;
-   void *vp;
-   int i;
+   void *vp, *ipp;
+   unsigned int i, imm, mu, nu, mb, nb;
 
+   #if 1
+   if (ATL_VWipgen_BEST_KB*(M+N) > LLC_ELTS &&       /* too large prob */
+       M*N > ATL_VWipgen_MAX_MB*ATL_VWipgen_MAX_MB)  /* should be subblked */
+      return(1);                                     /* so decline case */
+   if (K < ATL_VWipgen_BEST_KB)  /* really 1block! */
+   {  /* change to call _1b eventually */
+      for (i=0; i < ATL_VWipgen_LAST_IDX; i++)
+         if (ATL_GetVWipgenKB(i) >= K)
+            break;
+   }
+   else
+      i = ATL_VWipgen_BEST_IDX;
+   ATL_GetVWipgenAMMI(i);
+   ATL_AMM_GetMNU(imm, mu, nu);
+   mb = ((M+mu-1)/mu)*mu;
+   nb = ((M+nu-1)/nu)*nu;
+   Mjoin(PATL,ipgenInfoPop)(&ip, i, TA, TB, M, N, K, lda, ldb, ldc, alpha,
+                             beta, 0, 1, mb, mb, 0, 1, nb, nb);
+   #else
    i = Mjoin(PATL,geGetAmmmIndx)(M, N, K);
    Mjoin(PATL,geComputeIPInfo)(&ip, i, TA, TB, M, N, K, lda, ldb, ldc, 
                                alpha, beta);
-   vp = malloc(ATL_MulBySize(ip.szC+ip.szA+ip.szB+(ip.mu<<1)*ip.nu)
+   #endif
+   vp = malloc(ATL_MulBySize(ip.szC+ip.szA+ip.szB+ip.exsz)
                + 3*ATL_Cachelen);
    if (!vp)
       return(1);
@@ -35804,7 +35826,7 @@ void srch_dMN(char pre, int verb)
 int main(int nargs, char **args)
 {
    ATL_mmnode_t *mmb, *mp;
-   int verb=0, nkern0, nkern, flag;
+   int verb=0, nkern0, nkern, flag=0;
    unsigned int bLLC;
    char pre, upr;
    upr = pre = GetFlags(nargs, args);
@@ -35817,16 +35839,14 @@ int main(int nargs, char **args)
  * Get user & gen cases, and try compile- and run-time versions
  */
    mmb = GetWorkingUserCases(verb, pre);
+   mmb = MMApplyRules(mmb, flag, 0, 0);
    mp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   mp = MMApplyRules(mp, flag|(1<<MMR_MKCOMP), 0, 0);
    assert(mp);
    mmb = AddUniqueMMKernCompList(mmb, mp);
    KillAllMMNodes(mp);
    flag = (verb > 3) ? 3:(verb&3);
    flag |= 3 << 2;
-   mp = MMApplyRules(mmb, flag|(1<<MMR_MKCOMP), 0, 0);
-   mmb = NULL;
-   mmb = AddUniqueMMKernCompList(mmb, mp);
-   KillAllMMNodes(mp);
 
    bLLC = minSquareNB(upr, LLC_SZ, mmb);
    printf("bLLC = %u\n", bLLC);
@@ -37619,6 +37639,25 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
       nkvec += FLAG_IS_SET(mp->flag, MMF_KVEC);
    }
    fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n\n");
+
+   fprintf(fpout, "#define ATL_AMM_GetMNU(idx_, MU_, NU_) \\\n{\\\n");
+   fprintf(fpout, 
+      "   ATL_iptr_t v_ = (ATL_AMM_ML[ATL_AMM_Idx2Entry(idx_)+3])>>%u; \\\n",
+            nbits[0]);
+   if (nbits[1])
+   {
+      fprintf(fpout, "   MU_ = ATL_AMM_MIN_MU + (v_ & 0x%x); \\\n", 
+              (1<<nbits[1])-1);
+      fprintf(fpout, "   v_ >>= %u; \\\n", nbits[1]);
+   }
+   else
+      fprintf(fpout, "   MU_ = ATL_AMM_MIN_MU; \\\n");
+   if (nbits[2])
+      fprintf(fpout, "   NU_ = ATL_AMM_MIN_NU + (v_ & 0x%x); \\\n", 
+              (1<<nbits[2])-1);
+   else
+      fprintf(fpout, "   NU_ = ATL_AMM_MIN_NU; \\\n");
+   fprintf(fpout, "}\n\n");
 
    fprintf(fpout, "#define ATL_AMM_iinfo(ia_,FLAG_,MU_,NU_,KU_,VLEN_,"
                   "KBMIN_,KBMAX_,K1IDX_) \\\n");

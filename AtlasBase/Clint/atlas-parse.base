@@ -2596,6 +2596,7 @@ static ATL_@(rt)node_t *DelBadArch@up@(rt)Kernels(ATL_@(rt)node_t *bp)
    while (p)
    {
       die = (p->asmbits) ? !(asmb & p->asmbits) : 0;
+@ROUT mvread r1read mmread
       #ifndef ATL_SSE3
          if (p->SSE)
          {
@@ -2608,6 +2609,7 @@ static ATL_@(rt)node_t *DelBadArch@up@(rt)Kernels(ATL_@(rt)node_t *bp)
             #endif
          }
       #endif
+@ROUT mvread r1read mmread cpread
       if (die) 
       {
          if (p == bp) 
@@ -6159,12 +6161,26 @@ ATL_mmnode_t *MMApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
 {
    ATL_mmnode_t *nb=NULL;
    const unsigned int MVS = (((flag>>2)<<MMF_MVA) & MMF_MVSET);
+   if ((flag & (1<<MMR_MKCOMP)) && (flag & (1<<MMR_NOKCOMP)))
+         flag ^= 1<<MMR_MKCOMP; /* no MKCOMP, if KCOMP disallowed! */
    while(ob)
    {
       int KILL=0, REGEN=0, KILLFIX=0;
       if (reqVL)
          KILL = (ob->vlen != reqVL);
 
+      if (!KILL&&(flag&(1<<MMR_NOKFULL))&&FLAG_IS_SET(ob->flag, MMF_KUISKB))
+      {
+         REGEN = KILL = 1;
+         if (!ob->ID) /* genned codes poss changed to runtime */
+         {
+            KILL = 0;
+            ob->kbmin = ob->ku = FLAG_IS_SET(ob->flag, MMF_KVEC) ? ob->vlen : 4;
+            ob->kbmax = 0;
+            ob->flag ^= 1<<MMF_KUISKB;
+            ob->flag |= 1<<MMF_KRUNTIME;
+         }
+      }
       if (!KILL && maxKU && ob->ku > maxKU)
       {
          REGEN = KILL = 1;
@@ -6175,34 +6191,19 @@ ATL_mmnode_t *MMApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
                if (maxKU >= ob->vlen)
                {
                   KILL = 0;
-                  ob->ku = (maxKU/ob->vlen)*ob->vlen;
+                  ob->kbmin = ob->ku = (maxKU/ob->vlen)*ob->vlen;
                }
             }
             else
             {
                KILL = 0;
+               ob->kbmin = ob->ku = Mmin(maxKU, 4);
+               @BEGINSKIP
                if (ob->ku > ob->vlen && ob->vlen <= maxKU)
                   ob->ku = (maxKU/ob->vlen)*ob->vlen;
                else
                   ob->ku = 1;
-            }
-         }
-      }
-      if (!KILL&&(flag&(1<<MMR_NOKFULL))&&FLAG_IS_SET(ob->flag, MMF_KUISKB))
-      {
-         REGEN = KILL = 1;
-         if (!ob->ID) /* genned codes poss changed to runtime */
-         {
-            KILL = 0;
-            if (FLAG_IS_SET(ob->flag, MMF_KVEC))
-            {
-               ob->ku = ob->vlen;
-               ob->flag ^= 1<<MMF_KUISKB;
-            }
-            else
-            {
-               ob->ku = 1;
-               ob->flag ^= 1<<MMF_KUISKB;
+               @ENDSKIP
             }
          }
       }
@@ -6220,6 +6221,8 @@ ATL_mmnode_t *MMApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
                   while (ob->ku % ob->vlen)
                      ob->ku--;
             }
+            ob->kbmax = 0;
+            ob->kbmin = ob->ku;
             ob->flag |= 1<<MMF_KRUNTIME;
          }
       }
@@ -6244,8 +6247,9 @@ ATL_mmnode_t *MMApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             ob->rout = DupString("ATL_tmp.c");
             ob->flag &= ~MMF_MVSET;
             ob->flag |= MVS;
-            if (flag&(1<<MMR_MKCOMP)) /* want to try run- & compile-time K */
-            {
+            if (flag&(1<<MMR_MKCOMP) && !FLAG_IS_SET(ob->flag, MMF_KUISKB)
+                && !ob->ID)
+            { /* want to try run- & compile-time K */
                ATL_mmnode_t *np=NULL;
                if (FLAG_IS_SET(ob->flag, MMF_KVEC))
                {
@@ -6259,7 +6263,11 @@ ATL_mmnode_t *MMApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
                   if (FLAG_IS_SET(ob->flag, MMF_KRUNTIME))
                      np->flag ^= 1<<MMF_KRUNTIME;
                   else
+                  {
+                     np->kbmax = 0;
+                     np->kbmin = np->ku;
                      np->flag |= 1<<MMF_KRUNTIME;
+                  }
                   np->next = nb;
                   nb = np;
                }
