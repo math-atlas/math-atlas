@@ -617,11 +617,11 @@ void Mjoin(PATL,ipgenInfo)
    (ipinfo_t *ip, int flg, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
-void Mjoin(PATL,ipdmnInfo)
+void Mjoin(PATL,ipmenInfo)
    (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
-@whiledef vw ipgen ipdmn
+@whiledef vw ipgen ipmen
 void Mjoin(PATL,@(vw)InfoPop)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
@@ -634,6 +634,7 @@ static int Mjoin(PATL,geGetAmmmIndx)(size_t M, size_t N, size_t K)
 {
    ATL_assert(0);
 }
+@BEGINSKIP
 static void Mjoin(PATL,geFillInIPInfo)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
@@ -658,6 +659,7 @@ static int Mjoin(PATL,tGetParTriCIndx)(int P, int flg, size_t N, size_t K, int *
 {
    ATL_assert(0);
 }
+@ENDSKIP
 
 static int Mjoin(PATL,tGetIPInfo_tMN)
    (ipinfo_t *ip, int P, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
@@ -13609,7 +13611,7 @@ void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
    double mf0, mfB;
 
    
-   mSQ = TimeMMFileWithPath(pre, "res", "ipdMN.sum", 0, vrb, 0, 1, 0, -1);
+   mSQ = TimeMMFileWithPath(pre, "res", "ipmen.sum", 0, vrb, 0, 1, 0, -1);
    if (!mSQ)
       return;
    mb = TimeMMFileWithPath(pre, "res", "gAMSYRK.sum", 0, vrb, 0, 1, 0, -1);
@@ -31892,7 +31894,7 @@ int main(int nargs, char **args)
 #include "atlas_level1.h"
 #include "atlas_level2.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
-#include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
+#include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #define ATL_DECL_ 1
 #include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
@@ -32230,19 +32232,8 @@ int syrk_amm
    ablk2cmat_t blk2sy, blk2c;
 
 /*
- * Need a special case for outer-product eventually.  Outer product is
- * used in right-looking Cholesky
- */
-   #if 0
-   if (K <= ATL_VWsyrk_MAX_MB)
-   #ifdef Conj_
-      return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
-   #else
-      return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
-   #endif
-   #endif
-/*
- * Inner-product version calls nothing by SYRK kernels
+ * Inner-product version calls nothing by SYRK kernels, and is called in
+ * LAPACK's default left-looking Cholesky.
  */
    if (N <= ATL_VWsyrk_MAX_NB)
    {
@@ -32253,12 +32244,27 @@ int syrk_amm
       #endif
       return(0);
    }
+/*
+ * Outer product version will call outer-product-optimized amm, and since
+ * N is too large to call syrk_IP, we expect amm perf to dominate this case.
+ * Outer product SYRK is used in right-looking Cholesky.
+ */
+   #if 0
+   if (K <= ATL_VWopgen_BEST_KB)
+   #ifdef Conj_
+      return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
+   #else
+      return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
+   #endif
+   #endif
    return(1);  /* not supporting N > MAXNB yet! */
    #if 0
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
  * For now, just pretend syrk time doesn't matter
  */
+   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+   @BEGINSKIP
 #if 1
    idx = Mjoin(PATL,GetSyrkIdx)((Uplo == AtlasUpper), N, K, 1.33);
 #else
@@ -32266,6 +32272,7 @@ int syrk_amm
 #endif
    Mjoin(PATL,sqComputeIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, 
                                alpha, beta);
+   @ENDSKIP
 /*
  * Need space for only one column-panel of At
  */
@@ -32281,7 +32288,7 @@ int syrk_amm
    nbS *= ATL_SYRKK_NU;
    szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
           * ATL_SYRKK_VLEN;
-   extra = (ip.mu<<1)*ip.nu;
+   extra = ip.exsz;
    extra = Mmax(extra, (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU);
    if (Uplo == AtlasUpper)
       extra = Mmax(extra, ip.szC);
@@ -32701,7 +32708,8 @@ int syrk_OP
    cm2am_t sy2blk;
    ablk2cmat_t blk2sy, blk2c;
 
-   Mjoin(PATL,GetSyrkOP)(&op, 1, TA, TB, N, K, lda, ldc, alpha, beta);
+@skip   Mjoin(PATL,GetSyrkOP)(&op, 1, TA, TB, N, K, lda, ldc, alpha, beta);
+   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
    nnblks = op.nfnblks + op.npnblks;
    sy2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT) : Mjoin(PATL,a2blk_syrkN);
       
@@ -35756,7 +35764,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    KillAllMMNodes(mmb);
 }
 
-void srch_dMN(char pre, int verb)
+void srch_men(char pre, int verb)
 /*
  * Finds kernels for cases with M=N at fixed values, while K is tuned.
  * Used in SYRK.
@@ -35765,7 +35773,7 @@ void srch_dMN(char pre, int verb)
    ATL_mmnode_t *bp, *mmb=NULL;
    unsigned int U, D, d, maxK;
    
-   bp = TimeMMFileWithPath(pre, "res", "ipdMN.sum", 0, 0, 0, 1, 0, -1);
+   bp = TimeMMFileWithPath(pre, "res", "ipmen.sum", 0, 0, 0, 1, 0, -1);
    if (bp)
    {
       KillAllMMNodes(bp);
@@ -35794,7 +35802,7 @@ void srch_dMN(char pre, int verb)
       mmb = KillMMNode(mmb);
    mmb = ReverseMMQ(mmb);
    MMPruneMflopTol(mmb, 0, 1.0);
-   WriteMMFileWithPath(pre, "res", "ipdMN.sum", mmb);
+   WriteMMFileWithPath(pre, "res", "ipmen.sum", mmb);
    KillAllMMNodes(mmb);
 }
 
@@ -35841,7 +35849,7 @@ int main(int nargs, char **args)
    PrintMMNodes(stdout, mmb);
 
    findBestIP(pre, verb, mmb, NULL);
-   srch_dMN(pre, verb);
+   srch_men(pre, verb);
 
    return(0);
 }
@@ -38038,10 +38046,10 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
-@ROUT ATL_ipdmninfo `@define vwf @ipdmn@`
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipdmninfo
+@ROUT ATL_ipmeninfo `@define vwf @ipmen@`
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
 #include "atlas_amm.h"
-@ROUT ATL_ipinfo ATL_ipdmninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #define  ATL_DECL_ 1
 #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
@@ -38055,7 +38063,7 @@ int main(int nargs, char **args)
    #define  ATL_DECL_ 1
 #endif
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipdmninfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
 @whiledef al 1 N X
    @whiledef ta N T
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
@@ -38338,7 +38346,7 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
       *cp = (SCALAR_IS_ZERO(beta)) ? 
             ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
 }
-@ROUT ATL_ipinfo ATL_ipdmninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo
 void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
 (
    ipinfo_t *ip,        /* output */
@@ -38669,24 +38677,28 @@ void Mjoin(PATL,@(vwf)Info)
  *   0: Force mb=M
  *   1: Force nb=N
  */
-@ROUT ATL_ipinfo ATL_ipdmninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo
 {
    size_t nfmblks, npmblks, nfnblks, npnblks;
    const ATL_iptr_t *ipp;
    ATL_UINT mb, pmb, nb, pnb, mu, nu, nmu, pnmu, nnu, pnnu;
    ATL_UINT MB, NB, k, imm, idx=ATL_VW@(vwf)_BEST_IDX;
    float spf;
-@ROUT ATL_ipdmninfo
-/*
- *  When we call this routine, we know both M & N <= LAST_NB (MB=NB in file)
- *  Find first NB >= to MAX(M,N), which will usually get better performance
- *  than if we used blocking from smaller dim.  May later want a view of
- *  degenerate M/N to handle nonsquare better.
- */
+@ROUT ATL_ipmeninfo
    NB = Mmax(M,N);
-   for (idx=0; idx < ATL_VW@(vwf)_NCASES; idx++)
-      if (ATL_GetVW@(vwf)MB(idx) >= NB)
-         break;
+/*
+ * This routine called whenever we need MB=NB (eg. SYRK) but we are doing
+ * an inner product (usually, K > ATL_VWopgen_BEST_KB).
+ * Use best NB unless M or N or smaller than that, in which case we use
+ * first square block that can contain them both.
+ */
+   if (NB < ATL_VWipmen_BEST_NB && ATL_VW@(vwf)_BEST_IDX)
+   {
+      for (idx--; idx; idx--)
+         if (ATL_GetVW@(vwf)MB(idx) < NB)
+            break;
+      idx++;
+   }
    ATL_GetVW@(vwf)Info(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
    ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
    ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
@@ -38752,7 +38764,7 @@ void Mjoin(PATL,@(vwf)Info)
       else
          npnblks = pnnu = pnb = 0;
    }
-@ROUT ATL_ipinfo ATL_ipdmninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo
    Mjoin(PATL,@(vwf)InfoPop)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha,
                              beta, nfmblks, npmblks, mb, pmb, nfnblks,
                              npnblks, nb, pnb);
