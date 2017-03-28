@@ -32257,13 +32257,15 @@ int syrk_amm
       return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
    #endif
    #endif
-   return(1);  /* not supporting N > MAXNB yet! */
    #if 0
+   return(1);  /* not supporting N > MAXNB yet! */
+   #else
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
  * For now, just pretend syrk time doesn't matter
  */
-   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+   Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+   printf("D=(%u,%u), B=(%u,%u)\n", N, K, ip.mb, ip.nb);
    @BEGINSKIP
 #if 1
    idx = Mjoin(PATL,GetSyrkIdx)((Uplo == AtlasUpper), N, K, 1.33);
@@ -32336,10 +32338,10 @@ int syrk_amm
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b1);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_b1):Mjoin(PATL,SyrkIntoC_aX_b1);
+                     Mjoin(PATL,SyrkIntoC_a1b1):Mjoin(PATL,SyrkIntoC_aXb1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
@@ -32352,27 +32354,27 @@ int syrk_amm
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
+                     Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_bX);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_bX):Mjoin(PATL,SyrkIntoC_aX_bX);
+                     Mjoin(PATL,SyrkIntoC_a1bX):Mjoin(PATL,SyrkIntoC_aXbX);
       }
    }
    else
    {
       if (SCALAR_IS_NONE(alpha))
-         blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
+         blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
       else
          blk2sy = SCALAR_IS_ONE(alpha) ?
-                  Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
+                  Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
    }
    nnblks = ip.nfnblks + ip.npnblks;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
@@ -38684,6 +38686,19 @@ void Mjoin(PATL,@(vwf)Info)
    ATL_UINT mb, pmb, nb, pnb, mu, nu, nmu, pnmu, nnu, pnnu;
    ATL_UINT MB, NB, k, imm, idx=ATL_VW@(vwf)_BEST_IDX;
    float spf;
+
+   #if ATL_VW@(vwf)_NCASES > 1
+   if (K < ATL_VW@(vwf)_BEST_KB)
+   {
+      for (idx=0; idx < ATL_VW@(vwf)_LAST_IDX; idx++)
+         if (ATL_GetVW@(vwf)KB(idx) >= K)
+            break;
+   }
+   #endif
+   ATL_GetVW@(vwf)Info(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
+   ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
+   ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
+@BEGINSKIP
 @ROUT ATL_ipmeninfo
    NB = Mmax(M,N);
 /*
@@ -38708,19 +38723,9 @@ void Mjoin(PATL,@(vwf)Info)
    pnnu = nnu = (N+nu-1)/nu;
    mb = pmb = nmu * mu;
    nb = pnb = nnu * nu;
-@ROUT ATL_ipinfo
-   #if ATL_VW@(vwf)_NCASES > 1
-   if (K < ATL_VW@(vwf)_BEST_KB)
-   {
-      for (idx=0; idx < ATL_VW@(vwf)_LAST_IDX; idx++)
-         if (ATL_GetVW@(vwf)KB(idx) >= K)
-            break;
-   }
-   #endif
-   ATL_GetVW@(vwf)Info(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
-   ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
-   ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
-   if ((flg&1) || MB >= M)
+@ENDSKIP
+@ROUT ATL_ipmeninfo `   if (MB >= M)`
+@ROUT ATL_ipinfo `   if ((flg&1) || MB >= M)`
    {
       npmblks = 1;
       nfmblks = 0;
@@ -38742,7 +38747,8 @@ void Mjoin(PATL,@(vwf)Info)
       else
          npmblks = pnmu = pmb = 0;
    }
-   if ((flg&2) || NB >= N)
+@ROUT ATL_ipinfo    `   if ((flg&2) || NB >= N)`
+@ROUT ATL_ipmeninfo `   if (NB >= N)`
    {
       npnblks = 1;
       nfnblks = 0;
@@ -38764,7 +38770,6 @@ void Mjoin(PATL,@(vwf)Info)
       else
          npnblks = pnnu = pnb = 0;
    }
-@ROUT ATL_ipinfo ATL_ipmeninfo
    Mjoin(PATL,@(vwf)InfoPop)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha,
                              beta, nfmblks, npmblks, mb, pmb, nfnblks,
                              npnblks, nb, pnb);
