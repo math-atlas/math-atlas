@@ -621,6 +621,9 @@ void Mjoin(PATL,ipmenInfo)
    (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
+double Mjoin(PATL,ipsyrkInfo) /* returns predicted time */
+   (ipinfo_t*, enum ATLAS_TRANS,size_t,size_t,size_t,size_t, 
+    const SCALAR alpha, const SCALAR beta);
 @whiledef vw ipgen ipmen
 void Mjoin(PATL,@(vw)InfoPop)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
@@ -32225,6 +32228,7 @@ int syrk_amm
    size_t sz, szA, szB, szC, szS, nnblks, extra;
    void *vp;
    TYPE *wA, *wB, *wC, *wS, *wCs, *rC, *rCs, *rS;
+   double timG;
    int nb, nbS, flg, idx;
    #ifdef Conj_
       TYPE alpha[2]={ralpha, ATL_rzero}, beta[2]={rbeta, ATL_rzero};
@@ -32240,14 +32244,54 @@ int syrk_amm
  * Inner-product version calls nothing by SYRK kernels, and is called in
  * LAPACK's default left-looking Cholesky.
  */
+   #if 0
+      Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+   #else
+      timG = Mjoin(PATL,ipsyrkInfo)(&ip, TA, N, K, lda, ldc, alpha, beta);
+   #endif
    if (N <= ATL_VWsyrk_MAX_NB)
    {
-      #ifdef Conj_
-         Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+      double timS;
+      float *tpf;
+      int i, IS;
+      unsigned int nb, nbL=0;
+/*
+ *    Find smallest NB syrk kernel that can fully contain N
+ */
+      #if ATL_VWsyrk_BEST_IDX != ATL_VWsyrk_LAST_IDX
+         IS=(N <= ATL_VWsyrk_BEST_NB)?ATL_VWsyrk_BEST_IDX:ATL_VWsyrk_LAST_IDX;
       #else
-         Mjoin(PATL,syrk_IP)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+         IS = ATL_VWsyrk_BEST_IDX;
       #endif
-      return(0);
+      for (i=IS; i; i--)
+      {
+         nb = ATL_GetVWsyrkNB(i);
+         if (N < nb)
+         {
+            if (i != IS && nbL-N > N-nb)
+               i++;
+            break;
+         }
+         else if (N == nb)
+            break;
+         nbL = nb;
+      }
+      nb = ((N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
+      tpf = (float*)(ATL_VIEW_syrk+ATL_VWsyrk_IDXMUL(i));
+      timS = *tpf * nb * nb * K;
+      if (timS <= timG)
+      {
+         printf("timS=%e, timG=%e : use SYRK_IP D=(%u,%u)\n", timS, timG, N, K);
+         #ifdef Conj_
+            Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+         #else
+            Mjoin(PATL,syrk_IP)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+         #endif
+         return(0);
+      }
+      else
+         printf("timS=%e, timG=%e: D=(%u,%u), B=(%u,%u)\n", timS, timG,
+                N, K, ip.mb, ip.nb);
    }
 /*
  * Outer product version will call outer-product-optimized amm, and since
@@ -32262,24 +32306,10 @@ int syrk_amm
       return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
    #endif
    #endif
-   #if 0
-   return(1);  /* not supporting N > MAXNB yet! */
-   #else
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
  * For now, just pretend syrk time doesn't matter
  */
-   Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
-   printf("D=(%u,%u), B=(%u,%u)\n", N, K, ip.mb, ip.nb);
-   @BEGINSKIP
-#if 1
-   idx = Mjoin(PATL,GetSyrkIdx)((Uplo == AtlasUpper), N, K, 1.33);
-#else
-   idx = 0;
-#endif
-   Mjoin(PATL,sqComputeIPInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, 
-                               alpha, beta);
-   @ENDSKIP
 /*
  * Need space for only one column-panel of At
  */
@@ -32467,7 +32497,6 @@ int syrk_amm
    }
    free(vp);
    return(0);
-   #endif
 }
 @ROUT ATL_syrk_OP
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
@@ -38053,7 +38082,7 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
-@ROUT ATL_ipmeninfo `@define vwf @ipmen@`
+@ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@`
 @ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
 #include "atlas_amm.h"
 @ROUT ATL_ipinfo ATL_ipmeninfo
@@ -38778,4 +38807,107 @@ void Mjoin(PATL,@(vwf)Info)
    Mjoin(PATL,@(vwf)InfoPop)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha,
                              beta, nfmblks, npmblks, mb, pmb, nfnblks,
                              npnblks, nb, pnb);
+}
+@ROUT ATL_ipsyrkInfo
+#include "atlas_amm.h"
+#include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+#include Mstr(Mjoin(ATLAS_PRE,ipmen_view.h))
+#include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
+
+double Mjoin(PATL,ipsyrkInfo)
+(
+   ipinfo_t *ip,        /* output */
+   enum ATLAS_TRANS TA,
+   size_t N,
+   size_t K,
+   size_t lda,
+   size_t ldc,
+   const SCALAR alpha,
+   const SCALAR beta
+)
+{
+   size_t nfnblks;
+   unsigned int npnblks, mb, nb, pnb, pmb, mu, nu;
+   unsigned int i, idB=ATL_VWipmen_BEST_IDX, nbB=0;
+   double timB=N*N*K;
+   const enum ATLAS_TRANS TB = (TA == AtlasNoTrans) ? 
+      #ifdef Conj_
+          AtlasConjTrans : AtlasNoTrans;
+      #else
+          AtlasTrans : AtlasNoTrans;
+      #endif
+
+   for (i=0; i <= ATL_VWipmen_BEST_IDX; i++)
+   {
+      double tim;
+      float *tpf, *stpf;
+      ATL_iptr_t nfdiag, ngblk;
+      unsigned int nb, pnb;
+
+      nb = ATL_GetVWipmenNB(i);
+      if (nb+nb > N)
+         break;
+      nfdiag = N / nb;
+      pnb = N - nb*nfdiag;
+      ngblk = ((nfdiag-1)*nfdiag)>>1;
+      tim = nb*nb;
+      tim *= K;
+      tpf  = (float*)(ATL_VIEW_ipmen+ATL_VWipmen_IDXMUL(i));
+      stpf = (float*)(ATL_VIEW_syrk+ATL_VWsyrk_IDXMUL(i));
+      tim *= (*tpf * 2.0*ngblk) + (*stpf * nfdiag);
+/*
+ *    For partial block, guess performance poor (half normal) if pnb <= 3*U,
+ *    and good (.85 normal) if bigger than that.
+ */
+      if (pnb)
+      {
+         unsigned int imm;
+         double tg, ts, nf;
+         imm = ATL_GetVWipmenAMMI(i);
+         ATL_AMM_GetMNU(imm, mu, nu);
+         nf = (pnb*1.0)*pnb * K;
+         tg = (pnb >= 3*Mmax(mu,nu)) ? .85 : .5;
+         ts = (pnb > 3*ATL_SYRKK_NU) ? .85 : .5;
+         tg *= *tpf * (nf+nf);
+         ts *= *stpf * nf;
+         tim += tg + ts;
+      }
+      if (tim < timB)
+      {
+         idB = i;
+         nbB = nb;
+         nfnblks = nfdiag;
+         timB = tim;
+      }
+      printf("%u: D=(%u,%u), NB=%u(%u) tim=%e\n", i, N, K, nb, pnb, tim);
+   }
+   i = ATL_GetVWipmenAMMI(idB);
+   ATL_AMM_GetMNU(i, mu, nu);
+   if (nbB >= N)
+   {
+      npnblks = 1;
+      nfnblks = 0;
+      pmb = mb = ((N+mu-1)/mu)*mu;
+      pnb = nb = ((N+nu-1)/nu)*nu;
+   }
+   else
+   {
+      mb = nb = nbB;
+      pnb = N - nfnblks*nbB;
+      if (pnb)
+      {
+         npnblks = 1;
+         pnb = N - nfnblks*nbB;
+         pmb = ((pnb+mu-1)/mu)*mu;
+         pnb = ((pnb+nu-1)/nu)*nu;
+      }
+      else
+         npnblks = pnb = pmb = 0;
+   }
+   printf("F%u: D=(%u,%u), NB=%u(%u)\n", idB, N, K, nbB, pnb);
+   Mjoin(PATL,@(vwf)InfoPop)(ip, idB, TA, TB, N, N, K, lda, lda, ldc, alpha,
+                             beta, nfnblks, npnblks, mb, pmb, nfnblks,
+                             npnblks, nb, pnb);
+   return(timB);
 }
