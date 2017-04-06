@@ -4,6 +4,10 @@ mydir=`pwd`
 srcdir=./TEST
 topd = $(mydir)/AtlasBase
 defs = -def topd $(topd) -def ext $(mydir)/$(srcdir)/xextract
+OS = $(shell uname -s)
+ifeq ($(OS),MINGW32_NT-6.1)
+CCFLAGS += -Wl,--stack,16777216
+endif
 
 $(srcdir) :
 	mkdir $(srcdir)
