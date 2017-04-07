@@ -3704,6 +3704,15 @@ static ATL_mmnode_t *MMWinnowByKU(ATL_mmnode_t *mb, int minKB, double tol)
    }
    return(rb);
 }
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+void SetExtBFkoRout(char *rout)
+{
+   int len;
+   len = strlen(rout);
+   if (rout[len-1] != 'B' && rout[len-2] == '.' )
+      rout[len-1] = 'B';
+}
 @ROUT cpread
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -5656,7 +5665,79 @@ char *MMGetFkoGenString
    ATL_mmnode_t *mp             /* mmkern ptr */
 )
 {
-   return(NULL);
+   char *frm="make gen_%s_fko pre=%c rt=%s vec=%s vlen=%d mu=%d nu=%d ku=%d"
+             " KB=%d bcast=%d pf=%d pfLS=%d";
+   char *vec="mdim";
+   char *gs, *sp;
+   int len;
+   int ku=mp->ku;
+   int kb, bc;
+
+   if (mp->blask >= ATL_KGECPFA && mp->blask <= ATL_KSKCP2C)
+      return(MMGetCpGenString(pre, mp, 1, 1));
+   if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
+   {
+      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+         ku = ((mp->kbB+mp->vlen-1)/mp->vlen)*mp->vlen;
+      else
+         ku = mp->kbB;
+   }
+   len = strlen(frm) + strlen(mp->rout) + 4;
+   gs = malloc(len);
+   assert(gs);
+   if (mp->vlen < 2)
+      vec = "no";
+   else if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   {
+      vec = "kdim";
+      if (!FLAG_IS_SET(mp->flag, MMF_KUISKB))
+         assert(mp->ku % mp->vlen == 0);
+   }
+   else
+      assert(mp->mu % mp->vlen == 0);
+   switch(mp->blask)
+   {/* 0:ammm, 1:syrk, 2:symm, 3:trmm */
+   case ATL_KSYRK:
+      sp = "amsyrk";
+      break;
+   case ATL_KSYMM:
+      sp = "amsymm";
+      break;
+   case ATL_KTRMM:
+      sp = "amtrmm";
+      break;
+   case ATL_KTRSM:
+      sp = "amtrsm";
+      break;
+   case ATL_KGECPFA:
+   case ATL_KGECP2A:
+   case ATL_KGECPFC:
+   case ATL_KGECP2C:
+   case ATL_KSKCPFC:
+   case ATL_KSKCP2C:
+      fprintf(stderr, "Copy routines not supported by FKO gen, kernel type=%d\n",
+              mp->blask);
+      exit(1);
+   default:
+      sp = "amm";
+   }
+   if (FLAG_IS_SET(mp->flag, MMF_NOBCAST))
+      bc = 0;
+   else
+      bc = FLAG_IS_SET(mp->flag, MMF_BREG1) ? 3 : 1;
+
+   if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      kb = 0;
+   else if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      kb = ((mp->kbB+mp->vlen-1)/mp->vlen)*mp->vlen;
+   else
+      kb = mp->kbB;
+   
+   if (FLAG_IS_SET(mp->flag , MMF_FKO))
+     SetExtBFkoRout(mp->rout);
+   sprintf(gs, frm, sp, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, ku, kb,
+           bc, mp->pref, mp->pfLS);
+   return(gs);
 }
 
 char *GetFKOComp(int i)
@@ -5665,7 +5746,7 @@ char *GetFKOComp(int i)
 }
 char *GetFKOFlags(int i)
 {
-   return("");
+   return("-vec");
 }
 
 @iexp ip @(ip) 1 +
@@ -5863,6 +5944,14 @@ ATL_mmnode_t *MMGetNodeGEN(char pre, int flag, int kb, int mu, int nu, int ku,
    mp->vlen = vlen;
    mp->pref = pf;
    mp->pfLS = pfLS;
+@beginskip
+// checked flag to set FKO and cleared it so that remaining codes work fine
+@endskip
+   if (flag&4)
+   {
+      mp->flag |= (1<<MMF_FKO);
+      flag ^=4; /* clear fko bit */
+   }
    if (flag&1)
       mp->flag |= (1<<MMF_NOBCAST);
    else if (flag&2)
@@ -7244,7 +7333,7 @@ int MMTimeAllVecGen
 /*
  * If legal, try M-vec with splat
  */
-   if (mp->nu % mp->vlen == 0)
+   if ((mp->nu % mp->vlen == 0) && !FLAG_IS_SET(mp->flag, MMF_FKO))
    {
       mp->flag |= (1<<MMF_NOBCAST);
       mp->genstr = MMGetGenString(pre, mp);

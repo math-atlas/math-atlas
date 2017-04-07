@@ -1,0 +1,2696 @@
+@ROUT !
+   @define pre @@(@pre)@
+   @PRE S C
+      @define typ @FLOAT@
+      @define sz @4@
+   @PRE D Z
+      @define sz @8@
+      @define typ @DOUBLE@
+   @PRE !
+@skip #define ATL_VLEN @(vl)
+@beginskip
+#if !defined(SREAL) && !defined(DREAL) && !defined(SCPLX) && !defined(DCPLX)
+   @PRE C `   #define SCPLX 1`
+   @PRE S `   #define SREAL 1`
+   @PRE D `   #define DREAL 1`
+   @PRE Z `   #define DCPLX 1`
+#endif
+@endskip
+@ifdef ! TRI
+   @iexp TRI 0
+@endifdef
+@SKIP TRI = 1 means lower triangular C (SYRK)
+@iif TRI = 1
+   @skip @abort "triangular C not yet tested with HIL code"
+   @iif mu ! nu
+      @abort "mu (@(mu)) must equal nu (@(nu))!"
+   @endiif
+@endiif
+@ROUT amm
+@beginskip
+Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
+following defines:
+   mu : m (scalar) unrolling
+   nu : n (scalar) unrolling
+   ku : k (scalar) unrolling
+   vl : vector length to use
+The following can be optionally defined:
+   kb : compile-time constant K loop bound to use
+   kp : # of kits to peel, must be a multiple of vku!
+   bc : don't define or set to 1 to use ATL_vbcast, 0 to use vld/vsplat
+   pf : bit vec describing prefetch strategy
+   pfLS : line size to assume for prefetch (64 bytes by default)
+   bc : now used a bitvector, default 1, with following meanings:
+    BPOS: SET MEANING
+      0 : use bcast (else use splat) for B load (ignored for K-vec)
+      1 : use only 1 register for B loads (ignored if using splat)
+      2 : nnu=1 (else need N-loop)
+      3 : nmu=1 (else need M-loop)
+
+pf bit location meanings:
+   prefC always done as just next mu*nu block
+   pfA/B : can prefetch next mu/nu A/B within K-loop
+   nA/nB : can prefetch next block outside K-loop 
+   take pf integer bitvec bit/additive means:
+      0/1   : prefetch C before K-loop
+      1/2   : prefetch next block of A before K-loop
+      2/4   : prefetch next block of B before K-loop
+      3/8   : prefetch next mu*K iter of A inside K-loop
+      4/16  : prefetch next nu*K iter of B inside K-loop
+      5/32  : pref of C should use ATL_pfl1 instead of ATL_pfl2
+      6/64  : pref of next blk of A should use ATL_pfl1 not ATL_pfl2
+      7/128 : pref of next blk of B should use ATL_pfl1 not ATL_pfl2
+      8/256 : pref of C should use ATL_pflX instead of ATL_pflX
+      9/512 : pref of next blk of A should use ATL_pflX not ATL_pfl2
+     10/1024: pref of next blk of B should use ATL_pflX not ATL_pfl2
+     11/2048: K-loop pref of A use ATL_pfl1 not ATL_pfl2
+     12/4096: K-loop pref of B use ATL_pfl1 not ATL_pfl2
+     13/8192: K-loop pref of A use ATL_pflX not ATL_pfl2
+    14/16384: K-loop pref of B use ATL_pflX not ATL_pfl2
+
+   We'll put pf bitvec in rout name, and then the search will find that
+   we want to pref everything to L1 for small NB, only C &  block of A for
+   medium size, and no pref for large, for instance.
+
+During tuning, think about several regions for prefetch:
+1. pref pfnA&B to L1:  m*n + 2*k*(m+n) < L1
+   -> n^2 + 4n^2 < L2 ==> nb <= sqrt(L1/5)
+2. pref B to L1, A to L2: m*n + 2*k*n + m*k < L1
+   -> n^2 + 2n^2 + n^2 < L1 ==> nb <= sqrt(L1/4)
+3. pref A&B to L2 so long as all 5 blocks fit (L2 size not known)
+4. pref only one of nA/B to L2
+5. No prefetch of next blocks (maybe internal prefetch)
+@endskip
+@SKIP extract info from bc, then set it to bcast value
+@ifdef ! bc
+   @iexp bc 1
+@endifdef
+@skip if ((bc&1) == 0 && (bc&2) == 2) bc ^= 2
+@iif @iexp @(bc) 1 & 0 = @(bc) 2 & 2 = &
+   @iexp bc @(bc) 2 ^
+@endiif
+@iexp B1R @(bc) 2 & 0 !
+@iexp DONLOOP @(bc) 4 & 0 =
+@iexp DOMLOOP @(bc) 8 & 0 =
+@iexp bc @(bc) 1 &
+@print bc=@(bc) B1R=@(B1R) DO_N,M=@(DONLOOP),@(DONLOOP)
+@SKIP KVEC & UNVEC can't use splat, so define bcast!
+@VEC KDIM NO
+@ifdef bc
+   @undef bc
+@endifdef
+@iexp bc 0 1 +
+@VEC MDIM
+@skip *********************** HIL specific *******************
+@ifdef vl
+   @iif vl ! 0
+      @iif vl ! 1
+         @ifdef mu
+         @skip "HIL must be scalar, so we multiply mu with vl and make vl 1"
+            @skip @iexp mu @(mu) @(vl) *
+            @skip @print "Forcing vlen as 1... fko will vectoried the serial kernel"
+            @iexp vl 0 1 +
+         @endifdef
+      @endiif
+   @endiif
+@endifdef
+@skip ********************************************************
+@ifdef ! bc
+   @iexp bc 0 1 +
+@endifdef
+@VEC !
+@ifdef ! pf
+   @define pf @1@
+@endifdef
+@ifdef ! pfLS
+   @define pfLS @64@
+@endifdef
+@iif pfLS = 0
+   @define pfLS @64@
+@endiif
+@iexp pfLS @(sz) @(pfLS) /
+@iexp kk @(pf) 32 &
+@iif kk ! 0
+   @skip @define pfC @ATL_pfl1W@
+   @define pfC @_PREFETCHW(0@
+@endiif
+@iexp kk @(pf) 256 &
+@iif kk ! 0
+   @skip @define pfC @ATL_pflXW@
+   @define pfC @_PREFETCHW(2@
+@endiif
+@ifdef ! pfC
+   @skip @define pfC @ATL_pfl2W@
+   @define pfC @_PREFETCHW(1@
+@endifdef
+@iexp kk @(pf) 64 &
+@iif kk ! 0
+   @skip @define pfA @ATL_pfl1R@
+   @define pfA @_PREFETCHR(0@
+@endiif
+@iexp kk @(pf) 512 &
+@iif kk ! 0
+   @skip @define pfA @ATL_pflXR@
+   @define pfA @_PREFETCHR(2@
+@endiif
+@ifdef ! pfA
+   @skip @define pfA @ATL_pfl2R@
+   @define pfA @_PREFETCHR(1@
+@endifdef
+@iexp kk @(pf) 128 &
+@iif kk ! 0
+   @skip @define pfB @ATL_pfl1R@
+   @define pfB @_PREFETCHR(0@
+@endiif
+@iexp kk @(pf) 1024 &
+@iif kk ! 0
+   @skip @define pfB @ATL_pflXR@
+   @define pfB @_PREFETCHR(2@
+@endiif
+@ifdef ! pfB
+   @skip @define pfB @ATL_pfl2R@
+   @define pfB @_PREFETCHR(1@
+@endifdef
+@iexp kk @(pf) 8 &
+@iif kk ! 0
+   @skip @define pfAk @ATL_pfl2R@
+   @define pfAk @_PREFETCHR(1@
+   @iexp kk @(pf) 2048 &
+   @iif kk ! 0
+      @undef pfAk
+      @skip @define pfAk @ATL_pfl1R@
+      @define pfAk @_PREFETCHR(0@
+   @endiif
+   @iexp kk @(pf) 8192 &
+   @iif kk ! 0
+      @undef pfAk
+      @skip @define pfAk @ATL_pflXR@
+      @define pfAk @_PREFETCHR(2@
+   @endiif
+@endiif
+@iexp kk @(pf) 16 &
+@iif kk ! 0
+   @skip @define pfBk @ATL_pfl2R@
+   @define pfBk @_PREFETCHR(1@
+   @iexp kk @(pf) 4096 &
+   @iif kk ! 0
+      @undef pfBk
+      @skip @define pfBk @ATL_pfl1R@
+      @define pfBk @_PREFETCHR(0@
+   @endiif
+   @iexp kk @(pf) 16384 &
+   @iif kk ! 0
+      @undef pfBk
+      @skip @define pfBk @ATL_pflXR@
+      @define pfBk @_PREFETCHR(2@
+   @endiif
+@endiif
+@SKIP npfC = (pf&1) * ((mu*nu + pfLS -1) / pfLS)
+@iexp npfC 1 @(pf) & @(pfLS) @(nu) @(mu) * @(pfLS) + -1 + / *
+@iexp npfA @(pfLS) 1 @(pf) r 1 & @(mu) @(nu) * * /
+@iexp npfB @(pfLS) 2 @(pf) r 1 & @(mu) @(nu) * * /
+@iexp npf @(npfC) @(npfA) +
+@iif npfA ! 0
+   @iexp npfA @(npfA) @(npfC) +
+@endiif
+@iif npfB ! 0
+   @iexp npf @(npf) @(npfB) +
+   @iexp npfB @(npf) 0 +
+@endiif
+@skip bc = (bc != 0 || (vl < 2) || nu%vl != 0);
+@iexp bc 0 @(bc) ! 2 @(vl) < | @(vl) @(nu) % 0 ! |
+@iif TRI = 1
+   @VEC KDIM
+      @iif ku ! vl
+         @abort "ku (@(ku)) must equal vlen (@(vl))!"
+      @endiif
+   @VEC MDIM
+      @iif ku ! 1
+         @abort "ku must be 1, but it is @(ku)!"
+      @endiif
+   @VEC !
+@endiif
+@ifdef ! vl
+   @abort "vl must be defined!"
+@endifdef
+@ifdef ! mu
+   @abort "mu must be defined!"
+@endifdef
+@ifdef ! nu
+   @abort "nu must be defined!"
+@endifdef
+@ifdef ! ku
+   @abort "ku must be defined!"
+@endifdef
+@ifdef ! kb
+   @define kb @0@
+@endifdef
+@iif kb = 0
+   @addkeys KCON=no
+@endiif
+@iif kb ! 0
+   @addkeys KCON=yes
+@endiif
+@iexp vku @(ku) 0 +
+@iexp vmu @(mu) 0 +
+@iexp vnu @(nu) 0 +
+@VEC MDIM
+   @iexp vmu @(vl) @(mu) /
+   @iexp kk @(vmu) @(vl) *
+   @iif kk ! mu
+      @abort "MU=@(mu) illegal with VLEN=@(vl)!"
+   @endiif
+@VEC KDIM
+   @iexp vku @(vl) @(ku) /
+   @iif @iexp @(vku) @(vl) * @(ku) !
+      @abort "KU=@(ku) illegal with VLEN=@(vl)!"
+   @endiif
+@VEC NO
+   @iif vl ! 1
+      @abort "vl must be 1 for scalar code!"
+   @endiif
+@VEC !
+@ifdef ! kp
+   @VEC KDIM `@define kp @@(vl)@`
+   @VEC ! KDIM `@define kp @1@`
+@endifdef
+@VEC KDIM 
+   @iexp vkp @(vl) @(kp) /
+   @iexp kk @(vkp) @(vl) *
+   @iif kk != ku
+      @abort "KP (@(kp)) must be a multiple of ku*VLEN (@(ku)*@(vl))"
+   @endiif
+@VEC ! KDIM
+   @define vkp @@(kp)@
+@VEC !
+@define KB @K@
+@ifdef ! kp
+   @VEC KDIM
+      @define kp @@(vl)@
+   @VEC ! KDIM
+      @define kp @@(vku)@
+   @VEC !
+@endifdef
+@iif vkp < 1
+   @abort "K-peel (kp) must be >= 1!"
+@endiif
+@iexp kk @(ku) @(kp) /
+@iexp kk @(kk) @(ku) *
+@iif kp ! kk
+   @abort "K-peel (@(kp)) must be a multiple of KU=@(ku)!"
+@endiif
+@VEC KDIM
+@SKIP FOR KVEC, kb = CEIL(kb/vlen)*vlen
+@iif kb ! 0
+   @iexp kb @(vl) @(kb) @(vl) -1 + + / @(vl) *
+   @undef KB
+   @define KB @@(kb)@
+   @iif @iexp @(vku) @(kb) %
+      @abort "VKU=@(vku) must be multiple of @(kb)!"
+   @endiif
+@endiif
+@VEC !
+@iif kb > 0
+@echo @define ATL_KBCONST @1@
+@echo @define ATL_MM_KB @@(kb)@
+@endiif
+
+@iif kb = 0
+@echo @ifdef ! ATL_MM_KB 
+@echo    @define MMKB @0@
+@echo @endifdef
+@echo @ifdef  ATL_MM_KB 
+@echo    @define MMKB @1@
+@echo @endifdef
+@echo @iif MMKB = 0
+@echo    @ifdef KB
+@echo       @iif KB > 0
+@echo          @define ATL_KBCONST @1@
+@echo          @define ATL_MM_KB @@(KB)@
+@echo       @endiif
+@echo       @iif KB { 0
+@echo         @define ATL_KBCONST @0@
+@echo         @define ATL_MM_KB @K@
+@echo       @endiif
+@echo    @endifdef
+@echo    @ifdef ! KB
+@echo      @define ATL_KBCONST @0@
+@echo      @define ATL_MM_KB @K@
+@echo    @endifdef
+@echo @endiif 
+@echo @iif MMKB = 1
+@echo   @iif ATL_MM_KB > 0
+@echo       @define ATL_KBCONST @1@
+@echo   @endiif
+@echo   @iif ATL_MM_KB { 0 
+@echo      @undef ATL_MM_KB
+@echo      @define ATL_MM_KB @K@
+@echo      @define ATL_KBCONST @0@
+@echo   @endiif
+@echo @endiif
+@endiif
+@VEC ! NO
+@echo @ifdef ! BETA1
+@echo    @ifdef ! BETA0
+@echo        @define ibet @-1@
+@echo    @endifdef
+@echo @endifdef
+@echo @ifdef BETA1
+@echo     @define ibet @1@
+@echo @endifdef
+@echo @ifdef BETA0
+@echo    @define ibet @0@
+@echo @endifdef
+@BEGINPROC vbeta p_ idx d_ t_
+@echo  @iif ibet ! 0 
+         @(t_) = @(p_)[@(idx)]; 
+@echo    @iif ibet = 1
+         @(d_) = @(d_) + @(t_);
+@echo    @endiif
+@echo    @iif ibet = -1
+         @(d_) = @(d_) - @(t_);
+@echo    @endiif
+@echo  @endiif
+         @(p_)[@(idx)] = @(d_); 
+@ENDPROC
+@VEC MDIM
+   @iif bc = 0
+      @abort "bc can't be 0 since we don't have any explicit splat for fko" 
+      @BEGINPROC ldB spc d i_
+      @beginindent 1 @(spc)
+      @define j @@
+      @define kk @@
+@BEGINSKIP
+         1-D must be able to do 2 memops/MAC to get peak, and a 2x2 2-D block
+         must do a load for every MAC, so there will never be any "holes" to
+         do extra memory operations like prefetch or advanced load for these
+         cases.  1-D handles this with special code; to create a hole for 2x2
+         we therefore don't count the last B load as memory load.  We do:
+            IF (vmu != 2 || nu != 2 || i_ == nu-1)
+               mo++  // mo is count of memory ops done with last MAC
+         but this the same as
+            mo = mo + 1*(vmu != 2 || nu != 2 || i_ == nu-1)
+         which was obvious to you from the line below, of course.
+@ENDSKIP
+         @iexp mo 2 @(vmu) ! 2 @(nu) ! | @(i_) 1 @(nu) - = 1 * @(mo) +
+         @iexp j @(vl) @(i_) /
+         @iexp i_ @(vl) @(j) * @(i_) -
+   ATL_vsplat@(i_)(@(d), vB@(j));
+@SKIP    if ((i_+1)%vl == 0, add another vector to stack of vBs to load (lb)
+         @iexp kk @(vl) 1 @(i_) + %
+         @iif kk = 0
+@SKIP    Keep macro stack in old->new order by reversing if non-empty
+@SKIP    so we can add newest to bottom.
+            @whiledef lb
+               @define lb2 @@(lb)@
+            @endwhile
+            @define lb @@(j)@
+            @whiledef lb2
+               @define lb @@(lb2)@
+            @endwhile
+         @endiif
+         @undef j
+         @undef kk
+      @endindent
+      @ENDPROC
+   @endiif
+   @iif bc ! 0
+      @BEGINPROC ldB spc d i_
+      @beginindent 1 @(spc)
+         @iexp mo 2 @(vmu) ! 2 @(nu) ! | @(i_) 1 @(nu) - = 1 * @(mo) +
+         @iif ib < 0
+            @iif i_ ! 0
+   @skip ATL_vbcast(@(d), pB+@(i_));
+   @(d) = pB[@(i_)];
+            @endiif
+            @iif i_ = 0
+   @skip ATL_vbcast(@(d), pB);
+   @(d) = pB[0];
+            @endiif
+         @endiif
+         @iif ib > -1
+            @iif ib ! 0
+   @skip ATL_vbcast(@(d), pB+@(ib));
+   @(d) = pB[@(ib)];
+             @endiif
+            @iif ib = 0
+   @skip ATL_vbcast(@(d), pB);
+   @(d) = pB[0];
+             @endiif
+            @iexp ib @(ib) 1 +
+         @endiif
+      @endindent
+      @ENDPROC
+   @endiif
+@VEC KDIM
+@BEGINSKIP
+ARGS:
+   nv : vvrsum # to use
+   nr : actual number of registers remaining to be summed
+   ir : base register number (0 <= ir < mu*nu)
+ASSUMES: mu, nu, exreg
+@ENDSKIP
+   @BEGINPROC vvrsum nv nr ir
+      @define k @0@
+      @define kl @0@
+      @define i @0@
+      @define j @0@
+      @declare "   ATL_vvrsum@(nv)(" y n ");"
+         @iexp kl @(ir) @(nr) +
+         @iexp k @(ir)
+         @iwhile k < kl
+            @iexp j @(mu) @(k) /
+            @iexp i @(mu) @(k) %
+               rC@(i)_@(j)
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iif nr < nv
+            @iexp kl @(ir) @(nv) +
+            @iwhile k < kl
+               @(exreg)
+            @iexp k @(k) 1 +
+         @endiwhile
+         @endiif
+      @enddeclare
+      @iexp j @(mu) @(ir) /
+      @iexp i @(mu) @(ir) %
+      @iexp kl @(j) @(mu) *
+      @iexp kl @(kl) @(i) +
+   @skip ATL_vbeta(pC+@(kl), rC@(i)_@(j));
+   @ATL_vbeta(pC, @(kl), rC@(i)_@(j));
+   call vbeta pC @(kl) rC@(i)_@(j) rA0
+      @undef i
+      @undef j
+      @undef k
+      @undef kl
+   @ENDPROC
+@VEC KDIM NO
+   @BEGINPROC ldB spc d i_
+   @beginindent 1 @(spc)
+      @iexp i_ @(vl) @(i_) *
+      @iexp mo 2 @(vmu) ! 2 @(nu) ! | @(i_) 1 @(nu) - = 1 * @(mo) +
+      @iif ib < 0
+         @iif i_ ! 0
+   @skip ATL_vld(@(d), pB+@(i_));
+   @(d) = pB[@(i_)];
+         @endiif
+         @iif i_ = 0
+   @skip ATL_vld(@(d), pB);
+   @(d) = pB[0];
+         @endiif
+      @endiif
+      @iif ib > -1 
+         @iif ib ! 0
+   @skip ATL_vld(@(d), pB+@(ib));
+   @(d) = pB[@(ib)];
+         @endiif
+         @iif ib = 0
+   @skip ATL_vld(@(d), pB);
+   @(d) = pB[0];
+         @endiif
+         @iexp ib @(ib) @(vl) +
+      @endiif
+   @endindent
+   @ENDPROC
+@VEC NO KDIM
+   @define ldB @ATL_vld@
+   @iexp bmul @(vl) 0 +
+@VEC MDIM
+   @define ldB @ATL_vbcast@
+   @iexp bmul 1 0 +
+@VEC NO
+   @BEGINPROC storeC spc
+   @define kk @dum@
+   @define i @dum@
+   @define j @dum@
+   @beginindent 1 @(spc)
+      @iexp kk 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+   #ifdef BETA0
+      pC[@(kk)] = rC@(i)_@(j);
+   #elif defined(BETA1)
+      pC[@(kk)] += rC@(i)_@(j);
+   #else
+      pC[@(kk)] = rC@(i)_@(j) - pC[@(kk)];
+   #endif
+            @iexp kk @(kk) 1 +
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @endindent
+   @undef kk
+   @undef j
+   @undef k
+   @ENDPROC
+@VEC MDIM
+   @BEGINPROC storeC spc
+   @define kk @dum@
+   @define i @dum@
+   @define j @dum@
+   @beginindent 1 @(spc)
+      @iexp kk 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+   @skip ATL_vbeta(pC+@(kk), rC@(i)_@(j));
+   @skip ATL_vbeta(pC, @(kk), rC@(i)_@(j));
+   @callproc vbeta pC  @(kk)  rC@(i)_@(j) rC@(i)_@(j)m
+            @iexp kk @(kk) @(vl) +
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @endindent
+   @undef kk
+   @undef j
+   @ENDPROC
+@VEC KDIM
+   @skip *************************** new KDIM storeC for HIL *************
+   @BEGINPROC storeC spc
+   @define kk @dum@
+   @define i @dum@
+   @define j @dum@
+   @beginindent 1 @(spc)
+      @iexp kk 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+   @callproc vbeta pC  @(kk)  rC@(i)_@(j) rC@(i)_@(j)m
+            @iexp kk @(kk) 1 +
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @endindent
+   @undef kk
+   @undef j
+   @ENDPROC
+
+@VEC KDIM
+   @iexp incAk @(mu) @(ku) *
+   @iexp incBk @(nu) @(ku) *
+@VEC MDIM NO
+   @iexp incAk @(mu)
+   @iexp incBk @(nu)
+@VEC !
+@iexp TWOD 1 0 +
+@iif vmu = 1
+   @iexp TWOD 0 0 +
+@endiif
+@iif vnu = 1
+   @iexp TWOD 0 0 +
+@endiif
+@skip NOKLOOP = (kb == ku);
+@iexp NOKLOOP @(kb) @(ku) =
+@skip @iif NOKLOOP = 0
+   @iexp ia -1 0 +
+   @iexp ib -1 0 +
+@skip @endiif
+@skip @iif NOKLOOP ! 0
+@skip    @iexp ia 0 0 +  
+@skip    @iexp ib 0 0 +
+@skip @endiif
+@ifdef lb
+   @abort "lb cannot be defined!"
+@endifdef
+@ifdef lb2
+   @abort "lb2 cannot be defined!"
+@endifdef
+
+@skip #ifndef ATL_CSZT
+@skip    #include <stddef.h>
+@skip    #define ATL_CSZT const size_t
+@skip #endif
+@skip Helper func for DoIter[0].  
+@skip IN: pfLS,npfA,npfB, npfC, ipb, ipa, mu, nu, IN_K; 
+@skip IN/OUT: mo, ipf
+@BEGINPROC DoPref
+   @define kk @dum@
+   @define jj @dum@
+   @SKIP commented out, now handled in ldB
+   @BEGINSKIP
+   @SKIP if (vmu == 2 && vnu == 2 && mo = 1) mo = 0
+   @iexp kk @(vmu) 2 = @(vnu) 2 = @(mo) 1 = & &
+   @iif kk ! 0
+      @iexp mo 0 0 +
+   @endiif
+   @ENDSKIP
+   @iif mo = 0
+      @iif ipf < npfC
+         @iexp kk @(ipf) @(pfLS) *
+               @skip @(pfC)(pC+@(kk));
+               @(pfC), pC[@(kk)]);
+         @iexp ipf @(ipf) 1 +
+         @iexp mo @(mo) 1 +
+      @endiif
+      @skip if (mo = 0 && ipf < npfA)
+      @iexp kk @(mo) 0 = @(npfA) @(ipf) < &
+      @iif kk ! 0
+         @iexp kk @(npfC) @(ipf) - @(pfLS) *
+               @skip @(pfA)(pAn+@(kk));
+               @(pfA), pAn[@(kk)]);
+         @iexp ipf @(ipf) 1 +
+         @iif ipf = npfA
+               pAn += incAN;
+         @endiif
+         @iexp mo @(mo) 1 +
+      @endiif
+      @skip if (mo == 0 && ipf < npfB)
+      @iexp kk @(mo) 0 = @(npfB) @(ipf) < &
+      @iif kk ! 0
+         @iexp kk @(npfA) @(ipf) - @(pfLS) *
+               @skip @(pfB)(pBn+@(kk));
+               @(pfB), pBn[@(kk)]);
+         @iexp ipf @(ipf) 1 +
+         @iif ipf = npfB
+               pBn += incBN;
+         @endiif
+         @iexp mo @(mo) 1 +
+      @endiif
+@SKIP Handle prefetch of next k loop traversal, if it exists
+      @iif mo = 0
+         @ifdef pfBk
+            @SKIP if (NOKLOOP == 0 && IN_K != 0)
+            @iexp kk 0 @(NOKLOOP) = 0 @(IN_K) ! &
+            @iif kk ! 0
+               @skip @(pfBk)(pB+incBn);
+               @(pfBk), pB[incBn]);
+                  @undef pfBk
+               @iexp mo @(mo) 1 +
+            @endiif
+            @iexp jj @(kb) @(nu) *
+            @SKIP if (NOKLOOP != 0 && ipb%pfLS == 0 && ipb < incBn)
+            @iexp kk @(pfLS) @(ipb) % 0 = @(NOKLOOP) 0 ! & @(jj) @(ipb) < &
+            @iif kk ! 0
+               @iexp jj @(jj) @(ipb) +
+            @skip @(pfBk)(pB+@(jj));
+            @(pfBk), pB[@(jj)]);
+               @iexp ipb @(ipb) @(pfLS) +
+               @iexp mo @(mo) 1 +
+            @iexp kk @(jj) @(ipb) <
+            @endiif
+         @endifdef
+      @endiif
+      @iif mo = 0
+         @ifdef pfAk
+            @SKIP if (NOKLOOP == 0 && IN_K != 0)
+            @iexp kk 0 @(NOKLOOP) = 0 @(IN_K) ! &
+            @iif kk ! 0
+               @skip @(pfAk)(pA+incAm);
+               @(pfAk), pA[incAm]);
+                  @undef pfAk
+               @iexp mo @(mo) 1 +
+            @endiif
+            @iexp jj @(kb) @(mu) *
+            @SKIP if (NOKLOOP != 0 && ipa%pfLS == 0 && ipa < incAm)
+            @iexp kk @(pfLS) @(ipa) % 0 = @(NOKLOOP) 0 ! & @(jj) @(ipa) < &
+            @iif kk ! 0
+               @iexp jj @(jj) @(ipa) +
+            @skip @(pfAk)(pA+@(jj));
+            @(pfAk), pA[@(jj)]);
+               @iexp ipa @(ipa) @(pfLS) +
+               @iexp mo @(mo) 1 +
+            @endiif
+         @endifdef
+      @endiif
+      @iif IN_K ! 0
+         @ifdef pfAk
+            @iif mo = 0
+            @skip @(pfAk)(pA+incAm);
+            @(pfAk), pA[incAm]);
+               @undef pfAk
+               @iexp mo @(mo) 1 +
+            @endiif
+         @endifdef
+      @endiif
+   @endiif
+   @undef jj
+   @undef kk
+@ENDPROC
+@beginskip
+Perform initial iteration use vmul.  1-D scheduled to make it obvious
+the non-unit dimension can be directly loaded from memory, rather than
+really using registers.  This allows total number of registers to be:
+   MAX(MU,NU) + 1
+ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
+@endskip
+@BEGINPROC DoIter0_k
+@SKIP define internal vars, so they can popped off to leave caller unchanged
+   @define DN @0@
+   @define i @0@
+   @define j @0@
+   @define kk @0@
+@SKIP 1-D with NU=1
+   @iif vnu = 1
+      @iexp DN 1 0 +
+         @callproc ldB 9 rB0 0
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+         @skip ATL_vld(rC@(i)_0, pA+@(ia));
+         rC@(i)_0 = pA[@(ia)];
+            @iexp ia @(ia) @(vl) +
+         @skip ATL_vmul(rC@(i)_0, rC@(i)_0, rB0);
+         rC@(i)_0 = rC@(i)_0 * rB0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+   @endiif
+@SKIP 1-D with VMU=1
+   @iif DN = 0
+      @iif vmu = 1
+         @iexp DN 1 0 +
+         @skip ATL_vld(rA0, pA+@(ia));
+         rA0 = pA[@(ia)];
+         @iexp ia @(ia) @(vl) +
+@skip         @iexp ia @(ia) @(incAk) +
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @callproc ldB 6 rC0_@(j) @(j)
+         @skip ATL_vmul(rC0_@(j), rC0_@(j), rA0);
+         rC0_@(j) = rC0_@(j) * rA0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp j @(j) 1 +
+            @skip if (bc==0 && j%vl==0)
+            @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
+            @ifdef lb
+             @skip ATL_vld(vB@(lb), pB+@(ib));
+             vB@(lb) = pB[@(ib)];
+                @undef lb
+                @iexp ib @(ib) @(vl) +
+            @endifdef
+         @endiwhile
+      @endiif
+   @endiif
+@SKIP 2-D case assumes all but last rB already loaded unless B1R is set
+   @iif DN = 0
+      @define jb @0@
+         @skip ATL_vld(rA0, pA);
+         rA0 = pA[0];
+      @iexp ia @(ia) @(vl) +
+      @iexp i 0 1 +
+      @iwhile i < @(vmu)
+         @skip ATL_vld(rA@(i), pA+@(ia));
+         rA@(i) = pA[@(ia)];
+         @iexp ia @(ia) @(vl) +
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif B1R = 0
+         @callproc ldB 6 rB@(jl) @(jl)
+      @endiif
+      @ifdef lb
+         @skip ATL_vld(vB@(lb), pB+@(ib));  // A01
+         vB@(lb) = pB[@(ib)];  // A01
+         @undef lb
+         @iexp ib @(ib) @(vl) +
+      @endifdef
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp jb 0 @(B1R) = @(j) *
+         @iif B1R ! 0
+            @callproc ldB 9 rB0 @(j)
+         @endiif
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+         @skip ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
+         @skip rC@(i)_@(j) = rA@(i) * rB@(j);
+         @skip ATL_vmul(rC@(i)_@(j), rA@(i), rB@(jb));
+         rC@(i)_@(j) = rA@(i) * rB@(jb);
+            @iexp mo 0 0 +
+            @iif j = jl
+            @skip ATL_vld(rA@(i), pA+@(ia));
+            rA@(i) = pA[@(ia)];
+               @iexp ia @(ia) @(vl) +
+               @iexp mo @(mo) 1 +
+            @endiif
+            @iif mo = 0
+               @ifdef lb
+            @skip ATL_vld(vB@(lb), pB+@(ib));  // A02 i=@(i) j=@(j)
+            vB@(lb) = pB[@(ib)];  // A02 i=@(i) j=@(j)
+                  @undef lb
+                  @iexp mo @(mo) 1 +
+                  @iexp ib @(ib) @(vl) +
+               @endifdef
+            @endiif
+            @skip @iif i = il
+            @skip   @iif j ! jl
+            @skip if (i == il && j != jl && !B1R)
+            @iif @iexp @(i) @(il) = @(j) @(jl) ! & @(B1R) 0 = &
+            @callproc ldB 9 rB@(j) @(j)
+               @skip @endiif
+            @endiif
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @undef jb
+   @endiif
+@SKIP pop our defs so caller's macros of same name aren't changed
+   @undef DN
+   @undef i
+   @undef j
+   @undef kk
+@ENDPROC
+@SKIP do all zerod rc 
+@SKIP ASSUMES DEFINED: vmu, vnu, ipf, npf, IN_K
+@BEGINPROC RC_ZEROD 
+   @skip ************** pref inst ******************************************
+   @iexp IN_K 0 0 +
+   @iwhile ipf < npf
+      @skip "we want to apply all pref here"
+      @iexp mo 0 0 + 
+      @CALLPROC DoPref
+      @skip ipf increased inside DoPref
+   @endiwhile
+   @skip *******************************************************************
+   @define i @0@
+   @define j @0@
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @mif typ = "DOUBLE
+         rC@(i)_@(j) = 0.0;
+            @endmif
+            @mif typ = "FLOAT
+         rC@(i)_@(j) = 0.0f;
+            @endmif
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @undef i
+   @undef j
+@ENDPROC
+@SKIP Do Normal Kdim kloop iter
+@SKIP ASSUMES DEFINED: 
+@BEGINPROC DoIter_kvec
+   @define i @0@
+   @define j @0@
+   @define kk @0@
+   @define idx @0@
+   @define ic @0@
+   @define DN @0@
+@SKIP 1D with NU=1
+   @iif nu = 1
+      @iexp DN 1 0 +
+      @SKIP need to load pB only once
+      @iexp kk 0 0 +
+      @iwhile kk < @(vl)
+         rB0 = pB[@(kk)];
+         @iexp ic 0 0 +
+         @iwhile ic < @(mu)
+            @iexp idx @(ic) @(vl) *
+            @iexp idx @(idx) @(kk) +
+            rA0 = pA[@(idx)];
+            rC@(ic)_0 += rA0 * rB0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp ic @(ic) 1 +
+         @endiwhile
+         @iexp kk @(kk) 1 +
+      @endiwhile
+   @endiif
+@SKIP 1D with MU=1
+   @iif DN = 0
+      @iif mu = 1
+         @iexp DN 1 0 +
+         @iexp kk 0 0 +
+         @iwhile kk < @(vl)
+            rA0 = pA[@(kk)];
+            @iexp j 0 0 +
+            @iwhile j < @(nu)
+               @iexp idx @(j) @(vl) *
+               @iexp idx @(idx) @(kk) +
+               rB0 = pB[@(idx)]; 
+               rC0_@(j) += rA0 * rB0;
+               @iexp mo 0 0 +
+               @callproc DoPref
+               @iexp j @(j) 1 +
+            @endiwhile
+            @iexp kk @(kk) 1 +
+         @endiwhile
+      @endiif
+   @endiif
+@SKIP 2-D case
+   @iif DN = 0
+      @iexp kk 0 0 +
+      @iwhile kk < @(vl)
+@beginskip
+@skip ******************* without scheduling ****************************
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            @iexp idx @(i) @(vl) *
+            @iexp idx @(idx) @(kk) +
+            rA@(i) = pA[@(idx)];
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp idx @(j) @(vl) *
+            @iexp idx @(idx) @(kk) +
+            rB0 = pB[@(idx)]; 
+            @iexp ic 0 0 +
+            @iwhile ic < @(mu)
+               rC@(ic)_@(j) += rA@(ic) * rB0;
+               @iexp ic @(ic) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+@skip ********************************************************************
+@endskip
+         rB0 = pB[@(kk)];
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            @iexp idx @(i) @(vl) *
+            @iexp idx @(idx) @(kk) +
+            rA@(i) = pA[@(idx)];
+            rC@(i)_0 += rA@(i) * rB0;
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j 0 1 +
+         @iwhile j < @(nu)
+            @iexp idx @(j) @(vl) *
+            @iexp idx @(idx) @(kk) +
+            rB0 = pB[@(idx)]; 
+            @iexp ic 0 0 +
+            @iexp mo 0 1 +
+            @iwhile ic < @(mu)
+               @callproc DoPref
+               rC@(ic)_@(j) += rA@(ic) * rB0;
+               @iexp mo 0 0 +
+               @iexp ic @(ic) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp kk @(kk) 1 +
+      @endiwhile
+   @endiif
+         @iexp idx @(mu) @(vl) *
+         pA += @(idx);
+         @iexp idx @(nu) @(vl) *
+         pB += @(idx);
+   @undef i
+   @undef j
+   @undef kk
+   @undef idx
+   @undef ic
+   @undef DN @0@
+@ENDPROC
+@SKIP Do normal iteration
+@SKIP ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl, jpf
+@BEGINPROC DoIter_k
+@SKIP define internal vars, so they can popped off to leave caller unchanged
+   @define DN @0@
+   @define i @0@
+   @define j @0@
+   @define kk @0@
+@SKIP 1-D with NU=1
+   @iif vnu = 1
+      @iexp DN 1 0 +
+         @callproc ldB 9 rB0 0
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @skip ATL_vld(rA0, pA+@(ia));
+            rA0 = pA[@(ia)];
+            @iexp ia @(ia) @(vl) +
+            @skip ATL_vmac(rC@(i)_0, rA0, rB0);
+            rC@(i)_0 += rA0 * rB0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+   @endiif
+@SKIP 1-D with MU=1
+   @iif DN = 0
+      @iif vmu = 1
+         @iexp DN 1 0 +
+            @skip ATL_vld(rA0, pA+@(ia));
+            rA0 = pA[@(ia)];
+            @iexp ia @(ia) @(vl) +
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @callproc ldB 9 rB0 @(j)
+            @skip ATL_vmac(rC0_@(j), rA0, rB0);
+            rC0_@(j) += rA0 * rB0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp j @(j) 1 +
+            @skip if (bc==0 && j%vl==0)
+            @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
+            @iif kk ! 0
+               @iexp kk @(vl) @(j) / -1 +
+             @skip ATL_vld(vB@(kk), pB+@(ib)); // 01
+             vB@(kk) = pB[@(ib)]; // 01
+               @iexp ib @(ib) @(vl) +
+            @endiif
+         @endiwhile
+      @endiif
+   @endiif
+@SKIP 2-D case assumes all but last rB already loaded unless B1R true
+@SKIP 2-D case assumes all but last rB already loaded
+   @iif DN = 0
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @iexp mo 0 0 +
+            @skip ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
+            rC@(i)_@(j) += rA@(i) * rB@(j);
+            @skip @iif i = 0
+            @skip    @iif j = 0
+            @skip if ((i|j) == 0 && !B1R)
+            @iif @iexp @(i) @(j) | 0 = @(B1R) 0 = &
+                  @iexp kk @(jl) @(bmul) *
+               @callproc ldB 12 rB@(jl) @(jl)
+                  @ifdef lb
+               @skip ATL_vld(vB@(lb), pB+@(ib)); // 02
+               vB@(lb) = pB[@(ib)]; // 02
+                     @undef lb
+                     @iexp ib @(ib) @(vl) +
+                     @iexp mo 1 0 +
+                  @skip @endifdef
+               @endiif
+            @endiif
+            @iif j = jl
+               @skip ATL_vld(rA@(i), pA+@(ia));
+               rA@(i) = pA[@(ia)];
+               @iexp ia @(ia) @(vl) +
+               @iexp mo 1 0 +
+            @endiif
+            @skip @iif j ! jl
+            @skip   @iif i = il
+            @skip if (j != jl && i == il && !B1R
+            @iif @iexp @(j) @(jl) ! @(i) @(il) = & @(B1R) 0 = &
+               @callproc ldB 12 rB@(j) @(j)
+               @skip @endiif
+            @endiif
+            @iif mo = 0
+               @ifdef lb
+               @skip ATL_vld(vB@(lb), pB+@(ib)); // 03
+               vB@(lb) = pB[@(ib)]; // 03
+                  @undef lb
+                  @iexp ib @(ib) @(vl) +
+                  @SKIP if (vmu !=2 && vnu != 2) mo++
+                  @iexp kk @(vmu) 2 ! @(vnu) 2 ! |
+                  @iif kk ! 0
+                     @iexp mo 1 0 +
+                  @endiif
+               @endifdef
+            @endiif
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @undef jb
+   @endiif
+@SKIP pop our defs so caller's macros of same name aren't changed
+   @undef DN
+   @undef i
+   @undef j
+   @undef kk
+@ENDPROC
+@BEGINPROC DoIter0
+@SKIP define internal vars, so they can popped off to leave caller unchanged
+   @define DN @0@
+   @define i @0@
+   @define j @0@
+   @define kk @0@
+@SKIP 1-D with NU=1
+   @iif vnu = 1
+      @iexp DN 1 0 +
+         @skip @(ldB)(rB0, pB); ---- replaced
+         rB0 = pB[0];
+         pB += @(incBk);
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @iexp kk @(i) @(vl) *
+         @skip ATL_vld(rC@(i)_0, pA+@(kk));
+         rC@(i)_0 = pA[@(kk)];
+         @skip ATL_vmul(rC@(i)_0, rC@(i)_0, rB0);
+         rC@(i)_0 = rC@(i)_0 * rB0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+         pA += @(incAk);
+   @endiif
+@SKIP 1-D with VMU=1
+   @iif DN = 0
+      @iif vmu = 1
+         @iexp DN 1 0 +
+         @skip ATL_vld(rA0, pA);
+         rA0 = pA[0];
+         pA += @(incAk);
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @callproc ldB 6 rC0_@(j) @(j)
+         @skip ATL_vmul(rC0_@(j), rC0_@(j), rA0);
+         rC0_@(j) = rC0_@(j) * rA0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp j @(j) 1 +
+            @skip if (bc==0 && j%vl==0)
+            @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
+            @iif kk ! 0
+               @iexp kk @(vl) @(j) / -1 +
+               @iexp jj @(kk) @(vl) *
+             @skip ATL_vld(vB@(kk), pB+@(jj));
+             vB@(kk) = pB[@(jj)];
+            @endiif
+         @endiwhile
+         pB += @(incBk);
+      @endiif
+   @endiif
+@SKIP 2-D case assumes all but last rB already loaded unless B1R is true
+   @iif DN = 0
+      @define jb @0@
+         @skip ATL_vld(rA0, pA);
+         rA0 = pA[0];
+      @iexp i 0 1 +
+      @iwhile i < @(vmu)
+         @iexp kk @(i) @(vl) *
+         @skip ATL_vld(rA@(i), pA+@(kk));
+         rA@(i) = pA[@(kk)];
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif B1R = 0
+         @callproc ldB 6 rB@(jl) @(jl)
+      @endiif
+         pA += @(incAk);
+      @ifdef lb
+         @iexp jj @(vl) @(lb) *
+         @skip ATL_vld(vB@(lb), pB+@(jj));
+         vB@(lb) = pB[@(jj)]; 
+         @undef lb
+      @endifdef
+      @iif B1R = 0
+         pB += @(incBk);
+      @endiif
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iif B1R ! 0
+            @callproc ldB 6 rB0 @(j)
+            @iif @iexp @(vnu) -1 + @(j) =
+               pB += @(incBk); 
+            @endiif
+         @endiif
+         @iexp jb 0 @(B1R) = @(j) *
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+         @skip ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
+         @skip rC@(i)_@(j) = rA@(i) * rB@(j);
+         @skip ATL_vmul(rC@(i)_@(j), rA@(i), rB@(jb));
+         rC@(i)_@(j) = rA@(i) * rB@(jb);
+            @iexp mo 0 0 +
+            @iif j = jl
+               @iexp kk @(i) @(vl) *
+            @skip ATL_vld(rA@(i), pA+@(kk));
+            rA@(i) = pA[@(kk)];
+               @iexp mo @(mo) 1 +
+                  @iif i = il
+            pA += @(incAk);
+                  @endiif
+            @endiif
+            @iif mo = 0
+               @ifdef lb
+                  @iexp kk @(lb) @(vl) *
+               @skip ATL_vld(vB@(lb), pB+@(kk)); // di0_01: lb=@(lb) jl=@(jl)
+               vB@(lb) = pB[@(kk)]; 
+                  @iexp kk @(kk) @(vl) +
+                  @iif kk = incBk
+               pB += @(incBk); 
+                  @endiif
+                  @undef lb
+                  @iexp mo @(mo) 1 +
+               @endifdef
+            @endiif
+            @iif B1R = 0
+               @iif i = il
+                  @iif j ! jl
+                     @iexp kk @(j) @(bmul) *
+            @callproc ldB 9 rB@(j) @(j)
+                  @endiif
+               @endiif
+            @endiif
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @undef jb
+   @endiif
+@SKIP pop our defs so caller's macros of same name aren't changed
+   @undef DN
+   @undef i
+   @undef j
+   @undef kk
+@ENDPROC
+@SKIP Do normal iteration
+@SKIP ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl, jpf
+@BEGINPROC DoIter
+@SKIP define internal vars, so they can popped off to leave caller unchanged
+   @define DN @0@
+   @define i @0@
+   @define j @0@
+   @define kk @0@
+@SKIP 1-D with NU=1
+   @iif vnu = 1
+      @iexp DN 1 0 +
+            @skip @(ldB)(rB0, pB);
+            rB0 = pB[0];
+            pB += @(incBk);
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @iexp kk @(i) @(vl) *
+            @skip ATL_vld(rA0, pA+@(kk));
+            rA0 = pA[@(kk)];
+            @skip ATL_vmac(rC@(i)_0, rA0, rB0);
+            rC@(i)_0 += rA0 * rB0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+            pA += @(incAk);
+   @endiif
+@SKIP 1-D with MU=1
+   @iif DN = 0
+      @iif vmu = 1
+         @iexp DN 1 0 +
+            @skip ATL_vld(rA0, pA);
+            rA0 = pA[0];
+            pA += @(incAk);
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @callproc ldB 9 rB0 @(j)
+            @skip ATL_vmac(rC0_@(j), rA0, rB0);
+            rC0_@(j) += rA0 * rB0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp j @(j) 1 +
+            @skip if (bc==0 && j%vl==0)
+            @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
+            @iif kk ! 0
+               @iexp kk @(vl) @(j) / -1 +
+               @iexp jj @(kk) @(vl) *
+             @skip ATL_vld(vB@(kk), pB+@(jj));
+             vB@(kk) = pB[@(jj)];
+            @endiif
+         @endiwhile
+            pB += @(incBk);
+      @endiif
+   @endiif
+@SKIP 2-D case assumes all but last rB already loaded
+   @iif DN = 0
+      @define jb @0@
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp jb 0 @(B1R) = @(j) *
+         @iif B1R ! 0
+            @callproc ldB 12 rB0 @(j)
+            @iif jl = j
+               pB += @(incBk);
+            @endiif
+         @endiif
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @iexp mo 0 0 +
+            @skip ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
+            @skip rC@(i)_@(j) += rA@(i) * rB@(j);
+            @skip ATL_vmac(rC@(i)_@(j), rA@(i), rB@(jb));
+            rC@(i)_@(j) += rA@(i) * rB@(jb);
+            @skip if ((i|j|B1R) == 0)
+            @iif @iexp @(i) @(j) | @(B1R) | 0 =
+            @skip @iif i = 0
+               @skip @iif j = 0
+                  @iexp kk @(jl) @(bmul) *
+               @callproc ldB 12 rB@(jl) @(jl)
+                  @ifdef lb
+                     @iexp kk @(lb) @(vl) *
+               @skip ATL_vld(vB@(lb), pB+@(kk));
+               vB@(lb) = pB[@(kk)];
+                     @undef lb
+                     @iexp mo 1 0 +
+                  @endifdef
+               pB += @(incBk);
+               @skip @endiif
+            @endiif
+            @iif j = jl
+               @iexp kk @(i) @(vl) *
+               @skip ATL_vld(rA@(i), pA+@(kk));
+               rA@(i) = pA[@(kk)];
+               @iexp mo 1 0 +
+               @iif i = il
+               pA += @(incAk);
+               @endiif
+            @endiif
+            @skip if (j != jl && i == il && !B1R)
+            @iif @iexp @(j) @(jl) ! @(i) @(il) = & @(B1R) 0 = &
+            @skip @iif j ! jl
+               @skip @iif i = il
+                  @iexp kk @(j) @(bmul) *
+               @callproc ldB 12 rB@(j) @(j)
+               @skip @endiif
+            @endiif
+            @iif mo = 0
+               @ifdef lb
+                  @iexp kk @(lb) @(vl) *
+               @skip ATL_vld(vB@(lb), pB+@(kk));
+               vB@(lb) = pB[@(kk)];
+                  @undef lb
+                  @iexp mo 1 0 +
+               @endifdef
+            @endiif
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @undef jb
+   @endiif
+@SKIP pop our defs so caller's macros of same name aren't changed
+   @undef DN
+   @undef i
+   @undef j
+   @undef kk
+@ENDPROC
+@beginskip
+void ATL_USERMM
+(
+   ATL_CSZT nmus,
+   ATL_CSZT nnus,
+   ATL_CSZT K,
+   const @(typ) *pA, /* @(mu)*KB*nmus-length access-major array of A */
+   const @(typ) *pB, /* @(nu)*KB*nnus-length access-major array of B */
+   @(typ) *pC,   /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
+   const @(typ) *pAn, /* next block of A */
+   const @(typ) *pBn, /* next block of B */
+   const @(typ) *pCn  /* next block of C */
+)
+@endskip
+ROUTINE ATL_USERMM;
+   PARAMS :: nmus, nnus, K, pA, pB, pC, pAn, pBn, pCn;
+   INT :: nmus, nnus, K;
+   @(typ)_PTR :: pA, pB, pC, pAn, pBn, pCn;
+//
+// Performs a GEMM with M,N,K unrolling (& jam) of (@(mu),@(nu),@(ku)).
+@VEC KDIM `// Vectorization of VLEN=@(vl) along K dim, vec unroll=(@(vmu),@(vnu),@(vku)).`
+@VEC MDIM `// Vectorization of VLEN=@(vl) along M dim, vec unroll=(@(vmu),@(vnu),@(vku)).`
+@VEC NO   `// Code is not vectorized (VLEN=@(vl)).`
+@iif kb = 0
+// You may set compile-time constant K dim by defining ATL_MM_KB.
+@endiif
+//
+@skip {
+ROUT_LOCALS
+   @declare "   @(typ) :: " y n ";"
+      @iif bc = 0
+         @iexp kk @(vl) @(vnu) /
+         @iexp j 0 0 +
+         @iwhile j < @(kk)
+            vB@(j)
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif B1R ! 0
+         rB0
+      @endiif
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iif @iexp 0 @(TWOD) ! 0 @(B1R) = &
+         @skip @iif TWOD ! 0
+            rB@(j)
+         @endiif
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            rC@(i)_@(j)
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iif TWOD = 0
+         rA0
+         @iif B1R = 0
+            rB0
+         @endiif
+      @endiif
+      @iif TWOD ! 0
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            rA@(i)
+            @iexp i @(i) 1 +
+         @endiwhile
+      @endiif
+      @SKIP if (mu*nu < vlen && mu != 1 && nu != 1
+      @iif @iexp @(vl) @(mu) @(nu) * < @(mu) 1 ! & @(nu) 1 ! &
+         rtmp
+         @define exreg @rtmp@
+      @endiif
+   @enddeclare
+   @iif @iexp @(vl) @(mu) @(nu) * > 
+      @define exreg @rC0_0@
+   @endiif
+   @ifdef ! exreg
+      @iif @iexp @(mu) 1 = @(nu) 1 = |
+         @define exreg @rB0@
+      @endiif
+   @endifdef
+   @(typ)_PTR :: pA0, pB0;
+   INT :: i, j, k;
+   INT :: incAm, incBn;
+   @iif npfA > 0
+   INT :: incAN;
+   @endiif
+   @iif npfB > 0
+   INT :: incBN;
+   @endiif
+@skip ****poping of defs for i and j
+   @whiledef i
+   @endwhile
+   @whiledef j
+   @endwhile
+@echo @iif ibet ! 0
+@echo   @declare "   @(typ) :: " y n ";"
+@echo      @iexp j 0 0 +
+@echo      @iwhile j < @(vnu)
+@echo         @iexp i 0 0 +
+@echo         @iwhile i < @(vmu)
+@echo             rC@(i)_@(j)m
+@echo            @iexp i @(i) 1 +
+@echo         @endiwhile
+@echo         @iexp j @(j) 1 +
+@echo      @endiwhile
+@echo   @enddeclare
+@echo @endiif
+ROUT_MARKUP
+   ALIGNED(32) :: *;
+ROUT_BEGIN
+   @iif npfA > 0
+      incAN = @(ATL_MM_KB) * @(mu);
+      incAN = incAN / nnus;
+   @endiif
+   @iif npfB > 0
+      incBN = @(ATL_MM_KB) * @(nu);
+      incBN = incBN / nmus;
+   @endiif
+   pB0=pB;
+   pA0=pA;
+@echo @iif ATL_KBCONST = 0
+      incAm = K*@(mu); 
+      incBn = K*@(nu);
+@echo @endiif
+@echo @iif ATL_KBCONST ! 0
+      incAm = @(ATL_MM_KB)*@(mu);
+      incBn = @(ATL_MM_KB)*@(nu);
+@echo @endiif
+@skip *************************************************   
+   @SKIP if (npfA > 0 & npfB > 0)
+   @iexp kk 0 @(npfA) > 0 @(npfB) > &
+   @iif kk ! 0
+   @skip pAn = (pAn != pA) ? pAn : pC;
+   IF ( pAn != pA) GOTO LB_PA_EQ;
+      pAn = pC;
+LB_PA_EQ: 
+   @skip pBn = (pBn != pB) ? pBn : pC;
+   IF (pBn != pB) GOTO LB_PB_EQ;
+      pBn = pC;
+LB_PB_EQ: 
+   @endiif
+   @iif kk = 0
+      @iif npfA > 0
+      @skip   if (pAn == pA)
+      @skip      pAn = (pBn != pB) ? pBn : pCn;
+         IF (pAn != pA) GOTO LB_PA_ALL_DONE;
+            IF (pBn == pB) GOTO LB_IF_CN;
+               pAn = pBn;
+               GOTO LB_PA_ALL_DONE;
+            LB_IF_CN:
+               pAn = pCn;
+         LB_PA_ALL_DONE:
+      @endiif
+      @iif npfB > 0
+      @skip   if (pBn == pB)
+      @skip      pBn = (pAn != pA) ? pAn : pCn;
+      IF ( pBn != pB ) GOTO LB_PB_ALL_DONE;
+         IF ( pAn == pA ) GOTO LB_IF_PA_CN;
+            pBn = pAn;
+            GOTO LB_PB_ALL_DONE;
+         LB_IF_PA_CN: 
+            pBn = pCn;
+      LB_PB_ALL_DONE:
+      @endiif
+   @endiif
+@skip *************************************************   
+   @iexp mo 0 0 +
+   @iexp ipf 0 0 +
+   @iexp ipa 0 0 +
+   @iexp ipb 0 0 +
+   @iexp jl @(vnu) -1 +
+   @iexp il @(vmu) -1 +
+   @iif vnu > 2
+      @iexp jpf 0 1 +
+   @endiif
+   @iif vnu < 3
+      @iexp jpf 0 -1 +
+   @endiif
+   @iexp jpf 0 -1 +
+@iif @iexp @(DOMLOOP)
+   i = nmus;
+   MLOOP:
+@endiif
+@print NOK=@(NOKLOOP) ib=@(ib) ia=@(ia)
+@skip ***********************************************************
+@VEC MDIM      
+   @iif bc = 0
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp kk @(vl) @(j) /
+      vB@(kk) = pB[@(j)];
+         @iexp j @(j) @(vl) +
+      @endiwhile
+      pB += @(incBk);
+   @endiif
+   @iif @iexp 1 @(vmu) > 0 @(B1R) = &
+      @iexp j 0 0 +
+      @iwhile j < @(jl)
+         @callproc ldB 3 rB@(j) @(j)
+         @ifdef lb
+            @iif ib < 0
+               @iexp kk @(vl) @(lb) *
+      vB@(lb) = pB[@(kk)]; // h0
+            @endiif
+            @iif ib > -1 
+      vB@(lb) = pB[@(ib)];  // h1
+               @iexp ib @(ib) @(vl) +
+            @endiif
+            @undef lb
+         @endifdef
+         @iexp j @(j) 1 +
+      @endiwhile
+   @endiif
+   @iif @iexp @(DONLOOP)
+      @iif TRI = 0
+         j =  nnus;
+      @endiif
+      @iif TRI = 1
+         j = nmus - i;
+      @endiif
+      NLOOP:
+   @endiif
+         @skip /* Peel K=0 iteration to avoid zero of rCxx and extra add  */
+         // Peel K=0 iteration to avoid zero of rCxx and extra add
+   @skip *********************************************************
+   @iif NOKLOOP ! 0
+      @iexp IN_K 0 0 +
+         @CALLPROC DoIter0
+      @iexp incK 1 0 +
+      @iexp k 0 @(incK) +
+      @iwhile ipf < npf
+            // Peel K=@(k) iteration for prefetch  
+         @CALLPROC DoIter
+         @iexp k @(k) @(incK) +
+      @endiwhile
+      @iexp IN_K 1 0 +
+         @iexp kk @(k) 0 +
+         @print k=@(k), kb=@(kb)
+         @iif k < kb
+         LOOP k = @(kk), @(kb), @(incK)
+         LOOP_BODY
+            @iexp IN_K 0 1 +
+            @CALLPROC DoIter
+         LOOP_END
+         @endiif
+   @endiif
+   @skip **********************************************************
+   @iif NOKLOOP = 0
+      @iexp IN_K 0 0 +
+      @iexp npeel 1 0 +
+      @CALLPROC DoIter0
+      @iwhile ipf < npf
+        //Peel K=@(npeel) it to allow prefetch of C or next blocks of A&B
+         @iexp kk @(npeel) 0 +
+         IF (K == @(kk)) GOTO KDONE;
+            @CALLPROC DoIter
+         @iexp npeel @(npeel) 1 +
+      @endiwhile
+         @iexp kk @(npeel) 0 +
+      @echo @iif ATL_KBCONST = 0
+         IF (K == @(kk)) GOTO KDONE;
+         LOOP k = @(kk), @(ATL_MM_KB), @(ku)
+         LOOP_BODY
+            @iexp IN_K 0 1 +
+            @CALLPROC DoIter
+         LOOP_END
+      @echo @endiif
+      @echo @iif ATL_KBCONST ! 0
+         @echo    @iif @(ATL_MM_KB) > @(kk)   
+         LOOP k = @(kk), @(ATL_MM_KB), @(ku)
+         LOOP_BODY
+            @iexp IN_K 0 1 +
+            @CALLPROC DoIter
+         LOOP_END
+         @echo    @endiif
+      @echo @endiif
+      @iif npeel > 1      
+KDONE:
+      @endiif
+      @iif npeel { 1
+         @echo @iif ATL_KBCONST = 0
+KDONE:
+         @echo @endiif
+      @endiif
+   @endiif
+         @CALLPROC storeC 6
+         @iexp kk @(mu) @(nu) *
+      @iif @iexp @(DOMLOOP) @(DONLOOP) |
+         pC += @(kk);
+         pA = pA0;
+      @endiif
+@VEC KDIM
+   @iif @iexp @(DONLOOP)
+      @iif TRI = 0
+         j =  nnus;
+      @endiif
+      @iif TRI = 1
+         j = i;
+      @endiif
+      NLOOP:
+   @endiif
+      @skip pref inside rc_zerod proc
+      @CALLPROC RC_ZEROD
+      @skip started kloop
+   @iif NOKLOOP = 0
+      LOOP k=0, @(ATL_MM_KB), @(ku)       
+      LOOP_BODY
+      @iexp IN_K 0 1 +
+         @CALLPROC DoIter_kvec
+      LOOP_END
+   @endiif
+   @iif NOKLOOP ! 0
+      @iexp kk 0 @(vl) +
+      LOOP k=0, @(ATL_MM_KB), @(kk)       
+      LOOP_BODY
+      @iexp IN_K 0 1 +
+            @CALLPROC DoIter_kvec
+      LOOP_END
+   @endiif
+         @CALLPROC storeC 6
+         @iexp kk @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *
+      @iif @iexp @(DOMLOOP) @(DONLOOP) |
+         pC += @(kk);
+         pA = pA0;
+      @endiif
+@VEC !
+   @iif @iexp @(DONLOOP)
+         j = j - 1;
+      @iif TRI = 0
+         IF (j > 0) GOTO NLOOP; 
+      @endiif
+      @iif TRI = 1
+         IF (j >= 0) GOTO NLOOP; 
+      @endiif
+   @endiif
+      pB = pB0;
+      pA0 += incAm;
+      pA = pA0;
+   @iif @iexp @(DOMLOOP)
+      i = i - 1;
+      IF (i > 0) GOTO MLOOP;
+   @endiif
+ROUT_END
+
+@ROUT blk2C C2blk
+#include <stddef.h>
+@ifdef ! cpvl
+   @iexp cpvl 1
+@endifdef
+@iif cpvl > 1
+#define ATL_VLEN @(vl)
+#include "atlas_simd.h"
+@endiif
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__/100 >= 1999)
+   #define INLINE inline
+#endif
+@SKIP LEGAL: alpha=[1,-1,X], beta=[0,1,-1,X]
+@SKIP if (alpha==1) && (beta==0 || beta==1)) -> char same as #
+@ifdef ! rtnm
+   @define rtnm @ATL_USERCPMM@
+@endifdef
+@PRE S D
+@SKIP blksz = ((mu*nu+vlen-1)/vlen)*vlen
+@iexp bs @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *
+// HERE vl=@(vl), mu=@(mu), nu=@(nu) bs=@(bs)
+@SKIP IN: mu, nu, beta, alpha
+@BEGINPROC doDiBlock n_
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @define c @dum@
+   @define r @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(n_)
+         @iexp k @(j) @(mu) * @(i) +
+@ROUT blk2C
+         @iexp r @(i)
+         @iexp c @(j)
+         @iif j { i
+@ROUT C2blk
+         @iif j > i
+            @iexp r @(j)
+            @iexp c @(i)
+         @endiif
+         @iif j { i
+            @iexp r @(i)
+            @iexp c @(j)
+         @endiif
+@ROUT blk2C C2blk
+         @iif alpha = 1
+            @iif beta = 0
+@ROUT blk2C `            C@(c)[@(r)] = p[@(k)];`
+@ROUT C2blk `            p[@(k)] = C@(c)[@(r)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(c)[@(r)] += p[@(k)];`
+@ROUT C2blk `            p[@(k)] += C@(c)[@(r)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(c)[@(r)] = p[@(k)] - C@(c)[@(r)];`
+@ROUT C2blk `            p[@(k)] = C@(c)[@(r)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(c)[@(r)] = beta*C@(c)[@(r)] + p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + C@(c)[@(r)];`
+            @endiif
+         @endiif
+         @iif alpha = -1
+            @iif beta = 0
+@ROUT blk2C `            C@(c)[@(r)] = -p[@(k)];`
+@ROUT C2blk `            p[@(k)] = -C@(c)[@(r)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(c)[@(r)] -= p[@(k)];`
+@ROUT C2blk `            p[@(k)] -= C@(c)[@(r)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(c)[@(r)] = -C@(c)[@(r)] - p[@(k)];`
+@ROUT C2blk `            p[@(k)] = -C@(c)[@(r)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(c)[@(r)] = beta*C@(c)[@(r)] - p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] - C@(c)[@(r)]`
+            @endiif
+         @endiif
+         @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+            @iif beta = 0
+@ROUT blk2C `            C@(c)[@(r)] = alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] = alpha*C@(c)[@(r)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(c)[@(r)] += alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] += alpha*C@(c)[@(r)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(c)[@(r)] = alpha*p[@(k)] - C@(c)[@(r)];`
+@ROUT C2blk `            p[@(k)] = alpha*C@(c)[@(r)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(c)[@(r)] = beta*C@(c)[@(r)] + alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + alpha*C@(c)[@(r)];`
+            @endiif
+         @endiif
+@ROUT blk2C 
+         @endiif
+@ROUT blk2C C2blk
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif n_ = mu
+            C@(j) += @(mu);
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef k
+   @undef i
+   @undef j
+   @undef c
+   @undef r
+@ENDPROC
+@BEGINPROC doBlock m_ n_
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(m_)
+         @iexp k @(j) @(mu) * @(i) +
+         @iif alpha = 1
+            @iif beta = 0
+@ROUT blk2C `            C@(j)[@(i)] = p[@(k)];`
+@ROUT C2blk `            p[@(k)] = C@(j)[@(i)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(j)[@(i)] += p[@(k)];`
+@ROUT C2blk `            p[@(k)] += C@(j)[@(i)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(j)[@(i)] = p[@(k)] - C@(j)[@(i)];`
+@ROUT C2blk `            p[@(k)] = C@(j)[@(i)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] + p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + C@(j)[@(i)];`
+            @endiif
+         @endiif
+         @iif alpha = -1
+            @iif beta = 0
+@ROUT blk2C `            C@(j)[@(i)] = -p[@(k)];`
+@ROUT C2blk `            p[@(k)] = -C@(j)[@(i)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(j)[@(i)] -= p[@(k)];`
+@ROUT C2blk `            p[@(k)] -= C@(j)[@(i)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(j)[@(i)] = -C@(j)[@(i)] - p[@(k)];`
+@ROUT C2blk `            p[@(k)] = -C@(j)[@(i)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] - p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] - C@(j)[@(i)]`
+            @endiif
+         @endiif
+         @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+            @iif beta = 0
+@ROUT blk2C `            C@(j)[@(i)] = alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] = alpha*C@(j)[@(i)];`
+            @endiif
+            @iif beta = 1
+@ROUT blk2C `            C@(j)[@(i)] += alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] += alpha*C@(j)[@(i)];`
+            @endiif
+            @iif beta = -1
+@ROUT blk2C `            C@(j)[@(i)] = alpha*p[@(k)] - C@(j)[@(i)];`
+@ROUT C2blk `            p[@(k)] = alpha*C@(j)[@(i)] - p[@(k)];`
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `            C@(j)[@(i)] = beta*C@(j)[@(i)] + alpha*p[@(k)];`
+@ROUT C2blk `            p[@(k)] = beta*p[@(k)] + alpha*C@(j)[@(i)];`
+            @endiif
+         @endiif
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif m_ = mu
+            C@(j) += @(mu);
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef k
+   @undef i
+   @undef j
+@ENDPROC
+@iif cpvl = 1
+void @(rtnm)
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   @ROUT blk2C
+   const @(typ) alpha,  /* scalar for b */
+   const @(typ) *b,     /* matrix stored in @(mu)x@(nu)-major order */
+   const @(typ) beta,   /* scalar for C */
+   @(typ) *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+   @ROUT C2blk
+   const @(typ) alpha,  /* scalar for C */
+   const @(typ) *C,     /* matrix to be copied to access-major format */
+   const size_t ldc,    /* stride between row elements */
+   const @(typ) beta,   /* scalar for b */
+   @(typ) *b            /* matrix stored in @(mu)x@(nu)-major order */
+   @ROUT C2blk blk2C
+)
+@endiif
+@iif cpvl > 1
+static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha, 
+                         const @(typ) *b, const SCALAR beta, 
+                         @(typ) *C, ATL_CSZT ldc)
+@endiif
+{
+   const unsigned int mf = M/@(mu), nf = N/@(nu);
+   const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
+@iif TRI = 1
+   unsigned int pansz = @(bs);
+   const size_t incC0 = (ldc+1)*@(nu);
+@endiif
+@iif TRI = 0
+   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+   const size_t incC = ldc*@(nu) - m;
+@endiif
+   unsigned int i, j;
+@ROUT blk2C `   @declare "   @(typ) " n n ";"`
+@ROUT C2blk `   @declare "   const @(typ) " n n ";"`
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+@iif TRI = 1
+   for (j=0; j < nf; j++)
+@endiif
+@iif TRI = 0
+   for (j=nf; j; j--, b += @(bs))
+@endiif
+   {
+@ROUT blk2C `      const @(typ) *p = b;`
+@ROUT C2blk `      @(typ) *p = b;`
+@iif TRI = 1
+      unsigned int psz = pansz+@(bs), incC = incC0 - (mf-j)*@(mu);
+
+      @callproc doDiBlock @(nu)
+      p += pansz;
+      for (i=j+1; i < mf; i++, p += psz, psz += @(bs))
+@endiif
+@iif TRI = 0
+      for (i=mf; i; i--, p += pansz)
+@endiif
+      {
+         @callproc doBlock @(mu) @(nu)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(nu)
+      @iexp m @(m) 1 +
+         break;
+   @endiwhile
+      default:;
+      }
+   @iexp j 0
+   @iwhile j < @(nu)
+      C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+@iif TRI = 1
+      pansz += @(bs);
+      b += pansz;
+@endiif
+   }
+@iif nu > 1
+   switch(nr)
+   {
+@ROUT blk2C `      const @(typ) *p;`
+@ROUT C2blk `      @(typ) *p;`
+   @iexp n 1
+   @iwhile n < @(nu)
+   case @(n):
+      p = b;
+@iif TRI = 1
+         @callproc doDiBlock @(n)
+      break;
+@endiif
+@iif TRI = 0
+      for (i=0; i < mf; i++, p += pansz)
+      {
+         @callproc doBlock @(mu) @(n)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(n)
+      @iexp m @(m) 1 +
+         break;
+   @endiwhile
+      default:;
+      }
+      break;
+@endiif
+      @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+@endiif
+}
+@PRE C Z
+   @iexp betX 0 @(beta) ! 1 @(beta) ! & -1 @(beta) ! &
+   @iexp alpX 0 @(alpha) ! 1 @(alpha) ! & -1 @(alpha) ! &
+@SKIP blksz = ((mu*nu+vlen-1)/vlen)*vlen
+@iexp bs @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *
+// HERE vl=@(vl), mu=@(mu), nu=@(nu) bs=@(bs)
+@SKIP IN: mu, nu, beta, alpha
+@BEGINPROC doDiBlock n_
+   @define i @dum@
+   @define ir @dum@
+   @define ii @dum@
+   @define j @dum@
+   @define k @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(n_)
+@ROUT C2blk 
+         @iif j > i
+            @iexp ir @(j) @(j) +
+            @define h @@(i)@
+         @endiif
+         @iif j { i
+            @iexp ir @(i) @(i) +
+            @define h @@(j)@
+         @endiif
+         @iexp ii @(ir) 1 +
+         @iexp k @(j) @(mu) * @(i) +
+@ROUT blk2C 
+         @iexp ir @(i) @(i) +
+         @iexp ii @(ir) 1 +
+         @iexp k @(j) @(mu) * @(i) +
+         @iif j { i
+@ROUT blk2C C2blk
+         @iif alpha = 1
+            @iif beta = 0
+@ROUT blk2C 
+            C@(j)[@(ir)] = pr[@(k)];  // i=@(i), j=@(j), ir=@(ir), k=@(k);
+            C@(j)[@(ii)] = pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = C@(h)[@(ir)];
+            pi[@(k)] = C@(h)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            C@(j)[@(ir)] += pr[@(k)];
+            C@(j)[@(ii)] += pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] += C@(h)[@(ir)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            C@(j)[@(ir)] = pr[@(k)] - C@(j)[@(ir)];
+            C@(j)[@(ii)] = pi[@(k)] - C@(j)[@(ii)];
+@ROUT C2blk 
+            pr[@(k)] = C@(h)[@(ir)] - pr[@(k)];
+            pi[@(k)] = C@(h)[@(ii)] - pi[@(k)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rr=pr[@(k)], ir=pi[@(k)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr=C@(h)[@(ir)], ir=C@(h)[@(ii)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               pr[@(k)] = rr;
+               pi[@(k)] = ic;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iif alpha = -1
+            @iif beta = 0
+@ROUT blk2C 
+            C@(j)[@(ir)] = -pr[@(k)];
+            C@(j)[@(ii)] = -pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = -C@(h)[@(ir)];
+            pi[@(k)] = -C@(h)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            C@(j)[@(ir)] -= pr[@(k)];
+            C@(j)[@(ii)] -= pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] -= C@(h)[@(ir)];
+            pi[@(k)] -= C@(h)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            C@(j)[@(ir)] = -C@(j)[@(ir)] - pr[@(k)];
+            C@(j)[@(ii)] = -C@(j)[@(ii)] - pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = -C@(h)[@(ir)] - pr[@(k)];
+            pi[@(k)] = -C@(h)[@(ii)] - pi[@(k)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rr = -pr[@(k)], ir = -pi[@(k)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr = -C@(h)[@(ir)], ir = -C@(h)[@(ii)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               pr[@(k)] = rr;
+               pi[@(k)] = ic;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+            @iif beta = 0
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr, ir;
+               rr = rc * ra;
+               ir = ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(h)[@(ir)], ic=C@(h)[@(ii)];
+               register @(typ) rr, ir;
+               rr  = rc * ra;
+               ir  = ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr=C@(j)[@(ir)], ir=C@(j)[@(ii)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(h)[@(ir)], ic=C@(h)[@(ii)];
+               const register @(typ) rr=pr[@(k)], ir=pi[@(k)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr = -C@(j)[@(ir)], ir = -C@(j)[@(ii)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(h)[@(ir)], ic=C@(h)[@(ii)];
+               const register @(typ) rr = -pr[@(k)], ir = -pi[@(k)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            {
+               register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rB=pr[@(k)], iB=pi[@(k)], r0, i0, r1, i1;
+               r0  = rb * rc;
+               r1  = ra * rB;
+               i0  = rb * ic;
+               i1  = ra * iB;
+               r0 -= ib * ic;
+               i1 += ib * rc;
+               r1 -= ia * iB;
+               i1 += ia * rB;
+               C@(j)[@(ir)] = r0 + r1;
+               C@(j)[@(ii)] = i0 + i1;
+            }
+@ROUT C2blk 
+            {
+               register @(typ) rB=C@(h)[@(ir)], iB=C@(h)[@(ii)];
+               register @(typ) rc=pr[@(k)], ic=pi[@(k)], r0, i0, r1, i1;
+               r0  = rb * rc;
+               r1  = ra * rB;
+               i0  = rb * ic;
+               i1  = ra * iB;
+               r0 -= ib * ic;
+               i1 += ib * rc;
+               r1 -= ia * iB;
+               i1 += ia * rB;
+               pr[@(k)] = r0 + r1;
+               pi[@(k)] = i0 + i1;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+@ROUT blk2C
+         @endiif
+@ROUT blk2C C2blk
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iexp i @(mu) @(mu) +
+      @iif n_ = mu
+            C@(j) += @(i);
+      @endiif
+@ROUT C2blk `      @undef h`
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef k
+   @undef ii
+   @undef ir
+   @undef j
+@ENDPROC
+@BEGINPROC doBlock m_ n_
+   @define i @dum@
+   @define ir @dum@
+   @define ii @dum@
+   @define j @dum@
+   @define k @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(m_)
+         @iexp ir @(i) @(i) +
+         @iexp ii @(ir) 1 +
+         @iexp k @(j) @(mu) * @(i) +
+         @iif alpha = 1
+            @iif beta = 0
+@ROUT blk2C 
+            C@(j)[@(ir)] = pr[@(k)];
+            C@(j)[@(ii)] = pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = C@(j)[@(ir)];
+            pi[@(k)] = C@(j)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            C@(j)[@(ir)] += pr[@(k)];
+            C@(j)[@(ii)] += pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] += C@(j)[@(ir)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            C@(j)[@(ir)] = pr[@(k)] - C@(j)[@(ir)];
+            C@(j)[@(ii)] = pi[@(k)] - C@(j)[@(ii)];
+@ROUT C2blk 
+            pr[@(k)] = C@(j)[@(ir)] - pr[@(k)];
+            pi[@(k)] = C@(j)[@(ii)] - pi[@(k)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rr=pr[@(k)], ir=pi[@(k)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr=C@(j)[@(ir)], ir=C@(j)[@(ii)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               pr[@(k)] = rr;
+               pi[@(k)] = ic;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iif alpha = -1
+            @iif beta = 0
+@ROUT blk2C 
+            C@(j)[@(ir)] = -pr[@(k)];
+            C@(j)[@(ii)] = -pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = -C@(j)[@(ir)];
+            pi[@(k)] = -C@(j)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            C@(j)[@(ir)] -= pr[@(k)];
+            C@(j)[@(ii)] -= pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] -= C@(j)[@(ir)];
+            pi[@(k)] -= C@(j)[@(ii)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            C@(j)[@(ir)] = -C@(j)[@(ir)] - pr[@(k)];
+            C@(j)[@(ii)] = -C@(j)[@(ii)] - pi[@(k)];
+@ROUT C2blk 
+            pr[@(k)] = -C@(j)[@(ir)] - pr[@(k)];
+            pi[@(k)] = -C@(j)[@(ii)] - pi[@(k)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rr = -pr[@(k)], ir = -pi[@(k)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr = -C@(j)[@(ir)], ir = -C@(j)[@(ii)];
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               pr[@(k)] = rr;
+               pi[@(k)] = ic;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+            @iif beta = 0
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr, ir;
+               rr = rc * ra;
+               ir = ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rr, ir;
+               rr  = rc * ra;
+               ir  = ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr=C@(j)[@(ir)], ir=C@(j)[@(ii)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               const register @(typ) rr=pr[@(k)], ir=pi[@(k)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=pr[@(k)], ic=pi[@(k)];
+               register @(typ) rr = -C@(j)[@(ir)], ir = -C@(j)[@(ii)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               C@(j)[@(ir)] = rr;
+               C@(j)[@(ii)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               const register @(typ) rr = -pr[@(k)], ir = -pi[@(k)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               pr[@(k)] = rr;
+               pi[@(k)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            {
+               register @(typ) rc=C@(j)[@(ir)], ic=C@(j)[@(ii)];
+               register @(typ) rB=pr[@(k)], iB=pi[@(k)], r0, i0, r1, i1;
+               r0  = rb * rc;
+               r1  = ra * rB;
+               i0  = rb * ic;
+               i1  = ra * iB;
+               r0 -= ib * ic;
+               i1 += ib * rc;
+               r1 -= ia * iB;
+               i1 += ia * rB;
+               C@(j)[@(ir)] = r0 + r1;
+               C@(j)[@(ii)] = i0 + i1;
+            }
+@ROUT C2blk 
+            {
+               register @(typ) rB=C@(j)[@(ir)], iB=C@(j)[@(ii)];
+               register @(typ) rc=pr[@(k)], ic=pi[@(k)], r0, i0, r1, i1;
+               r0  = rb * rc;
+               r1  = ra * rB;
+               i0  = rb * ic;
+               i1  = ra * iB;
+               r0 -= ib * ic;
+               i1 += ib * rc;
+               r1 -= ia * iB;
+               i1 += ia * rB;
+               pr[@(k)] = r0 + r1;
+               pi[@(k)] = i0 + i1;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iexp i @(mu) @(mu) +
+      @iif m_ = mu
+            C@(j) += @(i);
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef k
+   @undef ii
+   @undef ir
+   @undef j
+@ENDPROC
+@ROUT blk2C C2blk
+@iif cpvl = 1
+void @(rtnm)
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   const @(typ) *alpha, /* scalar for b */
+   @ROUT blk2C
+   const @(typ) *rC,    /* real block stored in @(mu)x@(nu)-major order */
+   const @(typ) *iC,    /* imag block stored in @(mu)x@(nu)-major order */
+   const @(typ) *beta,  /* scalar for C */
+   @(typ) *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+   @ROUT C2blk
+   const @(typ) *C,     /* matrix to be copied to access-major format */
+   const size_t ldc,    /* stride between row elements */
+   const @(typ) beta,   /* scalar for C */
+   @(typ) *rC,          /* real block stored in @(mu)x@(nu)-major order */
+   @(typ) *iC,          /* imag block stored in @(mu)x@(nu)-major order */
+   @ROUT C2blk blk2C
+)
+@endiif
+@iif cpvl > 1
+static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha, 
+                         const @(typ) *b, const SCALAR beta, 
+                         @(typ) *C, ATL_CSZT ldc)
+@endiif
+{
+   const unsigned int mf = M/@(mu), nf = N/@(nu);
+   const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
+@iif TRI = 1
+   unsigned int pansz = @(bs);
+   const size_t ldc2 = ldc+ldc, incC0 = (ldc2+2)*@(nu);
+@endiif
+@iif TRI = 0
+   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+   const size_t incC = (ldc*@(nu) - m)<<1, ldc2 = ldc+ldc;
+@endiif
+   unsigned int i, j;
+   @iif alpX ! 0
+   const register @(typ) ra=(*alpha), ia=alpha[1];
+   @endiif
+   @iif betX ! 0
+   const register @(typ) rb=(*beta), ib=beta[1];
+   @endiif
+@ROUT blk2C `   @declare "   @(typ) " n n ";"`
+@ROUT C2blk `   @declare "   const @(typ) " n n ";"`
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc2
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+@iif TRI = 1
+   for (j=0; j < nf; j++)
+@endiif
+@iif TRI = 0
+   for (j=nf; j; j--, rC += @(bs), iC += @(bs))
+@endiif
+   {
+@ROUT blk2C `      const @(typ) *pr = rC, *pi = iC;`
+@ROUT C2blk `      @(typ) *pr = rC, *pi = iC;`
+@iif TRI = 1
+      unsigned int psz = pansz+@(bs), incC = incC0 - (mf-j)*(@(mu)+@(mu));
+      @callproc doDiBlock @(nu)
+      pr += pansz; pi += pansz;
+      for (i=j+1; i < mf; i++, pr += psz, pi += psz, psz += @(bs))
+@endiif
+@iif TRI = 0
+      for (i=mf; i; i--, pr += pansz, pi += pansz)
+@endiif
+      {
+         @callproc doBlock @(mu) @(nu)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(nu)
+      @iexp m @(m) 1 +
+         break;
+   @endiwhile
+      default:;
+      }
+   @iexp j 0
+   @iwhile j < @(nu)
+      C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+@iif TRI = 1
+      pansz += @(bs);
+      rC += pansz;
+      iC += pansz;
+@endiif
+   }
+@iif nu > 1
+   switch(nr)
+   {
+@ROUT blk2C `      const @(typ) *pr, *pi;`
+@ROUT C2blk `      @(typ) *pr, *pi;`
+   @iexp n 1
+   @iwhile n < @(nu)
+   case @(n):
+      pr = rC; pi = iC;
+@iif TRI = 1
+      @callproc doDiBlock @(n)
+      break;
+@endiif
+@iif TRI = 0
+      for (i=0; i < mf; i++, pr += pansz, pi += pansz)
+      {
+         @callproc doBlock @(mu) @(n)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(n)
+      @iexp m @(m) 1 +
+         break;
+   @endiwhile
+      default:;
+      }
+      break;
+@endiif
+      @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+@endiif
+}
+@ROUT
+
