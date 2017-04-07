@@ -11535,7 +11535,7 @@ int UseBcast(int flg, int verb, char pre, int kb, int nreg, int VL)
    ATL_mmnode_t *mpBC, *mpNO;
    double mfBC, mfNO;
 
-   if (flg & (1<<MMF_FKO))  /* temporary for Majedul */
+   if (flg&32)  /* temporary for Majedul */
       return(1);            /* replace wt analysis later */
    if (VL < 2)
       return(1);
@@ -11579,10 +11579,14 @@ ATL_mmnode_t *DoSyrkMUNU
    double mfB = 0.0;
    int i, j, uB=VL, bcB=1, kvecB=0, kbB=0;
    const char *frm="   %c%c %4d %4d %3d %9.0f\n";
+   const int bf=(flg&32)?4:0;
 
-   pM = MMGetNodeGEN(pre, 0, 0, VL, 1, 1, VL, 0, 0, 0, DupString("ATL_tmp.c"));
-   pB = MMGetNodeGEN(pre, 1, 0, VL, 1, 1, VL, 0, 0, 0, DupString("ATL_tmp.c"));
-   pK = MMGetNodeGEN(pre, 0, 0, 1, 1, VL, VL, 1, 0, 0, DupString("ATL_tmp.c"));
+   pM = MMGetNodeGEN(pre, 0|bf, 0, VL, 1, 1, VL, 0, 0, 0, 
+                     DupString("ATL_tmp.c"));
+   pB = MMGetNodeGEN(pre, 1|bf, 0, VL, 1, 1, VL, 0, 0, 0, 
+                     DupString("ATL_tmp.c"));
+   pK = MMGetNodeGEN(pre, 0|bf, 0, 1, 1, VL, VL, 1, 0, 0, 
+                     DupString("ATL_tmp.c"));
    pM->blask = pB->blask = pK->blask = 1;
    pK->next = pM;
    pM->next = pB;
@@ -11677,7 +11681,7 @@ ATL_mmnode_t *DoSyrkMUNU
    pM->genstr = pK->genstr = pB->genstr = NULL;
    KillAllMMNodes(pK);
    printf("Done.\n");
-   pK = MMGetNodeGEN(pre, bcB, 0, uB, uB, kvecB ? kvecB:1, VL, kvecB, 
+   pK = MMGetNodeGEN(pre, bcB|bf, 0, uB, uB, kvecB ? kvecB:1, VL, kvecB, 
                       0, 0, NULL);
    if (uB*uB+uB+uB > nreg)
    {
@@ -11743,13 +11747,17 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    const int CHK=(flg&1), ku = (KVEC) ? VL : 1;
    int n, i, j, mbB, nbB, kbB, muB=1, nuB=1, b1B=0;
    char ch;
+   const int bf=(flg&32)?4:0;
 
    assert(VL < 1000 && nreg < 1000);  /* don't overflow fn len */
    if (VL < 2)
       ch = 'U';
    else
       ch = (KVEC) ? 'K':'M';
-   sprintf(fn, "gAMMUR_%c%d_%d.sum", ch, VL, nreg);
+   if (bf)
+      sprintf(fn, "gAMMUR_%c%d_%d_fko.sum", ch, VL, nreg);
+   else
+      sprintf(fn, "gAMMUR_%c%d_%d.sum", ch, VL, nreg);
    mmp = ReadMMFileWithPath(pre, "res", fn);
    if (mmp)
    {
@@ -11759,7 +11767,7 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
       return(mmp);
    }
    assert(nb%VL == 0);
-   mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 0, 0,
+   mmp = MMGetNodeGEN(pre, 0|bf, nb, 1, 1, ku, 1, KVEC, 0, 0,
                       DupString("ATL_Xamm_munu.c"));
    mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
@@ -11808,6 +11816,7 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
            free(mmp->genstr);
          mbu = (nb >= mu) ? (nb/mu)*mu : mu;
          nbu = (nb >= nu) ? (nb/nu)*nu : nu;
+         if (bf) mmp->flag |= 1<<MMF_FKO;
          mmp->genstr = MMGetGenString(pre, mmp);
          mf = TimeMMKernel(verb, 0, mmp, pre, mbu, nbu, nb, 1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
@@ -11836,7 +11845,7 @@ DONE:
    i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    i |= (b1B) ? 2 : 0;
    KillMMNode(mmp);
-   mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, 0, 0, NULL);
+   mmp = MMGetNodeGEN(pre, i|bf, nb, muB, nuB, ku, VL, KVEC, 0, 0, NULL);
    mmp->mbB = mbB;
    mmp->nbB = nbB;
    mmp->kbB = kbB;
@@ -11859,8 +11868,12 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
    double mf, mfB=0.0;
    const int CHK=(flg&1), mu = I*VL;
    int n, i, j, mbB, nbB, kbB, nuB=1, b1B=0, mbu;
+   const int bf=(flg&32)?4:0;
 
-   sprintf(fn, "gAMMUR_MU%d_M%d_%d.sum", I, VL, nreg);
+   if (bf)
+      sprintf(fn, "gAMMUR_MU%d_M%d_%d_fko.sum", I, VL, nreg);
+   else
+      sprintf(fn, "gAMMUR_MU%d_M%d_%d.sum", I, VL, nreg);
    mmp = ReadMMFileWithPath(pre, "res", fn);
    if (mmp)
    {
@@ -11869,7 +11882,7 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
       WriteRefreshedMMFileWithPath(pre, "res", fn, mmp);
       return(mmp);
    }
-   mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, 1, 1, 0, 0, 0, 
+   mmp = MMGetNodeGEN(pre, 0|bf, nb, 1, 1, 1, 1, 0, 0, 0, 
                       DupString("ATL_Xamm_munu.c"));
    mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
@@ -11897,6 +11910,7 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
          mmp->flag |= 1<<MMF_BREG1;
       else
          mmp->flag &= ~(1<<MMF_BREG1);
+      if (bf) mmp->flag |= 1<<MMF_FKO;
       mmp->genstr = MMGetGenString(pre, mmp);
       mf = TimeMMKernel(verb, 0, mmp, pre, mbu, nbu, nb, 1, 0, -1);
       printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", I, j, mf);
@@ -11924,7 +11938,7 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
       printf("NO LEGAL KERNS FOR MU=%d!\n", I);
       return(NULL);
    }
-   mmp = MMGetNodeGEN(pre, i, nb, mu, nuB, 1, VL, 0, 0, 0, NULL);
+   mmp = MMGetNodeGEN(pre, i|bf, nb, mu, nuB, 1, VL, 0, 0, 0, NULL);
    mmp->mbB = mbB;
    mmp->nbB = nbB;
    mmp->kbB = kbB;
@@ -11945,12 +11959,16 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
    const int CHK=(flg&1), ku = (KVEC) ? VL : 1;
    int n, i, j, mbB, nbB, kbB, muB=1, nuB=1, b1B=0;
    char ch;
+   const int bf=(flg&32)?4:0;
 
    if (VL < 2)
       ch = 'U';
    else
       ch = (KVEC) ? 'K':'M';
-   sprintf(fn, "gAMMURP2_%c%d_%d.sum", ch, VL, nreg);
+   if (bf)
+      sprintf(fn, "gAMMURP2_%c%d_%d_fko.sum", ch, VL, nreg);
+   else
+      sprintf(fn, "gAMMURP2_%c%d_%d.sum", ch, VL, nreg);
    mmp = ReadMMFileWithPath(pre, "res", fn);
    if (mmp)
    {
@@ -11959,7 +11977,7 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
       WriteRefreshedMMFileWithPath(pre, "res", fn, mmp);
       return(mmp);
    }
-   mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 0, 0,
+   mmp = MMGetNodeGEN(pre, 0|bf, nb, 1, 1, ku, 1, KVEC, 0, 0,
                       DupString("ATL_Xamm_munu.c"));
    mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
@@ -12014,6 +12032,7 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
            free(mmp->genstr);
          mbu = (nb >= mu) ? (nb/mu)*mu : mu;
          nbu = (nb >= nu) ? (nb/nu)*nu : nu;
+         if (bf) mmp->flag |= 1<<MMF_FKO;
          mmp->genstr = MMGetGenString(pre, mmp);
          mf = TimeMMKernel(verb, 0, mmp, pre, mbu, nbu, nb, 1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
@@ -12042,7 +12061,7 @@ DONE:
    i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    i |= (b1B) ? 2 : 0;
    KillMMNode(mmp);
-   mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, 0, 0, NULL);
+   mmp = MMGetNodeGEN(pre, i|bf, nb, muB, nuB, ku, VL, KVEC, 0, 0, NULL);
    mmp->mbB = mbB;
    mmp->nbB = nbB;
    mmp->kbB = kbB;
@@ -12067,6 +12086,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    #endif
    int n, i, j, kb, mbB, nbB, kbB, muB=1, nuB=1, b1B=0;
    char ch;
+   const int bf=(flg&32)?4:0;
 
    if (flg&2)
       return(FullSrchMUNU(flg, verb, pre, nreg, nb, VL, KVEC));
@@ -12076,7 +12096,10 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
       ch = 'U';
    else
       ch = (KVEC) ? 'K':'M';
-   sprintf(fn, "gAMMUR_%c%d_%d.sum", ch, VL, nreg);
+   if (bf)
+      sprintf(fn, "gAMMUR_%c%d_%d_fko.sum", ch, VL, nreg);
+   else
+      sprintf(fn, "gAMMUR_%c%d_%d.sum", ch, VL, nreg);
    mmp = ReadMMFileWithPath(pre, "res", fn);
    if (mmp)
    {
@@ -12086,7 +12109,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
       WriteMMFileWithPath(pre, "res", fn, mmp);
       return(mmp);
    }
-   mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 0, 0,
+   mmp = MMGetNodeGEN(pre, 0|bf, nb, 1, 1, ku, 1, KVEC, 0, 0,
                       DupString("ATL_Xamm_munu.c"));
    mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
@@ -12120,6 +12143,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
         free(mmp->genstr);
       mbu = (nb >= mu) ? (nb/mu)*mu : mu;
       nbu = (nb >= nu) ? (nb/nu)*nu : nu;
+      if (bf) mmp->flag |= 1<<MMF_FKO;
       mmp->genstr = MMGetGenString(pre, mmp);
       mf = TimeMMKernel(verb, 0, mmp, pre, mbu, nbu, nb, 1, 0, -1);
       printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
@@ -12161,6 +12185,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
          nu = mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
+         if (bf) mmp->flag |= 1<<MMF_FKO;
          mmp->genstr = MMGetGenString(pre, mmp);
          mbu = (nb >= mu) ? (nb/mu)*mu : mu;
          nbu = (nb >= nu) ? (nb/nu)*nu : nu;
@@ -12186,6 +12211,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
          nbu = (nb >= nu) ? (nb/nu)*nu : nu;
          if (mmp->genstr)
            free(mmp->genstr);
+         if (bf) mmp->flag |= 1<<MMF_FKO;
          mmp->genstr = MMGetGenString(pre, mmp);
          mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, 1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
@@ -12209,7 +12235,7 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    i |= (b1B) ? 2 : 0;
    KillMMNode(mmp);
-   mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, 0, 0, NULL);
+   mmp = MMGetNodeGEN(pre, i|bf, nb, muB, nuB, ku, VL, KVEC, 0, 0, NULL);
    mmp->mbB = mbB;
    mmp->nbB = nbB;
    mmp->kbB = kbB;
@@ -12498,14 +12524,25 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    const int WNR=(flag&4);
    int nreg=(*NREG), vlen=(*VLEN);
    ATL_mmnode_t *mp, *mpN;
+   const int bf=(flag&32)?4:0;
+   char *mvsum, *kvsum;
 
    if (pre == 'z')
       pre = 'd';
    else if (pre == 'c')
       pre = 's';
-
-   mp = ReadMMFileWithPath(pre, "res", "gmvAMMUR.sum");
-   mpN = ReadMMFileWithPath(pre, "res", "gkvAMMUR.sum");
+   if (bf)
+   {
+      mvsum = "gmvAMMUR_fko.sum";
+      kvsum = "gkvAMMUR_fko.sum";
+   }
+   else
+   {
+      mvsum = "gmvAMMUR.sum";
+      kvsum = "gkvAMMUR.sum";
+   }
+   mp = ReadMMFileWithPath(pre, "res", mvsum);
+   mpN = ReadMMFileWithPath(pre, "res", kvsum);
    if (mp && mpN)
    {
       *VLEN = mp->vlen;
@@ -12514,8 +12551,8 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
       MMFillInGenStrings(pre, mpN);
       TimeNegMMKernels(0, verb, 0, mp, pre, 1, 0, -1);
       TimeNegMMKernels(0, verb, 0, mpN, pre, 1, 0, -1);
-      WriteRefreshedMMFileWithPath(pre, "res", "gmvAMMUR.sum", mp);
-      WriteRefreshedMMFileWithPath(pre, "res", "gkvAMMUR.sum", mpN);
+      WriteRefreshedMMFileWithPath(pre, "res", mvsum, mp);
+      WriteRefreshedMMFileWithPath(pre, "res", kvsum, mpN);
       KillAllMMNodes(mp);
       KillAllMMNodes(mpN);
       if (WNR)
@@ -12552,7 +12589,7 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    KillAllMMNodes(mpN);
    mp = ReverseMMQ(mp);
    mp->ivar = nreg;
-   WriteRefreshedMMFileWithPath(pre, "res", "gmvAMMUR.sum", mp);
+   WriteRefreshedMMFileWithPath(pre, "res", mvsum, mp);
    KillAllMMNodes(mp);
 
    mp = SrchMUNU(flag, verb, pre, nreg, NB, vlen, 1);
@@ -12561,7 +12598,7 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    mp = AddUniqueMMKernCompList(mp, mpN);
    KillAllMMNodes(mpN);
    mp = ReverseMMQ(mp);
-   WriteRefreshedMMFileWithPath(pre, "res", "gkvAMMUR.sum", mp);
+   WriteRefreshedMMFileWithPath(pre, "res", kvsum, mp);
    KillAllMMNodes(mp);
    if (WNR)
    {
@@ -12575,13 +12612,26 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    *VLEN = vlen;
    *NREG = nreg;
 }
-ATL_mmnode_t *GetBestKernVT(char pre, char vt)
+ATL_mmnode_t *GetBestKernVT(char pre, char vt, int flg)
 {
    ATL_mmnode_t *mp;
-   if (vt == 'K')
-      mp = ReadMMFileWithPath(pre, "res", "gkvAMMUR.sum");
+   char *mvsum, *kvsum;
+   const int bf=(flg&32)?4:0;
+
+   if (bf)
+   {
+      mvsum = "gmvAMMUR_fko.sum";
+      kvsum = "gkvAMMUR_fko.sum";
+   }
    else
-      mp = ReadMMFileWithPath(pre, "res", "gmvAMMUR.sum");
+   {
+      mvsum = "gmvAMMUR.sum";
+      kvsum = "gkvAMMUR.sum";
+   }
+   if (vt == 'K')
+      mp = ReadMMFileWithPath(pre, "res", kvsum);
+   else
+      mp = ReadMMFileWithPath(pre, "res", mvsum);
    assert(mp);
    if (mp->next)
    {
@@ -12591,11 +12641,11 @@ ATL_mmnode_t *GetBestKernVT(char pre, char vt)
    return(mp);
 }
 
-ATL_mmnode_t *GetBestKern(char pre)
+ATL_mmnode_t *GetBestKern(char pre, int flg)
 {
    ATL_mmnode_t *mp, *mpB;
-   mpB = GetBestKernVT(pre, 'M');
-   mp =  GetBestKernVT(pre, 'K');
+   mpB = GetBestKernVT(pre, 'M', flg);
+   mp =  GetBestKernVT(pre, 'K', flg);
    if (mp->mflop[0] > mpB->mflop[0])
    {
       KillAllMMNodes(mpB);
@@ -12612,7 +12662,7 @@ void DoSquare(int flag, int verb, char pre, int nreg, int VL)
    ATL_mmnode_t *mp;
    int maxNB;
 
-   mp = GetBestKern(pre);
+   mp = GetBestKern(pre, flag);
    maxNB = GetMaxNB(flag, verb, pre, mp);
 }
 
@@ -12634,6 +12684,7 @@ int CountFails(int TEST, int flg, int verb, char pre, int NB, int nreg, int VL)
    int i, j, ntest=0, nfail=0;
    char *frm="%8d %4d %3d %3d %3d  %2d   %c %2d  %5d\n";
    FILE *fperr;
+   const int bf=(flg&32)?4:0;
 
    fperr = fopen("res/FAIL.OUT", "w");
    assert(fperr);
@@ -12659,7 +12710,7 @@ int CountFails(int TEST, int flg, int verb, char pre, int NB, int nreg, int VL)
          else if (i*j+i+j > nreg)
             flg = 2;
 
-         mp = MMGetNodeGEN(pre, flg, NB, i*VL, j, 1, VL, 0, 0, 0, NULL);
+         mp = MMGetNodeGEN(pre, flg|bf, NB, i*VL, j, 1, VL, 0, 0, 0, NULL);
          nf = NumberBetaFails(fperr, pre, NB, mp);
          printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 0, 3-nf);
          nfail += nf;
@@ -12672,7 +12723,8 @@ int CountFails(int TEST, int flg, int verb, char pre, int NB, int nreg, int VL)
             ntest += 3;
          }
          mp = KillMMNode(mp);
-         if (j%VL == 0)  /* try m-vec w/o bcast */
+         @skip "fko doesn't support splat!"
+         if (j%VL == 0 && !bf)  /* try m-vec w/o bcast */
          {
             mp = MMGetNodeGEN(pre, 1, NB, i*VL, j, 1, VL, 0, 0, 0, NULL);
             nf = NumberBetaFails(fperr, pre, NB, mp);
@@ -12692,7 +12744,7 @@ int CountFails(int TEST, int flg, int verb, char pre, int NB, int nreg, int VL)
          }
          if (1 /*(i*j)%VL == 0*/) /* try k-vec */
          {
-            mp = MMGetNodeGEN(pre, flg, NB, i, j, VL, VL, 1, 0, 0, NULL);
+            mp = MMGetNodeGEN(pre, flg|bf, NB, i, j, VL, VL, 1, 0, 0, NULL);
             nf = NumberBetaFails(fperr, pre, NB, mp);
             printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'K', 0, 3-nf);
             nfail += nf;
@@ -12775,7 +12827,7 @@ int CountFails(int TEST, int flg, int verb, char pre, int NB, int nreg, int VL)
  */
                if (!NOBCAST)
                {
-                  mp = MMGetNodeGEN(pre, 0, NB, MU, nu, 1, VL, 0, 
+                  mp = MMGetNodeGEN(pre, 0|bf, NB, MU, nu, 1, VL, 0, 
                                     pfs[k], pfLS, NULL);
                   nf = NumberBetaFails(fperr, pre, NB, mp);
                   printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'M', 
@@ -12784,7 +12836,8 @@ int CountFails(int TEST, int flg, int verb, char pre, int NB, int nreg, int VL)
                   ntest += 3;
                   KillMMNode(mp);
                }
-               if (nu%VL == 0)  /* try m-vec using splat & w/o bcast */
+               @skip "fko doesn't support splat"
+               if (nu%VL == 0 && !bf)  /* try m-vec using splat & w/o bcast */
                {
                   mp = MMGetNodeGEN(pre, 1, NB, MU, nu, 1, VL, 0, 
                                     pfs[k], pfLS, NULL);
@@ -12798,7 +12851,7 @@ int CountFails(int TEST, int flg, int verb, char pre, int NB, int nreg, int VL)
                }
                if (!NOBCAST && (mu*nu)%VL == 0)  /* try k-vec */
                {
-                  mp = MMGetNodeGEN(pre, 0, NB, mu, nu, VL, VL, 1, 
+                  mp = MMGetNodeGEN(pre, 0|bf, NB, mu, nu, VL, VL, 1, 
                                     pfs[k], pfLS, NULL);
                   nf = NumberBetaFails(fperr, pre, NB, mp);
                   printf(frm, ntest, NB, mp->mu, mp->nu, mp->ku, VL, 'K', 
@@ -13269,8 +13322,21 @@ void DoBlock(char pre, int flg, int verb)
    ATL_mmnode_t *mmb, *mm3, *mp;
    int b;
    char upr;
+   char *ressum, *mvsum, *kvsum;
 
-   mmb = TimeMMFileWithPath(pre, "res", "gAMMRES.sum", 0, verb, 0, 1, 0, -1);
+   if (flg&32)
+   {
+      ressum = "gAMMRES_fko.sum";
+      mvsum = "gmvAMMUR_fko.sum";
+      kvsum = "gkvAMMUR_fko.sum";
+   }
+   else
+   {
+      ressum = "gAMMRES.sum";
+      mvsum = "gmvAMMUR.sum";
+      kvsum = "gkvAMMUR.sum";
+   }
+   mmb = TimeMMFileWithPath(pre, "res", ressum, 0, verb, 0, 1, 0, -1);
    if (mmb)
    {
       KillAllMMNodes(mmb);
@@ -13284,9 +13350,9 @@ void DoBlock(char pre, int flg, int verb)
  * Compute # of L1 cache elements, and join M- & K-vec kernels found so far
  */
    L1ELTS = GetL1CacheElts(upr);
-   mmb = ReadMMFileWithPath(upr, "res", "gmvAMMUR.sum");
+   mmb = ReadMMFileWithPath(upr, "res", mvsum);
    assert(mmb);
-   mp = ReadMMFileWithPath(upr, "res", "gkvAMMUR.sum");
+   mp = ReadMMFileWithPath(upr, "res", kvsum);
    ATL_LastMMNode(mmb)->next = mp;
    MMFillInGenStrings(pre, mmb);
 /*
@@ -13299,7 +13365,7 @@ void DoBlock(char pre, int flg, int verb)
    mmb = mm3;
    DoKUs(pre, flg, verb, mmb);   /* find best ku */
    DoPref(pre, flg, verb, mmb);  /* find best prefetch patterns */
-   WriteRefreshedMMFileWithPath(pre, "res", "gAMMRES.sum", mmb);
+   WriteRefreshedMMFileWithPath(pre, "res", ressum, mmb);
    KillAllMMNodes(mmb);
 }
 
@@ -13496,11 +13562,14 @@ int SyrkXover(int flg, int vrb, char pre, ATL_mmnode_t *ms,/* syrk kerns */
    return(nb);
 }
 
-void DoAllSyrkNB(char pre, int vrb, ATL_mmnode_t *mSQ, ATL_mmnode_t *sy)
+void DoAllSyrkNB(char pre, int vrb, ATL_mmnode_t *mSQ, ATL_mmnode_t *sy, int flg)
 {
    ATL_mmnode_t *mSY, *mp;
    const unsigned int nu=sy->nu, ku=sy->ku, maxD;
-   mp = TimeMMFileWithPath(pre, "res", "SYRKFNL.sum", 0, 0, 0, 1, 0, -1);
+   if (flg&32)
+      mp = TimeMMFileWithPath(pre, "res", "SYRKFNL_fko.sum", 0, 0, 0, 1, 0, -1);
+   else
+      mp = TimeMMFileWithPath(pre, "res", "SYRKFNL.sum", 0, 0, 0, 1, 0, -1);
    if (mp)
    {
       KillAllMMNodes(mp);
@@ -13538,15 +13607,21 @@ void DoAllSyrkNB(char pre, int vrb, ATL_mmnode_t *mSQ, ATL_mmnode_t *sy)
    printf("DONE TIMING SYRK KERN FOR ALL NBs.\n");
    if (mSY->next && mSY->nbB > mSY->next->nbB)
       mSY = ReverseMMQ(mSY);
-   WriteMMFileWithPath(pre, "res", "SYRKFNL.sum", mSY);
+   if(flg&32)
+      WriteMMFileWithPath(pre, "res", "SYRKFNLi_fko.sum", mSY);
+   else
+      WriteMMFileWithPath(pre, "res", "SYRKFNL.sum", mSY);
    KillAllMMNodes(mSY);
 }
 
-void DoSyrkTim(char pre, int verb)
+void DoSyrkTim(char pre, int verb, int flg)
 {
    ATL_mmnode_t *tb, *tp, *sb, *syp, *syb=NULL;
    int mu, nu;
-   tb = ReadMMFileWithPath(pre, "res", "syrkK.sum");
+   if (flg&32)
+      tb = ReadMMFileWithPath(pre, "res", "syrkKi_fko.sum");
+   else
+      tb = ReadMMFileWithPath(pre, "res", "syrkK.sum");
    if (tb)  /* already ran! */
    {
       for (tp=tb; tp; tp = tp->next)
@@ -13559,13 +13634,23 @@ void DoSyrkTim(char pre, int verb)
                printf("   syrkK %dx%d: %.2f\n", tp->mbB, tp->nbB, tp->mflop[0]);
          }
       }
-      WriteRefreshedMMFileWithPath(pre, "res", "syrkK.sum", tb);
+      if (flg&32)
+         WriteRefreshedMMFileWithPath(pre, "res", "syrkK_fko.sum", tb);
+      else
+         WriteRefreshedMMFileWithPath(pre, "res", "syrkK.sum", tb);
       KillAllMMNodes(tb);
       return;
    }
-
-   tb = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
-   syp = ReadMMFileWithPath(pre, "res", "gAMSYRK.sum");
+   if (flg&32)
+   {
+      tb = ReadMMFileWithPath(pre, "res", "sqAMMRES_fko.sum");
+      syp = ReadMMFileWithPath(pre, "res", "gAMSYRK_fko.sum");
+   }
+   else
+   {
+      tb = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
+      syp = ReadMMFileWithPath(pre, "res", "gAMSYRK.sum");
+   }
    assert(syp);
    mu=syp->mu; 
    nu=syp->nu;
@@ -13596,7 +13681,10 @@ void DoSyrkTim(char pre, int verb)
    KillAllMMNodes(tb);
    KillAllMMNodes(syp);
    syb = ReverseMMQ(syb);
-   WriteRefreshedMMFileWithPath(pre, "res", "syrkK.sum", syb);
+   if (flg&32)
+      WriteRefreshedMMFileWithPath(pre, "res", "syrkK_fko.sum", syb);
+   else
+      WriteRefreshedMMFileWithPath(pre, "res", "syrkK.sum", syb);
    printf("DONE SYRK TIMING.\n");
    KillAllMMNodes(syb);
 }
@@ -13607,18 +13695,28 @@ void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
    int L1ELTS, i, maxNB, nu, ku, kb;
    char upr = (pre == 'c' || pre == 's') ? 's' : 'd';
    double mf0, mfB;
+   char *ipsum, *syrksum;
 
-   
-   mSQ = TimeMMFileWithPath(pre, "res", "ipdMN.sum", 0, vrb, 0, 1, 0, -1);
+   if (flg&32)
+   {
+      ipsum = "ipdMN_fko.sum";
+      syrksum = "gAMSYRK_fko.sum";
+   }
+   else
+   {
+      ipsum = "ipdMN.sum";
+      syrksum = "gAMSYRK.sum";
+   }
+   mSQ = TimeMMFileWithPath(pre, "res", ipsum, 0, vrb, 0, 1, 0, -1);
    if (!mSQ)
       return;
-   mb = TimeMMFileWithPath(pre, "res", "gAMSYRK.sum", 0, vrb, 0, 1, 0, -1);
+   mb = TimeMMFileWithPath(pre, "res", syrksum, 0, vrb, 0, 1, 0, -1);
    if (mb)
    {
-      DoAllSyrkNB(pre, vrb, mSQ, mb);
+      DoAllSyrkNB(pre, vrb, mSQ, mb, flg);
       KillAllMMNodes(mb);
       KillAllMMNodes(mSQ);
-@skip      DoSyrkTim(pre, vrb);
+@skip      DoSyrkTim(pre, vrb, flg);
       return;
    }
    mSQ = ReverseMMQ(mSQ);  /* sorted from large to small NB */
@@ -13633,14 +13731,14 @@ void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
    TryAllSyrkPref(flg, vrb, pre, mp, nb, kb);
 @skip   maxNB = SyrkXover(flg, vrb, pre, mp, mSQ);
 @skip   mb->mbB = mb->nbB = mb->kbB = maxNB;
-   WriteMMFileWithPath(pre, "res", "gAMSYRK.sum", mp);
+   WriteMMFileWithPath(pre, "res", syrksum, mp);
 /*
  * Make a syrk node for all nodes in mSQ
  */
-   DoAllSyrkNB(pre, vrb, mSQ, mb);
+   DoAllSyrkNB(pre, vrb, mSQ, mb, flg);
    KillAllMMNodes(mSQ);
    KillMMNode(mb);
-@skip   DoSyrkTim(pre, vrb);
+@skip   DoSyrkTim(pre, vrb, flg);
 }
 
 void DoPrefOnList(int flg, int vrb, char pre, int maxB)
@@ -13649,7 +13747,10 @@ void DoPrefOnList(int flg, int vrb, char pre, int maxB)
    int b, binc;
    FILE *fp;
 
-   mb = ReadMMFile("time.sum");
+   if (flg&32)
+      mb = ReadMMFile("time.sum");
+   else
+      mb = ReadMMFile("time.sum");
    if (!mb)
    {
       fprintf(stderr, "No files in time.sum, exiting!\n");
@@ -13728,6 +13829,7 @@ void SetFlops(int flg, int verb, char pre, int VL)
    #define TOL .015
    const double mbig=(1.0+TOL), msml=(1.0-TOL);
    double mfB, mf, mul, nmf, tim;
+   const int bf=(flg&32)?4:0;
 
 /*
  * Get square blocking factor that fills cache with one block
@@ -13742,6 +13844,7 @@ void SetFlops(int flg, int verb, char pre, int VL)
  */
    if (VL < 1)
       VL = GetNativeVLEN(pre);
+   @skip "don't use fko to findout vlen"
    if (VL < 1)  /* no good guess, will have to probe for it */
    {
       int vl, vlB=1;
@@ -13773,7 +13876,7 @@ void SetFlops(int flg, int verb, char pre, int VL)
       KillMMNode(mp);
    }
    
-   mp = MMGetNodeGEN(pre, 0, 0, 1, 1, VL, VL, 1, 0, 0, DupString("ATL_tmp.c"));
+   mp = MMGetNodeGEN(pre, 0|bf, 0, 1, 1, VL, VL, 1, 0, 0, DupString("ATL_tmp.c"));
    mp->ku = 1;
    mp->flag &= ~( (1<<MMF_MVA)|(1<<MMF_MVB)|(1<<MMF_MVC) ); /* no cache flush */
    printf("SCOPING FOR A DECENT SQUARE REGISTER BLOCKING, VLEN=%d\n", VL);
@@ -13868,8 +13971,11 @@ void SetFlops(int flg, int verb, char pre, int VL)
       nmf *= 2.0;
    }
    printf("Final timing interval: %e seconds, nmflops=%.0f\n", tim, nmf);
-
-   sprintf(fn, "%cmflops.frc", pre);
+   
+   if(bf)
+      sprintf(fn, "%cmflopsi_fko.frc", pre);
+   else
+      sprintf(fn, "%cmflops.frc", pre);
    fp = fopen(fn, "w");
    fprintf(fp, "%e", nmf);
    fclose(fp);
