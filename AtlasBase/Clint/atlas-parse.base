@@ -7634,7 +7634,7 @@ double MMExpand@(nm)
     int (*wrkSetOK)(unsigned long, ATL_mmnode_t*,int,int,int), 
     const int maxB, ATL_mmnode_t *mp)
 /*
- * Assume U=LCM(MU,NU,KU), this search startes at KB=MB=NB=U, and then tries
+ * Assume U=LCM(MU,NU), this search startes at MB=NB=U,KB=KU and then tries
  * increasing M,N,K and picks whichever provides the greatest speedup.  
  * Continues expanding MB,NB,KB in this way until perf drops by around 3%.
 @mif nm = "MNK
@@ -7647,8 +7647,8 @@ double MMExpand@(nm)
  * RETURNS: mflop for best MB,NB,KB which is given in mp->(mbB,nbB,kbB).
  */
 {
-   const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
-   unsigned int MU, NU, KU;
+   const unsigned int mu=mp->mu, nu=mp->nu;
+   unsigned int MU, NU, KU, ku;
 @mif nm = "MN_K
    const unsigned int maxKB = Mmax(240,maxB+maxB);
 @endmif
@@ -7660,8 +7660,42 @@ double MMExpand@(nm)
    double mfB, penB=B1PEN;
 
    NU = ATL_iLCM(mu, nu);
-   NU = ATL_iLCM(NU, ku);
-   maxDB = kb = mb = nb = kbB = mbB = nbB = MU = KU = NU;
+   if (!FLAG_IS_SET(mp->flag, MMF_KUISKB) || !mp->ID) /* gen can adapt KB */
+   {  /* genned KUISKB or non-KUISKB can always adapt KU as needed */
+      
+      KU = ATL_iLCM(NU, mp->ku);
+      if (KU > 16 || KU > maxKB) /* too big, make smaller if possible */
+      {
+         if (mp->ku <= 8)
+         {
+            for (KU=mp->ku; KU < 8; KU += mp->ku);
+         }
+         else
+            KU = NU;
+         kbB = kb = KU;
+      }
+      else
+         NU = kbB = kb = KU;
+   }
+   else if (mp->kbmin > 1)  /* reach here --> user KUISKB kern */
+   {
+      if (mp->kbmax == mp->kbmin)
+         kbB = kb = KU = mp->kbmax;
+      else
+      {
+         unsigned const int inc=NU;
+         KU = ATL_iLCM(NU, mp->ku);
+         if (KU > 16 || KU > maxKB) /* too big, make smaller if possible */
+         {
+            for (KU=mp->ku; KU < Mmax(8, mp->kbmin); KU += mp->ku);
+            kbB = kb = KU; /* NOT IN LOOP! */
+         }
+         else
+            NU = kbB = kb = KU;
+      }
+   }
+   maxDB = mb = nb = mbB = nbB = MU = NU;
+
    mfB = TimeMMKernel(verb, tflag, mp, pre, mbB, nbB, kb, beta, 0, -1);
    printf("      ID=%d : B=(%u,%u,%u) maxB=%d mf=%.2f\n", mp->ID, 
           mbB, nbB, kbB, maxB, mfB);
@@ -7673,6 +7707,7 @@ double MMExpand@(nm)
          double mfM, mfN, mfK, mf;
          int mbN=mb+MU, nbN=nb+NU, kbN=kb+KU;
          int MOK, NOK, KOK;
+         int ku0=mp->ku, kbmin0=mp->kbmin, kbmax0=mp->kbmax;
          double penM, penN, penK;
 
          @callproc setFast M kbB
@@ -7768,6 +7803,17 @@ double MMExpand@(nm)
                nfut = 0;
             }
          }
+         if (FLAG_IS_SET(mp->flag, MMF_KUISKB) && mp->kbmin != kbB)
+         {
+            if (!mp->ID && mp->ku != 1)
+               mp->ku = kbB;
+            mp->kbmin = mp->kbmax = kbB;
+            if (mp->genstr)
+            {
+               free(mp->genstr);
+               mp->genstr = MMGetGenString(pre, mp);
+            }
+         }
          if (!FASTER)
          {
             mf = Mmax(mfM, mfN);
@@ -7795,6 +7841,7 @@ double MMExpand@(nm)
    mp->nbB = nbB;
    mp->kbB = kbB;
    mp->mflop[0] = mfB;
+   assert(!MMKernelFailsTest(pre, mbB, nbB, kbB, beta, mp));
    return(mfB);
 }
 @endwhile
@@ -9640,7 +9687,7 @@ static FILE *OpenMMGenHeader
    fn = malloc(len+1);
    assert(fn);
    if (UID)
-      i = sprintf(fn, "%s/atlas_%c%s%s%_%s.h", outd, pre, ip, cn, UID, nm);
+      i = sprintf(fn, "%s/atlas_%c%s%s%u_%s.h", outd, pre, ip, cn, UID, nm);
    else
       i = sprintf(fn, "%s/atlas_%c%s%s_%s.h", outd, pre, ip, cn, nm);
    assert(i <= len);
