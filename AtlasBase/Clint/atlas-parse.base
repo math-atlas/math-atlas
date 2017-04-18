@@ -3125,12 +3125,17 @@ static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
    const int flg0=p0->flag&MMF_DIFFMSK, flg1=p1->flag&MMF_DIFFMSK;
 /*
  * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
+ * However, if KUISKB, generated kernels with differing KBs are not same!
  * NOTE: pref & pfLS do not affect output, and so are not checked!
  * NOTE: any extension of generator functionality should extend this check!
  */
    if (p0->ID == 0 && p1->ID == 0)
+   {
+      if (FLAG_IS_SET(p0->flag, MMF_KUISKB) && p0->kbB != p1->kbB)
+         return(0);
       return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
              p0->vlen == p1->vlen && flg0 == flg1);
+   }
 /*
  * If both are user kernels, then they may be repeats.  For user kernels,
  * they are the same if both ID and flag match, else they are not.
@@ -7660,15 +7665,15 @@ double MMExpand@(nm)
    double mfB, penB=B1PEN;
 
    NU = ATL_iLCM(mu, nu);
+   ku = mp->ku;      
    if (!FLAG_IS_SET(mp->flag, MMF_KUISKB) || !mp->ID) /* gen can adapt KB */
    {  /* genned KUISKB or non-KUISKB can always adapt KU as needed */
-      
-      KU = ATL_iLCM(NU, mp->ku);
+      KU = ATL_iLCM(NU, ku);
       if (KU > 16 || KU > maxKB) /* too big, make smaller if possible */
       {
-         if (mp->ku <= 8)
+         if (ku <= 8)
          {
-            for (KU=mp->ku; KU < 8; KU += mp->ku);
+            for (KU=ku; KU < 8; KU += ku);
          }
          else
             KU = NU;
@@ -7677,22 +7682,27 @@ double MMExpand@(nm)
       else
          NU = kbB = kb = KU;
    }
-   else if (mp->kbmin > 1)  /* reach here --> user KUISKB kern */
-   {
+   else if (mp->kbmin > 1)
+   {                               /* reach here --> user KUISKB kern */
       if (mp->kbmax == mp->kbmin)
          kbB = kb = KU = mp->kbmax;
       else
       {
          unsigned const int inc=NU;
-         KU = ATL_iLCM(NU, mp->ku);
+         KU = ATL_iLCM(NU, ku);
          if (KU > 16 || KU > maxKB) /* too big, make smaller if possible */
          {
-            for (KU=mp->ku; KU < Mmax(8, mp->kbmin); KU += mp->ku);
+            for (KU=ku; KU < Mmax(8, mp->kbmin); KU += ku);
             kbB = kb = KU; /* NOT IN LOOP! */
          }
          else
             NU = kbB = kb = KU;
       }
+   }
+   else
+   {
+      ku = 1;
+      kbB = kb = KU = NU;
    }
    maxDB = mb = nb = mbB = nbB = MU = NU;
 
@@ -7841,6 +7851,15 @@ double MMExpand@(nm)
    mp->nbB = nbB;
    mp->kbB = kbB;
    mp->mflop[0] = mfB;
+   if (FLAG_IS_SET(mp->flag, MMF_KUISKB) && !mp->ID)
+   {
+      mp->ku = kbB;
+      if (mp->genstr)
+      {
+         free(mp->genstr);
+         mp->genstr = NULL;
+      }
+   }
    assert(!MMKernelFailsTest(pre, mbB, nbB, kbB, beta, mp));
    return(mfB);
 }
