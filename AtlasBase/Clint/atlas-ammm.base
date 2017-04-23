@@ -37771,6 +37771,27 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    }
    fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n\n");
 
+
+   if (nbits[3] == 0)
+      fprintf(fpout, "#define ATL_AMM_GetKU(idx_) ATL_AMM_MIN_KU\n");
+   else
+   {
+      fprintf(fpout, "#define ATL_AMM_GetKU(idx_) \\\n");
+      if (nbits[0]+nbits[1]+nbits[2]+nbits[3] <= sizeof(ATL_iptr_t)*8)
+         fprintf(fpout, 
+                 "   ((((ATL_AMM_ML[ATL_AMM_Idx2Entry(idx_)+3])>>%u)&0x%x)",
+                 nbits[0]+nbits[1]+nbits[2], (1<<(nbits[3]))-1);
+      else
+      {
+         assert(nbits[0]+nbits[1]+nbits[2] <= sizeof(ATL_iptr_t)*8);
+         fprintf(fpout, "   (((ATL_AMM_ML[ATL_AMM_Idx2Entry(idx_)+4])&0x%x)",
+                 (1<<(nbits[3]))-1);
+      }
+      if (nbits[3+NIVAR])
+         fprintf(fpout, "+ATL_AMM_MIN_KU)\n");
+      else
+         fprintf(fpout, ")\n");
+   }
    fprintf(fpout, "#define ATL_AMM_GetMNU(idx_, MU_, NU_) \\\n{\\\n");
    fprintf(fpout, 
       "   ATL_iptr_t v_ = (ATL_AMM_ML[ATL_AMM_Idx2Entry(idx_)+3])>>%u; \\\n",
@@ -38613,12 +38634,13 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
       {
          ATL_assert(ik1);
          ik1--;
-         KB0 = ATL_AMM_KMAJOR(flgK) ? KB0 : kb0;
          #ifdef TCPLX
             ATL_AMM_kinfo(ik1, &ip->ammK1_b0, &ip->ammK1_b1, &ip->ammK1_bn);
          #else
             ATL_AMM_kinfo(ik1, &ip->ammK1_b0, &ip->ammK1_b1, &iptmp);
          #endif
+         KB0 = ATL_AMM_GetKU(ik1);
+         KB0 = ((kb0+KB0-1)/KB0)*KB0;
       }
       else
       {
