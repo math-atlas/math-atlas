@@ -8993,7 +8993,11 @@ void PrintBegIfdef(FILE *fpout, char *nm)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
+ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp, ATL_mmnode_t *ML)
+/*
+ * ML is master list of mm kernels, where ivar is set to the entry #+1 of the
+ * K-clean node (ivar=0 means self-cleaning or no K-clean needed).
+ */
 {
    ATL_cpnode_t *cp;
 
@@ -9036,22 +9040,43 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp)
          cp->mu = mp->vlen;
       else if (mp->blask) /* non-gemm kernels always pad to ku */
          cp->mu = mp->ku; /* so can handle all K in face of unrolling */
-      else if (mp->ku <= 4)  /* any kern wt ku <= 4 can be padded and */
-         cp->mu = mp->ku;    /* used for K-clean */
+      else if (ML)/* to find copy padding, must examine cleaning node in ML */
+      {
+         ATL_mmnode_t *ml;
+         ml = MMKernCompIsPresent(ML, mp);
+         assert(ml);
+         if (ml->ivar)
+         {
+            const int n=ml->ivar-1;
+            int i;
+            for(i=0, ml=ML; i < n && ml; i++, ml = ml->next);
+            assert(ml);
+            assert(MMKernsCompat(mp, ml));
+         }
+         else ml = mp;
+         cp->mu = ml->ku;
+      }
+      else if (mp->kbB % ku)  /* self-cleaning with non-mult kbB */
+         cp->mu = mp->ku;
+      else /* no cleanup needed because kbB is multiple of ku */
+         cp->mu = 1;
+@skip      else if (mp->ku <= 4)  /* any kern wt ku <= 4 can be padded and */
+@skip         cp->mu = mp->ku;    /* used for K-clean */
    }
    return(cp);
 }
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_cpnode_t *GetAllCopyNodesFromMM(int flag, ATL_mmnode_t *mb)
+ATL_cpnode_t *GetAllCopyNodesFromMM(int flag, ATL_mmnode_t *mb, 
+                                    ATL_mmnode_t *ML)
 {
    ATL_cpnode_t *cb=NULL, *cp;
    ATL_mmnode_t *mp;
 
    for (mp=mb; mp; mp = mp->next)
    {
-      cp = GetCopyNodeFromMM(flag, mp);
+      cp = GetCopyNodeFromMM(flag, mp, ML);
       cp->next = cb;
       cb = cp;
    }
@@ -9060,7 +9085,8 @@ ATL_cpnode_t *GetAllCopyNodesFromMM(int flag, ATL_mmnode_t *mb)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-int *MMGetCopyIdxsFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
+int *MMGetCopyIdxsFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb,
+                           ATL_mmnode_t *ML)
 /*
  * RETURNS: integer array of indices (starting from 0) in cb, 1st elt is len
  */
@@ -9078,7 +9104,7 @@ int *MMGetCopyIdxsFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
       ATL_cpnode_t *cm, *cp;
       int id;
 
-      cm = GetCopyNodeFromMM(flag, mp);
+      cm = GetCopyNodeFromMM(flag, mp, ML);
       assert(cm);
       for (id=0,cp=cb; cp; cp = cp->next, id++)
          if (!CopyAreDiff(cp, cm))
@@ -9100,14 +9126,15 @@ int *MMGetCopyIdxsFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_cpnode_t *MMGetCopiesFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb)
+ATL_cpnode_t *MMGetCopiesFromList(int flag, ATL_mmnode_t *mb, ATL_cpnode_t *cb,
+                                  ATL_mmnode_t *ML)
 {
    ATL_cpnode_t *mcb=NULL;
    ATL_mmnode_t *mp;
    for (mp=mb; mp; mp = mp->next)
    {
       ATL_cpnode_t *cm, *cp;
-      cm = GetCopyNodeFromMM(flag, mp);
+      cm = GetCopyNodeFromMM(flag, mp, ML);
       cp = FindEquivCopy(cb, cm);
       if (!cp)
       {

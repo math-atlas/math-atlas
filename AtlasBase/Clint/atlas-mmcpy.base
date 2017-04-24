@@ -925,13 +925,16 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -o /path : specify directory to generate into\n");
 @ROUT cphgen printView
    fprintf(stderr,
-   "   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F S=A,C,M,U <name> mmview.sum:\n");
+   "   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F K=0,1,2 S=A,C,M,U <name> mmview.sum:\n");
    fprintf(stderr, 
 "      If args to left of = are omitted, these vals don't appear in the view.\n"
 "      Args to right of = may be omitted, which means all values are set.\n"
 "      <name> and <mmview> must appear in that order.\n"
 "      A/Cd=[I,F]: copy Into or From col-major (I,F means both directions).\n"
 "      A/Ca/b give the list of needed alpha/beta for that matrix copy.\n"
+"      K : change how K-cleanup is done, default 1:\n"
+"          0: Kerns self-clean, so no padding if kbB%ku == 0, else ku-pad\n"
+"          1: Kernels use other kernels for K-cleanup.\n"
 "      S=A,C,M,U: don't store [A,C] copyI, matmulI, or unrollings, resp.\n"
 "      Suppressed copies will still be added to master list, just not in view\n"
 "      <name> is a unique string that will be used in all header files.\n"
@@ -1156,6 +1159,7 @@ void GenHead
    fclose(fpd);
 }
 
+@BEGINSKIP
 void GenAllCHeadDir(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
                     ATL_cpnode_t *CB)
 {
@@ -1286,6 +1290,7 @@ void GenAllAHeadDir(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
    }
    free(tnam);
 }
+@ENDSKIP
 
 int *ReadMasterIdx(char pre, int *N)
 {
@@ -1340,7 +1345,7 @@ void DoMaster(char pre, FILE *fp, ATL_cpnode_t *cb)
       if (sizeof(imf) > sizeof(int))
          fprintf(fp, "0x%lxL", imf);
       else
-         fprintf(fp, "0x%x", imf);
+         fprintf(fp, "0x%x", (int)imf);
       fprintf(fp, "/*%u:%.3e*/", i, (float)mf);
       sp = ",\n";
    }
@@ -1427,7 +1432,8 @@ unsigned int MMIdxCount(ATL_mmnode_t *mb, ATL_mmnode_t *want)
    return(0);
 }
 
-void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
+void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
+                 ATL_mmnode_t *ML)
 {
    ATL_mmnode_t *mp, *MB, *maxPerf=NULL;
    FILE *fpout;
@@ -1577,7 +1583,7 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
                fprintf(stderr, "Missing or empty file '%s'\n", fn);
                assert(cb);
             }
-            cpidxs[i] = MMGetCopyIdxsFromList(flag, mb, cb);
+            cpidxs[i] = MMGetCopyIdxsFromList(flag, mb, cb, ML);
             KillAllCPNodes(cb);
             assert(cpidxs[i]);
             assert(cpidxs[i][0] == N);
@@ -2052,17 +2058,27 @@ int main(int nargs, char **args)
 {
    ATL_view_t *vb, *vp;
    char *path, *nm;
-   char pre, dir;
+   char pre, dir, upr;
    ATL_cpnode_t *cb;
+   ATL_mmnode_t *ML;
 
    vb = GetFlags(nargs, args, &pre, &path);
+   if (pre == 'c')
+      upr = 's';
+   else if (pre == 'z')
+      upr = 'd';
+   else
+      upr = pre;
+   ML = ReadMMFileWithPath(upr, "res", "FNLK1.sum");
+   assert(ML);
+
    GenMasterFiles(pre, path);
    cb = ReadCPFileWithPath(pre, "res", "cpyPERF.CPS");
    for (vp=vb; vp; vp = vp->next)
    {
       ATL_mmnode_t *mb;
       mb = ReadMMFile(vp->fnam);
-      GenViewFile(pre, path, vp, mb);
+      GenViewFile(pre, path, vp, mb, ML);
 @skip      GenAllCHeadDir(pre, path, vp, mb, cb);
 @skip      GenAllAHeadDir(pre, path, vp, mb, cb);
       KillAllMMNodes(mb);
@@ -2070,6 +2086,7 @@ int main(int nargs, char **args)
 
    KillAllViews(vb);
    KillAllCPNodes(cb);
+   KillAllMMNodes(ML);
    free(path);
    return(0);
 }
@@ -2079,8 +2096,18 @@ int main(int nargs, char **args)
 void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
 {
    int d;
-
    ATL_cpnode_t *cb=NULL, *cbC=NULL, *cp;
+   ATL_mmnode_t *ML;
+   char upr;
+
+   if (pre == 'c')
+      upr = 's';
+   else if (pre == 'z')
+      upr = 'd';
+   else
+      upr = pre;
+   ML = ReadMMFileWithPath(upr, "res", "FNLK1.sum");
+   assert(ML);
    for (d=0; d < 2; d++)  /* 0: M2BLK, 1: BLK2M */
    {
       int a;
@@ -2114,13 +2141,13 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
                   fprintf(stderr, "NO KERNS FROM VIEW FILE '%s'!\n", vp->fnam);
                   assert(mb);
                }
-               bb = GetAllCopyNodesFromMM(flg, mb);
+               bb = GetAllCopyNodesFromMM(flg, mb, ML);
                if (bb)
                {
                   cp = ATL_LastCPNode(bb);
                   cp->next = cb;
                   cb = bb;
-                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb);
+                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb, ML);
                   cp = ATL_LastCPNode(bb);
                   cp->next = cb;
                   cb = bb;
@@ -2143,7 +2170,7 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
                   ATL_cpnode_t *bb;
                   mb = ReadMMFile(vp->fnam);
                   assert(mb);
-                  bb = GetAllCopyNodesFromMM(flg, mb);
+                  bb = GetAllCopyNodesFromMM(flg, mb, ML);
                   if (bb)
                   {
                      cp = ATL_LastCPNode(bb);
@@ -2251,6 +2278,7 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
       printf("CREATED NEW res/%ccpylst.CPS!\n\n", pre);
    }
    KillAllCPNodes(cb);
+   KillAllMMNodes(ML);
 }
 
 void PrintUsage(char *name, int ierr, char *flag)
