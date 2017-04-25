@@ -8731,6 +8731,7 @@ double TimeTSKernel
 #define CPV_NOCCP 15
 #define CPV_NOMMI 16
 #define CPV_NOUNR 17
+#define CPV_SELFK 18  /* only called with kbB, self-clean if not mul ku */
 
 #define CPV_ALLDIRA ( (1<<CPV_BLK2A)|(1<<CPV_A2BLK) )
 #define CPV_ALLDIRC ( (1<<CPV_BLK2C)|(1<<CPV_C2BLK) )
@@ -8788,7 +8789,9 @@ static char *View2Args(ATL_view_t *p)
    char *Ca, *Aa, *Ad, *Cd, *sp, *SUP;
    char scl[4]={'1', 'N', 'X', '0'};
    char Cb[12]={'C', 'b', '=', '\0'};
-
+   char ks[4]={'K','=','1', '\0'};
+   
+   ks[2] = (flag&(1<<CPV_SELFK)) ? '0' : '1';
    i = (flag>>CPV_C2BLK)&3;
    if (i == 3)
       Cd ="Cd=I,F";
@@ -8907,12 +8910,12 @@ static char *View2Args(ATL_view_t *p)
       assert(i == 0);
    }
 
-   i = strlen(p->nam) + strlen(p->fnam) + strlen(Cb) + 25 + 2*5 + 2*4
-     + strlen(SUP);
+   i = strlen(p->nam) + strlen(p->fnam) + strlen(Cb) + 26 + 2*5 + 2*4
+     + strlen(SUP) + strlen(ks);
    sp = malloc(i);
    assert(sp);
-   k = sprintf(sp, "-V %s %s %s %s %s %s %s %s", Ca, Aa, Cb, Ad, Cd,
-               SUP, p->nam, p->fnam);
+   k = sprintf(sp, "-V %s %s %s %s %s %s %s %s %s", Ca, Aa, Cb, Ad, Cd,
+               ks, SUP, p->nam, p->fnam);
    assert(k < i);
    return(sp);
 }
@@ -8995,6 +8998,7 @@ void PrintBegIfdef(FILE *fpout, char *nm)
 /* procedure @(ip) */
 ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp, ATL_mmnode_t *ML)
 /*
+ * ML NULL means rout only called with K=kbB, so self-clean if kbB%ku != 0. Else
  * ML is master list of mm kernels, where ivar is set to the entry #+1 of the
  * K-clean node (ivar=0 means self-cleaning or no K-clean needed).
  */
@@ -9056,7 +9060,7 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp, ATL_mmnode_t *ML)
          else ml = mp;
          cp->mu = ml->ku;
       }
-      else if (mp->kbB % ku)  /* self-cleaning with non-mult kbB */
+      else if (mp->kbB % mp->ku)  /* self-cleaning with non-mult kbB */
          cp->mu = mp->ku;
       else /* no cleanup needed because kbB is multiple of ku */
          cp->mu = 1;

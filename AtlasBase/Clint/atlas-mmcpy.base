@@ -925,7 +925,8 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -o /path : specify directory to generate into\n");
 @ROUT cphgen printView
    fprintf(stderr,
-   "   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F K=0,1,2 S=A,C,M,U <name> mmview.sum:\n");
+"   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F K=0,1 S=A,C,M,U <name> mmview.sum:\n"
+          );
    fprintf(stderr, 
 "      If args to left of = are omitted, these vals don't appear in the view.\n"
 "      Args to right of = may be omitted, which means all values are set.\n"
@@ -973,11 +974,11 @@ ATL_view_t *GetFlags(int nargs, char **args, char *PRE, char **PTH)
          pth = DupString(args[i]);
          break;
 @ROUT cphgen readView
-      case 'V':           /* -V C/Aa=1,N,X Cb=0,1,N,X C/Ad=I,F S=A,C,M,U */
+      case 'V':    /* -V C/Aa=1,N,X Cb=0,1,N,X C/Ad=I,F K=[0,1] S=A,C,M,U */
          if (++i >= nargs)/*    <name> mmview.sum */
             PrintUsage(args[0], i-1, NULL);
          flag = 0;
-         for (k=0; k < 6; k++)
+         for (k=0; k < 7; k++)
          {
             char mt, wt;
             int st;
@@ -1009,6 +1010,17 @@ ATL_view_t *GetFlags(int nargs, char **args, char *PRE, char **PTH)
                   cp++;
                }
                while(*cp == ',');
+            }
+            else if (mt == 'K')
+            {
+               char *cp = args[i] + 1;
+               assert(*cp == '=');
+               if (cp[1] == '0')
+                  flag |= 1<<CPV_SELFK;
+               else if (cp[1] == '1')
+                  flag &= ~(1<<CPV_SELFK);
+               else
+                  PrintUsage(args[0], i-1, NULL);
             }
             else if (mt != 'C' && mt != 'A')
                break;
@@ -2078,7 +2090,7 @@ int main(int nargs, char **args)
    {
       ATL_mmnode_t *mb;
       mb = ReadMMFile(vp->fnam);
-      GenViewFile(pre, path, vp, mb, ML);
+      GenViewFile(pre, path, vp, mb, (vp->flag & (1<<CPV_SELFK)) ? NULL : ML);
 @skip      GenAllCHeadDir(pre, path, vp, mb, cb);
 @skip      GenAllAHeadDir(pre, path, vp, mb, cb);
       KillAllMMNodes(mb);
@@ -2119,6 +2131,7 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
             const int vflg=vp->flag;
             int flg;
             int b;
+            ATL_mmnode_t *MLV = (vp->flag & (1<<CPV_SELFK)) ? NULL : ML;
 
             flg = (d) ? 0 : (1<<CPF_TOBLK);
             flg |= 1<<(CPF_AL1+a);
@@ -2141,13 +2154,13 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
                   fprintf(stderr, "NO KERNS FROM VIEW FILE '%s'!\n", vp->fnam);
                   assert(mb);
                }
-               bb = GetAllCopyNodesFromMM(flg, mb, ML);
+               bb = GetAllCopyNodesFromMM(flg, mb, MLV);
                if (bb)
                {
                   cp = ATL_LastCPNode(bb);
                   cp->next = cb;
                   cb = bb;
-                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb, ML);
+                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb, MLV);
                   cp = ATL_LastCPNode(bb);
                   cp->next = cb;
                   cb = bb;
@@ -2170,7 +2183,7 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
                   ATL_cpnode_t *bb;
                   mb = ReadMMFile(vp->fnam);
                   assert(mb);
-                  bb = GetAllCopyNodesFromMM(flg, mb, ML);
+                  bb = GetAllCopyNodesFromMM(flg, mb, MLV);
                   if (bb)
                   {
                      cp = ATL_LastCPNode(bb);
