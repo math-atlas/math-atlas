@@ -12528,9 +12528,10 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
 {
    const int WNR=(flag&4);
    int nreg=(*NREG), vlen=(*VLEN);
-   ATL_mmnode_t *mp, *mpN;
+   ATL_mmnode_t *mp, *mpN, *mpB;
    const int bf=(flag&32)?4:0;
    char *mvsum, *kvsum;
+   char fn[16]={pre,'m','f','l','o','p','s','.','f','r','c','\0'};
 
    if (pre == 'z')
       pre = 'd';
@@ -12550,6 +12551,7 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    mpN = ReadMMFileWithPath(pre, "res", kvsum);
    if (mp && mpN)
    {
+      FILE *fp;
       *VLEN = mp->vlen;
       *NREG = mp->ivar;
       MMFillInGenStrings(pre, mp);
@@ -12558,7 +12560,12 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
       TimeNegMMKernels(0, verb, 0, mpN, pre, 1, 0, -1);
       WriteRefreshedMMFileWithPath(pre, "res", mvsum, mp);
       WriteRefreshedMMFileWithPath(pre, "res", kvsum, mpN);
+      mpB = FindMaxMflopMMQ(mp, 0);
+      mpB = CloneMMNode(mpB);
       KillAllMMNodes(mp);
+      mp = FindMaxMflopMMQ(mpN, 0);
+      if (mp->mflop[0] > mpB->mflop[0])
+         CopyMMNode(mpB, mp);
       KillAllMMNodes(mpN);
       if (WNR)
       {
@@ -12569,6 +12576,10 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
          fprintf(fp, "%d\n", *NREG);
          fclose(fp);
       }
+      fp = fopen(fn, "r");
+      if (!fp)
+         goto FIND_REPS;
+      KillMMNode(mpB);
       return;
    }
    else if (mp)
@@ -12583,13 +12594,17 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
  */
    mp = SrchMUNU(flag, verb, pre, nreg, NB, vlen, 0);
    mpN = SrchMUNUp2(flag, verb, pre, nreg, NB, vlen, 0);
+   mpB = (mpN->mflop[0] > mp->mflop[0]) ? mpN : mp;
    mpN->next = SrchNU(flag, verb, pre, nreg, NB, vlen, 1);
+   mpB = (mpB->mflop[0] >= mpN->next->mflop[0]) ? mpB : mpN->next;
    if (mpN->next)
    {
       mpN->next->next = SrchNU(flag, verb, pre, nreg, NB, vlen, 2);
+      mpB = (mpB->mflop[0] >= mpN->next->next->mflop[0]) ? mpB:mpN->next->next;
       if (mpN->next->next)
           mpN->next->next->next = SrchNU(flag, verb, pre, nreg, NB, vlen, 3);
    }
+   mpB = CloneMMNode(mpB);
    mp = AddUniqueMMKernCompList(mp, mpN);
    KillAllMMNodes(mpN);
    mp = ReverseMMQ(mp);
@@ -12598,8 +12613,12 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    KillAllMMNodes(mp);
 
    mp = SrchMUNU(flag, verb, pre, nreg, NB, vlen, 1);
+   if (mp->mflop[0] > mpB->mflop[0])
+      CopyMMNode(mpB, mp);
    mp->ivar = nreg;
    mpN = SrchMUNUp2(flag, verb, pre, nreg, NB, vlen, 1);
+   if (mpN->mflop[0] > mpB->mflop[0])
+      CopyMMNode(mpB, mpN);
    mp = AddUniqueMMKernCompList(mp, mpN);
    KillAllMMNodes(mpN);
    mp = ReverseMMQ(mp);
@@ -12616,7 +12635,28 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    }
    *VLEN = vlen;
    *NREG = nreg;
+/*
+ * Now, use best-performing kernel found so far to set target MFLOP timing
+ * interval for all subsequent timings
+ */
+   FIND_REPS:
+   {
+      double tim, nrep=1.0, mf;
+      FILE *fp;
+      printf(
+      "FINDING NUMBER OF FLOPS TO FORCE FOR .2 SECOND TIMING INTERVAL:\n");
+      mf = (mpB->mbB*1e-6)*mpB->nbB*2.0*mpB->kbB;
+      tim = mf / mpB->mflop[0];
+      if (tim < 0.2)
+         nrep = .22 / tim;
+      fprintf(stdout, "\nINCREASING TIMING INTERVAL BY: %.2f, MFLOP=%e!\n\n", 
+              nrep, nrep*mf);
+      fp = fopen(fn, "w");
+      fprintf(fp, "%le", nrep*mf);
+      fclose(fp);
+   }
 }
+
 ATL_mmnode_t *GetBestKernVT(char pre, char vt, int flg)
 {
    ATL_mmnode_t *mp;
