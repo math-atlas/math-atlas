@@ -3785,10 +3785,11 @@ int IsSimpleLoopNestVec(int vflag)
 #else
       type = GetLoopVtype(optloop);
       k = vtype2elem(type);
-      if (optloop->itermul % k)
+      if (!optloop->itermul || (optloop->itermul % k) )
       {
-         fko_warn(__LINE__, "Must not have cleanup: (%d, %d)", optloop->itermul,
+         fko_warn(__LINE__, "Must have no cleanup: (%d, %d)", optloop->itermul,
                   k);
+         return(0);
       }
       /*else 
          fprintf(stderr, "no need of cleanup in vec");*/
