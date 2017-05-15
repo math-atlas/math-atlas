@@ -35102,6 +35102,12 @@ ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
    if (!mb)
       return(NULL);
 /*
+ * We know ku=1 legal cleanup, use 3 most sig buts for U=4,3,2 resp, 
+ * 1 means an unroll of this size can be used for cleanup, 0 means not.
+ * For an U to be legal for cleanup, it must be a multiple of all KB.
+ */
+   assert(32-MMF_MAXBIT >= 3); /* need 3 bits, ku=2,3,4 */
+/*
  * K cleanup can be done by any kernel with the same storage for A/B/C, so it
  * doesn't have to be the exact same kernel implementation, assuming it can
  * handle all the required K values.  Therefore, start by finding all storage
@@ -35117,6 +35123,7 @@ ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
          {
             ATL_mmnode_t *p;
             p = CloneMMNode(mp);
+            p->flag |= 0x7 << 29;  /* assuming all KU legal cleaners */
             p->next = ub;
             ub = p;
          }
@@ -35137,8 +35144,15 @@ ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
       mp = mb;
       while (mp = MMCompatKernPresent(mp, bp))
       {
+         const unsigned kb = mp->kbB;
          mbC = Mmax(mbC, mp->mbB);
          nbC = Mmax(mbC, mp->nbB);
+         if (kb & 0x3)            /* if (mp->kbB % 4 != 0) */
+            bp->flag &= ~(1<<31);
+         if (kb % 3)
+            bp->flag &= ~(1<<30);
+         if (kb & 1)              /* if (mp->kbB % 2 != 0) */
+            bp->flag &= ~(1<<29);
          avgK += mp->kbB;
          nk++;
          mp = mp->next;

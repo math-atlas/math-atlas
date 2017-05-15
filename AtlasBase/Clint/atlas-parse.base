@@ -146,6 +146,7 @@ struct CPNode
 #define MMF_BREG1      19  /* 1: use only 1 reg for B, else use NU */
 #define MMF_KCLN       20  /* 1: cleaner for K dim is required */
 #define MMF_ALLTRANS   21  /* 1: do C^T = B^T * A^T, not C=A*B */
+#define MMF_MAXBIT     21
 
 #define MMF_ALLPF ( (1<<MMF_PFACOLS)|(1<<MMF_PFABLK)|(1<<MMF_PFBCOLS) \
                     |(1<<MMF_PFCELTS) )
@@ -3042,6 +3043,10 @@ static int MMKernsCompat(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 static int MMKernCleansK(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 /*
  * RETURNS: 1 if p1 can provide K-cleanup for p0, else 0
+ * NOTE: upper 3 bits of p->flag must indicate whether KU=4,3,2 are legeal
+ *       KU for cleanup (most sig to least).  If any kbB that kern p0 is used
+ *       for is not a multiple of a given KU, then it is ruled out, and so has
+ *       this bit unset.
  * To do K-cleanup in our scheme, MAX(ku, kbmin) <= 4, kbmax == 0, K must
  * by a runtime variable, and it must have the same storage for all matrices.  
  * We could avoid requiring same  A/B storage, but this would require using
@@ -3067,10 +3072,16 @@ static int MMKernCleansK(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
    }
    else /* M/N vectorized */
    {
-      if (p1->kbmin > 4)
+      const int KU=p1->ku;
+      if (p1->kbmin > KU)  /* kernel must handle all K cases, incl KU! */
          return(0);
-      if (p1->ku > 4)
-         return(0);
+      if (KU > 1)
+      {
+         if (KU > 4)
+            return(0);
+         if (!(p0->flag & (1<<(31+KU-4))))
+            return(0);
+      }
    }
    return(MMKernsCompat(p0, p1));
 }
