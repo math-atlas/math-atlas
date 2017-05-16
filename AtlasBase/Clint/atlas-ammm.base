@@ -35090,6 +35090,41 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
    return(cb);
 }
 
+void FindValidCleanKUs(ATL_mmnode_t *p, ATL_mmnode_t *mb)
+/*
+ * Searches master list given by mb, finding all kernel compiles that match p
+ * to find all kbB that this kern comp is used with.  This allows us to compute
+ * whether a given KU is legal.  Recall that we can pad kbB up to 4.  1 is
+ * always a multiple of all kbB, and so can be used for cleanup always.  
+ * However, imagine we want to have pad to 3 for cleanup.  If any target
+ * kernel is used with a kernel where kbB % 3 != 0, we would either have
+ * memory overwrite on non-cleanup code, or have to have non-cleanup nodes
+ * allocate the extra space.  Therefore, for the possibly incompatible KUs of
+ * 4, 3, 2, we rule them out if some target kbB doesn't evenly divide them.
+ * mp->flag sets: 31:4, 30:3, 29:2 -- set to 1 if OK clean mul, else 0.
+ */
+{
+   unsigned int flg = (0x7<<29);
+   ATL_mmnode_t *mp;
+
+   if (!FLAG_IS_SET(mb->flag, MMF_KCLN))
+      return;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      if (FLAG_IS_SET(mp->flag, MMF_KCLN) && MMKernCompsSame(mb, mp))
+      {
+         const unsigned kb = mp->kbB;
+         if (kb & 0x3)            /* if (mp->kbB % 4 != 0) */
+            flg &= ~(1<<31);
+         if (kb % 3)
+            flg &= ~(1<<30);
+         if (kb & 1)              /* if (mp->kbB % 2 != 0) */
+            flg &= ~(1<<29);
+      }
+   }
+   p->flag = flg | (p->flag & (~(0x7<<29)));
+}
+
 ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
 /*
  * Finds all unique kernels in mb, and then takes the largest blocking factor
@@ -35117,17 +35152,19 @@ ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
    {
       if (FLAG_IS_SET(mp->flag, MMF_KCLN))
       {
+         FindValidCleanKUs(mp, mb);
          if (MMKernCleansK(mp, mp))
             mp->ivar = 0;
          else if (!MMCompatKernPresent(ub, mp))/* no storg compat kern in ub */
          {
             ATL_mmnode_t *p;
             p = CloneMMNode(mp);
-            p->flag |= 0x7 << 29;  /* assuming all KU legal cleaners */
             p->next = ub;
             ub = p;
          }
       }
+      else
+         mp->ivar = 0;
    }
 /*
  * We're going to use the same K-cleanup for all storage-compatible kernels,
@@ -35142,19 +35179,23 @@ ATL_mmnode_t *GetDesiredK1(ATL_mmnode_t *mb)
       int nk=0;
       mbC = nbC = 0;
       mp = mb;
+      bp->flag |= 7<<29;
       while (mp = MMCompatKernPresent(mp, bp))
       {
-         const unsigned kb = mp->kbB;
-         mbC = Mmax(mbC, mp->mbB);
-         nbC = Mmax(mbC, mp->nbB);
-         if (kb & 0x3)            /* if (mp->kbB % 4 != 0) */
-            bp->flag &= ~(1<<31);
-         if (kb % 3)
-            bp->flag &= ~(1<<30);
-         if (kb & 1)              /* if (mp->kbB % 2 != 0) */
-            bp->flag &= ~(1<<29);
-         avgK += mp->kbB;
-         nk++;
+         if (FLAG_IS_SET(mp->flag, MMF_KCLN))
+         {
+            const unsigned kb = mp->kbB;
+            mbC = Mmax(mbC, mp->mbB);
+            nbC = Mmax(mbC, mp->nbB);
+            if (kb & 0x3)            /* if (mp->kbB % 4 != 0) */
+               bp->flag &= ~(1<<31);
+            if (kb % 3)
+               bp->flag &= ~(1<<30);
+            if (kb & 1)              /* if (mp->kbB % 2 != 0) */
+               bp->flag &= ~(1<<29);
+            avgK += mp->kbB;
+            nk++;
+         }
          mp = mp->next;
       }
       avgK /= (nk<<1);
@@ -35377,7 +35418,18 @@ int GetIdxOfKClean(ATL_mmnode_t *kb, ATL_mmnode_t *dp)
 {
    ATL_mmnode_t *kp;
    int cnt;
-
+/*
+ * Prioritize self-cleaning over other-cleaning so that we don't do unnec
+ * instruction load for kb0 case
+ */
+   FindValidCleanKUs(dp, kb);
+   if (MMKernCleansK(dp, dp))
+   {
+      for (cnt=0,kp=kb; kp; kp = kp->next, cnt++)
+         if (kp == dp)
+            return(cnt);
+      assert(0);  /* should not be reached! */
+   }
    for (cnt=0,kp=kb; kp; kp = kp->next, cnt++)
    {
       if (MMKernCleansK(dp, kp))
