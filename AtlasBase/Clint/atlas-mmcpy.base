@@ -1,3 +1,1086 @@
+@ROUT cpytest
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Jakob Hinton" -def contrib "R. Clint Whaley"
+/*
+ * This copy sanity tester written by Jakob Hinton, and desperately needs
+ * code review.
+ * If functions by testing copy function ATL_USERCPMM against a known-good
+ * implementation provided by ATL_GOODCP
+ */
+#include "atlas_misc.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <math.h>
+
+
+#if defined(SCPLX) || defined(DCPLX)
+   #define IS_CPLX  1
+#else
+   #define IS_CPLX  0
+#endif
+
+#ifndef COPY_C
+   #define CCOPY 0
+#else
+   #if COPY_C
+      #define CCOPY 0
+   #else
+      #define CCOPY 1
+   #endif
+#endif
+#if IS_TRANS == 1
+   #define TRANST_
+#endif
+
+#ifdef BETAX
+   #define beta 3.0
+#endif
+
+#ifdef BETA1
+   #define beta 1.0
+#endif
+
+#ifdef BETA0
+   #define beta 0.0
+#endif
+
+#ifdef ALPHAX
+   #define alpha 0.5
+#endif
+
+#ifdef ALPHA1
+   #define alpha 1.0
+#endif
+
+#ifdef ALPHA0
+   #define alpha 0.0
+#endif
+
+/* function signature for cblk2C */
+#if CCOPY == 1 && defined TCPLX && TO_BLK == 0
+
+   void ATL_GOODCP
+   (
+      ATL_CSZT M,      /* number of rows in A */
+      ATL_CSZT N,      /* number of columns in A */
+      const SCALAR *a, /* scalar for b */
+      const TYPE *rC,    /* real block stored in 1x1-major order */
+      const TYPE *iC,    /* imag block stored in 1x1-major order */
+      const SCALAR *b,  /* scalar for C */
+      TYPE *C,           /* matrix to be copied to access-major format */
+      ATL_CSZT ldc     /* stride between row elements */
+   );
+void ATL_USERCPMM
+   (
+      ATL_CSZT M,      /* number of rows in A */
+      ATL_CSZT N,      /* number of columns in A */
+      const SCALAR *a, /* scalar for b */
+      const TYPE *rC,    /* real block stored in 1x1-major order */
+      const TYPE *iC,    /* imag block stored in 1x1-major order */
+      const SCALAR *b,  /* scalar for C */
+      TYPE *C,           /* matrix to be copied to access-major format */
+      ATL_CSZT ldc     /* stride between row elements */
+   );
+
+
+/* function signature for C2blk */
+#elif CCOPY == 1 && !defined TCPLX && TO_BLK == 1
+
+   void ATL_GOODCP
+   (
+      ATL_CSZT M,      /* number of rows in A */
+      ATL_CSZT N,      /* number of columns in A */
+      const SCALAR a,  /* scalar for C */
+      const TYPE *C,     /* matrix to be copied to access-major format */
+      ATL_CSZT ldc,    /* stride between row elements */
+      const SCALAR b,   /* scalar for b */
+      TYPE *B            /* matrix stored in 4x4-major order */
+   );
+   
+   void ATL_USERCPMM
+   (
+      ATL_CSZT M,      /* number of rows in A */
+      ATL_CSZT N,      /* number of columns in A */
+      const SCALAR a,  /* scalar for C */
+      const TYPE *C,     /* matrix to be copied to access-major format */
+      ATL_CSZT ldc,    /* stride between row elements */
+      const SCALAR b,   /* scalar for b */
+      TYPE *B            /* matrix stored in 4x4-major order */
+   );
+
+/* function signature for blk2C */
+#elif CCOPY == 1 && !defined TCPLX && TO_BLK == 0
+  void ATL_USERCPMM
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   const double a,  /* scalar for b */
+   const double *b,     /* matrix stored in 1x1-major order */
+   const double bta,   /* scalar for C */
+   double *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+);
+
+void ATL_GOODCP
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   const double a,  /* scalar for b */
+   const double *b,     /* matrix stored in 1x1-major order */
+   const double bta,   /* scalar for C */
+   double *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+);
+
+/* function signature for cAN2blk, cAT2blk, cblk2AN, & cblk2AT */
+#elif defined TCPLX && CCOPY == 0
+
+   void ATL_GOODCP
+   (
+      ATL_CSZT K,          /* number of rows in A */
+      ATL_CSZT N,          /* number of columns in A */
+      const SCALAR a,      /* scalar for A */
+      const TYPE *A,       /* col maj matrix */
+      ATL_CSZT lda,        /* stride between row elements */
+      TYPE *rA,            /* access-major block holding real vals */
+      TYPE *iA             /* access-major block holding imag vals */
+   );
+   
+   void ATL_USERCPMM
+   (
+      ATL_CSZT K,          /* number of rows in A */
+      ATL_CSZT N,          /* number of columns in A */
+      const SCALAR a,      /* scalar for A */
+      const TYPE *A,       /* col maj matrix */
+      ATL_CSZT lda,        /* stride between row elements */
+      TYPE *rA,            /* access-major block holding real vals */
+      TYPE *iA             /* access-major block holding imag vals */
+   );
+
+/* function signature for cC2blk */
+#elif defined TCPLX && CCOPY == 1 && TO_BLK == 1
+
+void ATL_GOODCP
+(
+   ATL_CSZT M,      /* number of rows in A */
+   ATL_CSZT N,      /* number of columns in A */
+   const SCALAR *a, /* scalar for b */
+   const TYPE *C,     /* matrix to be copied to access-major format */
+   ATL_CSZT ldc,    /* stride between row elements */
+   const SCALAR *b,  /* scalar for C */
+   TYPE *rC,          /* real block stored in 1x1-major order */
+   TYPE *iC           /* imag block stored in 1x1-major order */
+);
+
+void ATL_USERCPMM
+(
+   ATL_CSZT M,      /* number of rows in A */
+   ATL_CSZT N,      /* number of columns in A */
+   const SCALAR *a, /* scalar for b */
+   const TYPE *C,     /* matrix to be copied to access-major format */
+   ATL_CSZT ldc,    /* stride between row elements */
+   const SCALAR *b,  /* scalar for C */
+   TYPE *rC,          /* real block stored in 1x1-major order */
+   TYPE *iC           /* imag block stored in 1x1-major order */
+);
+
+
+/* function signature for AN2blk, AT2blk, blk2AN, & blk2AT */
+#else
+   void ATL_GOODCP
+   (
+      ATL_CSZT K,          /* number of rows in A */
+      ATL_CSZT N,          /* number of columns in A */
+      const SCALAR a,      /* scalar for A */
+      const TYPE *A,       /* col maj matrix */
+      ATL_CSZT lda,        /* stride between row elements */
+      TYPE *b              /* access-major block */
+   );
+   
+   void ATL_USERCPMM
+   (
+      ATL_CSZT K,          /* number of rows in A */
+      ATL_CSZT N,          /* number of columns in A */
+      const SCALAR a,      /* scalar for A */
+      const TYPE *A,       /* col maj matrix */
+      ATL_CSZT lda,        /* stride between row elements */
+      TYPE *b              /* access-major block */
+   );
+#endif
+
+/*if the tested cpy function into an access maj array has been writing past its 
+  given parameters, this function will print an err and return each time it 
+  does so.*/
+int acc_buffercheckr
+(
+   TYPE *A,          /*this is the array we are checking to see if its buffer
+                       was touched*/
+   int SZ,           /*size of the array in the array that has no buffervals*/
+   int bufferspace,  /*amount of space allocated around array, it is asuumed
+                       that this space /2 is full of the buffer val at the 
+                       front and back end of the access major array*/
+   TYPE tst_val      /*this is the val padded into the outer rims of the array*/
+)
+{
+   int i, j;
+   int buffer_err = 0;
+   for(i=0;i<bufferspace/2;i++)
+   {
+      /* check the 0 end of the buffer space */
+      if(*(A + i) != tst_val)
+      {
+         fprintf(stderr, "ERROR pos [%d] has been edited and is outside the"
+                 "given parameters for the routine being tstd\n",i);
+         buffer_err++;
+      }
+      /* check the max index end of the buffer space */
+      if(*(A + (SZ-1) - i) != tst_val)
+      {
+         fprintf(stderr, "ERROR pos [%d] has been edited and is outside the "
+                 "given parameters for the routine being tstd\n",SZ - i);
+         buffer_err++;
+      }
+   }
+   return buffer_err;
+}
+
+/*if the tested cpy function into a col maj array has been writing past its 
+  given parameters, this function will return each time it does so.*/
+int col_buffercheckr
+(
+   TYPE *A,          /*this is the array we are checking to see if its buffer
+                       was touched*/
+   int K,
+   int N,
+   TYPE tst_val      /*this is the val padded into the outer rims of the array*/
+)
+{
+   int i, j;
+   int buffer_err = 0;
+   int lda = K*3;
+   for(i=0;i<K*3;i++)
+   {
+      for(j=0;j<N*3;j++)
+      {
+         /* this if statement checks if the current val is not in the buffzone*/
+         if(i>=K && i<K*2 && j>=N && j<N*2);
+
+         /* if it is in the buffer zone, then check if it has been violated */
+         else
+         {
+            if(*(A + i + j*lda) != tst_val)
+            {
+               fprintf(stderr, "ERROR pos [%d] has been edited and is outside"
+                       " the given parameters for the routine being tstd\n",
+                       i+j*lda);
+               buffer_err++;
+            }
+         }
+      }
+   }
+   return buffer_err;
+}
+
+
+/*this function checks the correct array with the test one and makes note of
+  any inconsitencies*/
+int tst_checkr
+(
+   TYPE *A,            /*this is the good array that is being compared to the 
+                         array of unknown quality*/
+   TYPE *b,            /*this is the array being tsted*/
+   ATL_CSZT sz         /*amount of elements*/
+)
+{
+   int errcount = 0;
+   ATL_SZT i;
+   
+   for(i = 0; i < sz; i++)
+   {
+      if(*(A + i) != *(b + i))
+      {
+         fprintf(stderr, "ERROR pos [%zu] does not match\n",i);
+         fprintf(stderr, "correctarr == %f\n",*(A + i));
+         fprintf(stderr, "tstarr == %f\n\n",*(b + i));
+         errcount++;
+      }
+   }
+
+   return errcount;
+}
+
+void PrintUsage(char *name, int iarg, char *arg)
+{
+    fprintf(stderr, "\nERROR around arg %d (%s).\n", iarg, arg ? arg:"unknown");
+    fprintf(stderr, "USAGE: %s [flags], where flags are:\n", name);
+    fprintf(stderr, "   -m <#> : set number of rows to #\n");
+    fprintf(stderr, "   -n <#> : set number of col's to #\n");
+    fprintf(stderr, "   -s <#> : set sz to #\n");
+    fprintf(stderr, "   -k <#> : set k unrolling to #\n");
+    fprintf(stderr, "   TOBLK=<1/0> : set whether copying into a blk\n");
+    fprintf(stderr, "   CCOPY=<1/0> : set whether performing a c copy\n");
+    fprintf(stderr, "   ISTRANS=<1/0> : set whether a trans is occuring\n");
+    fprintf(stderr, "   BETA=<1/0/X> : set what beta is going to be\n");
+    fprintf(stderr, "   ALPHA=<1/0/X> : set what alpha is going to be\n");
+    exit(iarg ? iarg : -1);
+}
+
+void GetFlags(int nargs, char **args, int *K, int *N, int *SZ)
+{
+   int i, int ku = 0;
+   *K = 0;
+   *N = 0;
+   *SZ = 0;
+   int SZchk;
+   double SZchkDouble;
+   for(i=1; i < nargs; i++)
+   {
+      if(args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch (args[i][1])
+      {
+         case 'm':
+            if(++i >= nargs)
+               PrintUsage(args[0], i, "out of arguements");
+            *K = atoi(args[i]);
+            break;
+         case 'n':
+            if(++i >= nargs)
+               PrintUsage(args[0], i, "out of arguements");
+            *N = atoi(args[i]);
+            break;
+         case 'k':
+            if(++i >= nargs)
+               PrintUsage(args[0], i, "out of arguements");
+            ku = atoi(args[i]);
+            break;
+         case 's':
+            if(++i >= nargs)
+               PrintUsage(args[0], i, "out of arguements");
+            *SZ = atoi(args[i]);
+            break;
+         default:
+            PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if(*K == 0 && *N == 0 && *SZ == 0)
+   {
+      *SZ = 16;
+      *N = 4;
+      *K = 4;
+   }
+   else if(*SZ == 0 && *K != 0 && *N != 0)
+   {
+      *SZ = *K * *N;
+   }
+   else if(*SZ != 0 && *K == 0 && *N == 0)
+   {
+      SZchkDouble = sqrt((double) *SZ);
+      SZchk = SZchkDouble;
+      if(SZchk == SZchkDouble)
+      {
+         *K = SZchk;
+         *N = SZchk;
+      }
+      else
+      {
+         fprintf(stderr,"ERROR: SZ was given as %d but this value is not a "
+                 "perfect square\n and no colomns/rows were specifed so block"
+                 "size is ambiguous.\n", *SZ);
+         exit(0);
+      }
+   }
+   else if(*SZ == *K * *N);
+   else
+   {
+      fprintf(stderr,"ERROR: SZ of block doesnt matchup with number of rows"
+              " and columns\n");
+      exit(0);
+   }
+   if(ku != 0)
+   {
+      *K = (*K / ku) * ku;
+      *SZ = *K * *N;
+   }
+}
+
+void copytest(
+      int blk,
+      int transt,
+      int ccopy,
+      int cplx,
+      int K,
+      int N,
+      SCALAR a,
+      SCALAR b,
+      ATL_CSZT SZ,
+      int *chkarray)
+{
+      int i, j;
+      TYPE count = 0;
+      TYPE count2 = 65656.56565;
+      ATL_CSZT bufferrange = SZ*8;
+      ATL_CSZT lda = K*3;
+      TYPE bufferval = 12345.54321;
+      ATL_CSZT lda2 = lda*2;
+
+      /* C2blk || CT2blk */
+      if(blk == 1 && cplx == 0 && ccopy == 1)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
+     
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=K; i < K*2;i++)
+         {
+            for(j=N;j<N*2;j++)
+            {
+               *(tstarray + i + j*lda) = ++count;
+            }
+         }
+
+         TYPE *outarray1 = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
+         
+         count = 0;
+      
+         for(j = 0;j < SZ; j++)
+         {
+            *(outarray1 + j) = count;
+            *(outarray2 + j + bufferrange/2) = count;
+         }
+         for(j=0;j<bufferrange/2;j++)
+         {
+            *(outarray2 + j) = bufferval;
+            *(outarray2 + (SZ + bufferrange - 1) - j) = bufferval;
+         }
+  
+#if !defined TCPLX && CCOPY == 1 && TO_BLK == 1
+         if(transt == 1)
+         {
+            printf("beginning CT2blk\n");
+            ATL_GOODCP(N, K, a, tstarray+(N*lda+K), lda, b, outarray1);
+            ATL_USERCPMM(N, K, a, tstarray+(N*lda+K), lda, b, 
+                         outarray2+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning C2blk\n");
+            ATL_GOODCP(K, N, a, tstarray+(N*lda+K), lda, b, outarray1);
+            ATL_USERCPMM(K, N, a, tstarray+(N*lda+K), lda, b, 
+                         outarray2+bufferrange/2);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2+bufferrange/2, SZ);
+         chkarray[1] = acc_buffercheckr(outarray2, SZ+bufferrange, bufferrange,
+                                        bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* blk2C || blk2CT*/
+      else if(blk == 0 && cplx == 0 && ccopy == 1)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+        
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=0;i<SZ;i++)
+         {
+            *(tstarray + i + bufferrange/2) = ++count;
+         }
+         
+         TYPE *outarray1 = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         
+         count = 0;
+      
+         for(i=K; i < K*2;i++)
+         {
+            for(j=N;j < N*2;j++)
+            {
+               *(outarray1 + i + j*lda) = count;
+               *(outarray2 + i + j*lda) = count;
+            }
+         }
+
+         
+         for(i=0;i<K*3;i++)
+         {
+            for(j=0;j<N*3;j++)
+            {
+               if(i>=K && i<K*2 && j>=N && j<N*2);
+               else
+               {
+                  *(outarray1 + i + j*lda) = bufferval;                 
+                  *(outarray2 + i + j*lda) = bufferval;                 
+               }
+            }
+         }
+
+#if !defined TCPLX && TO_BLK == 0 && CCOPY == 1
+         if(transt == 1)
+         {
+            printf("beginning blk2CT\n");
+            ATL_GOODCP(N, K, a, tstarray+bufferrange/2, b, 
+                       outarray1+(N*lda+K), lda);
+            ATL_USERCPMM(N, K, a, tstarray+bufferrange/2, b, 
+                         outarray2+(N*lda+K), lda);
+         }
+         else
+         {
+            printf("beginning blk2C\n");
+            ATL_GOODCP(K, N, a, tstarray+bufferrange/2, b, outarray1+(N*lda+K),
+                       lda);
+            ATL_USERCPMM(K, N, a, tstarray+bufferrange/2, b, 
+                         outarray2+(N*lda+K), lda);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2, SZ+bufferrange);
+         chkarray[1] = col_buffercheckr(outarray2, K, N, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* AN2blk || AT2blk */
+      if(blk == 1 && cplx == 0 && ccopy == 0)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
+     
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=K; i < K*2;i++)
+         {
+            for(j=N;j<N*2;j++)
+            {
+               *(tstarray + i + j*lda) = ++count;
+            }
+         }
+
+         TYPE *outarray1 = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
+         
+         count = 0;
+      
+         for(j = 0;j < SZ; j++)
+         {
+            *(outarray1 + j) = count;
+            *(outarray2 + j + bufferrange/2) = count2;
+         }
+         for(j=0;j<bufferrange/2;j++)
+         {
+            *(outarray2 + j) = bufferval;
+            *(outarray2 + (SZ + bufferrange - 1) - j) = bufferval;
+         }
+  
+#if !defined TCPLX && CCOPY == 0
+         if(transt == 1)
+         {
+            printf("beginning AT2blk\n");
+            ATL_GOODCP(N, K, a, tstarray+(N*lda+K), lda, outarray1);
+            ATL_USERCPMM(N, K, a, tstarray+(N*lda+K), lda, 
+                         outarray2+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning AN2blk\n");
+            ATL_GOODCP(K, N, a, tstarray+(N*lda+K), lda, outarray1);
+            ATL_USERCPMM(K, N, a, tstarray+(N*lda+K), lda, 
+                         outarray2+bufferrange/2);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2+bufferrange/2, SZ);
+         chkarray[1] = acc_buffercheckr(outarray2, SZ+bufferrange, bufferrange,
+                                        bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* blk2AN || blk2AT*/
+      else if(blk == 0 && cplx == 0 && ccopy == 0)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+        
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=0;i<SZ;i++)
+         {
+            *(tstarray + i + bufferrange/2) = ++count;
+         }
+         
+         TYPE *outarray1 = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         
+         count = 0;
+      
+         for(i=K; i < K*2;i++)
+         {
+            for(j=N;j < N*2;j++)
+            {
+               *(outarray1 + i + j*lda) = count;
+               *(outarray2 + i + j*lda) = count2;
+            }
+         }
+
+         
+         for(i=0;i<K*3;i++)
+         {
+            for(j=0;j<N*3;j++)
+            {
+               if(i>=K && i<K*2 && j>=N && j<N*2);
+               else
+               {
+                  *(outarray1 + i + j*lda) = bufferval;                 
+                  *(outarray2 + i + j*lda) = bufferval;                 
+               }
+            }
+         }
+
+#if !defined TCPLX && CCOPY == 0
+         if(transt == 1)
+         {
+            printf("beginning blk2AT\n");
+            ATL_GOODCP(N, K, a, outarray1+(N*lda+K), lda, 
+                       tstarray+bufferrange/2);
+            ATL_USERCPMM(N, K, a, outarray2+(N*lda+K), lda, 
+                         tstarray+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning blk2AN\n");
+            ATL_GOODCP(K, N, a, outarray1+(N*lda+K), lda, 
+                       tstarray+bufferrange/2);
+            ATL_USERCPMM(K, N, a, outarray2+(N*lda+K), lda, 
+                         tstarray+bufferrange/2);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2, SZ+bufferrange);
+         chkarray[1] = col_buffercheckr(outarray2, K, N, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* cAN2blk || cAT2blk */
+      else if(blk == 1 && cplx == 1 && ccopy == 0)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * 2 * sizeof(TYPE));
+
+         for(i=0;i< (SZ+bufferrange) * 2;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=K*2;i<K*4;i++)
+         {
+            for(j=N;j<N*2;j++)
+            {
+               *(tstarray + i + j*lda2) = ++count;
+            }
+         }
+
+         TYPE *outarray1i = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2i = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *outarray1r = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2r = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+   
+         count = 0;
+      
+         for(j = 0;j < SZ; j++)
+         {
+            *(outarray1r + j) = count;
+            *(outarray1i + j) = count;
+            *(outarray2r + j + bufferrange/2) = count2;
+            *(outarray2i + j + bufferrange/2) = count2;
+         }
+
+         for(j=0;j<bufferrange/2;j++)
+         {
+            *(outarray2r + j) = bufferval;
+            *(outarray2r + (SZ + bufferrange - 1) - j) = bufferval;
+            *(outarray2i + j) = bufferval;
+            *(outarray2i + (SZ + bufferrange - 1) - j) = bufferval;
+         }
+
+#if defined TCPLX && CCOPY == 0
+         if(transt == 1)
+         {
+            printf("beginning cAT2blk\n");
+            ATL_GOODCP(N, K, a, tstarray+(N*lda2+K*2), lda, outarray1r, 
+                       outarray1i);
+            ATL_USERCPMM(N, K, a, tstarray+(N*lda2+K*2), lda, 
+                         outarray2r+bufferrange/2, outarray2i+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning cAN2blk\n");
+            ATL_GOODCP(K, N, a, tstarray+(N*lda2+K*2), lda, outarray1r, 
+                       outarray1i);
+            ATL_USERCPMM(K, N, a, tstarray+(N*lda2+K*2), lda, 
+                         outarray2r+bufferrange/2, outarray2i+bufferrange/2);
+         }
+
+         chkarray[0] = tst_checkr(outarray1r, outarray2r+bufferrange/2, SZ);
+         chkarray[1] = acc_buffercheckr(outarray2r, SZ+bufferrange, bufferrange,
+                                        bufferval);
+         
+         chkarray[0] += tst_checkr(outarray1i, outarray2i+bufferrange/2, SZ);
+         chkarray[1] += acc_buffercheckr(outarray2i, SZ+bufferrange, 
+                                         bufferrange, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1i);
+         free(outarray1r);
+         free(outarray2r);
+         free(outarray2i);
+      }
+      /* cblk2AN || cblk2AT */
+      else if(blk == 0 && cplx == 1 && ccopy == 0)
+      {
+         TYPE *tstarrayi = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *tstarrayr = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarrayi + i) = --count;
+            *(tstarrayr + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=0;i<SZ;i++)
+         {
+            *(tstarrayi + i + bufferrange/2) = ++count;
+            *(tstarrayr + i + bufferrange/2) = ++count;
+         }
+
+         TYPE *outarray1 = (TYPE *)malloc((SZ + bufferrange)*2*sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ + bufferrange)*2*sizeof(TYPE));
+         assert(outarray1 && outarray2);
+         
+         count = 0;
+      
+         for(i=K*2; i < K*4;i++)
+         {
+            for(j=N;j < N*2;j++)
+            {
+               *(outarray1 + i + j*lda2) = count;
+               *(outarray2 + i + j*lda2) = count2;
+            }
+         }
+
+         
+         for(i=0;i<K*6;i++)
+         {
+            for(j=0;j<N*3;j++)
+            {
+               if(i>=K*2 && i<K*4 && j>=N && j<N*2);
+               else
+               {
+                  *(outarray1 + i + j*lda2) = bufferval;                 
+                  *(outarray2 + i + j*lda2) = bufferval;                 
+               }
+            }
+         }
+         
+      
+#if defined TCPLX && CCOPY == 0
+         if(transt == 1)
+         {
+            printf("beginning cblk2AT\n");
+            ATL_GOODCP(N, K, a, outarray1+N*lda2+K*2, lda, 
+                       tstarrayr+bufferrange/2, tstarrayi+bufferrange/2);
+            ATL_USERCPMM(N, K, a, outarray2+N*lda2+K*2, lda, 
+                         tstarrayr+bufferrange/2, tstarrayi+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning cblk2AN\n");
+            ATL_GOODCP(K, N, a, outarray1+N*lda2+K*2, lda, 
+                       tstarrayr+bufferrange/2, tstarrayi+bufferrange/2);
+            ATL_USERCPMM(K, N, a, outarray2+N*lda2+K*2, lda, 
+                         tstarrayr+bufferrange/2, tstarrayi+bufferrange/2);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2, SZ+bufferrange);
+         chkarray[1] = col_buffercheckr(outarray2, K*2, N, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarrayr);
+         free(tstarrayi);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* cC2blk || cCT2blk */
+      else if(blk == 1 && cplx == 1 && ccopy == 1)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * 2 * sizeof(TYPE));
+
+         for(i=0;i< (SZ+bufferrange) * 2;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=K*2;i<K*4;i++)
+         {
+            for(j=N;j<N*2;j++)
+            {
+
+               *(tstarray + i + j*lda2) = ++count;
+            }
+         }
+
+         TYPE *outarray1i = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2i = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *outarray1r = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2r = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+   
+         count = 0;
+      
+         for(j = 0;j < SZ; j++)
+         {
+            *(outarray1r + j) = count;
+            *(outarray1i + j) = count;
+            *(outarray2r + j + bufferrange/2) = count;
+            *(outarray2i + j + bufferrange/2) = count;
+         }
+
+         for(j=0;j<bufferrange/2;j++)
+         {
+            *(outarray2r + j) = bufferval;
+            *(outarray2r + (SZ + bufferrange - 1) - j) = bufferval;
+            *(outarray2i + j) = bufferval;
+            *(outarray2i + (SZ + bufferrange - 1) - j) = bufferval;
+         }
+
+#if defined TCPLX && CCOPY == 1 && TO_BLK == 1
+   
+         if(transt == 1)
+         {
+            printf("beginning cCT2blk\n");
+            ATL_GOODCP(N, K, a, tstarray+(N*lda2+K*2), lda, b, outarray1r, 
+                       outarray1i);
+            ATL_USERCPMM(N, K, a, tstarray+(N*lda2+K*2), lda, b, 
+                         outarray2r+bufferrange/2, outarray2i+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning cC2blk\n");
+            ATL_GOODCP(K, N, a, tstarray+(N*lda2+K*2), lda, b, outarray1r, 
+                       outarray1i);
+            ATL_USERCPMM(K, N, a, tstarray+(N*lda2+K*2), lda, b, 
+                         outarray2r+bufferrange/2, outarray2i+bufferrange/2);
+         }
+
+         chkarray[0] = tst_checkr(outarray1r, outarray2r+bufferrange/2, SZ);
+         chkarray[1] = acc_buffercheckr(outarray2r, SZ+bufferrange, 
+                                        bufferrange, bufferval);
+         
+         chkarray[0] += tst_checkr(outarray1i, outarray2i+bufferrange/2, SZ);
+         chkarray[1] += acc_buffercheckr(outarray2i, SZ+bufferrange, 
+                                         bufferrange, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1i);
+         free(outarray1r);
+         free(outarray2r);
+         free(outarray2i);
+      }
+      /* cblk2C || cblk2CT */
+      else if(blk == 0 && cplx == 1 && ccopy == 1)
+      {
+         TYPE *tstarrayi = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *tstarrayr = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarrayi + i) = --count;
+            *(tstarrayr + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=0;i<SZ;i++)
+         {
+            *(tstarrayi + i + bufferrange/2) = ++count;
+            *(tstarrayr + i + bufferrange/2) = ++count;
+         }
+
+         TYPE *outarray1 = (TYPE *)malloc((SZ + bufferrange)*2*sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ + bufferrange)*2*sizeof(TYPE));
+         assert(outarray1 && outarray2);
+         
+         count = 0;
+      
+         for(i=K*2; i < K*4;i++)
+         {
+            for(j=N;j < N*2;j++)
+            {
+               *(outarray1 + i + j*lda2) = count;
+               *(outarray2 + i + j*lda2) = count;
+            }
+         }
+
+         
+         for(i=0;i<K*6;i++)
+         {
+            for(j=0;j<N*3;j++)
+            {
+               if(i>=K*2 && i<K*4 && j>=N && j<N*2);
+               else
+               {
+                  *(outarray1 + i + j*lda2) = bufferval;                 
+                  *(outarray2 + i + j*lda2) = bufferval;                 
+               }
+            }
+         }
+         
+      
+#if defined TCPLX && CCOPY == 1 && TO_BLK == 0
+         if(transt == 1)
+         {
+            printf("beginning cblk2CT\n");
+            ATL_GOODCP(N, K, a, tstarrayr+bufferrange/2, 
+                       tstarrayi+bufferrange/2, b, outarray1+N*lda2+K*2, lda);
+            ATL_USERCPMM(N, K, a, tstarrayr+bufferrange/2, 
+                         tstarrayi+bufferrange/2, b, outarray2+N*lda2+K*2, lda);
+         }
+         else
+         {
+            printf("beginning cblk2C\n");
+            ATL_GOODCP(K, N, a, tstarrayr+bufferrange/2, 
+                       tstarrayi+bufferrange/2, b, outarray1+N*lda2+K*2, lda);
+            ATL_USERCPMM(K, N, a, tstarrayr+bufferrange/2, 
+                         tstarrayi+bufferrange/2, b, outarray2+N*lda2+K*2, lda);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2, SZ+bufferrange);
+         chkarray[1] = col_buffercheckr(outarray2, K*2, N, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarrayr);
+         free(tstarrayi);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      else
+      {
+         chkarray[0] = -1;
+         return;
+      }
+}
+
+int main (int nargs, char **args)
+{
+   int i, j, count = 0;
+
+   /* 
+    * The first val in this array will hold the number of incorrectly copied
+    * vals the second val will hold the number of buffer violations 
+    */
+   int chkarray[2] = {0,0};
+   int blk = 0, transt = 0, cplx = 0, ccopy = 0;
+   int K, N, SZ; 
+
+   SCALAR a;
+   SCALAR b;
+
+   GetFlags(nargs, args, &K, &N, &SZ);
+   
+   /* compile time flags will determine these runtime flags for what form of 
+   copytest is occurring */
+#if TO_BLK == 1
+      blk = 1;
+#endif
+
+#if CCOPY == 1 
+      ccopy = 1;
+#endif
+
+#ifdef TRANST_
+      transt = 1;
+#endif
+
+   /* complex copytest takes alpha and beta as an array of 2 values each so 
+      need to malloc, otherwise just treat as scalar */
+#if IS_CPLX == 1
+      cplx = 1;
+      a = (TYPE *)malloc(2 * sizeof(TYPE));
+      b = (TYPE *)malloc(2 * sizeof(TYPE));
+      a[0] = alpha;
+      a[1] = alpha;
+      b[0] = beta;
+      b[1] = beta;
+#else
+      a = alpha;
+      b = beta;
+#endif
+
+   copytest(blk,transt,ccopy,cplx,K,N,a,b,SZ,chkarray);
+
+   /* this is just a check that will occur if theres a combination of 
+      compile time flags that arent accounted for */
+   if(chkarray[0] == -1)
+   {
+      fprintf(stderr,"ERROR NO TESTING DONE, this is probably caused by a "
+                     "compile time flag issue \n");
+   }
+   else if(chkarray[0] == 0 && chkarray[1] == 0)
+      fprintf(stderr,"tst passed, both output blocks match and the buffer"
+              "was not over-written!\n");
+   else
+   {
+      fprintf(stderr,"tst failed, %d incorrectly copied position errors\n", 
+              chkarray[0]);
+      fprintf(stderr,"the tested copy routine wrote past the given size %d"
+              " times\n", chkarray[1]);
+   }
+#if IS_CPLX == 1
+   free(a);
+   free(b);
+#endif
+}
 @ROUT storage.idx scopy.idx dcopy.idx ccopy.idx zcopy.idx
 #
 # In this file, any line beginning with a '#' is ignored, but the # must be in
