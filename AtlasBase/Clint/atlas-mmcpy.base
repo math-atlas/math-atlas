@@ -1,4 +1,338 @@
-@ROUT cpytest
+@rout cpytest
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
+static int MA=0, NA=0, LDA=0, IA=0, JA=0;
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr,"  -A <M> <N> <LDA>: set dimensions of col-major matrix\n");
+   fprintf(stderr,"  -b <M> <N> : set dims of access-major block\n");
+   fprintf(stderr,"  -B # <M1> <N1> <M2> <N2> ... <M#> <N#>\n");
+   fprintf(stderr,"  -s # <sz> allocate sz for each block\n");
+   fprintf(stderr,"  -S # <sz1> ... <szN>: allocate sz for each block\n");
+   fprintf(stderr,"  -i I J : set offset in array to access\n");
+
+}
+unsigned int *GetFlags (int nargs, char **args)
+/*
+ * RETURNS: int array, 1st elt is # of blocks, then M,N pairs of block dims
+ */
+{
+   unsigned int nblk=0, i, SZ=0;
+   unsigned int *bD=NULL, *szs=NULL:
+
+   IA = JA = 0;
+   for (i=1; i < nargs; i++)
+   {
+      char ch;
+      int k;
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 's':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         SZ = atoi(args[i]);
+         break;
+      case 'S':
+         if (szs)
+            free(szs);
+         szs = NULL;
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nblk = atoi(args[i]);
+         if (bD)
+            assert(bD[0] == nblk);
+         else
+         {
+            bD = calloc(((nblks<<1)+nblks)+1,sizeof(int));
+            assert(bD);
+         }
+         for (k=0; k < nblks; k++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            bD[(k<<1)+k+1] = atoi(args[i]);
+         }
+         break;
+      case 'B': /* -B # m1 n1 ... m# n# */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nblk = atoi(args[i]);
+         if (bD)
+         {
+            if (bD[3])
+               assert(bD[0] == nblk);
+            else
+            {
+               free(bD);
+               bD = NULL;
+            }
+         }
+         goto GET_BLKS;
+      case 'b': /* -b m n */
+         nblk = 1;
+      GET_BLKS:
+         if (!bD)
+         {
+            bD = calloc(((nblks<<1)+nblks)+1,sizeof(int));
+            assert(bD);
+         }
+         *bD = nblk;
+         nblk += nblk<<1;
+         for (k=0; k < nblk; k += 3)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            bD[k+1] = atoi(args[i]);
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            bD[k+2] = atoi(args[i]);
+         }
+         break;
+      case 'i': /* -i <I> <J> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         IA = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         JA = atoi(args[i]);
+         break;
+      case 'A': /* -A M N lda */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         MA = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         NA = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         LDA = atoi(args[i]);
+         break;
+      @beginskip
+      case 'D': /* -D T/F */
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         ch = args[i][0];
+         ch = toupper(ch);
+         assert(ch == 'F' || ch == 'T');
+         *TOBLK = (ch == 'T');         
+         break;
+      @endskip
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (bD == NULL)
+   {
+      *bD = malloc(4*sizeof(int));
+      assert(bD);
+      bD[0] = 1;
+      bD[1] = 3*ATL_MU;
+      bD[2] = 5*ATL_NU;
+      bD[3] = bD[1] * bD[2];
+   }
+   else if (!bD[4])
+   {
+      int nblk = bD[0];
+      nblk += nblk<<1;
+      if (SZ)
+         for (i=0; i < nblk; i += 3)
+            bD[1+i] = SZ;
+      else
+         for (i=0; i < nblk; i += 3)
+         {
+            int M=bD[1+i], N=bD[2+i];
+            M = ((M+ATL_MU-1)/ATL_MU)*ATL_MU;
+            N = ((N+ATL_NU-1)/ATL_NU)*ATL_NU;
+            bD[1+i] = N*M;
+         }
+   }
+   if (!NA)
+   {
+      int nblk=bD[0]<<1;
+      MA = bD[1];
+      NA = bD[2];
+      for (k=2; k < nblk; k += 2)
+      {
+         MA = Mmax(MA, bD[k+1]);
+         NA = Mmax(NA, bD[k+2]);
+      }
+      #ifdef TRANS_
+         k = MA;
+         MA = NA;
+         NA = k;
+      #endif
+      #ifdef FromBlk_
+         MA += MA;
+      #endif
+      MA += I;
+      NA += J;
+      LDA = MA + 7;
+   }
+   else
+   {
+      int nblk=bD[0]<<1;
+      for (k=0; k < nblk; k += 2)
+      {
+         #ifdef TRANS_
+            assert(IA + bD[k+2] <= MA);
+            assert(JA + bD[k+1] <= NA);
+         #else
+            assert(IA + bD[k+1] <= MA);
+            assert(JA + bD[k+2] <= NA);
+         #endif
+      }
+      assert(LDA >= MA);
+   }
+   return(bD);
+}
+
+TYPE *getMat(size_t M, size_t N, size_t lda, int seed)
+{
+   int i, j;
+   const int lda2 = lda SHIFT;
+   const double mul = 1.0 / (lda2*N);
+
+   A = malloc(N*lda);
+   assert(A);
+#ifdef TCPLX
+   M += M;
+   lda += lda;
+#endif
+@skip   dumb_seed(seed);
+   for (j=N; j; j--, A += lda2)
+   {
+      for (i=0; i != lda; i++) A[i] = 1.0 + (mul*j)*lda2+(i*1e-1)
+   }
+   return(A);
+}
+
+TYPE *getBlock(int sz, int pad)
+{
+   TYPE *b;
+   int i, SZ = sz + pad + pad;
+   double mul = 1.0 / SZ;
+
+   b = malloc(SZ*sizeof(TYPE));
+   for (i=0; i < SZ; i++)
+      A[i] = -(1.0+mul*i);
+}
+
+#ifdef matC_
+   #ifdef Trans_
+      #error "No test of Transpose C matrix right now!"
+   #endif
+   #ifdef FromBlk_
+      #ifdef TCPLX
+         void ATL_USERCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *r,
+             const TYPE *c, const SCALAR beta, TYPE *C, const size_t ldc);
+         void ATL_GOODCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *r,
+             const TYPE *c, const SCALAR beta, TYPE *C, const size_t ldc);
+      #else
+         void ATL_USERCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *b,
+             const SCALAR beta, TYPE *C, const size_t ldc);
+         void ATL_GOODCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *b,
+             const SCALAR beta, TYPE *C, const size_t ldc);
+      #endif
+   #else /* ToBlock */
+      #ifdef TCPLX
+         void ATL_USERCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *C, 
+             const size_t ldc, const SCALAR beta, TYPE *rb, TYPE *ib);
+         void ATL_GOODCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *C, 
+             const size_t ldc, const SCALAR beta, TYPE *rb, TYPE *ib);
+      #else
+         void ATL_USERCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *C, 
+             const size_t ldc, const SCALAR beta, TYPE *b);
+         void ATL_GOODCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *C, 
+             const size_t ldc, const SCALAR beta, TYPE *b);
+      #endif
+   #endif
+#else  /* Trans & NoTrans have same prototype */
+   #ifdef FromBlk_
+      #ifdef TCPLX
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           TYPE *rb, TYPE *ib, const TYPE *A, ATL_CSZT lda)
+         void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           TYPE *rb, TYPE *ib, const TYPE *A, ATL_CSZT lda)
+      #else
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           TYPE *b, const TYPE *A, ATL_CSZT lda);
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           TYPE *b, const TYPE *A, ATL_CSZT lda);
+      #endif
+   #else
+      #ifdef TCPLX
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           const TYPE *A, ATL_CSZT lda, TYPE *rb, TYPE *ib);
+         void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           const TYPE *A, ATL_CSZT lda, TYPE *rb, TYPE *ib);
+      #else
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           const TYPE *A, ATL_CSZT lda, TYPE *b);
+         void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           const TYPE *A, ATL_CSZT lda, TYPE *b);
+      #endif
+   #endif
+#endif
+int doTests_toblk(unsigned int ntest, unsigned int *bD)
+{
+   int t;
+   TYPE *A;
+   int nerr=0, pad=32;
+
+   A = getMat(MA, NA, LDA, MA+NA*LDA);
+   for (t=0; t < ntest; t++)
+   {
+      TYPE *b0, b1, *b2, *b3;
+      unsigned int T = (t<<1)+t, mb = bD[T], nb = bD[T+1], sz=bd[T+2];
+      unsigned int i;
+      b0 = getBlock(sz, pad)
+      b1 = getBlock(sz, pad)
+      b2 = b0 + pad+sz;
+      b3 = b1 + pad+sz;
+
+      for (i=0; i < pad; i++)
+      {
+         if (b0[i] != b1[i])
+         {
+            printf("PREPAD %d, expected=%e, got=%e\n", 32-i, b0[i], b1[i]);
+            nerr++;
+         }
+      }
+
+      free(b0);
+      free(b1);
+   }
+   return(nerr);
+}
+
+int main(int nargs, char *args)
+{
+   int *bD;
+   int nerr = 0;
+   bD = GetFlags (nargs, args);
+   nerr = doTests(bD[0], bD+1);
+   free(bD);
+   return(nerr);
+}
+@ROUT cpytest_shit
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Jakob Hinton" -def contrib "R. Clint Whaley"
 /*
  * This copy sanity tester written by Jakob Hinton, and desperately needs
@@ -327,12 +661,14 @@ void PrintUsage(char *name, int iarg, char *arg)
 
 void GetFlags(int nargs, char **args, int *K, int *N, int *SZ)
 {
-   int i, int ku = 0;
+   int i; 
+   int ku = 0;
+   int SZchk;
+   double SZchkDouble;
+
    *K = 0;
    *N = 0;
    *SZ = 0;
-   int SZchk;
-   double SZchkDouble;
    for(i=1; i < nargs; i++)
    {
       if(args[i][0] != '-')
@@ -404,17 +740,19 @@ void GetFlags(int nargs, char **args, int *K, int *N, int *SZ)
    }
 }
 
-void copytest(
-      int blk,
-      int transt,
-      int ccopy,
-      int cplx,
-      int K,
-      int N,
-      SCALAR a,
-      SCALAR b,
-      ATL_CSZT SZ,
-      int *chkarray)
+void copytest
+(
+   int blk,
+   int transt,
+   int ccopy,
+   int cplx,
+   int K,
+   int N,
+   SCALAR a,
+   SCALAR b,
+   ATL_CSZT SZ,
+   int *chkarray
+)
 {
       int i, j;
       TYPE count = 0;
@@ -422,6 +760,7 @@ void copytest(
       ATL_CSZT bufferrange = SZ*8;
       ATL_CSZT lda = K*3;
       TYPE bufferval = 12345.54321;
+      TYPE *outarray1, *outarray2;
       ATL_CSZT lda2 = lda*2;
 
       /* C2blk || CT2blk */
@@ -430,9 +769,7 @@ void copytest(
          TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
      
          for(i=0;i<SZ+bufferrange;i++)
-         {
-            *(tstarray + i) = --count;
-         }
+            tstarray[i] = --count;
 
          count = 0;
 
@@ -492,9 +829,7 @@ void copytest(
          TYPE *tstarray = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
         
          for(i=0;i<SZ+bufferrange;i++)
-         {
-            *(tstarray + i) = --count;
-         }
+            tstarray[i] = --count;
 
          count = 0;
 
@@ -564,19 +899,13 @@ void copytest(
          TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
      
          for(i=0;i<SZ+bufferrange;i++)
-         {
-            *(tstarray + i) = --count;
-         }
+            tstarray[i] = --count;
 
          count = 0;
 
          for(i=K; i < K*2;i++)
-         {
             for(j=N;j<N*2;j++)
-            {
                *(tstarray + i + j*lda) = ++count;
-            }
-         }
 
          TYPE *outarray1 = (TYPE *)malloc(SZ * sizeof(TYPE));
          TYPE *outarray2 = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
