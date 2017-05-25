@@ -1,6 +1,108 @@
 @rout cpytest
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include "atlas_bitvec.h"
+#ifndef TYPE
+   #define ATL_CSZT const size_t
+   #if defined(SREAL) || defined(SCPLX)
+      #define TYPE float
+   #elif defined(DREAL) || defined(DCPLX)
+      #define TYPE double
+   #endif
+   #ifdef SREAL
+      #define ATL_MulBySize(i_) ((i_)<<2)
+      #define ATL_DivBySize(i_) ((i_)>>2)
+   #elif defined(DREAL) || defined(SCPLX)
+      #define ATL_MulBySize(i_) ((i_)<<3)
+      #define ATL_DivBySize(i_) ((i_)>>3)
+   #else
+      #define ATL_MulBySize(i_) ((i_)<<4)
+      #define ATL_DivBySize(i_) ((i_)>>4)
+   #endif
+   #if defined(SCPLX) || defined(DCPLX)
+      #define SHIFT << 1
+      #define TCPLX 1
+   #else
+      #define TREAL 1
+      #define SHIFT
+   #endif
+   #ifdef TCPLX
+      #define SCALAR TYPE*
+      #define SCALAR_IS_ZERO(s_) ((s_)[0] == 0.0 && (s_)[1] == 0.0)
+   #else
+      #define SCALAR TYPE
+      #define SCALAR_IS_ZERO(s_) ((s_) == 0.0)
+   #endif
+   #define ATL_Cachelen 128
+   #define ATL_AlignPtr(vp) \
+      (void*) ( ATL_Cachelen + (((((size_t) (vp))+127)>>7)<<7) )
+#endif
+#if defined(SREAL) || defined(SCPLX)
+   #define FEPS 5.0e-7
+#else
+   #define FEPS 1.0e-15
+#endif
+#ifndef ATL_MU
+   #define ATL_MU 1
+#endif
+#ifndef ATL_NU
+   #define ATL_NU 1
+#endif
+#if TO_BLK
+   #ifdef FromBlk_
+      #undef FromBlk_
+   #endif
+#else
+   #define FromBlk_
+#endif
+#ifdef Trans_
+   #if Trans_ == 0
+      #undef Trans_
+   #endif
+#endif
+#ifdef Conj_
+   #if Conj_ == 0
+      #undef Conj_
+   #endif
+#endif
 static int MA=0, NA=0, LDA=0, IA=0, JA=0;
+#ifdef TCPLX
+   @whiledef sc BETA ALPHA
+   #ifdef @(sc)1
+      TYPE @(sc)[2] = {1.0, 0.0};
+   #elif defined(@(sc)N) || defined(@(sc)N1)
+      TYPE @(sc)[2] = {-1.0, 0.0};
+   #elif defined(@(sc)0)
+      TYPE @(sc)[2] = {0.0, 0.0};
+   #else
+      @mif sc = "BETA
+      TYPE @(sc)[2] = {-0.25, 0.75};
+      @endmif
+      @mif sc ! "BETA
+      TYPE @(sc)[2] = { 1.55, -0.35};
+      @endmif
+   #endif
+   @endwhile
+#else
+   @whiledef sc BETA ALPHA
+   #ifdef @(sc)1
+      TYPE @(sc) = 1.0;
+   #elif defined(@(sc)N) || defined(@(sc)N1)
+      TYPE @(sc) = -1.0;
+   #elif defined(@(sc)0)
+      TYPE @(sc) = 0.0;
+   #else
+      @mif sc = "BETA
+      TYPE @(sc) = 0.25;
+      @endmif
+      @mif sc ! "BETA
+      TYPE @(sc) = 1.08;
+      @endmif
+   #endif
+   @endwhile
+#endif
 
 void PrintUsage(char *name, int ierr, char *flag)
 {
@@ -16,18 +118,19 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr,"  -B # <M1> <N1> <M2> <N2> ... <M#> <N#>\n");
    fprintf(stderr,"  -s # <sz> allocate sz for each block\n");
    fprintf(stderr,"  -S # <sz1> ... <szN>: allocate sz for each block\n");
-   fprintf(stderr,"  -i I J : set offset in array to access\n");
-
+   fprintf(stderr,"  -i I J : offset in array to access\n");
+   exit(ierr ? ierr : 1);
 }
+
 unsigned int *GetFlags (int nargs, char **args)
 /*
  * RETURNS: int array, 1st elt is # of blocks, then M,N pairs of block dims
  */
 {
    unsigned int nblk=0, i, SZ=0;
-   unsigned int *bD=NULL, *szs=NULL:
+   unsigned int *bD=NULL, *szs=NULL;
 
-   IA = JA = 0;
+   IA = JA = -1;
    for (i=1; i < nargs; i++)
    {
       char ch;
@@ -53,10 +156,11 @@ unsigned int *GetFlags (int nargs, char **args)
             assert(bD[0] == nblk);
          else
          {
-            bD = calloc(((nblks<<1)+nblks)+1,sizeof(int));
+            bD = calloc(((nblk<<1)+nblk)+1,sizeof(int));
             assert(bD);
+            bD[0] = nblk;
          }
-         for (k=0; k < nblks; k++)
+         for (k=0; k < nblk; k++)
          {
             if (++i >= nargs)
                PrintUsage(args[0], i-1, NULL);
@@ -83,7 +187,7 @@ unsigned int *GetFlags (int nargs, char **args)
       GET_BLKS:
          if (!bD)
          {
-            bD = calloc(((nblks<<1)+nblks)+1,sizeof(int));
+            bD = calloc(((nblk<<1)+nblk)+1,sizeof(int));
             assert(bD);
          }
          *bD = nblk;
@@ -131,59 +235,70 @@ unsigned int *GetFlags (int nargs, char **args)
          PrintUsage(args[0], i, args[i]);
       }
    }
+   if (IA == -1)  
+   {
+      #ifdef FromBlk_  /* want to check pre/post pad! */
+         IA = 8;
+         JA = 6;
+      #else
+         IA = JA = 0;
+      #endif
+   }
    if (bD == NULL)
    {
-      *bD = malloc(4*sizeof(int));
+      bD = malloc(4*sizeof(int));
       assert(bD);
       bD[0] = 1;
       bD[1] = 3*ATL_MU;
       bD[2] = 5*ATL_NU;
       bD[3] = bD[1] * bD[2];
    }
-   else if (!bD[4])
+   else if (!bD[3])
    {
       int nblk = bD[0];
       nblk += nblk<<1;
       if (SZ)
          for (i=0; i < nblk; i += 3)
-            bD[1+i] = SZ;
+            bD[3+i] = SZ;
       else
          for (i=0; i < nblk; i += 3)
          {
             int M=bD[1+i], N=bD[2+i];
             M = ((M+ATL_MU-1)/ATL_MU)*ATL_MU;
             N = ((N+ATL_NU-1)/ATL_NU)*ATL_NU;
-            bD[1+i] = N*M;
+            bD[3+i] = N*M;
          }
    }
    if (!NA)
    {
-      int nblk=bD[0]<<1;
+      int k, nblk=bD[0];
+      nblk += nblk<<1;
       MA = bD[1];
       NA = bD[2];
-      for (k=2; k < nblk; k += 2)
+      for (k=3; k < nblk; k += 3)
       {
          MA = Mmax(MA, bD[k+1]);
          NA = Mmax(NA, bD[k+2]);
       }
-      #ifdef TRANS_
+      #ifdef Trans_
          k = MA;
          MA = NA;
          NA = k;
       #endif
       #ifdef FromBlk_
-         MA += MA;
+         NA += NA;
       #endif
-      MA += I;
-      NA += J;
+      MA += IA;
+      NA += JA;
       LDA = MA + 7;
    }
    else
    {
-      int nblk=bD[0]<<1;
-      for (k=0; k < nblk; k += 2)
+      int k, nblk=bD[0];
+      nblk += nblk<<1;
+      for (k=0; k < nblk; k += 3)
       {
-         #ifdef TRANS_
+         #ifdef Trans_
             assert(IA + bD[k+2] <= MA);
             assert(JA + bD[k+1] <= NA);
          #else
@@ -201,30 +316,28 @@ TYPE *getMat(size_t M, size_t N, size_t lda, int seed)
    int i, j;
    const int lda2 = lda SHIFT;
    const double mul = 1.0 / (lda2*N);
+   TYPE *A, *A0;
 
-   A = malloc(N*lda);
+   A0 = A = malloc(N*lda2*sizeof(TYPE));
    assert(A);
-#ifdef TCPLX
-   M += M;
-   lda += lda;
-#endif
 @skip   dumb_seed(seed);
-   for (j=N; j; j--, A += lda2)
-   {
-      for (i=0; i != lda; i++) A[i] = 1.0 + (mul*j)*lda2+(i*1e-1)
-   }
-   return(A);
+   for (j=0; j < N; j++, A += lda2)
+      for (i=0; i != lda2; i++) 
+         A[i] = 1.0 + (mul*j)*lda2+(i*1e-1);
+   return(A0);
 }
 
 TYPE *getBlock(int sz, int pad)
 {
    TYPE *b;
-   int i, SZ = sz + pad + pad;
+   int i, SZ = (sz + pad + pad)SHIFT;
    double mul = 1.0 / SZ;
 
    b = malloc(SZ*sizeof(TYPE));
+   assert(b);
    for (i=0; i < SZ; i++)
-      A[i] = -(1.0+mul*i);
+      b[i] = -(1.0+mul*i);
+   return(b);
 }
 
 #ifdef matC_
@@ -274,7 +387,7 @@ TYPE *getBlock(int sz, int pad)
       #else
          void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
                            TYPE *b, const TYPE *A, ATL_CSZT lda);
-         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+         void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
                            TYPE *b, const TYPE *A, ATL_CSZT lda);
       #endif
    #else
@@ -291,44 +404,239 @@ TYPE *getBlock(int sz, int pad)
       #endif
    #endif
 #endif
-int doTests_toblk(unsigned int ntest, unsigned int *bD)
+void initMat(SCALAR beta, int M, int N, TYPE *A, size_t lda)
+{
+   size_t lda2 = lda SHIFT;
+   unsigned int M2 = M SHIFT, i, j;
+   if (SCALAR_IS_ZERO(beta))
+   {
+      TYPE nan = 0.0 / 0.0;
+      for (j=0; j < N; j++, A += lda2)
+         for (i=0; i < M2; i++)
+            A[i] = nan;
+   }
+   else
+   {
+      const double mul = 1.0 / (((double)M2)*N);
+      for (j=0; j < N; j++, A += lda2)
+         for (i=0; i < M2; i++)
+            A[i] = (i + j*lda2)*mul + 1.0;
+   }
+}
+
+#ifdef matC_
+   #define C_MAT 'C'
+#else
+   #define C_MAT 'A'
+#endif
+#ifdef FromBlk_
+   #define C_DIR 'F'
+#else
+   #define C_DIR 'T'
+#endif
+#ifdef Trans_
+   #ifdef Conj_
+      #define C_TRANS 'C'
+   #else
+      #define C_TRANS 'T'
+   #endif
+#else
+   #ifdef Conj_
+      #define C_TRANS 'H'
+   #else
+      #define C_TRANS 'N'
+   #endif
+#endif
+
+#ifdef FromBlk_
+int doTests(unsigned int ntest, unsigned int *bD)
 {
    int t;
-   TYPE *A;
+   int nerr=0;
+   const unsigned int I2 = IA SHIFT, M2 = MA SHIFT, LDA2 = LDA SHIFT;
+   const double mul = 1.0 / (LDA2*NA);
+
+   printf("RUN %u TESTS: MAT=%c, TA=%c MD=(%u,%u), LDA=%u, (%u,%u)\n", 
+          ntest, C_MAT, C_TRANS, MA, NA, LDA, I2, JA);
+   for (t=0; t < ntest; t++)
+   {
+      unsigned int T = (t<<1)+t, mb = bD[T], nb = bD[T+1], sz=bD[T+2];
+      #ifdef Trans_
+         const unsigned int nrow = nb, ncol=mb;
+      #else
+         const unsigned int nrow = mb, ncol=nb;
+      #endif
+      const unsigned int M0=(IA+nrow)SHIFT, N0=JA+ncol, N1=N0+ncol;
+      const size_t offT = LDA2*ncol;
+      unsigned int j;
+      TYPE *b0, *b1;
+      TYPE *A, *a0, *a1, *A0;
+      
+      assert(N0 <= NA);
+      assert(N1 <= NA);
+      assert(M0 <= MA);
+      printf("   Test %u, D=(%u,%u), SZ=%u\n", t, mb, nb, sz);
+      fflush(stdout);
+      b0 = getBlock(sz, 0);
+      A0 = A = getMat(MA, NA, LDA, MA+NA*LDA);
+      a0 = A+((IA+JA*LDA)SHIFT);
+      a1 = a0 + offT;
+
+      initMat(BETA, nrow, ncol, a0, LDA);
+      initMat(BETA, nrow, ncol, a1, LDA);
+      #ifdef matC_
+         ATL_GOODCPMM(mb, nb, ALPHA, b0, BETA, a0, LDA);
+         ATL_USERCPMM(mb, nb, ALPHA, b0, BETA, a1, LDA);
+      #else
+         ATL_GOODCPMM(nb, mb, ALPHA, b0, a0, LDA);
+         ATL_USERCPMM(nb, mb, ALPHA, b0, a1, LDA);
+      #endif
+      a0 = A;
+      for (j=0; j < NA; j++, A += LDA2)
+      {
+         unsigned int i;
+         for (i=0; i < M2; i++)
+         {
+            double got, exp;
+            if (i >= I2 && i < M0)
+            {
+               if (j >= JA && j < N0)
+               {
+                  int nanE, nanG;
+                  exp = A[i];
+                  got = A[i+offT];
+                  nanE = exp != exp;
+                  nanG = got != got;
+                  if (nanE || nanG)
+                  {
+                     if (!nanE || !nanG)
+                     {
+                        nerr++;
+                        fprintf(stderr,
+                                "      A(%u,%u),b(%u,%u)=%e, expected=%e\n", 
+                                i, j, i-I2, j-JA, got, exp);
+                     }
+                  }
+                  else
+                  {
+                     double diff;
+                     diff = exp - got;
+                     if (diff < 0.0)
+                        diff = -diff;
+                     if (diff > FEPS)
+                     {
+                        fprintf(stderr,
+                                "      A(%u,%u),b(%u,%u)=%e, expected=%e\n", 
+                                i, j, i-I2, j-JA, got, exp);
+                        nerr++;
+                     }
+                     continue;
+                  }
+               }
+               else if (j <= N1)  /* don't scope 2nd overwrittes submat */
+                  continue;       /* since was scoped right above */
+            }
+            exp = 1.0 + (mul*j)*LDA2+(i*1e-1);
+            got = A[i];
+            if (exp != got)
+            {
+               fprintf(stderr, "      PAD ERR, A(%u,%u)=%e, expected=%e\n",
+                       i, j, got, exp);
+               nerr++;
+            }
+         }
+      }
+      free(A0);
+      free(b0);
+      if (nerr > 1)
+         return(nerr);
+      printf("   DONE Test %u\n", t);
+   }
+   return(nerr);
+}
+#else
+int doTests(unsigned int ntest, unsigned int *bD)
+{
+   int t;
+   TYPE *A, *a;
    int nerr=0, pad=32;
 
    A = getMat(MA, NA, LDA, MA+NA*LDA);
+   a = A+((IA+JA*LDA)SHIFT);
+   printf("RUN %u TESTS: MAT=%c, TA=%c MD=(%u,%u), LDA=%u\n", ntest, C_MAT, 
+          C_TRANS, MA, NA, LDA);
    for (t=0; t < ntest; t++)
    {
-      TYPE *b0, b1, *b2, *b3;
-      unsigned int T = (t<<1)+t, mb = bD[T], nb = bD[T+1], sz=bd[T+2];
-      unsigned int i;
-      b0 = getBlock(sz, pad)
-      b1 = getBlock(sz, pad)
-      b2 = b0 + pad+sz;
-      b3 = b1 + pad+sz;
+      TYPE *b0, *b1, *b2, *b3, *B0, *B1;
+      unsigned int T = (t<<1)+t, mb = bD[T], nb = bD[T+1], sz=bD[T+2];
+      unsigned int i, N;
+      printf("   Test %u, D=(%u,%u), SZ=%u\n", t, mb, nb, sz);
+      b0 = getBlock(sz, pad);
+      b1 = getBlock(sz, pad);
+      B0 = b0 + pad;
+      B1 = b1 + pad;
+      b2 = B0 + sz;
+      b3 = B1 + sz;
 
+      #ifdef matC_
+         ATL_GOODCPMM(mb, nb, ALPHA, a, LDA, BETA, B0);
+         ATL_USERCPMM(mb, nb, ALPHA, a, LDA, BETA, B1);
+      #else
+         ATL_GOODCPMM(nb, mb, ALPHA, a, LDA, B0);
+         ATL_USERCPMM(nb, mb, ALPHA, a, LDA, B1);
+      #endif
       for (i=0; i < pad; i++)
       {
          if (b0[i] != b1[i])
          {
-            printf("PREPAD %d, expected=%e, got=%e\n", 32-i, b0[i], b1[i]);
+            printf("      PREPAD  %d, expected=%e, got=%e\n", i, b0[i], b1[i]);
+            nerr++;
+         }
+         if (b3[i] != b2[i])
+         {
+            printf("      POSTPAD %d, expected=%e, got=%e\n", i, b0[i], b1[i]);
             nerr++;
          }
       }
+      for (N=mb*nb SHIFT, i=0; i < N; i++)
+      {
+         TYPE diff = B0[i] - B1[i];
 
+         diff = (diff >= 0.0) ? diff : -diff;
+         if (B1[i] != B1[i])
+         {
+            fprintf(stderr, "      B[%u]: got NaN, expected=%e\n", i, B0[i]);
+            if (B0[i] == B0[i])
+               nerr++;
+         }
+         else if (diff > FEPS)
+         {
+            fprintf(stderr, "      B[%u]: got %e, expected=%e\n", i, 
+                    B1[i], B0[i]);
+            nerr++;
+         }
+      }
       free(b0);
       free(b1);
+      if (nerr > 1)
+         return(nerr);
+      printf("   DONE Test %u\n", t);
    }
+   free(A);
    return(nerr);
 }
+#endif
 
-int main(int nargs, char *args)
+int main(int nargs, char **args)
 {
    int *bD;
    int nerr = 0;
-   bD = GetFlags (nargs, args);
+   bD = GetFlags(nargs, args);
    nerr = doTests(bD[0], bD+1);
+   if (!nerr)
+      printf("\nSUCCESS: PASS %u ALL TESTS\n", bD[0]);
+   else
+      printf("\nFAILED WITH %u ERRORS\n", nerr);
    free(bD);
    return(nerr);
 }

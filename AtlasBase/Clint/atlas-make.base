@@ -2370,7 +2370,8 @@ regs = 32
 nb = 28
 mmrout=JIKNBmm
 ID=25
-TOBLK=0
+TO_BLK=0
+TRANS=0
 szb=0
 
 pre = d
@@ -2474,9 +2475,10 @@ help :
 	@@echo "make gen_amsyrk rt= pre= vec=[no,kdim,mdim] mu= nu= ku= bcast="
 
 cpyhelp :
+	@@echo "make PREcopytest kfnam=FILENAME UR=X ku=X kmaj=[0,VLEN] alpha=[0,1,-1,2] beta=[0,1,-1,2] TOBLK=[0,1] TRANS=0,1 [CNJ='-DConj_=1']"
 	@@echo "make PREcpytime kfnam=FILENAME mu=X nu=X knam=ROUTINE_NAME ta=[N,T] betan=[X,1,n] TOBLK=[0,1]"
 	@@echo "-->can take MTXD '-D M lda N COLWISE'\n"
-	@@echo "make PREcpytest TO_BLK=[0,1] CPM=[C,A] [CNJ=-DConj_=1] sz=<bsz> alphan=[1,N,X] betan=[0,1,N,X] [CNJ="-DConj_=1" kfnam=<cp2test> cpgood=<good cp>"
+	@@echo "make PREcpytest TRANS=[0,1] TO_BLK=[0,1] CPM=[C,A] [CNJ=-DConj_=1] sz=<bsz> alphan=[1,N,X] betan=[0,1,N,X] [CNJ="-DConj_=1" kfnam=<cp2test> cpgood=<good cp>"
 	@@echo "make PREammmcpytst [blk2C=rt] [CM2blk=rt] mu= nu= alpha= beta= vlen="
 	@@echo "make xPREammtime_pt mmrout=FILENAME mu=X nu=X ku=X mb=X nb=X kb=X M=X N=X K=X\n"
 	@@echo "make gen_[sy,]blk2C rt= pre= vlen= mu= nu= cpvlen= beta= alpha="
@@ -3036,32 +3038,97 @@ $(L3Bdir)/kernel/@(trsm) :
 	cd $(L3Bdir)/kernel ; make @(trsm)
 @ptyp !
 @(pre)copytest:  # run cpytest vs generator
-	if [ "X$CPM" = "XC" ] ; then  \
-           echo "not yet done" ; \
-        else  \
-           if test $TOBLK -eq 0 ; then \
-              make gen_blk2A$(ta) rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
-                UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+	if [ "X$(CPM)" = "XC" ] ; then  \
+           if test $(TO_BLK) -eq 0 ; then \
+              make gen_blk2C rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                mu=$(UR) nu=$(ku) kmaj=$(kmaj) alpha=$(alpha) beta=$(beta) ; \
            else \
-              make gen_A$(ta)2blk rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
-                UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              make gen_C2blk rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                mu=$(UR) nu=$(ku) kmaj=$(kmaj) alpha=$(alpha) beta=$(beta) ; \
+           fi ; \
+        else  \
+           if test $(TO_BLK) -eq 0 ; then \
+              if test $(TRANS) -eq 0 ; then \
+                 make gen_blk2AT rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                   UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              else \
+                 make gen_blk2AN rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                   UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              fi ; \
+           else \
+              if test $(TRANS) -eq 0 ; then \
+                 make gen_AT2blk rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                   UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              else \
+                 make gen_AN2blk rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                   UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              fi ; \
            fi ; \
         fi 
-	$(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=$(betan) \
-           alphan=$(alphan) TOBLK=$(TOBLK) knam=$(knam) CNJ=$(CNJ) ku=$(ku) \
-           cpgood=ATL_cptmp.c kfnam=$(kfnam)
+	if test $(beta) -eq 0 || test $(beta) -eq 1 ; then \
+           if test $(alpha) -eq 0 || test $(alpha) -eq 1 ; then \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=$(beta) \
+                 alphan=$(alpha) TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 TRANS=$(TRANS) ku=$(ku) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           elif test $(alpha) -eq -1 ; then \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=$(beta) \
+                 alphan=N TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 TRANS=$(TRANS) ku=$(ku) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           else \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=$(beta) \
+                 alphan=X TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 TRANS=$(TRANS) ku=$(ku) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           fi ; \
+        elif test $(beta) -eq -1 ; then \
+           if test $(alpha) -eq 0 || test $(alpha) -eq 1 ; then \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=N \
+                 alphan=$(alpha) TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           elif test $(alpha) -eq -1 ; then \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=N \
+                 alphan=N TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           else \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=N \
+                 alphan=X TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           fi ; \
+        else \
+           if test $(alpha) -eq 0 || test $(alpha) -eq 1 ; then \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=X \
+                 alphan=$(alpha) TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           elif test $(alpha) -eq -1 ; then \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=X \
+                 alphan=N TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           else \
+	      $(MAKE) @(pre)cpytest @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=X \
+                 alphan=X TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           fi ; \
+        fi 
 @(pre)cpytest :
-	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DCOPY_$(CPM)=1 \
-           -DALPHA${alphan}=1 -DTO_BLK=$(TOBLK) -DCOPYK=$(knam) $(CNJ) \
+	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -Dmat$(CPM)_=1 \
+           -DALPHA${alphan}=1 -DTO_BLK=$(TO_BLK) -DTrans_=$(TRANS) $(CNJ) \
            -o @(pre)cpytest.o $(mySRCdir)/cpytest.c
-	$(@up@(pre)KC) $(@up@(pre)KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
+	$(KC) $(KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
            $(CNJ) -DALPHA${alphan}=1 -o @(pre)cpygood.o \
-           -DATL_USERCPMM=ATL_GOODCP -c $(cpgood)
+           -DATL_USERCPMM=ATL_GOODCPMM -c $(cpgood)
 	$(@up@(pre)KC) $(@up@(pre)KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
            $(CNJ) -DALPHA${alphan}=1 -o @(pre)cpychck.o -c $(kfnam)
 	$(CLINKER) $(CLINKFLAGS) -o x@(pre)cpytest @(pre)cpytest.o \
            @(pre)cpygood.o @(pre)cpychck.o $(SYSdir)/time.o $(LIBS)
-	$(ATLRUN) $(MMTdir) x@(pre)cpytest  -m $(mb) -n $(nb) -s $(szb)
+	$(ATLRUN) $(MMTdir) x@(pre)cpytest  -b $(mb) $(nb) -s $(szb)
            
 @(pre)cpytimeC : 
 	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_COPY -DCOPY_C \
