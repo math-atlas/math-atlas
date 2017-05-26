@@ -4921,9 +4921,10 @@ static ATL_cpnode_t *TimeCPFileWithPath
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-int CPKernelFailsTest(char pre, int mb, int nb, int ialp, int ibet, 
-                      ATL_cpnode_t *cp)
+int CPKernelFailsTestMM(char pre, int mb, int nb, int ialp, int ibet, 
+                        ATL_cpnode_t *cp)
 /*
+ * This tester only works for some alpha/beta combos.
  * RETURNS: 0 on success, non-zero on failure
  */
 {
@@ -5003,6 +5004,100 @@ int CPKernelFailsTest(char pre, int mb, int nb, int ialp, int ibet,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+static int CPKernelFailsTest
+(
+   char pre,    /* s,d,c,z */
+   int TA,      /* 0: copy to/from col-major storage, else row-major */
+   int mb,      /* if TA, # of cols, else # of rows */
+   int nb,      /* if TA, # of rows, else # of cols */
+   int ialp,    /* 0,1,-1,2 */
+   int ibet,    /* 0,1,-1,2, unused if not C copy */
+   ATL_cpnode_t *cp
+)
+/*
+ * RETURNS: 0 on success, non-zero on failure
+ */
+{
+   const unsigned int flag=cp->flag;
+   int i, ierr, L, mu=cp->mu, nu=cp->nu, ku=(cp->kvec)?cp->kvec:1, kb, CPLX=0;
+   unsigned int sz;
+   char *ln;
+
+   TA = (TA) ? 1 : 0;  /* make sure 0 or 1 only */
+   L = NumDecDigits(mb)+NumDecDigits(nb)+NumDecDigits(cp->mu)+NumDecDigits(nu) 
+       + NumDecDigits(mb*nb*2) + NumDecDigits(cp->kvec);
+   if (pre == 'z' || pre == 'c')
+   {
+      CPLX = 0;
+      L += 14; /* " CNJ='-DConj_'" */
+   }
+   L += 51 + 55 + 1 + strlen(cp->rout);
+   ln = malloc(L);
+   assert(ln);
+   if (cp->genstr)
+      assert(!DoGenString(0, cp->genstr));
+   if (flag & (1<<CPF_CBLK))
+   {
+      assert(TA == 0);
+      if (cp->kvec > 1)
+      {
+         int vl = cp->kvec;
+         sz = ((mu*nu+vl-1)/vl)*vl;
+      }
+      else
+         sz = mu*nu;
+      sz *= ((mb+mu-1)/mu)*((nb+nu-1)/nu)*sz;
+      i = sprintf(ln, "make %ccopytest CPM=C beta=%d alpha=%d UR=%u ku=%u "
+                  "mb=%u nb=%u szb=%u TO_BLK=%u TRANS=0 kvec=%u kfnam='%s'", 
+                  pre, ibet, ialp, mu, nu, mb, nb, sz, ((flag>>CPF_TOBLK)&1),
+                  (cp->kvec > 1) ? cp->kvec : 0, cp->rout);
+   }
+   else /* A or B matrix */
+   {
+      mu = cp->nu;
+      nu = cp->mu;
+      sz = ((mb+nu-1)/nu)*((nb+mu-1)/mu)*mu*nu;
+      i = sprintf(ln, "make %ccopytest CPM=A beta=%d alpha=%d UR=%u ku=%u "
+                  " mb=%u nb=%u szb=%u TO_BLK=%u TRANS=%u kvec=%u kfnam='%s'", 
+                  pre, ibet, ialp, nu, mu, mb, nb, sz, ((flag>>CPF_TOBLK)&1),
+                  TA, (cp->kvec > 1) ? cp->kvec : 0, cp->rout);
+   }
+   assert(i < L);
+   ierr = Sys2File(ln, "ATL_tmp.out");
+   if (ierr)
+   {
+      #if 0
+         fprintf(stderr, "\nOUTPUT OF FAILED COMMAND:\n"
+         system("cat ATL_tmp.out");
+      #endif
+      fprintf(stderr, "\nFAILED (%d) COMMAND: '%s'\n", i, ln);
+      if (cp->genstr)
+         fprintf(stderr, "   genstr= '%s'\n", cp->genstr);
+   }
+   remove("ATL_tmp.out");
+   if (!ierr && CPLX)
+   {
+      assert(i+14 < L);
+      strcpy(ln+i, " CNJ='-DConj_'");
+      ierr = Sys2File(ln, "ATL_tmp.out");
+      if (ierr)
+      {
+         #if 0
+            fprintf(stderr, "\nOUTPUT OF FAILED COMMAND:\n"
+            system("cat ATL_tmp.out");
+         #endif
+         fprintf(stderr, "\nFAILED CNJ (%d) COMMAND: '%s'\n", i, ln);
+         if (cp->genstr)
+         fprintf(stderr, "   genstr= '%s'\n", cp->genstr);
+      }
+      remove("ATL_tmp.out");
+   }
+   free(ln);
+   return(ierr);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 ATL_cpnode_t *KillFailingCPNodes(char pre, ATL_cpnode_t *cb)
 {
    ATL_cpnode_t *cp;
@@ -5022,7 +5117,8 @@ ATL_cpnode_t *KillFailingCPNodes(char pre, ATL_cpnode_t *cb)
          nb = 7*cp->nu;
       if (cp->flag&(1<<CPF_SYRK))
          nb = mb;
-      err = CPKernelFailsTest(pre, mb, nb, ialp, ibet, cp);
+      err = CPKernelFailsTest(pre, ((cp->flag>>CPF_TRANS)&1), mb, nb, 
+                              ialp, ibet, cp);
       if (cp->ID)
          printf("%3d. ID=%d (%s) : %s\n", i, cp->ID, cp->rout, 
                 (err) ? "FAIL!":"PASS.");
