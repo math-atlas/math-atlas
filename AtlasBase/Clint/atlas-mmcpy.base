@@ -1,4 +1,4 @@
-@ROUT ucpykill
+@ROUT ucpytest
 #include "atlas_cpparse.h"
 #include "atlas_cptesttime.h"
 
@@ -15,15 +15,15 @@ void PrintUsage(char *name, int ierr, char *flag)
    exit(ierr ? ierr : -1);
 }
 
-ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
+ATL_cpnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
 /*
  * RETURNS: list of all kerns/blk factors to tune copies for
  */
 {
    ATL_cpnode_t *cb=NULL, *cp;
    int i;
+   char pre = 'd';
 
-   *VERB = 0;
    *FOUT = NULL;
    for (i=1; i < nargs; i++)
    {
@@ -32,6 +32,12 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
 
       switch(args[i][1])
       {
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pre = tolower(args[i][0]);
+         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
       case 'i':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -49,10 +55,59 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
    }
    if (!cb)
       cb = ReadCPFile(NULL);
+   PrefixStrAllNodes(cb, GetOffset(&cb->next, cb), GetOffset(&cb->rout, cb),
+                    "CPYCASES/");
+   *PRE = pre;
    return(cb);
+}
+int FailAnyClaimedCase(char pre, ATL_cpnode_t *cp)
+{
+   const unsigned int flg = cp->flag, TA=(flg>>CPF_TRANS)&1, 
+      CBLK=(flg>>CPF_CBLK)&1;
+   int ia;
+   const int ialps[3] = {1,-1,2};
+   const int ibets[4] = {1,-1,2};
+   fprintf(stderr, "   TESTING %d-'%s':\n", cp->ID, cp->rout);
+   if (!CBLK)  /* For A/B copy, NU is M or N unroll, while MU is ku */
+   {
+      for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
+      {
+         int ialp
+         if (flg & (1<<ia) == 0)
+            continue;
+         ialp = ialps[ia-CPF_AL1;
+         if (CPKernelFailsTest(pre, TA, 367, 233, ialp, 1, cp))
+         {
+            fprintf(stderr, "   FAILED %d: alpha=%d!\n", cp->ID, ialp);
+            return(1);
+         }
+      }
+   }
+   else
+   {
+      for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
+      {
+         int ib;
+         for (ib=CPF_BE1; ib <= CPF_BE0; ib++)
+         {
+            fprintf(stderr, "      not yet imp!\n");
+         }
+      }
+   }
+   fprintf(stderr, "   PASS:   %d-'%s'\n", cp->ID, cp->rout);
+   return(0);
 }
 int main(int nargs, char **args)
 {
+   char *fnout;
+   char pre;
+   ATL_cpnode_t *cb, *cp;
+
+   cb = GetFlags(nargs, args, &pre, &fnout);
+   for (cp=cb; cp; cp = cp->next)
+     if (FailAnyClaimedCase(pre, cp))
+        return(-1);
+   return(0);
 }
 @rout cpytest
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
@@ -383,19 +438,28 @@ TYPE *getMat(size_t M, size_t N, size_t lda, int seed)
    return(A0);
 }
 
+#define AlignPtr(vp_) (void*) (((((size_t)(vp_))+127)>>7)<<7)
 TYPE *getBlock(int sz, int pad)
 {
+   void *vp;
    TYPE *b;
+   size_t ip;
    int i, SZ = (sz + pad + pad)SHIFT;
    double mul = 1.0 / SZ;
 
-   b = malloc(SZ*sizeof(TYPE));
-   assert(b);
+   vp = malloc(SZ*sizeof(TYPE) + 128);
+   b = AlignPtr(vp);
    for (i=0; i < SZ; i++)
       b[i] = -(1.0+mul*i);
-   return(b);
+   return(vp);
 }
 
+void freeBlock(void *vp)
+{
+   size_t ip = (size_t) vp;
+   ip = (ip>>7)<<7;
+   free((void*)ip);
+}
 #ifdef matC_
    #ifdef Trans_
       #error "No test of Transpose C matrix right now!"
@@ -525,6 +589,7 @@ int doTests(unsigned int ntest, unsigned int *bD)
       const unsigned int M0=(IA+nrow)SHIFT, N0=JA+ncol, N1=N0+ncol;
       const size_t offT = LDA2*ncol;
       unsigned int j;
+      void *v0;
       TYPE *b0, *b1;
       TYPE *A, *a0, *a1, *A0;
       
@@ -533,7 +598,8 @@ int doTests(unsigned int ntest, unsigned int *bD)
       assert(M0 <= MA);
       printf("   Test %u, D=(%u,%u), SZ=%u\n", t, mb, nb, sz);
       fflush(stdout);
-      b0 = getBlock(sz, 0);
+      v0 = getBlock(sz, 0);
+      b0 = AlignPtr(v0);
       A0 = A = getMat(MA, NA, LDA, MA+NA*LDA);
       a0 = A+((IA+JA*LDA)SHIFT);
       a1 = a0 + offT;
@@ -603,7 +669,7 @@ int doTests(unsigned int ntest, unsigned int *bD)
          }
       }
       free(A0);
-      free(b0);
+      free(v0);
       if (nerr > 1)
          return(nerr);
       printf("   DONE Test %u\n", t);
@@ -623,12 +689,15 @@ int doTests(unsigned int ntest, unsigned int *bD)
           C_TRANS, MA, NA, LDA);
    for (t=0; t < ntest; t++)
    {
+      void *v0, *v1;
       TYPE *b0, *b1, *b2, *b3, *B0, *B1;
       unsigned int T = (t<<1)+t, mb = bD[T], nb = bD[T+1], sz=bD[T+2];
       unsigned int i, N;
       printf("   Test %u, D=(%u,%u), SZ=%u\n", t, mb, nb, sz);
-      b0 = getBlock(sz, pad);
-      b1 = getBlock(sz, pad);
+      v0 = getBlock(sz, pad);
+      v1 = getBlock(sz, pad);
+      b0 = AlignPtr(v0);
+      b1 = AlignPtr(v1);
       B0 = b0 + pad;
       B1 = b1 + pad;
       b2 = B0 + sz;
@@ -672,8 +741,8 @@ int doTests(unsigned int ntest, unsigned int *bD)
             nerr++;
          }
       }
-      free(b0);
-      free(b1);
+      free(v0);
+      free(v1);
       if (nerr > 1)
          return(nerr);
       printf("   DONE Test %u\n", t);
