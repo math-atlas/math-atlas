@@ -356,7 +356,7 @@ int Sys2File(char *cmnd, char *file)
       lF = strlen(file);
    else 
       lF = 0;
-   sys = malloc((lC+lF+4)*sizeof(char));
+   sys = malloc((lC+lF+10)*sizeof(char));
    assert(sys);
    for (i=0; i < lC; i++)
       sys[i] = cmnd[i];
@@ -369,7 +369,12 @@ int Sys2File(char *cmnd, char *file)
       sp += 3;
       for (i=0; i < lF; i++)
          sp[i] = file[i];
-      sp[lF] = '\0';
+      sp[lF] = ' ';
+      sp[lF+1] = '2';
+      sp[lF+2] = '>';
+      sp[lF+3] = '&';
+      sp[lF+4] = '1';
+      sp[lF+5] = '\0';
    }
    else
       sys[lC] = '\0';
@@ -4206,10 +4211,13 @@ ATL_cpnode_t *FindEquivCopy(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_cpnode_t *FindEquivCopy_ab(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
+ATL_cpnode_t *FindEquivUserCopy(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
 /*
- * Searches cb for kerns that match dup, but whose alpha/beta settings may
- * be a superset of dup.
+ * Searches list of user-supplied kerns for one that matches dup.
+ * dup is a fully-qualified case, where CBLK,ABLK,TRANS are set to the exact
+ * case required, while cb is coming from a user cases index file.
+ * Therefore cb TRANS setting in reference to B matrix. I.e., TRANS=1 
+ * means NoTrans A, Trans B, while TRANS=0 means Trans A, NoTrans B.
  * RETURNS: NULL if no copy rout equivalent to dup is in cb, else ptr to dup
  */
 {
@@ -4218,6 +4226,7 @@ ATL_cpnode_t *FindEquivCopy_ab(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
    {
       const int dflag=dup->flag, dalp=dflag&CPF_ALLALP, dbet=dflag&CPF_ALLBET;
       const int CBLK=dup->flag&(1<<CPF_CBLK), dab=dflag&(CPF_ALLBET|CPF_ALLALP);
+      const int TRANS=(dflag>>CPF_TRANS)&1, ABLK=(dflag>>CPF_ABLK)&1;
       for (cp=cb; cp; cp = cp->next)
       {
          int flg0=cp->flag, ab;
@@ -4227,6 +4236,17 @@ ATL_cpnode_t *FindEquivCopy_ab(ATL_cpnode_t *cb, ATL_cpnode_t *dup)
             continue;
          if (CBLK && !(flg0 & dbet))
             continue;
+         if (!CBLK)
+         {
+            const int TA0 = (flg0>>CPF_TRANS)&1;
+            if (ABLK)
+            {
+               if (TA0 == TRANS)
+                  continue;
+            }
+            else if (TA0 != TRANS)
+               continue;
+         }
          cp->flag = (cp->flag & (~(CPF_ALLBET|CPF_ALLALP))) | dab;
          if (!CopyAreDiff(cp, dup))
          {
@@ -5025,13 +5045,13 @@ static int CPKernelFailsTest
 
    TA = (TA) ? 1 : 0;  /* make sure 0 or 1 only */
    L = NumDecDigits(mb)+NumDecDigits(nb)+NumDecDigits(cp->mu)+NumDecDigits(nu) 
-       + NumDecDigits(mb*nb*2) + NumDecDigits(cp->kvec);
+       + NumDecDigits(mb*nb*2)+NumDecDigits(cp->kvec)+NumDecDigits(cp->vlen);
    if (pre == 'z' || pre == 'c')
    {
       CPLX = 0;
       L += 14; /* " CNJ='-DConj_'" */
    }
-   L += 51 + 55 + 1 + strlen(cp->rout);
+   L += 52 + 54 + 10 + 1 + strlen(cp->rout);
    ln = malloc(L);
    assert(ln);
    if (cp->genstr)
@@ -5048,19 +5068,20 @@ static int CPKernelFailsTest
          sz = mu*nu;
       sz *= ((mb+mu-1)/mu)*((nb+nu-1)/nu)*sz;
       i = sprintf(ln, "make %ccopytest CPM=C beta=%d alpha=%d UR=%u ku=%u "
-                  "mb=%u nb=%u szb=%u TO_BLK=%u TRANS=0 kvec=%u kfnam='%s'", 
-                  pre, ibet, ialp, mu, nu, mb, nb, sz, ((flag>>CPF_TOBLK)&1),
-                  (cp->kvec > 1) ? cp->kvec : 0, cp->rout);
+                  "vlen=%u mb=%u nb=%u szb=%u TO_BLK=%u TRANS=0 kvec=%u "
+                  "kfnam='%s'", 
+                  pre, ibet, ialp, mu, nu, cp->vlen, mb, nb, sz, 
+                  ((flag>>CPF_TOBLK)&1), (cp->kvec > 1)?cp->kvec:0, cp->rout);
    }
    else /* A or B matrix */
    {
-      mu = cp->nu;
-      nu = cp->mu;
       sz = ((mb+nu-1)/nu)*((nb+mu-1)/mu)*mu*nu;
       i = sprintf(ln, "make %ccopytest CPM=A beta=%d alpha=%d UR=%u ku=%u "
-                  " mb=%u nb=%u szb=%u TO_BLK=%u TRANS=%u kvec=%u kfnam='%s'", 
-                  pre, ibet, ialp, nu, mu, mb, nb, sz, ((flag>>CPF_TOBLK)&1),
-                  TA, (cp->kvec > 1) ? cp->kvec : 0, cp->rout);
+                  " vlen=%u mb=%u nb=%u szb=%u TO_BLK=%u TRANS=%u kvec=%u "
+                  "kfnam='%s'", 
+                  pre, ibet, ialp, nu, mu, cp->vlen, mb, nb, sz, 
+                  ((flag>>CPF_TOBLK)&1), TA, (cp->kvec > 1)?cp->kvec:0, 
+                  cp->rout);
    }
    assert(i < L);
    ierr = Sys2File(ln, "ATL_tmp.out");

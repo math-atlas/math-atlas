@@ -60,22 +60,23 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
    *PRE = pre;
    return(cb);
 }
+
 int FailAnyClaimedCase(char pre, ATL_cpnode_t *cp)
 {
    const unsigned int flg = cp->flag, TA=(flg>>CPF_TRANS)&1, 
       CBLK=(flg>>CPF_CBLK)&1;
    int ia;
    const int ialps[3] = {1,-1,2};
-   const int ibets[4] = {1,-1,2};
+   const int ibets[4] = {1,-1,2,0};
    fprintf(stderr, "   TESTING %d-'%s':\n", cp->ID, cp->rout);
    if (!CBLK)  /* For A/B copy, NU is M or N unroll, while MU is ku */
    {
       for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
       {
-         int ialp
+         int ialp;
          if (flg & (1<<ia) == 0)
             continue;
-         ialp = ialps[ia-CPF_AL1;
+         ialp = ialps[ia-CPF_AL1];
          if (CPKernelFailsTest(pre, TA, 367, 233, ialp, 1, cp))
          {
             fprintf(stderr, "   FAILED %d: alpha=%d!\n", cp->ID, ialp);
@@ -87,10 +88,22 @@ int FailAnyClaimedCase(char pre, ATL_cpnode_t *cp)
    {
       for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
       {
-         int ib;
+         int ib, ialp;
+         if (flg & (1<<ia) == 0)
+            continue;
+         ialp = ialps[ia-CPF_AL1];
          for (ib=CPF_BE1; ib <= CPF_BE0; ib++)
          {
-            fprintf(stderr, "      not yet imp!\n");
+            int ibet; 
+            if (flg & (1<<ib) == 0)
+               continue;
+            ibet=ibets[ib-CPF_BE1];
+            if (CPKernelFailsTest(pre, TA, 367, 233, ialp, 1, cp))
+            {
+               fprintf(stderr, "   FAILED %d: alpha=%d, beta=%d!\n", 
+                       cp->ID, ialp, ibet);
+               return(1);
+            }
          }
       }
    }
@@ -104,9 +117,29 @@ int main(int nargs, char **args)
    ATL_cpnode_t *cb, *cp;
 
    cb = GetFlags(nargs, args, &pre, &fnout);
-   for (cp=cb; cp; cp = cp->next)
-     if (FailAnyClaimedCase(pre, cp))
-        return(-1);
+   while (cb && FailAnyClaimedCase(pre, cb))
+      cb = KillCPNode(cb);
+   if (cb)
+   {
+      ATL_cpnode_t *prev=cb;
+      cp = cb->next;
+      while(cp)
+      {
+         ATL_cpnode_t *next = cp->next;
+         if (FailAnyClaimedCase(pre, cp))
+         {
+            cp =  KillCPNode(cp);
+            prev->next = cp;
+         }
+         else
+            prev = cp;
+         cp = next;
+      }
+   }
+   fprintf(stderr, "\nSURVIVING COPY KERNELS, PRE='%c':\n", pre);
+   if (fnout)
+      WriteCPFile("stderr", cb);
+   WriteCPFile(fnout, cb);
    return(0);
 }
 @rout cpytest
@@ -1906,9 +1939,9 @@ int main (int nargs, char **args)
 #         0: copies from STGID block storage to column-major
 #         1: copies from column-major to STGID block storage
 # MU/NU: [0] unrolling along 1st & 2nd dim (MU=KU for A/B!);
-# TRANS: [n] Needed only for A/B storage, indicates transpose being done:
-#    N: cols of matrix stored contiguously, rows strided (col-major)
-#    T: rows of matrix stored contiguously, cols strided (row-major)
+# TRANS: [0] Needed only for A/B storage, indicates transpose being done:
+#    0: cols of matrix stored contiguously, rows strided (col-major)
+#    1: rows of matrix stored contiguously, cols strided (row-major)
 # ALPHA: mandatory.  What alpha cases handled by kern.  For A/B, full list
 #        is 1,N,X, for C it is 0,1,N,X.
 # BETA: mandatory for C ignored for A/B.  Full list is 0,1,N,X.
@@ -1933,11 +1966,12 @@ int main (int nargs, char **args)
 @ROUT dcopy.idx zcopy.idx 
 @define VL @4@
 @ROUT scopy.idx dcopy.idx
-ID=1 STGID=0 CBLK=1 TOBLK=0 MU=3 NU=3 KVEC=@(VL) VLEN=@(VL) SYRK=1@(TP) \
-     ALPHA=1,N,X BETA=0,N,1,X ROUT='ATL_skblk2C3x3.c' AUTH='R. Clint Whaley'
-ID=2 STGID=0 TOBLK=1 MU=1 NU=4 VLEN=4 ALPHA=1,N,X@(TP) \
+# This routine doesn't work for non-aligned C, and perf not good enough to fix
+#ID=1 STGID=0 CBLK=1 TOBLK=0 MU=3 NU=3 KVEC=@(VL) VLEN=@(VL) SYRK=1@(TP) \
+#     ALPHA=1,N,X BETA=0,N,1,X ROUT='ATL_skblk2C3x3.c' AUTH='R. Clint Whaley'
+ID=2 STGID=0 TOBLK=1 MU=1 NU=4 VLEN=4 ALPHA=1,N,X@(TP) TRANS=1 \
      ROUT='ATL_cpAN2blk4_avx2.c' AUTH='R. Clint Whaley'
-ID=3 STGID=0 TOBLK=1 MU=1 NU=12 VLEN=4 ALPHA=1,N,X@(TP) \
+ID=3 STGID=0 TOBLK=1 MU=1 NU=12 VLEN=4 ALPHA=1,N,X@(TP) TRANS=1 \
      ROUT='ATL_cpAN2blk12_avx2.c' AUTH='R. Clint Whaley'
 @ROUT cptst.c
 /* 
@@ -2037,18 +2071,20 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags:\n", name);
 @skip   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -u <ucase.idx>: (none) user cases to try\n");
    fprintf(stderr, "   -i <cpyin.CPS>: (stdin) list of copy to search\n");
    fprintf(stderr, "   -o <cpyout.CPS>: (stdout) fastest copy kernels\n");
 @skip   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    exit(ierr ? ierr : -1);
 }
 
-ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
+ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT, 
+                       ATL_cpnode_t **UB)
 /*
  * RETURNS: list of all kerns/blk factors to tune copies for
  */
 {
-   ATL_cpnode_t *cb=NULL, *cp;
+   ATL_cpnode_t *cb=NULL, *cp, *ub=NULL;
    int i;
 
    *VERB = 0;
@@ -2060,6 +2096,11 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
 
       switch(args[i][1])
       {
+      case 'u':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        ub = ReadCPFile(args[i]);
+        break;
       case 'i':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -2077,6 +2118,7 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
    }
    if (!cb)
       cb = ReadCPFile(NULL);
+   *UB = ub;
    return(cb);
 }
 
@@ -2123,13 +2165,12 @@ ATL_cpnode_t *GetWorkingKerns(char pre, int verb, ATL_cpnode_t *cb)
 }
 
 ATL_cpnode_t *DoHandTimings
-   (char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
+   (char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb, ATL_cpnode_t *hb)
 {
    ATL_cpnode_t *hb, *cp, *hp, *HB=NULL;
    unsigned long nrep;
 
 
-   hb = GetWorkingKerns(pre, verb, cb);
    if (!hb)
    {
       printf("NO USER-SUPPLIED COPY ROUTINES!\n");
@@ -2150,7 +2191,7 @@ ATL_cpnode_t *DoHandTimings
 /*
  *    Try any hand-tuned cases that work
  */
-      hp = FindEquivCopy_ab(hb, cp);
+      hp = FindEquivUserCopy(hb, cp);
       if (hp)
       {
          printf("   TIMINGS B=(%d,%d), U=(%d,%d) TA=%c, reps=%lu:\n", 
@@ -2288,7 +2329,8 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
 }
 
 void DoTimings
-   (char *fnam, char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
+   (char *fnam, char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb, 
+    ATL_cpnode_t *ub)
 {
    ATL_cpnode_t *cp, *fb;
 
@@ -2299,7 +2341,7 @@ void DoTimings
       return;
    }
    DoGenTimings(pre, verb, rep4, cb);
-   fb = DoHandTimings(pre, verb, rep4, cb);
+   fb = DoHandTimings(pre, verb, rep4, cb, ub);
    if (!fb)
       fb = cb;
    for (cp=fb; cp; cp=cp->next)
@@ -2370,17 +2412,17 @@ int main(int nargs, char **args)
  * (3) User-contributed cases
  */
 {
-   ATL_cpnode_t *cb, *cp, *cb0;
+   ATL_cpnode_t *cb, *cp, *cb0, *ub;
    char *fout;
    unsigned long nrep;
    char pre;
    int verb, minSz, ialp, ibet=0;
    unsigned int flag;
 
-   cb = GetFlags(nargs, args, &verb, &fout);
+   cb = GetFlags(nargs, args, &verb, &fout, &ub);
    pre = CopyGetPre(cb->flag);
    nrep = GetReps4x4(verb, 0.10);
-   DoTimings(fout, pre, verb, nrep, cb);
+   DoTimings(fout, pre, verb, nrep, cb, ub);
 
    KillAllCPNodes(cb);
    return(0);
