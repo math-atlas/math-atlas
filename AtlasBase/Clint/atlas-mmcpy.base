@@ -22,6 +22,7 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
 {
    ATL_cpnode_t *cb=NULL, *cp;
    int i;
+   int INDONE=0;
    char pre = 'd';
 
    *FOUT = NULL;
@@ -42,7 +43,7 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
         cb = ReadCPFile(args[i]);
-        assert(cb);
+        INDONE = 1;
         break;
       case 'o':
         if (++i >= nargs)
@@ -53,10 +54,11 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
          PrintUsage(args[0], i, args[i]);
       }
    }
-   if (!cb)
+   if (!INDONE)
       cb = ReadCPFile(NULL);
-   PrefixStrAllNodes(cb, GetOffset(&cb->next, cb), GetOffset(&cb->rout, cb),
-                    "CPYCASES/");
+   if (cb)
+      PrefixStrAllNodes(cb, GetOffset(&cb->next, cb), GetOffset(&cb->rout, cb),
+                       "CPYCASES/");
    *PRE = pre;
    return(cb);
 }
@@ -487,12 +489,6 @@ TYPE *getBlock(int sz, int pad)
    return(vp);
 }
 
-void freeBlock(void *vp)
-{
-   size_t ip = (size_t) vp;
-   ip = (ip>>7)<<7;
-   free((void*)ip);
-}
 #ifdef matC_
    #ifdef Trans_
       #error "No test of Transpose C matrix right now!"
@@ -534,9 +530,9 @@ void freeBlock(void *vp)
    #ifdef FromBlk_
       #ifdef TCPLX
          void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
-                           TYPE *rb, TYPE *ib, const TYPE *A, ATL_CSZT lda)
+                           TYPE *rb, TYPE *ib, const TYPE *A, ATL_CSZT lda);
          void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
-                           TYPE *rb, TYPE *ib, const TYPE *A, ATL_CSZT lda)
+                           TYPE *rb, TYPE *ib, const TYPE *A, ATL_CSZT lda);
       #else
          void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
                            TYPE *b, const TYPE *A, ATL_CSZT lda);
@@ -625,10 +621,13 @@ int doTests(unsigned int ntest, unsigned int *bD)
       void *v0;
       TYPE *b0, *b1;
       TYPE *A, *a0, *a1, *A0;
+      #ifdef TCPLX
+         TYPE *rb, *ib;
+      #endif
       
       assert(N0 <= NA);
       assert(N1 <= NA);
-      assert(M0 <= MA);
+      assert(M0 <= (MA SHIFT));
       printf("   Test %u, D=(%u,%u), SZ=%u\n", t, mb, nb, sz);
       fflush(stdout);
       v0 = getBlock(sz, 0);
@@ -639,12 +638,22 @@ int doTests(unsigned int ntest, unsigned int *bD)
 
       initMat(BETA, nrow, ncol, a0, LDA);
       initMat(BETA, nrow, ncol, a1, LDA);
-      #ifdef matC_
-         ATL_GOODCPMM(mb, nb, ALPHA, b0, BETA, a0, LDA);
-         ATL_USERCPMM(mb, nb, ALPHA, b0, BETA, a1, LDA);
+      #ifdef TCPLX
+         #ifdef matC_
+            ATL_GOODCPMM(mb, nb, ALPHA, b0+sz, b0, BETA, a0, LDA);
+            ATL_USERCPMM(mb, nb, ALPHA, b0+sz, b0, BETA, a1, LDA);
+         #else
+            ATL_GOODCPMM(nb, mb, ALPHA, b0+sz, b0, a0, LDA);
+            ATL_USERCPMM(nb, mb, ALPHA, b0+sz, b0, a1, LDA);
+         #endif
       #else
-         ATL_GOODCPMM(nb, mb, ALPHA, b0, a0, LDA);
-         ATL_USERCPMM(nb, mb, ALPHA, b0, a1, LDA);
+         #ifdef matC_
+            ATL_GOODCPMM(mb, nb, ALPHA, b0, BETA, a0, LDA);
+            ATL_USERCPMM(mb, nb, ALPHA, b0, BETA, a1, LDA);
+         #else
+            ATL_GOODCPMM(nb, mb, ALPHA, b0, a0, LDA);
+            ATL_USERCPMM(nb, mb, ALPHA, b0, a1, LDA);
+         #endif
       #endif
       a0 = A;
       for (j=0; j < NA; j++, A += LDA2)
@@ -714,7 +723,7 @@ int doTests(unsigned int ntest, unsigned int *bD)
 {
    int t;
    TYPE *A, *a;
-   int nerr=0, pad=32;
+   int nerr=0, pad=32, pad2=pad SHIFT;
 
    A = getMat(MA, NA, LDA, MA+NA*LDA);
    a = A+((IA+JA*LDA)SHIFT);
@@ -726,24 +735,36 @@ int doTests(unsigned int ntest, unsigned int *bD)
       TYPE *b0, *b1, *b2, *b3, *B0, *B1;
       unsigned int T = (t<<1)+t, mb = bD[T], nb = bD[T+1], sz=bD[T+2];
       unsigned int i, N;
+      #ifdef TCPLX
+         TYPE *rB0, *iB0, *rB1, *iB1;
+      #endif
       printf("   Test %u, D=(%u,%u), SZ=%u\n", t, mb, nb, sz);
       v0 = getBlock(sz, pad);
       v1 = getBlock(sz, pad);
       b0 = AlignPtr(v0);
       b1 = AlignPtr(v1);
-      B0 = b0 + pad;
-      B1 = b1 + pad;
-      b2 = B0 + sz;
-      b3 = B1 + sz;
-
-      #ifdef matC_
-         ATL_GOODCPMM(mb, nb, ALPHA, a, LDA, BETA, B0);
-         ATL_USERCPMM(mb, nb, ALPHA, a, LDA, BETA, B1);
+      B0 = b0 + pad2;
+      B1 = b1 + pad2;
+      b2 = B0 + (sz SHIFT);
+      b3 = B1 + (sz SHIFT);
+      #ifdef TCPLX
+         #ifdef matC_
+            ATL_GOODCPMM(mb, nb, ALPHA, a, LDA, BETA, B0+sz, B0);
+            ATL_USERCPMM(mb, nb, ALPHA, a, LDA, BETA, B1+sz, B1);
+         #else
+            ATL_GOODCPMM(nb, mb, ALPHA, a, LDA, B0+sz, B0);
+            ATL_USERCPMM(nb, mb, ALPHA, a, LDA, B1+sz, B1);
+         #endif
       #else
-         ATL_GOODCPMM(nb, mb, ALPHA, a, LDA, B0);
-         ATL_USERCPMM(nb, mb, ALPHA, a, LDA, B1);
+         #ifdef matC_
+            ATL_GOODCPMM(mb, nb, ALPHA, a, LDA, BETA, B0);
+            ATL_USERCPMM(mb, nb, ALPHA, a, LDA, BETA, B1);
+         #else
+            ATL_GOODCPMM(nb, mb, ALPHA, a, LDA, B0);
+            ATL_USERCPMM(nb, mb, ALPHA, a, LDA, B1);
+         #endif
       #endif
-      for (i=0; i < pad; i++)
+      for (i=0; i < pad2; i++)
       {
          if (b0[i] != b1[i])
          {
@@ -756,7 +777,7 @@ int doTests(unsigned int ntest, unsigned int *bD)
             nerr++;
          }
       }
-      for (N=mb*nb SHIFT, i=0; i < N; i++)
+      for (N=sz SHIFT, i=0; i < N; i++)
       {
          TYPE diff = B0[i] - B1[i];
 
@@ -2167,7 +2188,7 @@ ATL_cpnode_t *GetWorkingKerns(char pre, int verb, ATL_cpnode_t *cb)
 ATL_cpnode_t *DoHandTimings
    (char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb, ATL_cpnode_t *hb)
 {
-   ATL_cpnode_t *hb, *cp, *hp, *HB=NULL;
+   ATL_cpnode_t *cp, *hp, *HB=NULL;
    unsigned long nrep;
 
 
@@ -2216,7 +2237,7 @@ ATL_cpnode_t *DoHandTimings
             }
             hp = hp->next;
          }
-         while( (hp = FindEquivCopy_ab(hp, cp)) );
+         while( (hp = FindEquivUserCopy(hp, cp)) );
          printf("   DONE\n");
       }
       if (!np)
