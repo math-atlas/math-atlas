@@ -1,3 +1,1902 @@
+@ROUT ucpytest
+#include "atlas_cpparse.h"
+#include "atlas_cptesttime.h"
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -i <copy.idx>: (stdin) list of user-supplied copies\n");
+   fprintf(stderr, "   -o <cpyWORK.CPS>: (stdout) user copy kernels\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_cpnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
+/*
+ * RETURNS: list of all kerns/blk factors to tune copies for
+ */
+{
+   ATL_cpnode_t *cb=NULL, *cp;
+   int i;
+   int INDONE=0;
+   char pre = 'd';
+
+   *FOUT = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pre = tolower(args[i][0]);
+         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 'i':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        cb = ReadCPFile(args[i]);
+        INDONE = 1;
+        break;
+      case 'o':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *FOUT = args[i];
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!INDONE)
+      cb = ReadCPFile(NULL);
+   if (cb)
+      PrefixStrAllNodes(cb, GetOffset(&cb->next, cb), GetOffset(&cb->rout, cb),
+                       "CPYCASES/");
+   *PRE = pre;
+   return(cb);
+}
+
+int FailAnyClaimedCase(char pre, ATL_cpnode_t *cp)
+{
+   const unsigned int flg = cp->flag, TA=(flg>>CPF_TRANS)&1, 
+      CBLK=(flg>>CPF_CBLK)&1;
+   int ia;
+   const int ialps[3] = {1,-1,2};
+   const int ibets[4] = {1,-1,2,0};
+   fprintf(stderr, "   TESTING %d-'%s':\n", cp->ID, cp->rout);
+   if (!CBLK)  /* For A/B copy, NU is M or N unroll, while MU is ku */
+   {
+      for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
+      {
+         int ialp;
+         if (flg & (1<<ia) == 0)
+            continue;
+         ialp = ialps[ia-CPF_AL1];
+         if (CPKernelFailsTest(pre, TA, 367, 233, ialp, 1, cp))
+         {
+            fprintf(stderr, "   FAILED %d: alpha=%d!\n", cp->ID, ialp);
+            return(1);
+         }
+      }
+   }
+   else
+   {
+      for (ia=CPF_AL1; ia <= CPF_ALX; ia++)
+      {
+         int ib, ialp;
+         if (flg & (1<<ia) == 0)
+            continue;
+         ialp = ialps[ia-CPF_AL1];
+         for (ib=CPF_BE1; ib <= CPF_BE0; ib++)
+         {
+            int ibet; 
+            if (flg & (1<<ib) == 0)
+               continue;
+            ibet=ibets[ib-CPF_BE1];
+            if (CPKernelFailsTest(pre, TA, 367, 233, ialp, 1, cp))
+            {
+               fprintf(stderr, "   FAILED %d: alpha=%d, beta=%d!\n", 
+                       cp->ID, ialp, ibet);
+               return(1);
+            }
+         }
+      }
+   }
+   fprintf(stderr, "   PASS:   %d-'%s'\n", cp->ID, cp->rout);
+   return(0);
+}
+int main(int nargs, char **args)
+{
+   char *fnout;
+   char pre;
+   ATL_cpnode_t *cb, *cp;
+
+   cb = GetFlags(nargs, args, &pre, &fnout);
+   while (cb && FailAnyClaimedCase(pre, cb))
+      cb = KillCPNode(cb);
+   if (cb)
+   {
+      ATL_cpnode_t *prev=cb;
+      cp = cb->next;
+      while(cp)
+      {
+         ATL_cpnode_t *next = cp->next;
+         if (FailAnyClaimedCase(pre, cp))
+         {
+            cp =  KillCPNode(cp);
+            prev->next = cp;
+         }
+         else
+            prev = cp;
+         cp = next;
+      }
+   }
+   fprintf(stderr, "\nSURVIVING COPY KERNELS, PRE='%c':\n", pre);
+   if (fnout)
+      WriteCPFile("stderr", cb);
+   WriteCPFile(fnout, cb);
+   return(0);
+}
+@rout cpytest
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include "atlas_bitvec.h"
+#ifndef TYPE
+   #define ATL_CSZT const size_t
+   #if defined(SREAL) || defined(SCPLX)
+      #define TYPE float
+   #elif defined(DREAL) || defined(DCPLX)
+      #define TYPE double
+   #endif
+   #ifdef SREAL
+      #define ATL_MulBySize(i_) ((i_)<<2)
+      #define ATL_DivBySize(i_) ((i_)>>2)
+   #elif defined(DREAL) || defined(SCPLX)
+      #define ATL_MulBySize(i_) ((i_)<<3)
+      #define ATL_DivBySize(i_) ((i_)>>3)
+   #else
+      #define ATL_MulBySize(i_) ((i_)<<4)
+      #define ATL_DivBySize(i_) ((i_)>>4)
+   #endif
+   #if defined(SCPLX) || defined(DCPLX)
+      #define SHIFT << 1
+      #define TCPLX 1
+   #else
+      #define TREAL 1
+      #define SHIFT
+   #endif
+   #ifdef TCPLX
+      #define SCALAR TYPE*
+      #define SCALAR_IS_ZERO(s_) ((s_)[0] == 0.0 && (s_)[1] == 0.0)
+   #else
+      #define SCALAR TYPE
+      #define SCALAR_IS_ZERO(s_) ((s_) == 0.0)
+   #endif
+   #define ATL_Cachelen 128
+   #define ATL_AlignPtr(vp) \
+      (void*) ( ATL_Cachelen + (((((size_t) (vp))+127)>>7)<<7) )
+#endif
+#if defined(SREAL) || defined(SCPLX)
+   #define FEPS 5.0e-7
+#else
+   #define FEPS 1.0e-15
+#endif
+#ifndef ATL_MU
+   #define ATL_MU 1
+#endif
+#ifndef ATL_NU
+   #define ATL_NU 1
+#endif
+#if TO_BLK
+   #ifdef FromBlk_
+      #undef FromBlk_
+   #endif
+#else
+   #define FromBlk_
+#endif
+#ifdef Trans_
+   #if Trans_ == 0
+      #undef Trans_
+   #endif
+#endif
+#ifdef Conj_
+   #if Conj_ == 0
+      #undef Conj_
+   #endif
+#endif
+static int MA=0, NA=0, LDA=0, IA=0, JA=0;
+#ifdef TCPLX
+   @whiledef sc BETA ALPHA
+   #ifdef @(sc)1
+      TYPE @(sc)[2] = {1.0, 0.0};
+   #elif defined(@(sc)N) || defined(@(sc)N1)
+      TYPE @(sc)[2] = {-1.0, 0.0};
+   #elif defined(@(sc)0)
+      TYPE @(sc)[2] = {0.0, 0.0};
+   #else
+      @mif sc = "BETA
+      TYPE @(sc)[2] = {-0.25, 0.75};
+      @endmif
+      @mif sc ! "BETA
+      TYPE @(sc)[2] = { 1.55, -0.35};
+      @endmif
+   #endif
+   @endwhile
+#else
+   @whiledef sc BETA ALPHA
+   #ifdef @(sc)1
+      TYPE @(sc) = 1.0;
+   #elif defined(@(sc)N) || defined(@(sc)N1)
+      TYPE @(sc) = -1.0;
+   #elif defined(@(sc)0)
+      TYPE @(sc) = 0.0;
+   #else
+      @mif sc = "BETA
+      TYPE @(sc) = 0.25;
+      @endmif
+      @mif sc ! "BETA
+      TYPE @(sc) = 1.08;
+      @endmif
+   #endif
+   @endwhile
+#endif
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr,"  -A <M> <N> <LDA>: set dimensions of col-major matrix\n");
+   fprintf(stderr,"  -b <M> <N> : set dims of access-major block\n");
+   fprintf(stderr,"  -B # <M1> <N1> <M2> <N2> ... <M#> <N#>\n");
+   fprintf(stderr,"  -s # <sz> allocate sz for each block\n");
+   fprintf(stderr,"  -S # <sz1> ... <szN>: allocate sz for each block\n");
+   fprintf(stderr,"  -i I J : offset in array to access\n");
+   exit(ierr ? ierr : 1);
+}
+
+unsigned int *GetFlags (int nargs, char **args)
+/*
+ * RETURNS: int array, 1st elt is # of blocks, then M,N pairs of block dims
+ */
+{
+   unsigned int nblk=0, i, SZ=0;
+   unsigned int *bD=NULL, *szs=NULL;
+
+   IA = JA = -1;
+   for (i=1; i < nargs; i++)
+   {
+      char ch;
+      int k;
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 's':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         SZ = atoi(args[i]);
+         break;
+      case 'S':
+         if (szs)
+            free(szs);
+         szs = NULL;
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nblk = atoi(args[i]);
+         if (bD)
+            assert(bD[0] == nblk);
+         else
+         {
+            bD = calloc(((nblk<<1)+nblk)+1,sizeof(int));
+            assert(bD);
+            bD[0] = nblk;
+         }
+         for (k=0; k < nblk; k++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            bD[(k<<1)+k+1] = atoi(args[i]);
+         }
+         break;
+      case 'B': /* -B # m1 n1 ... m# n# */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nblk = atoi(args[i]);
+         if (bD)
+         {
+            if (bD[3])
+               assert(bD[0] == nblk);
+            else
+            {
+               free(bD);
+               bD = NULL;
+            }
+         }
+         goto GET_BLKS;
+      case 'b': /* -b m n */
+         nblk = 1;
+      GET_BLKS:
+         if (!bD)
+         {
+            bD = calloc(((nblk<<1)+nblk)+1,sizeof(int));
+            assert(bD);
+         }
+         *bD = nblk;
+         nblk += nblk<<1;
+         for (k=0; k < nblk; k += 3)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            bD[k+1] = atoi(args[i]);
+            if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            bD[k+2] = atoi(args[i]);
+         }
+         break;
+      case 'i': /* -i <I> <J> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         IA = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         JA = atoi(args[i]);
+         break;
+      case 'A': /* -A M N lda */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         MA = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         NA = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         LDA = atoi(args[i]);
+         break;
+      @beginskip
+      case 'D': /* -D T/F */
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         ch = args[i][0];
+         ch = toupper(ch);
+         assert(ch == 'F' || ch == 'T');
+         *TOBLK = (ch == 'T');         
+         break;
+      @endskip
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (IA == -1)  
+   {
+      #ifdef FromBlk_  /* want to check pre/post pad! */
+         IA = 8;
+         JA = 6;
+      #else
+         IA = JA = 0;
+      #endif
+   }
+   if (bD == NULL)
+   {
+      bD = malloc(4*sizeof(int));
+      assert(bD);
+      bD[0] = 1;
+      bD[1] = 3*ATL_MU;
+      bD[2] = 5*ATL_NU;
+      bD[3] = bD[1] * bD[2];
+   }
+   else if (!bD[3])
+   {
+      int nblk = bD[0];
+      nblk += nblk<<1;
+      if (SZ)
+         for (i=0; i < nblk; i += 3)
+            bD[3+i] = SZ;
+      else
+         for (i=0; i < nblk; i += 3)
+         {
+            int M=bD[1+i], N=bD[2+i];
+            M = ((M+ATL_MU-1)/ATL_MU)*ATL_MU;
+            N = ((N+ATL_NU-1)/ATL_NU)*ATL_NU;
+            bD[3+i] = N*M;
+         }
+   }
+   if (!NA)
+   {
+      int k, nblk=bD[0];
+      nblk += nblk<<1;
+      MA = bD[1];
+      NA = bD[2];
+      for (k=3; k < nblk; k += 3)
+      {
+         MA = Mmax(MA, bD[k+1]);
+         NA = Mmax(NA, bD[k+2]);
+      }
+      #ifdef Trans_
+         k = MA;
+         MA = NA;
+         NA = k;
+      #endif
+      #ifdef FromBlk_
+         NA += NA;
+      #endif
+      MA += IA;
+      NA += JA;
+      LDA = MA + 7;
+   }
+   else
+   {
+      int k, nblk=bD[0];
+      nblk += nblk<<1;
+      for (k=0; k < nblk; k += 3)
+      {
+         #ifdef Trans_
+            assert(IA + bD[k+2] <= MA);
+            assert(JA + bD[k+1] <= NA);
+         #else
+            assert(IA + bD[k+1] <= MA);
+            assert(JA + bD[k+2] <= NA);
+         #endif
+      }
+      assert(LDA >= MA);
+   }
+   return(bD);
+}
+
+TYPE *getMat(size_t M, size_t N, size_t lda, int seed)
+{
+   int i, j;
+   const int lda2 = lda SHIFT;
+   const double mul = 1.0 / (lda2*N);
+   TYPE *A, *A0;
+
+   A0 = A = malloc(N*lda2*sizeof(TYPE));
+   assert(A);
+@skip   dumb_seed(seed);
+   for (j=0; j < N; j++, A += lda2)
+      for (i=0; i != lda2; i++) 
+         A[i] = 1.0 + (mul*j)*lda2+(i*1e-1);
+   return(A0);
+}
+
+#define AlignPtr(vp_) (void*) (((((size_t)(vp_))+127)>>7)<<7)
+TYPE *getBlock(int sz, int pad)
+{
+   void *vp;
+   TYPE *b;
+   size_t ip;
+   int i, SZ = (sz + pad + pad)SHIFT;
+   double mul = 1.0 / SZ;
+
+   vp = malloc(SZ*sizeof(TYPE) + 128);
+   b = AlignPtr(vp);
+   for (i=0; i < SZ; i++)
+      b[i] = -(1.0+mul*i);
+   return(vp);
+}
+
+#ifdef matC_
+   #ifdef Trans_
+      #error "No test of Transpose C matrix right now!"
+   #endif
+   #ifdef FromBlk_
+      #ifdef TCPLX
+         void ATL_USERCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *r,
+             const TYPE *c, const SCALAR beta, TYPE *C, const size_t ldc);
+         void ATL_GOODCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *r,
+             const TYPE *c, const SCALAR beta, TYPE *C, const size_t ldc);
+      #else
+         void ATL_USERCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *b,
+             const SCALAR beta, TYPE *C, const size_t ldc);
+         void ATL_GOODCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *b,
+             const SCALAR beta, TYPE *C, const size_t ldc);
+      #endif
+   #else /* ToBlock */
+      #ifdef TCPLX
+         void ATL_USERCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *C, 
+             const size_t ldc, const SCALAR beta, TYPE *rb, TYPE *ib);
+         void ATL_GOODCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *C, 
+             const size_t ldc, const SCALAR beta, TYPE *rb, TYPE *ib);
+      #else
+         void ATL_USERCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *C, 
+             const size_t ldc, const SCALAR beta, TYPE *b);
+         void ATL_GOODCPMM
+            (const size_t M, const size_t N, const SCALAR alpha, const TYPE *C, 
+             const size_t ldc, const SCALAR beta, TYPE *b);
+      #endif
+   #endif
+#else  /* Trans & NoTrans have same prototype */
+   #ifdef FromBlk_
+      #ifdef TCPLX
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           TYPE *rb, TYPE *ib, const TYPE *A, ATL_CSZT lda);
+         void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           TYPE *rb, TYPE *ib, const TYPE *A, ATL_CSZT lda);
+      #else
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           TYPE *b, const TYPE *A, ATL_CSZT lda);
+         void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           TYPE *b, const TYPE *A, ATL_CSZT lda);
+      #endif
+   #else
+      #ifdef TCPLX
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           const TYPE *A, ATL_CSZT lda, TYPE *rb, TYPE *ib);
+         void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           const TYPE *A, ATL_CSZT lda, TYPE *rb, TYPE *ib);
+      #else
+         void ATL_USERCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           const TYPE *A, ATL_CSZT lda, TYPE *b);
+         void ATL_GOODCPMM(ATL_CSZT K, ATL_CSZT N, const SCALAR alpha, 
+                           const TYPE *A, ATL_CSZT lda, TYPE *b);
+      #endif
+   #endif
+#endif
+void initMat(SCALAR beta, int M, int N, TYPE *A, size_t lda)
+{
+   size_t lda2 = lda SHIFT;
+   unsigned int M2 = M SHIFT, i, j;
+   if (SCALAR_IS_ZERO(beta))
+   {
+      TYPE nan = 0.0 / 0.0;
+      for (j=0; j < N; j++, A += lda2)
+         for (i=0; i < M2; i++)
+            A[i] = nan;
+   }
+   else
+   {
+      const double mul = 1.0 / (((double)M2)*N);
+      for (j=0; j < N; j++, A += lda2)
+         for (i=0; i < M2; i++)
+            A[i] = (i + j*lda2)*mul + 1.0;
+   }
+}
+
+#ifdef matC_
+   #define C_MAT 'C'
+#else
+   #define C_MAT 'A'
+#endif
+#ifdef FromBlk_
+   #define C_DIR 'F'
+#else
+   #define C_DIR 'T'
+#endif
+#ifdef Trans_
+   #ifdef Conj_
+      #define C_TRANS 'C'
+   #else
+      #define C_TRANS 'T'
+   #endif
+#else
+   #ifdef Conj_
+      #define C_TRANS 'H'
+   #else
+      #define C_TRANS 'N'
+   #endif
+#endif
+
+#ifdef FromBlk_
+int doTests(unsigned int ntest, unsigned int *bD)
+{
+   int t;
+   int nerr=0;
+   const unsigned int I2 = IA SHIFT, M2 = MA SHIFT, LDA2 = LDA SHIFT;
+   const double mul = 1.0 / (LDA2*NA);
+
+   printf("RUN %u TESTS: MAT=%c, TA=%c MD=(%u,%u), LDA=%u, (%u,%u)\n", 
+          ntest, C_MAT, C_TRANS, MA, NA, LDA, I2, JA);
+   for (t=0; t < ntest; t++)
+   {
+      unsigned int T = (t<<1)+t, mb = bD[T], nb = bD[T+1], sz=bD[T+2];
+      #ifdef Trans_
+         const unsigned int nrow = nb, ncol=mb;
+      #else
+         const unsigned int nrow = mb, ncol=nb;
+      #endif
+      const unsigned int M0=(IA+nrow)SHIFT, N0=JA+ncol, N1=N0+ncol;
+      const size_t offT = LDA2*ncol;
+      unsigned int j;
+      void *v0;
+      TYPE *b0, *b1;
+      TYPE *A, *a0, *a1, *A0;
+      #ifdef TCPLX
+         TYPE *rb, *ib;
+      #endif
+      
+      assert(N0 <= NA);
+      assert(N1 <= NA);
+      assert(M0 <= (MA SHIFT));
+      printf("   Test %u, D=(%u,%u), SZ=%u\n", t, mb, nb, sz);
+      fflush(stdout);
+      v0 = getBlock(sz, 0);
+      b0 = AlignPtr(v0);
+      A0 = A = getMat(MA, NA, LDA, MA+NA*LDA);
+      a0 = A+((IA+JA*LDA)SHIFT);
+      a1 = a0 + offT;
+
+      initMat(BETA, nrow, ncol, a0, LDA);
+      initMat(BETA, nrow, ncol, a1, LDA);
+      #ifdef TCPLX
+         #ifdef matC_
+            ATL_GOODCPMM(mb, nb, ALPHA, b0+sz, b0, BETA, a0, LDA);
+            ATL_USERCPMM(mb, nb, ALPHA, b0+sz, b0, BETA, a1, LDA);
+         #else
+            ATL_GOODCPMM(nb, mb, ALPHA, b0+sz, b0, a0, LDA);
+            ATL_USERCPMM(nb, mb, ALPHA, b0+sz, b0, a1, LDA);
+         #endif
+      #else
+         #ifdef matC_
+            ATL_GOODCPMM(mb, nb, ALPHA, b0, BETA, a0, LDA);
+            ATL_USERCPMM(mb, nb, ALPHA, b0, BETA, a1, LDA);
+         #else
+            ATL_GOODCPMM(nb, mb, ALPHA, b0, a0, LDA);
+            ATL_USERCPMM(nb, mb, ALPHA, b0, a1, LDA);
+         #endif
+      #endif
+      a0 = A;
+      for (j=0; j < NA; j++, A += LDA2)
+      {
+         unsigned int i;
+         for (i=0; i < M2; i++)
+         {
+            double got, exp;
+            if (i >= I2 && i < M0)
+            {
+               if (j >= JA && j < N0)
+               {
+                  int nanE, nanG;
+                  exp = A[i];
+                  got = A[i+offT];
+                  nanE = exp != exp;
+                  nanG = got != got;
+                  if (nanE || nanG)
+                  {
+                     if (!nanE || !nanG)
+                     {
+                        nerr++;
+                        fprintf(stderr,
+                                "      A(%u,%u),b(%u,%u)=%e, expected=%e\n", 
+                                i, j, i-I2, j-JA, got, exp);
+                     }
+                  }
+                  else
+                  {
+                     double diff;
+                     diff = exp - got;
+                     if (diff < 0.0)
+                        diff = -diff;
+                     if (diff > FEPS)
+                     {
+                        fprintf(stderr,
+                                "      A(%u,%u),b(%u,%u)=%e, expected=%e\n", 
+                                i, j, i-I2, j-JA, got, exp);
+                        nerr++;
+                     }
+                     continue;
+                  }
+               }
+               else if (j <= N1)  /* don't scope 2nd overwrittes submat */
+                  continue;       /* since was scoped right above */
+            }
+            exp = 1.0 + (mul*j)*LDA2+(i*1e-1);
+            got = A[i];
+            if (exp != got)
+            {
+               fprintf(stderr, "      PAD ERR, A(%u,%u)=%e, expected=%e\n",
+                       i, j, got, exp);
+               nerr++;
+            }
+         }
+      }
+      free(A0);
+      free(v0);
+      if (nerr > 1)
+         return(nerr);
+      printf("   DONE Test %u\n", t);
+   }
+   return(nerr);
+}
+#else
+int doTests(unsigned int ntest, unsigned int *bD)
+{
+   int t;
+   TYPE *A, *a;
+   int nerr=0, pad=32, pad2=pad SHIFT;
+
+   A = getMat(MA, NA, LDA, MA+NA*LDA);
+   a = A+((IA+JA*LDA)SHIFT);
+   printf("RUN %u TESTS: MAT=%c, TA=%c MD=(%u,%u), LDA=%u\n", ntest, C_MAT, 
+          C_TRANS, MA, NA, LDA);
+   for (t=0; t < ntest; t++)
+   {
+      void *v0, *v1;
+      TYPE *b0, *b1, *b2, *b3, *B0, *B1;
+      unsigned int T = (t<<1)+t, mb = bD[T], nb = bD[T+1], sz=bD[T+2];
+      unsigned int i, N;
+      #ifdef TCPLX
+         TYPE *rB0, *iB0, *rB1, *iB1;
+      #endif
+      printf("   Test %u, D=(%u,%u), SZ=%u\n", t, mb, nb, sz);
+      v0 = getBlock(sz, pad);
+      v1 = getBlock(sz, pad);
+      b0 = AlignPtr(v0);
+      b1 = AlignPtr(v1);
+      B0 = b0 + pad2;
+      B1 = b1 + pad2;
+      b2 = B0 + (sz SHIFT);
+      b3 = B1 + (sz SHIFT);
+      #ifdef TCPLX
+         #ifdef matC_
+            ATL_GOODCPMM(mb, nb, ALPHA, a, LDA, BETA, B0+sz, B0);
+            ATL_USERCPMM(mb, nb, ALPHA, a, LDA, BETA, B1+sz, B1);
+         #else
+            ATL_GOODCPMM(nb, mb, ALPHA, a, LDA, B0+sz, B0);
+            ATL_USERCPMM(nb, mb, ALPHA, a, LDA, B1+sz, B1);
+         #endif
+      #else
+         #ifdef matC_
+            ATL_GOODCPMM(mb, nb, ALPHA, a, LDA, BETA, B0);
+            ATL_USERCPMM(mb, nb, ALPHA, a, LDA, BETA, B1);
+         #else
+            ATL_GOODCPMM(nb, mb, ALPHA, a, LDA, B0);
+            ATL_USERCPMM(nb, mb, ALPHA, a, LDA, B1);
+         #endif
+      #endif
+      for (i=0; i < pad2; i++)
+      {
+         if (b0[i] != b1[i])
+         {
+            printf("      PREPAD  %d, expected=%e, got=%e\n", i, b0[i], b1[i]);
+            nerr++;
+         }
+         if (b3[i] != b2[i])
+         {
+            printf("      POSTPAD %d, expected=%e, got=%e\n", i, b0[i], b1[i]);
+            nerr++;
+         }
+      }
+      for (N=sz SHIFT, i=0; i < N; i++)
+      {
+         TYPE diff = B0[i] - B1[i];
+
+         diff = (diff >= 0.0) ? diff : -diff;
+         if (B1[i] != B1[i])
+         {
+            fprintf(stderr, "      B[%u]: got NaN, expected=%e\n", i, B0[i]);
+            if (B0[i] == B0[i])
+               nerr++;
+         }
+         else if (diff > FEPS)
+         {
+            fprintf(stderr, "      B[%u]: got %e, expected=%e\n", i, 
+                    B1[i], B0[i]);
+            nerr++;
+         }
+      }
+      free(v0);
+      free(v1);
+      if (nerr > 1)
+         return(nerr);
+      printf("   DONE Test %u\n", t);
+   }
+   free(A);
+   return(nerr);
+}
+#endif
+
+int main(int nargs, char **args)
+{
+   int *bD;
+   int nerr = 0;
+   bD = GetFlags(nargs, args);
+   nerr = doTests(bD[0], bD+1);
+   if (!nerr)
+      printf("\nSUCCESS: PASS %u ALL TESTS\n", bD[0]);
+   else
+      printf("\nFAILED WITH %u ERRORS\n", nerr);
+   free(bD);
+   return(nerr);
+}
+@ROUT cpytest_shit
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Jakob Hinton" -def contrib "R. Clint Whaley"
+/*
+ * This copy sanity tester written by Jakob Hinton, and desperately needs
+ * code review.
+ * If functions by testing copy function ATL_USERCPMM against a known-good
+ * implementation provided by ATL_GOODCP
+ */
+#include "atlas_misc.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <math.h>
+
+
+#if defined(SCPLX) || defined(DCPLX)
+   #define IS_CPLX  1
+#else
+   #define IS_CPLX  0
+#endif
+
+#ifndef COPY_C
+   #define CCOPY 0
+#else
+   #if COPY_C
+      #define CCOPY 0
+   #else
+      #define CCOPY 1
+   #endif
+#endif
+#if IS_TRANS == 1
+   #define TRANST_
+#endif
+
+#ifdef BETAX
+   #define beta 3.0
+#endif
+
+#ifdef BETA1
+   #define beta 1.0
+#endif
+
+#ifdef BETA0
+   #define beta 0.0
+#endif
+
+#ifdef ALPHAX
+   #define alpha 0.5
+#endif
+
+#ifdef ALPHA1
+   #define alpha 1.0
+#endif
+
+#ifdef ALPHA0
+   #define alpha 0.0
+#endif
+
+/* function signature for cblk2C */
+#if CCOPY == 1 && defined TCPLX && TO_BLK == 0
+
+   void ATL_GOODCP
+   (
+      ATL_CSZT M,      /* number of rows in A */
+      ATL_CSZT N,      /* number of columns in A */
+      const SCALAR *a, /* scalar for b */
+      const TYPE *rC,    /* real block stored in 1x1-major order */
+      const TYPE *iC,    /* imag block stored in 1x1-major order */
+      const SCALAR *b,  /* scalar for C */
+      TYPE *C,           /* matrix to be copied to access-major format */
+      ATL_CSZT ldc     /* stride between row elements */
+   );
+void ATL_USERCPMM
+   (
+      ATL_CSZT M,      /* number of rows in A */
+      ATL_CSZT N,      /* number of columns in A */
+      const SCALAR *a, /* scalar for b */
+      const TYPE *rC,    /* real block stored in 1x1-major order */
+      const TYPE *iC,    /* imag block stored in 1x1-major order */
+      const SCALAR *b,  /* scalar for C */
+      TYPE *C,           /* matrix to be copied to access-major format */
+      ATL_CSZT ldc     /* stride between row elements */
+   );
+
+
+/* function signature for C2blk */
+#elif CCOPY == 1 && !defined TCPLX && TO_BLK == 1
+
+   void ATL_GOODCP
+   (
+      ATL_CSZT M,      /* number of rows in A */
+      ATL_CSZT N,      /* number of columns in A */
+      const SCALAR a,  /* scalar for C */
+      const TYPE *C,     /* matrix to be copied to access-major format */
+      ATL_CSZT ldc,    /* stride between row elements */
+      const SCALAR b,   /* scalar for b */
+      TYPE *B            /* matrix stored in 4x4-major order */
+   );
+   
+   void ATL_USERCPMM
+   (
+      ATL_CSZT M,      /* number of rows in A */
+      ATL_CSZT N,      /* number of columns in A */
+      const SCALAR a,  /* scalar for C */
+      const TYPE *C,     /* matrix to be copied to access-major format */
+      ATL_CSZT ldc,    /* stride between row elements */
+      const SCALAR b,   /* scalar for b */
+      TYPE *B            /* matrix stored in 4x4-major order */
+   );
+
+/* function signature for blk2C */
+#elif CCOPY == 1 && !defined TCPLX && TO_BLK == 0
+  void ATL_USERCPMM
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   const double a,  /* scalar for b */
+   const double *b,     /* matrix stored in 1x1-major order */
+   const double bta,   /* scalar for C */
+   double *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+);
+
+void ATL_GOODCP
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   const double a,  /* scalar for b */
+   const double *b,     /* matrix stored in 1x1-major order */
+   const double bta,   /* scalar for C */
+   double *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+);
+
+/* function signature for cAN2blk, cAT2blk, cblk2AN, & cblk2AT */
+#elif defined TCPLX && CCOPY == 0
+
+   void ATL_GOODCP
+   (
+      ATL_CSZT K,          /* number of rows in A */
+      ATL_CSZT N,          /* number of columns in A */
+      const SCALAR a,      /* scalar for A */
+      const TYPE *A,       /* col maj matrix */
+      ATL_CSZT lda,        /* stride between row elements */
+      TYPE *rA,            /* access-major block holding real vals */
+      TYPE *iA             /* access-major block holding imag vals */
+   );
+   
+   void ATL_USERCPMM
+   (
+      ATL_CSZT K,          /* number of rows in A */
+      ATL_CSZT N,          /* number of columns in A */
+      const SCALAR a,      /* scalar for A */
+      const TYPE *A,       /* col maj matrix */
+      ATL_CSZT lda,        /* stride between row elements */
+      TYPE *rA,            /* access-major block holding real vals */
+      TYPE *iA             /* access-major block holding imag vals */
+   );
+
+/* function signature for cC2blk */
+#elif defined TCPLX && CCOPY == 1 && TO_BLK == 1
+
+void ATL_GOODCP
+(
+   ATL_CSZT M,      /* number of rows in A */
+   ATL_CSZT N,      /* number of columns in A */
+   const SCALAR *a, /* scalar for b */
+   const TYPE *C,     /* matrix to be copied to access-major format */
+   ATL_CSZT ldc,    /* stride between row elements */
+   const SCALAR *b,  /* scalar for C */
+   TYPE *rC,          /* real block stored in 1x1-major order */
+   TYPE *iC           /* imag block stored in 1x1-major order */
+);
+
+void ATL_USERCPMM
+(
+   ATL_CSZT M,      /* number of rows in A */
+   ATL_CSZT N,      /* number of columns in A */
+   const SCALAR *a, /* scalar for b */
+   const TYPE *C,     /* matrix to be copied to access-major format */
+   ATL_CSZT ldc,    /* stride between row elements */
+   const SCALAR *b,  /* scalar for C */
+   TYPE *rC,          /* real block stored in 1x1-major order */
+   TYPE *iC           /* imag block stored in 1x1-major order */
+);
+
+
+/* function signature for AN2blk, AT2blk, blk2AN, & blk2AT */
+#else
+   void ATL_GOODCP
+   (
+      ATL_CSZT K,          /* number of rows in A */
+      ATL_CSZT N,          /* number of columns in A */
+      const SCALAR a,      /* scalar for A */
+      const TYPE *A,       /* col maj matrix */
+      ATL_CSZT lda,        /* stride between row elements */
+      TYPE *b              /* access-major block */
+   );
+   
+   void ATL_USERCPMM
+   (
+      ATL_CSZT K,          /* number of rows in A */
+      ATL_CSZT N,          /* number of columns in A */
+      const SCALAR a,      /* scalar for A */
+      const TYPE *A,       /* col maj matrix */
+      ATL_CSZT lda,        /* stride between row elements */
+      TYPE *b              /* access-major block */
+   );
+#endif
+
+/*if the tested cpy function into an access maj array has been writing past its 
+  given parameters, this function will print an err and return each time it 
+  does so.*/
+int acc_buffercheckr
+(
+   TYPE *A,          /*this is the array we are checking to see if its buffer
+                       was touched*/
+   int SZ,           /*size of the array in the array that has no buffervals*/
+   int bufferspace,  /*amount of space allocated around array, it is asuumed
+                       that this space /2 is full of the buffer val at the 
+                       front and back end of the access major array*/
+   TYPE tst_val      /*this is the val padded into the outer rims of the array*/
+)
+{
+   int i, j;
+   int buffer_err = 0;
+   for(i=0;i<bufferspace/2;i++)
+   {
+      /* check the 0 end of the buffer space */
+      if(*(A + i) != tst_val)
+      {
+         fprintf(stderr, "ERROR pos [%d] has been edited and is outside the"
+                 "given parameters for the routine being tstd\n",i);
+         buffer_err++;
+      }
+      /* check the max index end of the buffer space */
+      if(*(A + (SZ-1) - i) != tst_val)
+      {
+         fprintf(stderr, "ERROR pos [%d] has been edited and is outside the "
+                 "given parameters for the routine being tstd\n",SZ - i);
+         buffer_err++;
+      }
+   }
+   return buffer_err;
+}
+
+/*if the tested cpy function into a col maj array has been writing past its 
+  given parameters, this function will return each time it does so.*/
+int col_buffercheckr
+(
+   TYPE *A,          /*this is the array we are checking to see if its buffer
+                       was touched*/
+   int K,
+   int N,
+   TYPE tst_val      /*this is the val padded into the outer rims of the array*/
+)
+{
+   int i, j;
+   int buffer_err = 0;
+   int lda = K*3;
+   for(i=0;i<K*3;i++)
+   {
+      for(j=0;j<N*3;j++)
+      {
+         /* this if statement checks if the current val is not in the buffzone*/
+         if(i>=K && i<K*2 && j>=N && j<N*2);
+
+         /* if it is in the buffer zone, then check if it has been violated */
+         else
+         {
+            if(*(A + i + j*lda) != tst_val)
+            {
+               fprintf(stderr, "ERROR pos [%d] has been edited and is outside"
+                       " the given parameters for the routine being tstd\n",
+                       i+j*lda);
+               buffer_err++;
+            }
+         }
+      }
+   }
+   return buffer_err;
+}
+
+
+/*this function checks the correct array with the test one and makes note of
+  any inconsitencies*/
+int tst_checkr
+(
+   TYPE *A,            /*this is the good array that is being compared to the 
+                         array of unknown quality*/
+   TYPE *b,            /*this is the array being tsted*/
+   ATL_CSZT sz         /*amount of elements*/
+)
+{
+   int errcount = 0;
+   ATL_SZT i;
+   
+   for(i = 0; i < sz; i++)
+   {
+      if(*(A + i) != *(b + i))
+      {
+         fprintf(stderr, "ERROR pos [%zu] does not match\n",i);
+         fprintf(stderr, "correctarr == %f\n",*(A + i));
+         fprintf(stderr, "tstarr == %f\n\n",*(b + i));
+         errcount++;
+      }
+   }
+
+   return errcount;
+}
+
+void PrintUsage(char *name, int iarg, char *arg)
+{
+    fprintf(stderr, "\nERROR around arg %d (%s).\n", iarg, arg ? arg:"unknown");
+    fprintf(stderr, "USAGE: %s [flags], where flags are:\n", name);
+    fprintf(stderr, "   -m <#> : set number of rows to #\n");
+    fprintf(stderr, "   -n <#> : set number of col's to #\n");
+    fprintf(stderr, "   -s <#> : set sz to #\n");
+    fprintf(stderr, "   -k <#> : set k unrolling to #\n");
+    fprintf(stderr, "   TOBLK=<1/0> : set whether copying into a blk\n");
+    fprintf(stderr, "   CCOPY=<1/0> : set whether performing a c copy\n");
+    fprintf(stderr, "   ISTRANS=<1/0> : set whether a trans is occuring\n");
+    fprintf(stderr, "   BETA=<1/0/X> : set what beta is going to be\n");
+    fprintf(stderr, "   ALPHA=<1/0/X> : set what alpha is going to be\n");
+    exit(iarg ? iarg : -1);
+}
+
+void GetFlags(int nargs, char **args, int *K, int *N, int *SZ)
+{
+   int i; 
+   int ku = 0;
+   int SZchk;
+   double SZchkDouble;
+
+   *K = 0;
+   *N = 0;
+   *SZ = 0;
+   for(i=1; i < nargs; i++)
+   {
+      if(args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch (args[i][1])
+      {
+         case 'm':
+            if(++i >= nargs)
+               PrintUsage(args[0], i, "out of arguements");
+            *K = atoi(args[i]);
+            break;
+         case 'n':
+            if(++i >= nargs)
+               PrintUsage(args[0], i, "out of arguements");
+            *N = atoi(args[i]);
+            break;
+         case 'k':
+            if(++i >= nargs)
+               PrintUsage(args[0], i, "out of arguements");
+            ku = atoi(args[i]);
+            break;
+         case 's':
+            if(++i >= nargs)
+               PrintUsage(args[0], i, "out of arguements");
+            *SZ = atoi(args[i]);
+            break;
+         default:
+            PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if(*K == 0 && *N == 0 && *SZ == 0)
+   {
+      *SZ = 16;
+      *N = 4;
+      *K = 4;
+   }
+   else if(*SZ == 0 && *K != 0 && *N != 0)
+   {
+      *SZ = *K * *N;
+   }
+   else if(*SZ != 0 && *K == 0 && *N == 0)
+   {
+      SZchkDouble = sqrt((double) *SZ);
+      SZchk = SZchkDouble;
+      if(SZchk == SZchkDouble)
+      {
+         *K = SZchk;
+         *N = SZchk;
+      }
+      else
+      {
+         fprintf(stderr,"ERROR: SZ was given as %d but this value is not a "
+                 "perfect square\n and no colomns/rows were specifed so block"
+                 "size is ambiguous.\n", *SZ);
+         exit(0);
+      }
+   }
+   else if(*SZ == *K * *N);
+   else
+   {
+      fprintf(stderr,"ERROR: SZ of block doesnt matchup with number of rows"
+              " and columns\n");
+      exit(0);
+   }
+   if(ku != 0)
+   {
+      *K = (*K / ku) * ku;
+      *SZ = *K * *N;
+   }
+}
+
+void copytest
+(
+   int blk,
+   int transt,
+   int ccopy,
+   int cplx,
+   int K,
+   int N,
+   SCALAR a,
+   SCALAR b,
+   ATL_CSZT SZ,
+   int *chkarray
+)
+{
+      int i, j;
+      TYPE count = 0;
+      TYPE count2 = 65656.56565;
+      ATL_CSZT bufferrange = SZ*8;
+      ATL_CSZT lda = K*3;
+      TYPE bufferval = 12345.54321;
+      TYPE *outarray1, *outarray2;
+      ATL_CSZT lda2 = lda*2;
+
+      /* C2blk || CT2blk */
+      if(blk == 1 && cplx == 0 && ccopy == 1)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
+     
+         for(i=0;i<SZ+bufferrange;i++)
+            tstarray[i] = --count;
+
+         count = 0;
+
+         for(i=K; i < K*2;i++)
+         {
+            for(j=N;j<N*2;j++)
+            {
+               *(tstarray + i + j*lda) = ++count;
+            }
+         }
+
+         TYPE *outarray1 = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
+         
+         count = 0;
+      
+         for(j = 0;j < SZ; j++)
+         {
+            *(outarray1 + j) = count;
+            *(outarray2 + j + bufferrange/2) = count;
+         }
+         for(j=0;j<bufferrange/2;j++)
+         {
+            *(outarray2 + j) = bufferval;
+            *(outarray2 + (SZ + bufferrange - 1) - j) = bufferval;
+         }
+  
+#if !defined TCPLX && CCOPY == 1 && TO_BLK == 1
+         if(transt == 1)
+         {
+            printf("beginning CT2blk\n");
+            ATL_GOODCP(N, K, a, tstarray+(N*lda+K), lda, b, outarray1);
+            ATL_USERCPMM(N, K, a, tstarray+(N*lda+K), lda, b, 
+                         outarray2+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning C2blk\n");
+            ATL_GOODCP(K, N, a, tstarray+(N*lda+K), lda, b, outarray1);
+            ATL_USERCPMM(K, N, a, tstarray+(N*lda+K), lda, b, 
+                         outarray2+bufferrange/2);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2+bufferrange/2, SZ);
+         chkarray[1] = acc_buffercheckr(outarray2, SZ+bufferrange, bufferrange,
+                                        bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* blk2C || blk2CT*/
+      else if(blk == 0 && cplx == 0 && ccopy == 1)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+        
+         for(i=0;i<SZ+bufferrange;i++)
+            tstarray[i] = --count;
+
+         count = 0;
+
+         for(i=0;i<SZ;i++)
+         {
+            *(tstarray + i + bufferrange/2) = ++count;
+         }
+         
+         TYPE *outarray1 = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         
+         count = 0;
+      
+         for(i=K; i < K*2;i++)
+         {
+            for(j=N;j < N*2;j++)
+            {
+               *(outarray1 + i + j*lda) = count;
+               *(outarray2 + i + j*lda) = count;
+            }
+         }
+
+         
+         for(i=0;i<K*3;i++)
+         {
+            for(j=0;j<N*3;j++)
+            {
+               if(i>=K && i<K*2 && j>=N && j<N*2);
+               else
+               {
+                  *(outarray1 + i + j*lda) = bufferval;                 
+                  *(outarray2 + i + j*lda) = bufferval;                 
+               }
+            }
+         }
+
+#if !defined TCPLX && TO_BLK == 0 && CCOPY == 1
+         if(transt == 1)
+         {
+            printf("beginning blk2CT\n");
+            ATL_GOODCP(N, K, a, tstarray+bufferrange/2, b, 
+                       outarray1+(N*lda+K), lda);
+            ATL_USERCPMM(N, K, a, tstarray+bufferrange/2, b, 
+                         outarray2+(N*lda+K), lda);
+         }
+         else
+         {
+            printf("beginning blk2C\n");
+            ATL_GOODCP(K, N, a, tstarray+bufferrange/2, b, outarray1+(N*lda+K),
+                       lda);
+            ATL_USERCPMM(K, N, a, tstarray+bufferrange/2, b, 
+                         outarray2+(N*lda+K), lda);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2, SZ+bufferrange);
+         chkarray[1] = col_buffercheckr(outarray2, K, N, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* AN2blk || AT2blk */
+      if(blk == 1 && cplx == 0 && ccopy == 0)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
+     
+         for(i=0;i<SZ+bufferrange;i++)
+            tstarray[i] = --count;
+
+         count = 0;
+
+         for(i=K; i < K*2;i++)
+            for(j=N;j<N*2;j++)
+               *(tstarray + i + j*lda) = ++count;
+
+         TYPE *outarray1 = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ+bufferrange) * sizeof(TYPE));
+         
+         count = 0;
+      
+         for(j = 0;j < SZ; j++)
+         {
+            *(outarray1 + j) = count;
+            *(outarray2 + j + bufferrange/2) = count2;
+         }
+         for(j=0;j<bufferrange/2;j++)
+         {
+            *(outarray2 + j) = bufferval;
+            *(outarray2 + (SZ + bufferrange - 1) - j) = bufferval;
+         }
+  
+#if !defined TCPLX && CCOPY == 0
+         if(transt == 1)
+         {
+            printf("beginning AT2blk\n");
+            ATL_GOODCP(N, K, a, tstarray+(N*lda+K), lda, outarray1);
+            ATL_USERCPMM(N, K, a, tstarray+(N*lda+K), lda, 
+                         outarray2+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning AN2blk\n");
+            ATL_GOODCP(K, N, a, tstarray+(N*lda+K), lda, outarray1);
+            ATL_USERCPMM(K, N, a, tstarray+(N*lda+K), lda, 
+                         outarray2+bufferrange/2);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2+bufferrange/2, SZ);
+         chkarray[1] = acc_buffercheckr(outarray2, SZ+bufferrange, bufferrange,
+                                        bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* blk2AN || blk2AT*/
+      else if(blk == 0 && cplx == 0 && ccopy == 0)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+        
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=0;i<SZ;i++)
+         {
+            *(tstarray + i + bufferrange/2) = ++count;
+         }
+         
+         TYPE *outarray1 = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         
+         count = 0;
+      
+         for(i=K; i < K*2;i++)
+         {
+            for(j=N;j < N*2;j++)
+            {
+               *(outarray1 + i + j*lda) = count;
+               *(outarray2 + i + j*lda) = count2;
+            }
+         }
+
+         
+         for(i=0;i<K*3;i++)
+         {
+            for(j=0;j<N*3;j++)
+            {
+               if(i>=K && i<K*2 && j>=N && j<N*2);
+               else
+               {
+                  *(outarray1 + i + j*lda) = bufferval;                 
+                  *(outarray2 + i + j*lda) = bufferval;                 
+               }
+            }
+         }
+
+#if !defined TCPLX && CCOPY == 0
+         if(transt == 1)
+         {
+            printf("beginning blk2AT\n");
+            ATL_GOODCP(N, K, a, outarray1+(N*lda+K), lda, 
+                       tstarray+bufferrange/2);
+            ATL_USERCPMM(N, K, a, outarray2+(N*lda+K), lda, 
+                         tstarray+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning blk2AN\n");
+            ATL_GOODCP(K, N, a, outarray1+(N*lda+K), lda, 
+                       tstarray+bufferrange/2);
+            ATL_USERCPMM(K, N, a, outarray2+(N*lda+K), lda, 
+                         tstarray+bufferrange/2);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2, SZ+bufferrange);
+         chkarray[1] = col_buffercheckr(outarray2, K, N, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* cAN2blk || cAT2blk */
+      else if(blk == 1 && cplx == 1 && ccopy == 0)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * 2 * sizeof(TYPE));
+
+         for(i=0;i< (SZ+bufferrange) * 2;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=K*2;i<K*4;i++)
+         {
+            for(j=N;j<N*2;j++)
+            {
+               *(tstarray + i + j*lda2) = ++count;
+            }
+         }
+
+         TYPE *outarray1i = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2i = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *outarray1r = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2r = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+   
+         count = 0;
+      
+         for(j = 0;j < SZ; j++)
+         {
+            *(outarray1r + j) = count;
+            *(outarray1i + j) = count;
+            *(outarray2r + j + bufferrange/2) = count2;
+            *(outarray2i + j + bufferrange/2) = count2;
+         }
+
+         for(j=0;j<bufferrange/2;j++)
+         {
+            *(outarray2r + j) = bufferval;
+            *(outarray2r + (SZ + bufferrange - 1) - j) = bufferval;
+            *(outarray2i + j) = bufferval;
+            *(outarray2i + (SZ + bufferrange - 1) - j) = bufferval;
+         }
+
+#if defined TCPLX && CCOPY == 0
+         if(transt == 1)
+         {
+            printf("beginning cAT2blk\n");
+            ATL_GOODCP(N, K, a, tstarray+(N*lda2+K*2), lda, outarray1r, 
+                       outarray1i);
+            ATL_USERCPMM(N, K, a, tstarray+(N*lda2+K*2), lda, 
+                         outarray2r+bufferrange/2, outarray2i+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning cAN2blk\n");
+            ATL_GOODCP(K, N, a, tstarray+(N*lda2+K*2), lda, outarray1r, 
+                       outarray1i);
+            ATL_USERCPMM(K, N, a, tstarray+(N*lda2+K*2), lda, 
+                         outarray2r+bufferrange/2, outarray2i+bufferrange/2);
+         }
+
+         chkarray[0] = tst_checkr(outarray1r, outarray2r+bufferrange/2, SZ);
+         chkarray[1] = acc_buffercheckr(outarray2r, SZ+bufferrange, bufferrange,
+                                        bufferval);
+         
+         chkarray[0] += tst_checkr(outarray1i, outarray2i+bufferrange/2, SZ);
+         chkarray[1] += acc_buffercheckr(outarray2i, SZ+bufferrange, 
+                                         bufferrange, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1i);
+         free(outarray1r);
+         free(outarray2r);
+         free(outarray2i);
+      }
+      /* cblk2AN || cblk2AT */
+      else if(blk == 0 && cplx == 1 && ccopy == 0)
+      {
+         TYPE *tstarrayi = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *tstarrayr = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarrayi + i) = --count;
+            *(tstarrayr + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=0;i<SZ;i++)
+         {
+            *(tstarrayi + i + bufferrange/2) = ++count;
+            *(tstarrayr + i + bufferrange/2) = ++count;
+         }
+
+         TYPE *outarray1 = (TYPE *)malloc((SZ + bufferrange)*2*sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ + bufferrange)*2*sizeof(TYPE));
+         assert(outarray1 && outarray2);
+         
+         count = 0;
+      
+         for(i=K*2; i < K*4;i++)
+         {
+            for(j=N;j < N*2;j++)
+            {
+               *(outarray1 + i + j*lda2) = count;
+               *(outarray2 + i + j*lda2) = count2;
+            }
+         }
+
+         
+         for(i=0;i<K*6;i++)
+         {
+            for(j=0;j<N*3;j++)
+            {
+               if(i>=K*2 && i<K*4 && j>=N && j<N*2);
+               else
+               {
+                  *(outarray1 + i + j*lda2) = bufferval;                 
+                  *(outarray2 + i + j*lda2) = bufferval;                 
+               }
+            }
+         }
+         
+      
+#if defined TCPLX && CCOPY == 0
+         if(transt == 1)
+         {
+            printf("beginning cblk2AT\n");
+            ATL_GOODCP(N, K, a, outarray1+N*lda2+K*2, lda, 
+                       tstarrayr+bufferrange/2, tstarrayi+bufferrange/2);
+            ATL_USERCPMM(N, K, a, outarray2+N*lda2+K*2, lda, 
+                         tstarrayr+bufferrange/2, tstarrayi+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning cblk2AN\n");
+            ATL_GOODCP(K, N, a, outarray1+N*lda2+K*2, lda, 
+                       tstarrayr+bufferrange/2, tstarrayi+bufferrange/2);
+            ATL_USERCPMM(K, N, a, outarray2+N*lda2+K*2, lda, 
+                         tstarrayr+bufferrange/2, tstarrayi+bufferrange/2);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2, SZ+bufferrange);
+         chkarray[1] = col_buffercheckr(outarray2, K*2, N, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarrayr);
+         free(tstarrayi);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      /* cC2blk || cCT2blk */
+      else if(blk == 1 && cplx == 1 && ccopy == 1)
+      {
+         TYPE *tstarray = (TYPE *)malloc((SZ+bufferrange) * 2 * sizeof(TYPE));
+
+         for(i=0;i< (SZ+bufferrange) * 2;i++)
+         {
+            *(tstarray + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=K*2;i<K*4;i++)
+         {
+            for(j=N;j<N*2;j++)
+            {
+
+               *(tstarray + i + j*lda2) = ++count;
+            }
+         }
+
+         TYPE *outarray1i = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2i = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *outarray1r = (TYPE *)malloc(SZ * sizeof(TYPE));
+         TYPE *outarray2r = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+   
+         count = 0;
+      
+         for(j = 0;j < SZ; j++)
+         {
+            *(outarray1r + j) = count;
+            *(outarray1i + j) = count;
+            *(outarray2r + j + bufferrange/2) = count;
+            *(outarray2i + j + bufferrange/2) = count;
+         }
+
+         for(j=0;j<bufferrange/2;j++)
+         {
+            *(outarray2r + j) = bufferval;
+            *(outarray2r + (SZ + bufferrange - 1) - j) = bufferval;
+            *(outarray2i + j) = bufferval;
+            *(outarray2i + (SZ + bufferrange - 1) - j) = bufferval;
+         }
+
+#if defined TCPLX && CCOPY == 1 && TO_BLK == 1
+   
+         if(transt == 1)
+         {
+            printf("beginning cCT2blk\n");
+            ATL_GOODCP(N, K, a, tstarray+(N*lda2+K*2), lda, b, outarray1r, 
+                       outarray1i);
+            ATL_USERCPMM(N, K, a, tstarray+(N*lda2+K*2), lda, b, 
+                         outarray2r+bufferrange/2, outarray2i+bufferrange/2);
+         }
+         else
+         {
+            printf("beginning cC2blk\n");
+            ATL_GOODCP(K, N, a, tstarray+(N*lda2+K*2), lda, b, outarray1r, 
+                       outarray1i);
+            ATL_USERCPMM(K, N, a, tstarray+(N*lda2+K*2), lda, b, 
+                         outarray2r+bufferrange/2, outarray2i+bufferrange/2);
+         }
+
+         chkarray[0] = tst_checkr(outarray1r, outarray2r+bufferrange/2, SZ);
+         chkarray[1] = acc_buffercheckr(outarray2r, SZ+bufferrange, 
+                                        bufferrange, bufferval);
+         
+         chkarray[0] += tst_checkr(outarray1i, outarray2i+bufferrange/2, SZ);
+         chkarray[1] += acc_buffercheckr(outarray2i, SZ+bufferrange, 
+                                         bufferrange, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarray);
+         free(outarray1i);
+         free(outarray1r);
+         free(outarray2r);
+         free(outarray2i);
+      }
+      /* cblk2C || cblk2CT */
+      else if(blk == 0 && cplx == 1 && ccopy == 1)
+      {
+         TYPE *tstarrayi = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+         TYPE *tstarrayr = (TYPE *)malloc((SZ + bufferrange) * sizeof(TYPE));
+
+         for(i=0;i<SZ+bufferrange;i++)
+         {
+            *(tstarrayi + i) = --count;
+            *(tstarrayr + i) = --count;
+         }
+
+         count = 0;
+
+         for(i=0;i<SZ;i++)
+         {
+            *(tstarrayi + i + bufferrange/2) = ++count;
+            *(tstarrayr + i + bufferrange/2) = ++count;
+         }
+
+         TYPE *outarray1 = (TYPE *)malloc((SZ + bufferrange)*2*sizeof(TYPE));
+         TYPE *outarray2 = (TYPE *)malloc((SZ + bufferrange)*2*sizeof(TYPE));
+         assert(outarray1 && outarray2);
+         
+         count = 0;
+      
+         for(i=K*2; i < K*4;i++)
+         {
+            for(j=N;j < N*2;j++)
+            {
+               *(outarray1 + i + j*lda2) = count;
+               *(outarray2 + i + j*lda2) = count;
+            }
+         }
+
+         
+         for(i=0;i<K*6;i++)
+         {
+            for(j=0;j<N*3;j++)
+            {
+               if(i>=K*2 && i<K*4 && j>=N && j<N*2);
+               else
+               {
+                  *(outarray1 + i + j*lda2) = bufferval;                 
+                  *(outarray2 + i + j*lda2) = bufferval;                 
+               }
+            }
+         }
+         
+      
+#if defined TCPLX && CCOPY == 1 && TO_BLK == 0
+         if(transt == 1)
+         {
+            printf("beginning cblk2CT\n");
+            ATL_GOODCP(N, K, a, tstarrayr+bufferrange/2, 
+                       tstarrayi+bufferrange/2, b, outarray1+N*lda2+K*2, lda);
+            ATL_USERCPMM(N, K, a, tstarrayr+bufferrange/2, 
+                         tstarrayi+bufferrange/2, b, outarray2+N*lda2+K*2, lda);
+         }
+         else
+         {
+            printf("beginning cblk2C\n");
+            ATL_GOODCP(K, N, a, tstarrayr+bufferrange/2, 
+                       tstarrayi+bufferrange/2, b, outarray1+N*lda2+K*2, lda);
+            ATL_USERCPMM(K, N, a, tstarrayr+bufferrange/2, 
+                         tstarrayi+bufferrange/2, b, outarray2+N*lda2+K*2, lda);
+         }
+         chkarray[0] = tst_checkr(outarray1, outarray2, SZ+bufferrange);
+         chkarray[1] = col_buffercheckr(outarray2, K*2, N, bufferval);
+#else
+         chkarray[0] = -1;
+#endif
+         free(tstarrayr);
+         free(tstarrayi);
+         free(outarray1);
+         free(outarray2);
+         return;
+      }
+      else
+      {
+         chkarray[0] = -1;
+         return;
+      }
+}
+
+int main (int nargs, char **args)
+{
+   int i, j, count = 0;
+
+   /* 
+    * The first val in this array will hold the number of incorrectly copied
+    * vals the second val will hold the number of buffer violations 
+    */
+   int chkarray[2] = {0,0};
+   int blk = 0, transt = 0, cplx = 0, ccopy = 0;
+   int K, N, SZ; 
+
+   SCALAR a;
+   SCALAR b;
+
+   GetFlags(nargs, args, &K, &N, &SZ);
+   
+   /* compile time flags will determine these runtime flags for what form of 
+   copytest is occurring */
+#if TO_BLK == 1
+      blk = 1;
+#endif
+
+#if CCOPY == 1 
+      ccopy = 1;
+#endif
+
+#ifdef TRANST_
+      transt = 1;
+#endif
+
+   /* complex copytest takes alpha and beta as an array of 2 values each so 
+      need to malloc, otherwise just treat as scalar */
+#if IS_CPLX == 1
+      cplx = 1;
+      a = (TYPE *)malloc(2 * sizeof(TYPE));
+      b = (TYPE *)malloc(2 * sizeof(TYPE));
+      a[0] = alpha;
+      a[1] = alpha;
+      b[0] = beta;
+      b[1] = beta;
+#else
+      a = alpha;
+      b = beta;
+#endif
+
+   copytest(blk,transt,ccopy,cplx,K,N,a,b,SZ,chkarray);
+
+   /* this is just a check that will occur if theres a combination of 
+      compile time flags that arent accounted for */
+   if(chkarray[0] == -1)
+   {
+      fprintf(stderr,"ERROR NO TESTING DONE, this is probably caused by a "
+                     "compile time flag issue \n");
+   }
+   else if(chkarray[0] == 0 && chkarray[1] == 0)
+      fprintf(stderr,"tst passed, both output blocks match and the buffer"
+              "was not over-written!\n");
+   else
+   {
+      fprintf(stderr,"tst failed, %d incorrectly copied position errors\n", 
+              chkarray[0]);
+      fprintf(stderr,"the tested copy routine wrote past the given size %d"
+              " times\n", chkarray[1]);
+   }
+#if IS_CPLX == 1
+   free(a);
+   free(b);
+#endif
+}
 @ROUT storage.idx scopy.idx dcopy.idx ccopy.idx zcopy.idx
 #
 # In this file, any line beginning with a '#' is ignored, but the # must be in
@@ -61,9 +1960,9 @@
 #         0: copies from STGID block storage to column-major
 #         1: copies from column-major to STGID block storage
 # MU/NU: [0] unrolling along 1st & 2nd dim (MU=KU for A/B!);
-# TRANS: [n] Needed only for A/B storage, indicates transpose being done:
-#    N: cols of matrix stored contiguously, rows strided (col-major)
-#    T: rows of matrix stored contiguously, cols strided (row-major)
+# TRANS: [0] Needed only for A/B storage, indicates transpose being done:
+#    0: cols of matrix stored contiguously, rows strided (col-major)
+#    1: rows of matrix stored contiguously, cols strided (row-major)
 # ALPHA: mandatory.  What alpha cases handled by kern.  For A/B, full list
 #        is 1,N,X, for C it is 0,1,N,X.
 # BETA: mandatory for C ignored for A/B.  Full list is 0,1,N,X.
@@ -88,8 +1987,9 @@
 @ROUT dcopy.idx zcopy.idx 
 @define VL @4@
 @ROUT scopy.idx dcopy.idx
-ID=1 STGID=0 CBLK=1 TOBLK=0 MU=3 NU=3 KVEC=@(VL) VLEN=@(VL) SYRK=1@(TP) \
-     ALPHA=1,N,X BETA=0,N,1,X ROUT='ATL_skblk2C3x3.c' AUTH='R. Clint Whaley'
+# This routine doesn't work for non-aligned C, and perf not good enough to fix
+#ID=1 STGID=0 CBLK=1 TOBLK=0 MU=3 NU=3 KVEC=@(VL) VLEN=@(VL) SYRK=1@(TP) \
+#     ALPHA=1,N,X BETA=0,N,1,X ROUT='ATL_skblk2C3x3.c' AUTH='R. Clint Whaley'
 ID=2 STGID=0 TOBLK=1 MU=1 NU=4 VLEN=4 ALPHA=1,N,X@(TP) \
      ROUT='ATL_cpAN2blk4_avx2.c' AUTH='R. Clint Whaley'
 ID=3 STGID=0 TOBLK=1 MU=1 NU=12 VLEN=4 ALPHA=1,N,X@(TP) \
@@ -192,18 +2092,20 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags:\n", name);
 @skip   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -u <ucase.idx>: (none) user cases to try\n");
    fprintf(stderr, "   -i <cpyin.CPS>: (stdin) list of copy to search\n");
    fprintf(stderr, "   -o <cpyout.CPS>: (stdout) fastest copy kernels\n");
 @skip   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    exit(ierr ? ierr : -1);
 }
 
-ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
+ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT, 
+                       ATL_cpnode_t **UB)
 /*
  * RETURNS: list of all kerns/blk factors to tune copies for
  */
 {
-   ATL_cpnode_t *cb=NULL, *cp;
+   ATL_cpnode_t *cb=NULL, *cp, *ub=NULL;
    int i;
 
    *VERB = 0;
@@ -215,6 +2117,11 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
 
       switch(args[i][1])
       {
+      case 'u':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        ub = ReadCPFile(args[i]);
+        break;
       case 'i':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -232,6 +2139,7 @@ ATL_cpnode_t *GetFlags(int nargs, char **args, int *VERB, char **FOUT)
    }
    if (!cb)
       cb = ReadCPFile(NULL);
+   *UB = ub;
    return(cb);
 }
 
@@ -278,13 +2186,12 @@ ATL_cpnode_t *GetWorkingKerns(char pre, int verb, ATL_cpnode_t *cb)
 }
 
 ATL_cpnode_t *DoHandTimings
-   (char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
+   (char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb, ATL_cpnode_t *hb)
 {
-   ATL_cpnode_t *hb, *cp, *hp, *HB=NULL;
+   ATL_cpnode_t *cp, *hp, *HB=NULL;
    unsigned long nrep;
 
 
-   hb = GetWorkingKerns(pre, verb, cb);
    if (!hb)
    {
       printf("NO USER-SUPPLIED COPY ROUTINES!\n");
@@ -305,7 +2212,7 @@ ATL_cpnode_t *DoHandTimings
 /*
  *    Try any hand-tuned cases that work
  */
-      hp = FindEquivCopy_ab(hb, cp);
+      hp = FindEquivUserCopy(hb, cp);
       if (hp)
       {
          printf("   TIMINGS B=(%d,%d), U=(%d,%d) TA=%c, reps=%lu:\n", 
@@ -330,7 +2237,7 @@ ATL_cpnode_t *DoHandTimings
             }
             hp = hp->next;
          }
-         while( (hp = FindEquivCopy_ab(hp, cp)) );
+         while( (hp = FindEquivUserCopy(hp, cp)) );
          printf("   DONE\n");
       }
       if (!np)
@@ -443,7 +2350,8 @@ void DoGenTimings(char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
 }
 
 void DoTimings
-   (char *fnam, char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb)
+   (char *fnam, char pre, int verb, unsigned long rep4, ATL_cpnode_t *cb, 
+    ATL_cpnode_t *ub)
 {
    ATL_cpnode_t *cp, *fb;
 
@@ -454,7 +2362,7 @@ void DoTimings
       return;
    }
    DoGenTimings(pre, verb, rep4, cb);
-   fb = DoHandTimings(pre, verb, rep4, cb);
+   fb = DoHandTimings(pre, verb, rep4, cb, ub);
    if (!fb)
       fb = cb;
    for (cp=fb; cp; cp=cp->next)
@@ -525,17 +2433,17 @@ int main(int nargs, char **args)
  * (3) User-contributed cases
  */
 {
-   ATL_cpnode_t *cb, *cp, *cb0;
+   ATL_cpnode_t *cb, *cp, *cb0, *ub;
    char *fout;
    unsigned long nrep;
    char pre;
    int verb, minSz, ialp, ibet=0;
    unsigned int flag;
 
-   cb = GetFlags(nargs, args, &verb, &fout);
+   cb = GetFlags(nargs, args, &verb, &fout, &ub);
    pre = CopyGetPre(cb->flag);
    nrep = GetReps4x4(verb, 0.10);
-   DoTimings(fout, pre, verb, nrep, cb);
+   DoTimings(fout, pre, verb, nrep, cb, ub);
 
    KillAllCPNodes(cb);
    return(0);
@@ -640,7 +2548,15 @@ void GenCopy(ATL_cpnode_t *cb, char *path)
            "#ifdef SREAL\n   #undef SREAL\n#endif\n"
            "#ifdef DREAL\n   #undef DREAL\n#endif\n"
            "#ifdef SCPLX\n   #undef SCPLX\n#endif\n"
-           "#ifdef DCPLX\n   #undef DCPLX\n#endif\n";
+           "#ifdef DCPLX\n   #undef DCPLX\n#endif\n" 
+           "#ifdef ALPHA1\n  #undef ALPHA1\n#endif\n" 
+           "#ifdef ALPHAN\n  #undef ALPHAN\n#endif\n" 
+           "#ifdef ALPHAN1\n  #undef ALPHAN1\n#endif\n" 
+           "#ifdef ALPHAX\n  #undef ALPHAX\n#endif\n" 
+           "#ifdef BETA1\n  #undef BETA1\n#endif\n" 
+           "#ifdef BETAN\n  #undef BETAN\n#endif\n" 
+           "#ifdef BETAN1\n  #undef BETAN1\n#endif\n" 
+           "#ifdef BETAX\n  #undef BETAX\n#endif\n";
    if (pre == 'z')
       typs = "#define DCPLX 1\n#define TYPE double\n#define SCALAR TYPE*\n";
    else if (pre == 'c')
@@ -698,9 +2614,17 @@ void GenCopy(ATL_cpnode_t *cb, char *path)
       fprintf(fp, untyp);
       fprintf(fp, typs);
       if (cp->flag&(1<<CPF_CBLK))
+      {
+         fprintf(fp, "#define BETA%c\n", cbet);
+         if (cbet == 'N')
+            fprintf(fp, "#define BETAN1 1\n");
          fprintf(fp, "#define ATL_MU %u\n#define ATL_NU %u\n", cp->mu, cp->nu);
+      }
       else
          fprintf(fp, "#define ATL_NU %u\n", cp->nu);
+      fprintf(fp, "#define ALPHA%c 1\n", calp);
+      if (calp == 'N')
+         fprintf(fp, "#define ALPHAN1 1\n");
       fprintf(fp, "#define ATL_USERCPMM %s\n", nam);
       if (!(cp->flag&(1<<CPF_REAL)) && !(cp->flag&(1<<CPF_CBLK)))
       {  /* if complex A/B copy, need conj_! */
@@ -909,13 +2833,17 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -o /path : specify directory to generate into\n");
 @ROUT cphgen printView
    fprintf(stderr,
-   "   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F S=A,C,M,U <name> mmview.sum:\n");
+"   -V [C,A]a=1,N,X Cb=0,1,N,X [A,C]d=I,F K=0,1 S=A,C,M,U <name> mmview.sum:\n"
+          );
    fprintf(stderr, 
 "      If args to left of = are omitted, these vals don't appear in the view.\n"
 "      Args to right of = may be omitted, which means all values are set.\n"
 "      <name> and <mmview> must appear in that order.\n"
 "      A/Cd=[I,F]: copy Into or From col-major (I,F means both directions).\n"
 "      A/Ca/b give the list of needed alpha/beta for that matrix copy.\n"
+"      K : change how K-cleanup is done, default 1:\n"
+"          0: Kerns self-clean, so no padding if kbB%ku == 0, else ku-pad\n"
+"          1: Kernels use other kernels for K-cleanup.\n"
 "      S=A,C,M,U: don't store [A,C] copyI, matmulI, or unrollings, resp.\n"
 "      Suppressed copies will still be added to master list, just not in view\n"
 "      <name> is a unique string that will be used in all header files.\n"
@@ -954,11 +2882,11 @@ ATL_view_t *GetFlags(int nargs, char **args, char *PRE, char **PTH)
          pth = DupString(args[i]);
          break;
 @ROUT cphgen readView
-      case 'V':           /* -V C/Aa=1,N,X Cb=0,1,N,X C/Ad=I,F S=A,C,M,U */
+      case 'V':    /* -V C/Aa=1,N,X Cb=0,1,N,X C/Ad=I,F K=[0,1] S=A,C,M,U */
          if (++i >= nargs)/*    <name> mmview.sum */
             PrintUsage(args[0], i-1, NULL);
          flag = 0;
-         for (k=0; k < 6; k++)
+         for (k=0; k < 7; k++)
          {
             char mt, wt;
             int st;
@@ -990,6 +2918,17 @@ ATL_view_t *GetFlags(int nargs, char **args, char *PRE, char **PTH)
                   cp++;
                }
                while(*cp == ',');
+            }
+            else if (mt == 'K')
+            {
+               char *cp = args[i] + 1;
+               assert(*cp == '=');
+               if (cp[1] == '0')
+                  flag |= 1<<CPV_SELFK;
+               else if (cp[1] == '1')
+                  flag &= ~(1<<CPV_SELFK);
+               else
+                  PrintUsage(args[0], i-1, NULL);
             }
             else if (mt != 'C' && mt != 'A')
                break;
@@ -1140,6 +3079,7 @@ void GenHead
    fclose(fpd);
 }
 
+@BEGINSKIP
 void GenAllCHeadDir(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
                     ATL_cpnode_t *CB)
 {
@@ -1270,6 +3210,7 @@ void GenAllAHeadDir(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
    }
    free(tnam);
 }
+@ENDSKIP
 
 int *ReadMasterIdx(char pre, int *N)
 {
@@ -1324,7 +3265,7 @@ void DoMaster(char pre, FILE *fp, ATL_cpnode_t *cb)
       if (sizeof(imf) > sizeof(int))
          fprintf(fp, "0x%lxL", imf);
       else
-         fprintf(fp, "0x%x", imf);
+         fprintf(fp, "0x%x", (int)imf);
       fprintf(fp, "/*%u:%.3e*/", i, (float)mf);
       sp = ",\n";
    }
@@ -1411,7 +3352,8 @@ unsigned int MMIdxCount(ATL_mmnode_t *mb, ATL_mmnode_t *want)
    return(0);
 }
 
-void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
+void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
+                 ATL_mmnode_t *ML)
 {
    ATL_mmnode_t *mp, *MB, *maxPerf=NULL;
    FILE *fpout;
@@ -1561,7 +3503,7 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb)
                fprintf(stderr, "Missing or empty file '%s'\n", fn);
                assert(cb);
             }
-            cpidxs[i] = MMGetCopyIdxsFromList(flag, mb, cb);
+            cpidxs[i] = MMGetCopyIdxsFromList(flag, mb, cb, ML);
             KillAllCPNodes(cb);
             assert(cpidxs[i]);
             assert(cpidxs[i][0] == N);
@@ -2036,17 +3978,27 @@ int main(int nargs, char **args)
 {
    ATL_view_t *vb, *vp;
    char *path, *nm;
-   char pre, dir;
+   char pre, dir, upr;
    ATL_cpnode_t *cb;
+   ATL_mmnode_t *ML;
 
    vb = GetFlags(nargs, args, &pre, &path);
+   if (pre == 'c')
+      upr = 's';
+   else if (pre == 'z')
+      upr = 'd';
+   else
+      upr = pre;
+   ML = ReadMMFileWithPath(upr, "res", "FNLK1.sum");
+   assert(ML);
+
    GenMasterFiles(pre, path);
    cb = ReadCPFileWithPath(pre, "res", "cpyPERF.CPS");
    for (vp=vb; vp; vp = vp->next)
    {
       ATL_mmnode_t *mb;
       mb = ReadMMFile(vp->fnam);
-      GenViewFile(pre, path, vp, mb);
+      GenViewFile(pre, path, vp, mb, (vp->flag & (1<<CPV_SELFK)) ? NULL : ML);
 @skip      GenAllCHeadDir(pre, path, vp, mb, cb);
 @skip      GenAllAHeadDir(pre, path, vp, mb, cb);
       KillAllMMNodes(mb);
@@ -2054,6 +4006,7 @@ int main(int nargs, char **args)
 
    KillAllViews(vb);
    KillAllCPNodes(cb);
+   KillAllMMNodes(ML);
    free(path);
    return(0);
 }
@@ -2063,8 +4016,18 @@ int main(int nargs, char **args)
 void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
 {
    int d;
-
    ATL_cpnode_t *cb=NULL, *cbC=NULL, *cp;
+   ATL_mmnode_t *ML;
+   char upr;
+
+   if (pre == 'c')
+      upr = 's';
+   else if (pre == 'z')
+      upr = 'd';
+   else
+      upr = pre;
+   ML = ReadMMFileWithPath(upr, "res", "FNLK1.sum");
+   assert(ML);
    for (d=0; d < 2; d++)  /* 0: M2BLK, 1: BLK2M */
    {
       int a;
@@ -2076,6 +4039,7 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
             const int vflg=vp->flag;
             int flg;
             int b;
+            ATL_mmnode_t *MLV = (vp->flag & (1<<CPV_SELFK)) ? NULL : ML;
 
             flg = (d) ? 0 : (1<<CPF_TOBLK);
             flg |= 1<<(CPF_AL1+a);
@@ -2098,13 +4062,13 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
                   fprintf(stderr, "NO KERNS FROM VIEW FILE '%s'!\n", vp->fnam);
                   assert(mb);
                }
-               bb = GetAllCopyNodesFromMM(flg, mb);
+               bb = GetAllCopyNodesFromMM(flg, mb, MLV);
                if (bb)
                {
                   cp = ATL_LastCPNode(bb);
                   cp->next = cb;
                   cb = bb;
-                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb);
+                  bb = GetAllCopyNodesFromMM(flg|(1<<CPF_ABLK), mb, MLV);
                   cp = ATL_LastCPNode(bb);
                   cp->next = cb;
                   cb = bb;
@@ -2127,7 +4091,7 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
                   ATL_cpnode_t *bb;
                   mb = ReadMMFile(vp->fnam);
                   assert(mb);
-                  bb = GetAllCopyNodesFromMM(flg, mb);
+                  bb = GetAllCopyNodesFromMM(flg, mb, MLV);
                   if (bb)
                   {
                      cp = ATL_LastCPNode(bb);
@@ -2235,6 +4199,7 @@ void GetAllCopy(char pre, ATL_view_t *vb, int minSz)
       printf("CREATED NEW res/%ccpylst.CPS!\n\n", pre);
    }
    KillAllCPNodes(cb);
+   KillAllMMNodes(ML);
 }
 
 void PrintUsage(char *name, int ierr, char *flag)

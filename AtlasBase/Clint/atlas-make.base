@@ -2370,7 +2370,9 @@ regs = 32
 nb = 28
 mmrout=JIKNBmm
 ID=25
-TOBLK=0
+TO_BLK=0
+TRANS=0
+szb=0
 
 pre = d
 muladd = 1
@@ -2423,7 +2425,7 @@ knam=ATL_USERCPMM
 @whiledef iv szExtra
 @(iv)=0
 @endwhile
-FMF=750.0
+FMF=2000.0
 FMFS=-R $(FMF)
 NRF=-1  # change to -2 to get unconstrained MB
 blk2C=def
@@ -2468,16 +2470,17 @@ x@(rout) : $(INCAdir)/atlas_type.h @(rout).o @(dep) $(parsedeps)
 help :
 	@@echo "SEE ALSO: make cpyhelp"
 	@@echo "flags for amm kerns preMCFLAGS='', else preKCFLAGS=''\n"
-	@@echo "make PREcpytime kfnam=FILENAME mu=X nu=X knam=ROUTINE_NAME ta=[N,T] betan=[X,1,n] TOBLK=[0,1]"
-	@@echo "-->can take MTXD '-D M lda N COLWISE'\n"
-	@@echo "make PREcpytest TO_BLK=[0,1] CPM=[C,A] [CNJ=-DConj_=1] sz=<bsz> alphan=[1,N,X] betan=[0,1,N,X] kfnam=<cp2test> cpgood=<good cp>"
-	@@echo "make PREammmcpytst [blk2C=rt] [CM2blk=rt] mu= nu= alpha= beta= vlen="
-	@@echo "make xPREammtime_pt mmrout=FILENAME mu=X nu=X ku=X mb=X nb=X kb=X M=X N=X K=X\n"
 	@@echo "make PREammmtst mu=X nu=X M=X N=X K=X kvec=<0/VL> mmrout=<FILE>\n"
 	@@echo "make gen_amm_[sse,avx,gvec,scalar] mu=X nu=X vlen=VL kmaj=VL rt=FILE\n"
 	@@echo "make gen_amsyrk rt= pre= vec=[no,kdim,mdim] mu= nu= ku= bcast="
 
 cpyhelp :
+	@@echo "make PREcopytest kfnam=FILENAME UR=X ku=X kmaj=[0,VLEN] alpha=[0,1,-1,2] beta=[0,1,-1,2] TOBLK=[0,1] TRANS=0,1 [CNJ='-DConj_=1']"
+	@@echo "make PREcpytime kfnam=FILENAME mu=X nu=X knam=ROUTINE_NAME ta=[N,T] betan=[X,1,n] TOBLK=[0,1]"
+	@@echo "-->can take MTXD '-D M lda N COLWISE'\n"
+	@@echo "make PREcpytest TRANS=[0,1] TO_BLK=[0,1] CPM=[C,A] [CNJ=-DConj_=1] sz=<bsz> alphan=[1,N,X] betan=[0,1,N,X] [CNJ="-DConj_=1" kfnam=<cp2test> cpgood=<good cp>"
+	@@echo "make PREammmcpytst [blk2C=rt] [CM2blk=rt] mu= nu= alpha= beta= vlen="
+	@@echo "make xPREammtime_pt mmrout=FILENAME mu=X nu=X ku=X mb=X nb=X kb=X M=X N=X K=X\n"
 	@@echo "make gen_[sy,]blk2C rt= pre= vlen= mu= nu= cpvlen= beta= alpha="
 	@@echo "make gen_[sy,]C2blk rt= pre= vlen= mu= nu= cpvlen= beta= alpha="
 	@@echo "make gen_A[T,N]2blk rt= kmaj= UR= alpha="
@@ -2625,7 +2628,7 @@ ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c : $(basf) force_build
 @endwhile
 xprefparse : $(mySRCdir)/prefparse.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/prefparse.c
-@whiledef rt cpygen cphgen cpyfvw
+@whiledef rt cpygen cphgen cpyfvw ucpytest
 x@(rt) :  $(mySRCdir)/@(rt).c $(parsedeps) $(INCSdir)/atlas_mmgen.h
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/@(rt).c -lm
 @endwhile
@@ -2765,26 +2768,29 @@ res/@(pre)@(rt) : xgmmsearch
 # Viewf must be kept coherent with views for dep checks to work: it is just
 # all files read in from views.
 @declare "viewf=" y n 
-   @whiledef vf ipgen ipdMN AMSYRKFNL opmek opnek opFNL
+   @whiledef vf ipgen ipmen AMSYRKFNL opmek opnek opFNL
       res/@(pre)@(vf).sum
    @endwhile
 @enddeclare
 @ENDSKIP
 @(pre)views=-V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipgen res/@(pre)ipgen.sum \
-    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipdmn res/@(pre)ipdMN.sum \
-    -V Ad=F Aa=1 S=C,M,U syrk res/@(pre)gAMSYRK.sum \
-    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X opmek res/@(pre)opmek.sum \
-    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X opnek res/@(pre)opnek.sum \
-    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X opgen res/@(pre)opFNL.sum 
-res/@(pre)cpylst.CPS : xcpyfvw force_build
+    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipmen res/@(pre)ipmen.sum \
+    -V Ad=F Aa=1 S=C,M,U K=0 syrk res/@(pre)SYRKFNL.sum \
+    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X K=0 opmek res/@(pre)opmek.sum \
+    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X K=0 opnek res/@(pre)opnek.sum \
+    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X K=0 opgen res/@(pre)opFNL.sum 
+res/@(pre)cpylst.CPS : xcpyfvw force_build res/@(upr)FNLK1.sum
 	./xcpyfvw -z $(minsz) -p @(pre) $(@(pre)views)
-res/@(pre)cpyPERF.CPS : res/@(pre)cpylst.CPS xcpysearch
-	./xcpysearch -i res/@(pre)cpylst.CPS -o res/@(pre)cpyPERF.CPS
+res/@(pre)CPYWORK.sum : CPYCASES/@(pre)copy.idx xucpytest
+	./xucpytest -i CPYCASES/@(pre)copy.idx -o $@
+res/@(pre)cpyPERF.CPS : res/@(pre)cpylst.CPS xcpysearch res/@(pre)CPYWORK.sum
+	./xcpysearch -u res/@(pre)CPYWORK.sum -i res/@(pre)cpylst.CPS \
+                     -o res/@(pre)cpyPERF.CPS
 $(AMMdir)/KERNEL/@up@(pre)COPY:
 	mkdir $(AMMdir)/KERNEL/@up@(pre)COPY
 @skip	ln -s $(BLDdir)/Make.inc $(AMMdir)/KERNEL/@up@(pre)COPY/Make.inc
 @(pre)install_cpy : $(AMMdir)/KERNEL/@up@(pre)COPY xcpydrv force_build \
-               res/@(pre)cpyPERF.CPS
+               res/@(pre)cpyPERF.CPS res/@(upr)FNLK1.sum
 	- cd $(AMMdir)/KERNEL/@up@(pre)COPY ; $(MAKE) killall
 	./xcpydrv -p @(pre) $(@(pre)views) \
                   -o $(AMMdir)/KERNEL/@up@(pre)COPY
@@ -2849,10 +2855,10 @@ res/@(pre)@(rt).sum : res/@(pre)opFNL.sum
 	./xopsrch -p @(pre)
 @endwhile
 res/@(pre)K1.sum : xaddKClean res/@(pre)ipgen.sum res/@(cpr)ipgen.sum \
-   res/@(pre)ipdMN.sum res/@(cpr)ipdMN.sum \
+   res/@(pre)ipmen.sum res/@(cpr)ipmen.sum \
    res/@(pre)opmek.sum res/@(cpr)opmek.sum res/@(pre)opnek.sum res/@(cpr)opnek.sum
 	./xaddKClean -i res/@(pre)ipgen.sum -i res/@(cpr)ipgen.sum \
-           -i res/@(pre)ipdMN.sum -i res/@(cpr)ipdMN.sum -o res/@(pre)K1.sum \
+           -i res/@(pre)ipmen.sum -i res/@(cpr)ipmen.sum -o res/@(pre)K1.sum \
            -i res/@(pre)opmek.sum -i res/@(cpr)opmek.sum \
            -i res/@(pre)opnek.sum -i res/@(cpr)opnek.sum
    @ptyp s d
@@ -2866,7 +2872,7 @@ res/@(pre)gAMSYRK.sum : xgmmsearch
 res/@(pre)AMSYRKFNL.sum : res/@(pre)gAMSYRK.sum res/@(cpr)gAMSYRK.sum
 	- rm -f res/@(pre)AMSYRKFNL.sum
 	cat res/[@(pre),@(cpr)]gAMSYRK.sum > res/@(pre)AMSYRKFNL.sum
-@(pre)install_amm: res/@(pre)FNLK1.sum res/@(pre)AMSYRKFNL.sum \
+@(pre)install_amm: res/@(upr)FNLK1.sum res/@(pre)AMSYRKFNL.sum \
    xammkgen xbfisrch
 	- cd $(AMMdir)/KERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
 	./xammkgen -p @(pre) -b res/@(pre)AMSYRKFNL.sum -o $(AMMdir)/KERNEL 
@@ -3028,24 +3034,106 @@ x@(pre)nbtune : @(pre)nbtune.o @(pre)ammlib
               -o @(pre)trstime_pt3f.o $(mySRCdir)/mmtime_pt3f.c
 @ptyp z c
    @define trsm @ATL_@(pre)ctrsmKL_rk2.o@
+   @define cc @c@
 @ptyp d s
+   @define cc @@
    @define trsm @ATL_@(pre)trsmKL_rk4.o@
 @ptyp !
 $(L3Bdir)/kernel/@(trsm) :
 	cd $(L3Bdir)/kernel ; make @(trsm)
 @ptyp !
+@(pre)copytest:  # run cpytest vs generator
+	if [ "X$(CPM)" = "XC" ] ; then  \
+           if test $(TO_BLK) -eq 0 ; then \
+              make gen_blk2C rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                mu=$(UR) nu=$(ku) kmaj=$(kmaj) alpha=$(alpha) beta=$(beta) ; \
+           else \
+              make gen_C2blk rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                mu=$(UR) nu=$(ku) kmaj=$(kmaj) alpha=$(alpha) beta=$(beta) ; \
+           fi ; \
+        else  \
+           if test $(TO_BLK) -eq 0 ; then \
+              if test $(TRANS) -eq 0 ; then \
+                 make gen_@(cc)blk2AT rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                   UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              else \
+                 make gen_@(cc)blk2AN rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                   UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              fi ; \
+           else \
+              if test $(TRANS) -eq 0 ; then \
+                 make gen_@(cc)AT2blk rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                   UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              else \
+                 make gen_@(cc)AN2blk rt=ATL_cptmp.c pre=@(pre) vlen=$(vlen) \
+                   UR=$(UR) ku=$(ku) kmaj=$(kmaj) alpha=$(alpha) ; \
+              fi ; \
+           fi ; \
+        fi 
+	if test $(beta) -eq 0 || test $(beta) -eq 1 ; then \
+           if test $(alpha) -eq 0 || test $(alpha) -eq 1 ; then \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=$(beta) \
+                 alphan=$(alpha) TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 TRANS=$(TRANS) ku=$(ku) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           elif test $(alpha) -eq -1 ; then \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=$(beta) \
+                 alphan=N TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 TRANS=$(TRANS) ku=$(ku) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           else \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=$(beta) \
+                 alphan=X TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 TRANS=$(TRANS) ku=$(ku) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           fi ; \
+        elif test $(beta) -eq -1 ; then \
+           if test $(alpha) -eq 0 || test $(alpha) -eq 1 ; then \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=N \
+                 alphan=$(alpha) TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           elif test $(alpha) -eq -1 ; then \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=N \
+                 alphan=N TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           else \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=N \
+                 alphan=X TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           fi ; \
+        else \
+           if test $(alpha) -eq 0 || test $(alpha) -eq 1 ; then \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=X \
+                 alphan=$(alpha) TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           elif test $(alpha) -eq -1 ; then \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=X \
+                 alphan=N TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           else \
+	      $(MAKE) @(pre)cpytest szb=$(szb) @up@(pre)KC="$(@up@(pre)KC)" \
+                 @up@(pre)KCFLAGS="$(@up@(pre)KCFLAGS)" betan=X \
+                 alphan=X TO_BLK=$(TO_BLK) knam=$(knam) CNJ=$(CNJ) \
+                 ku=$(ku) TRANS=$(TRANS) cpgood=ATL_cptmp.c kfnam=$(kfnam) ; \
+           fi ; \
+        fi 
 @(pre)cpytest :
-	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DCOPY_$(CPM)=1 \
-           -DTO_BLK=$(TOBLK) -DCOPYK=$(knam) $(CNJ) \
+	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -Dmat$(CPM)_=1 \
+           -DALPHA${alphan}=1 -DTO_BLK=$(TO_BLK) -DTrans_=$(TRANS) $(CNJ) \
            -o @(pre)cpytest.o $(mySRCdir)/cpytest.c
-	$(@up@(pre)KC) $(@up@(pre)KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
+	$(KC) $(KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
            $(CNJ) -DALPHA${alphan}=1 -o @(pre)cpygood.o \
-           -DATL_USERCPMM=ATL_GOODCP -c $(cpgood)
+           -DATL_USERCPMM=ATL_GOODCPMM -c $(cpgood)
 	$(@up@(pre)KC) $(@up@(pre)KCFLAGS) $(CDEFS) -D@(typ)=1 -DBETA${betan}=1 \
            $(CNJ) -DALPHA${alphan}=1 -o @(pre)cpychck.o -c $(kfnam)
 	$(CLINKER) $(CLINKFLAGS) -o x@(pre)cpytest @(pre)cpytest.o \
            @(pre)cpygood.o @(pre)cpychck.o $(SYSdir)/time.o $(LIBS)
-	$(ATLRUN) $(MMTdir) x@(pre)cpytest  -m $(mb) -n $(nb) -s $(szb)
+	$(ATLRUN) $(MMTdir) x@(pre)cpytest  -b $(mb) $(nb) -s $(szb)
            
 @(pre)cpytimeC : 
 	$(KC) $(KCFLAGS) -c -DBETA${betan}=1 -D@(typ)=1 -DTIME_COPY -DCOPY_C \
@@ -3825,11 +3913,13 @@ ISet$(pre)KernDef.grd:
 @endskip
 
 IStage1: xatlas_waitfile
+	cd $(AUXdir) ; $(MAKE) xerbla.grd
 	cd $(SYSdir) ; $(MAKE) $(INCAdir)/atlas_type.h
 	$(MAKE) ITprim
+	cd $(SYSdir) ; $(MAKE) findCache
+	cd $(SYSdir) ; $(MAKE) sRunSysSum dRunSysSum cRunSysSum zRunSysSum
 	cd $(AUXdir) ; $(MAKE) lib
 	- cd $(AUXdir) ; $(MAKE) -s ATL_buildinfo.o
-	cd $(SYSdir) ; $(MAKE) findCache
 	cd $(TSTdir) ; $(MAKE) lib
 @skip	$(MAKE) INSTALL_LOG/L1CacheSize
 	$(MAKE) INSTALL_LOG/sMULADD pre=s nreg=$(nreg)
@@ -8160,7 +8250,7 @@ clean : dclean sclean cclean zclean
 @declare "@(pre)INCdep = " y n
    $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h
    $(INCAdir)/atlas_@(pre)ipgen_view.h $(INCAdir)/atlas_@(pre)opgen_view.h
-   $(INCAdir)/atlas_@(pre)ipdmn_view.h
+   $(INCAdir)/atlas_@(pre)ipmen_view.h
 @enddeclare
 @declare "@(pre)INCSQdep = " y n
    $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h
@@ -8168,17 +8258,18 @@ clean : dclean sclean cclean zclean
 
 @declare "@(pre)obj = " y n
 @skip   ATL_@(pre)GetAmmmInfo.o ATL_@(pre)GetAmmmInfoSQ.o 
-@skip   ATL_@(pre)GetRankKInfo.o 
-   ATL_@(pre)iploops.o ATL_@(pre)oploops.o ATL_@(pre)ammmK.o 
-@skip   ATL_@(pre)ammmM.o ATL_@(pre)ammmN.o 
+@skip   ATL_@(pre)GetRankKInfo.o ATL_@(pre)ammm_syrk.o
+   ATL_@(pre)iploops.o ATL_@(pre)oploops.o
+@skip   ATL_@(pre)ammmM.o ATL_@(pre)ammmN.o ATL_@(pre)ammmK.o 
 @BEGINSKIP  ! ONLY UNTIL DEBUGGED 
-   ATL_@(pre)ammm_syrk.o ATL_@(pre)ammm_1b.o
+   ATL_@(pre)ammm_1b.o
    @ptyp z c `ATL_@(pre)herk_OP.o`
    ATL_@(pre)syrk_OP.o
 @ENDSKIP
    ATL_@(pre)syrk_amm.o ATL_@(pre)syrk_IP.o
    @PTYP z c `ATL_@(pre)herk_IP.o ATL_@(pre)herk_amm.o`
-   ATL_@(pre)ammm.o ATL_@(pre)opinfo.o ATL_@(pre)ipinfo.o ATL_@(pre)ipdmninfo.o
+   ATL_@(pre)ammm.o ATL_@(pre)opinfo.o ATL_@(pre)ipinfo.o ATL_@(pre)ipmeninfo.o
+   ATL_@(pre)ipsyrkinfo.o
    ATL_@(pre)ammmKNMK.o ATL_@(pre)ammmKMNK.o
    ATL_@(pre)ammm_rk2.o ATL_@(pre)aliased_rkK.o ATL_@(pre)ammm_rkK.o
    ATL_@(pre)ammm_IP.o ATL_@(pre)ammm_tN.o
@@ -8200,7 +8291,7 @@ clean : dclean sclean cclean zclean
 	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(@(pre)obj)
 	$(RANLIB) $(ATLASlib)
 	touch @(pre)lib.grd
-@whiledef rt ammm_syrk syrk_OP syrk_IP syrk_amm
+@whiledef rt ammm_syrk syrk_OP syrk_IP syrk_amm ipsyrkinfo
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt).c \
    $(INCAdir)/atlas_@(pre)amm_sum.h $(INCAdir)/atlas_@(pre)amm_syrk.h \
    $(INCAdir)/atlas_@(pre)syrk_view.h
@@ -8231,8 +8322,8 @@ ATL_@(pre)trsm_ammLL.o : $(@(pre)INCdep) $(mySRCdir)/ATL_trsm_ammLL.c
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) \
                      $(mySRCdir)/ATL_trsm_ammLL.c
 @ptyp z c
-   @multidef rt2 syrk_OP syrk_IP syrk_amm
-   @whiledef rt herk_OP herk_IP herk_amm
+   @multidef rt2 syrk_OP syrk_IP syrk_amm ipsyrkinfo
+   @whiledef rt herk_OP herk_IP herk_amm ipherkinfo
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt2).c \
    $(INCAdir)/atlas_@(pre)amm_sum.h $(INCAdir)/atlas_@(pre)amm_syrk.h \
    $(INCAdir)/atlas_@(pre)syrk_view.h
@@ -8248,7 +8339,7 @@ ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_c@(rt).c \
    @multidef rt rk4n4 ammmREC ammmNKM ammmK 
    @multidef rt ammmNMK ammm_rk2 ammmMNK
 @ptyp !
-@whiledef pp op ip ipdmn
+@whiledef pp op ip ipmen
 ATL_@(pre)@(pp)info.o : $(mySRCdir)/ATL_@(pp)info.c \
    @whiledef al X N 1
    $(INCAdir)/COPY/atlas_@(pre)FromANg_a@(al).h $(INCAdir)/COPY/atlas_@(pre)FromATg_a@(al).h \
