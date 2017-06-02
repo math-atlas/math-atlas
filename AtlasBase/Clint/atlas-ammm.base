@@ -33652,6 +33652,7 @@ void Mjoin(PATL,syrk_IP)
    }
    else /* Upper must use workspace */
    {
+#if 0   
       if (SCALAR_IS_NONE(alpha))
          blk2c = Mjoin(PATL,SyrkIntoC_aNb0);
       else
@@ -33680,6 +33681,62 @@ void Mjoin(PATL,syrk_IP)
          for (k=0; k < N; k++, c += (1 SHIFT), C += (ldc SHIFT))
             Mjoin(PATL,axpby)(k+1, one, c, N, beta, C, 1);
       #endif
+#else
+@ skip ********* Majedul: added to call the new L2UT 
+      if (SCALAR_IS_ONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2c = Mjoin(PATL,Mjoin(SyrkIntoC_aNb1,_L2UT));
+         else
+            blk2c = SCALAR_IS_ONE(alpha) ?
+                    Mjoin(PATL,Mjoin(SyrkIntoC_a1b1,_L2UT))
+                    : Mjoin(PATL,Mjoin(SyrkIntoC_aXb1,_L2UT));
+      }
+      else if (SCALAR_IS_NONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2c = Mjoin(PATL,Mjoin(SyrkIntoC_aNbN,_L2UT));
+         else
+            blk2c = SCALAR_IS_ONE(alpha) ?
+                    Mjoin(PATL,Mjoin(SyrkIntoC_a1bN,_L2UT))
+                    : Mjoin(PATL,Mjoin(SyrkIntoC_aXbN,_L2UT));
+      }
+      else if (SCALAR_IS_ZERO(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2c = Mjoin(PATL,Mjoin(SyrkIntoC_aNb0,_L2UT));
+         else
+            blk2c = SCALAR_IS_ONE(alpha) ?
+                    Mjoin(PATL,Mjoin(SyrkIntoC_a1b0,_L2UT))
+                    : Mjoin(PATL,Mjoin(SyrkIntoC_aXb0, _L2UT));
+      }
+      else
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2c = Mjoin(PATL,Mjoin(SyrkIntoC_aNbX, _L2UT));
+         else
+            blk2c = SCALAR_IS_ONE(alpha) ?
+                    Mjoin(PATL,Mjoin(SyrkIntoC_a1bX, _L2UT))
+                    : Mjoin(PATL,Mjoin(SyrkIntoC_aXbX, _L2UT));
+      }
+      #ifdef TCPLX
+         blk2c(N, N, alpha, rC, iC, beta, C, ldc);
+         #ifdef Conj_  /* must zero complex part of diagonal! */
+      @SKIP ***** not working when beta != 0... need to update the copy routine
+         {
+            size_t ldc2 = ldc + ldc;
+            size_t sz = 2;
+            for (k=0; k < N; k++, C += ldc2, sz += 2)
+            {
+               Mjoin(ATL_d,scal)(k+1,ATL_rnone, C+1, 2);
+               C[sz-1] = ATL_rzero;
+            }
+         }
+         #endif
+      #else
+         blk2c(N, N, alpha, pC, beta, C, ldc);
+      #endif
+#endif
    }
 #endif
    free(vp);
