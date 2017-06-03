@@ -180,6 +180,9 @@ loopsm   : '{' PE '}'  { $$ = 1; }
          | '{' '-' '}' { $$ = -2; }
          |             { $$ = 0; }
          ;
+/*
+ * NOTE: LOOP in FKO is a DO-WHILE loop, not FOR loop. 
+ */
 loop_beg : LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
          { $$ = DoLoop($2, $4, $7, $10, $5, $8, $11); VecIntr = 0;}
          | LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm
@@ -232,17 +235,17 @@ typedec : INT LST idlist              { declare_list(T_INT); }
         | VFLOAT '(' iconst ')' LST idlist {declare_vector(T_VFLOAT, $3);}
         ;
 
-/*arraydim : '[' ID ']' arraydim {$$=$4+1; AddDim2List($2);} 
+arraydim : '[' ID ']' arraydim {$$=$4+1; AddDim2List($2);} 
          | '[' iconst ']' arraydim { $$=$4+1; AddDim2List($2);} 
          | '[' '*' ']' { $$=1; }
          | '[' ']' { $$=1; }
-         ;*/
+         ;
 
-arraydim : arraydim '[' ID ']' {$$=$1+1; AddDim2List($3); } 
+/*arraydim : arraydim '[' ID ']' {$$=$1+1; AddDim2List($3); } 
          | arraydim '[' iconst ']' { $$=$1+1; AddDim2List($3); } 
          | '[' '*' ']' { $$=1; }
          | '[' ']' { $$=1; }
-         ;
+         ;*/
 
 /*arrayid : NAME  {fprintf(stderr, "arrayid->NAME\n");}
         ;*/
