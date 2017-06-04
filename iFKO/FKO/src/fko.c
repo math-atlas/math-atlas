@@ -73,6 +73,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     I : dump interference graph info to <file>.IG\n");
    fprintf(stderr, "     L : dump LIL <file>.L\n");
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");*/
+   fprintf(stderr, "  -a : Optimize pointer for array access\n");
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
    fprintf(stderr, "  -U all : Unroll main loop all the way\n");
    /*fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");*/
@@ -3784,10 +3785,11 @@ int IsSimpleLoopNestVec(int vflag)
 #else
       type = GetLoopVtype(optloop);
       k = vtype2elem(type);
-      if (optloop->itermul % k)
+      if (!optloop->itermul || (optloop->itermul % k) )
       {
-         fko_warn(__LINE__, "Must not have cleanup: (%d, %d)", optloop->itermul,
+         fko_warn(__LINE__, "Must have no cleanup: (%d, %d)", optloop->itermul,
                   k);
+         return(0);
       }
       /*else 
          fprintf(stderr, "no need of cleanup in vec");*/
