@@ -33652,7 +33652,7 @@ void Mjoin(PATL,syrk_IP)
    }
    else /* Upper must use workspace */
    {
-#if 0   
+      @BEGINSKIP
       if (SCALAR_IS_NONE(alpha))
          blk2c = Mjoin(PATL,SyrkIntoC_aNb0);
       else
@@ -33681,8 +33681,7 @@ void Mjoin(PATL,syrk_IP)
          for (k=0; k < N; k++, c += (1 SHIFT), C += (ldc SHIFT))
             Mjoin(PATL,axpby)(k+1, one, c, N, beta, C, 1);
       #endif
-#else
-@skip ********* Majedul: added to call the new L2UT 
+      @ENDSKIP
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
@@ -33722,21 +33721,11 @@ void Mjoin(PATL,syrk_IP)
       #ifdef TCPLX
          blk2c(N, N, alpha, rC, iC, beta, C, ldc);
          #ifdef Conj_  /* must zero complex part of diagonal! */
-      @SKIP ***** not working when beta != 0... need to update the copy routine
-         {
-            size_t ldc2 = ldc + ldc;
-            size_t sz = 2;
-            for (k=0; k < N; k++, C += ldc2, sz += 2)
-            {
-               Mjoin(ATL_d,scal)(k+1,ATL_rnone, C+1, 2);
-               C[sz-1] = ATL_rzero;
-            }
-         }
+            Mjoin(PATLU,zero)(N, C+1, (ldc+1)SHIFT);
          #endif
       #else
          blk2c(N, N, alpha, pC, beta, C, ldc);
       #endif
-#endif
    }
 #endif
    free(vp);
@@ -37702,6 +37691,12 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
          int is;
          for (is=0; is < 2; is++)
          {
+            fprintf(fp, "#ifdef Conj_\n");
+            fprintf(fp, "#define ATL_%cSyrkIntoC_a%cb%c%s "
+                    "ATL_%cHerkIntoC_a%cb%c%s\n", 
+                     pre, bes[ial], bes[ibe], sfx[is],
+                     pre, bes[ial], bes[ibe], sfx[is]);
+            fprintf(fp, "#endif\n");
             fprintf(fp, "void ATL_%cSyrkIntoC_a%cb%c%s\n", pre, bes[ial],
                     bes[ibe], sfx[is]);
             if (pre == 's' || pre == 'd')
@@ -38226,7 +38221,21 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
          fprintf(fp, " \\\n       %s_b%c.o", mp->auth, bes[ib]);
    }
    for (cp=cb; cp; cp = cp->next)
+   {
+      char *sp;
       fprintf(fp, " \\\n       %s.o", cp->rout);
+      sp = strstr(cp->rout, "SyrkIntoC");
+      if (sp)
+      {
+         char pre = sp[-1];
+         if (pre == 'z' || pre == 'c')
+         {
+            sp[0] = '\0'; 
+            fprintf(fp, " \\\n       %sHerk%s.o", cp->rout, sp+4);
+            sp[0] = 'S';
+         }
+      }
+   }
    fprintf(fp, "\n");
 /*
  * library make targets
@@ -38299,6 +38308,27 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
       fprintf(fp, "\t$(KC) $(CDEFS2) -D%s=1 -DATL_USERCPMM=%s $(KCFLAGS) \\\n",
               ts, cp->rout);
       fprintf(fp, "        -c %s.c\n", cp->rout);
+      if (!(cp->flag & (1<<CPF_REAL)))
+      {
+         char *sp;
+         sp = strstr(cp->rout, "SyrkIntoC");
+         if (sp);
+         {
+            sp[0]='\0';
+            fprintf(fp, "%sHerk%s.o : %sSyrk%s.c\n", cp->rout, sp+4, 
+                    cp->rout, sp+4);
+            if (pre == 'd')
+               ts = "-DDCPLX=1 -DConj_=1";
+            else
+               ts = "-DSCPLX=1 -DConj_=1";
+            fprintf(fp, 
+            "\t$(KC) $(CDEFS2) %s -DATL_USERCPMM=%sHerk%s \\\n",
+                    ts, cp->rout, sp+4);
+            fprintf(fp, "        $(KCFLAGS) -o $@ -c %sSyrk%s.c\n", 
+                    cp->rout, sp+4);
+            sp[0]='S';
+         }
+      }
    }
    KillAllMMNodes(MB);
    fclose(fp);
