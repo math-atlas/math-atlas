@@ -32230,6 +32230,7 @@ void syrkBlk
       #endif
       if (ip->alpA != ip->alpB)
          alp = (ip->alpA != ip->alpC) ? ip->alpA : ip->alpB;
+      @beginskip
       if (flag&1)  /* Upper matrix */
       {
          #ifdef TCPLX
@@ -32240,6 +32241,8 @@ void syrkBlk
          #endif
       }
       else if (C)
+      @endskip
+      if (C)
       {
          #ifdef TCPLX
             blk2c(nb, nb, alp, rC, wC, beta, C, ldc);
@@ -32251,6 +32254,7 @@ void syrkBlk
          #endif
       }
    }
+   #if 0
    if ((flag&1) && C && wU)  /* need to reflect from Lower to Upper */
    {
       size_t ldc2=(ip->ldc)SHIFT;
@@ -32273,6 +32277,7 @@ void syrkBlk
             #endif
       #endif
    }
+   #endif
 }
 
 /*
@@ -32390,10 +32395,9 @@ int syrk_amm
  * Inner-product version calls nothing by SYRK kernels, and is called in
  * LAPACK's default left-looking Cholesky.
  */
-   #if 1
+   #if 0
    if (N <= ATL_VWsyrk_MAX_NB)
    {
-      Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
       #ifdef Conj_
          Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
       #else
@@ -32401,8 +32405,9 @@ int syrk_amm
       #endif
       return(0);
    }
-   #else
-      timG = Mjoin(PATL,ipsyrkInfo)(&ip, TA, N, K, lda, ldc, alpha, beta);
+   #endif
+   #if 0
+   timG = Mjoin(PATL,ipsyrkInfo)(&ip, TA, N, K, lda, ldc, alpha, beta);
    if (N <= ATL_VWsyrk_MAX_NB)
    {
       double timS;
@@ -32447,12 +32452,12 @@ int syrk_amm
          printf("timS=%e, timG=%e: D=(%u,%u), B=(%u,%u)\n", timS, timG,
                 N, K, ip.mb, ip.nb);
    }
+   #else
+      Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+      printf("D=(%u,%u), B=(%u,%u,%u), b=(%u,%u,%u), nB=(%u,%u,%u)\n", 
+             (unsigned int)N,(unsigned int)K, ip.mb, ip.nb, ip.kb,
+             ip.pmb, ip.pnb, ip.kb0, ip.nfmblks, ip.nfnblks, ip.nfkblks);
    #endif
-/*
- * For now, if we don't use syrk_IP, report failure, since outer syrk sometimes
- * wrong.
- */
-   return(-1);
 /*
  * Outer product version will call outer-product-optimized amm, and since
  * N is too large to call syrk_IP, we expect amm perf to dominate this case.
@@ -32466,6 +32471,11 @@ int syrk_amm
       return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
    #endif
    #endif
+/*
+ * For now, if we don't use syrk_IP, report failure, since outer syrk sometimes
+ * wrong.
+ */
+//   return(-1);
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
  * For now, just pretend syrk time doesn't matter
@@ -32487,9 +32497,12 @@ int syrk_amm
           * ATL_SYRKK_VLEN;
    extra = ip.exsz;
    extra = Mmax(extra, (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU);
+   @beginskip
    if (Uplo == AtlasUpper)
       extra = Mmax(extra, ip.szC);
-   szS = nbS * ip.kb;
+   @endskip
+   szS = ((ip.kb + ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   szS *= nbS;
    sz = Mmax(ip.szC,szC);
    sz = ATL_MulBySize(sz + szS + szA+szB + extra) + 5*ATL_Cachelen;
    if (sz < ATL_MaxMalloc)
@@ -32505,13 +32518,15 @@ int syrk_amm
    wC = ATL_AlignPtr(wC);
    if (!szA)
       wA = NULL;
-   if (Uplo == AtlasLower)
-      wCs = wC;
+@skip   if (Uplo == AtlasLower)
+   wCs = wC;
+   @beginskip
    else
    {
       wCs = wC + (szC SHIFT);
       wCs = ATL_AlignPtr(wCs);
    }
+   @endskip
    #ifdef TCPLX
       rC = wC + ip.szC;
       rCs = wC + szC;
@@ -32565,11 +32580,49 @@ int syrk_amm
    }
    else
    {
+      if (SCALAR_IS_ONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                     Mjoin(PATL,SyrkIntoC_a1b1_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb1_L2UT);
+      }
+      else if (SCALAR_IS_NONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                     Mjoin(PATL,SyrkIntoC_a1bN_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbN_L2UT);
+      }
+      else if (SCALAR_IS_ZERO(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                     Mjoin(PATL,SyrkIntoC_a1b0_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb0_L2UT);
+      }
+      else
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                     Mjoin(PATL,SyrkIntoC_a1bX_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbX_L2UT);
+      }
+@beginskip
       if (SCALAR_IS_NONE(alpha))
          blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
       else
          blk2sy = SCALAR_IS_ONE(alpha) ?
                   Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
+@endskip
    }
    nnblks = ip.nfnblks + ip.npnblks;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
@@ -32945,14 +32998,53 @@ int syrk_OP
                      Mjoin(PATL,SyrkIntoC_a1_bX):Mjoin(PATL,SyrkIntoC_aX_bX);
       }
    }
-   else
+   else  /* C is Upper */
    {
+      szU = 0;
+      if (SCALAR_IS_ONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b1_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                        Mjoin(PATL,SyrkIntoC_a1_b1_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aX_b1_L2UT);
+      }
+      else if (SCALAR_IS_NONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                        Mjoin(PATL,SyrkIntoC_a1bN_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aXbN_L2UT);
+      }
+      else if (SCALAR_IS_ZERO(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                        Mjoin(PATL,SyrkIntoC_a1_b0_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aX_b0_L2UT);
+      }
+      else
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aN_bX_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                        Mjoin(PATL,SyrkIntoC_a1_bX_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aX_bX_L2UT);
+      }
+@BEGINSKIP
       szU = N*N;
       if (SCALAR_IS_NONE(alpha))
          blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
       else
          blk2sy = SCALAR_IS_ONE(alpha) ?
                   Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
+@ENDSKIP
    }
    extra = (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
