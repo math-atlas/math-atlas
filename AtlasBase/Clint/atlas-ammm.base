@@ -32070,11 +32070,13 @@ int main(int nargs, char **args)
    #define syrk_K  Mjoin(PATL,herk_KLoop)
    #define syrk_amm  Mjoin(PATL,herk_amm)
    #define syrk_OP  Mjoin(PATL,herk_OP)
+   #define syrk_rec Mjoin(PATL,herk)
 #else
    #define syrkBlk Mjoin(PATL,syrkBlk)
    #define syrk_K  Mjoin(PATL,syrk_KLoop)
    #define syrk_amm  Mjoin(PATL,syrk_amm)
    #define syrk_OP  Mjoin(PATL,syrk_OP)
+   #define syrk_rec Mjoin(PATL,syrk)
 #endif
 void syrkBlk
 (
@@ -32218,8 +32220,6 @@ void syrkBlk
             Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wS, wS, wC, wS, wS, wC);
       #endif
    }
-   if (C)
-      C = IdxC_ip(ip, C, d, d);
    if (blk2c)
    {
       const size_t ldc=ip->ldc;
@@ -32244,6 +32244,7 @@ void syrkBlk
       @endskip
       if (C)
       {
+         C = IdxC_ip(ip, C, d, d);
          #ifdef TCPLX
             blk2c(nb, nb, alp, rC, wC, beta, C, ldc);
             #ifdef Conj_  /* must zero complex part of diagonal! */
@@ -32358,22 +32359,22 @@ int syrk_amm
 (
    const enum ATLAS_UPLO  Uplo,
    const enum ATLAS_TRANS TA,
-   ATL_CSZT  N,
-   ATL_CSZT K,
+   ATL_iptr_t  N,
+   ATL_iptr_t K,
    #ifdef Conj_
    const TYPE ralpha,
    #else
    const SCALAR alpha,
    #endif
    const TYPE *A,
-   ATL_CSZT lda,
+   ATL_iptr_t lda,
    #ifdef Conj_
    const TYPE rbeta,
    #else
    const SCALAR beta,
    #endif
    TYPE *C,
-   ATL_CSZT ldc
+   ATL_iptr_t ldc
 )
 {
    size_t sz, szA, szB, szC, szS, nnblks, extra;
@@ -32391,12 +32392,100 @@ int syrk_amm
    cm2am_t sy2blk;
    ablk2cmat_t blk2sy, blk2c;
 
+   if (N == 0)     /* no output */
+      return(0);   /* so return with no-op */
+@BEGINSKIP
+/*
+ * Does the operation not involve A at all?
+ */
+   #ifdef Conj_
+      if (ralpha == ATL_rzero || !K)
+      {
+         if (rbeta != ATL_rone)
+            Mjoin(PATL,hescal)(Uplo, N, N, rbeta, C, ldc);
+         return(0);
+      }
+   #else
+      if (SCALAR_IS_ZERO(alpha) || !K)
+      {
+         if (!SCALAR_IS_ONE(beta))
+            Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+         return(0);
+      }
+   #endif
+   if (N == 1) /* really a dot product */
+   {
+      const ATL_iptr_t incA = (TA == AtlasNoTrans) ? lda : 1;
+      #ifdef TCPLX
+         TYPE dot[2];
+      #endif
+      #ifdef Conj_
+         TYPE d0;
+         ATL_zdotc_sub(K, A, incA, A, incA, dot);
+         C[1] = ATL_rzero;
+         d0 = *dot * ralpha;
+         if (rbeta == ATL_rzero)
+            C[0] = d0;
+         else 
+            C[0] = C[0] * rbeta + d0;
+      #elif defined(TCPLX)
+         const TYPE ra=(*alpha), ia=alpha[1], rb=(*beta), ib=beta[1];
+         TYPE rd, id, rt;
+         ATL_zdotu_sub(K, A, incA, A, incA, dot);
+         rt = rd = dot[0];
+         id = dot[1];
+         rd = rd*ra - id*ia;
+         id = rt*ia + id*ra;
+         if (ib == ATL_rzero) /* beta is a real number only */
+         {
+            if (rb == ATL_rzero) /* beta is 0 */
+            {
+               C[0] = rd;
+               C[1] = id;
+            }
+            else
+            {
+               C[0] = C[0] * rb + rd;
+               C[1] = C[1] * rb + id;
+            }
+         }
+         else
+         {
+            const register rc=(*C), ic=C[1];
+            C[0] = rc*rb - ic*ib + rd;
+            C[1] = rc*ib + ic*rb + id;
+         }
+      #else /* real */
+         TYPE dot, c;
+         c = SCALAR_IS_ZERO(beta) ? ATL_rzero : *C * beta;
+         dot = Mjoin(PATL,dot)(K, A, incA, A, incA);
+         if (!SCALAR_IS_ONE(alpha))
+            dot *= alpha;
+         *C = c + dot;
+      #endif
+   }
+@skip   else if (K < 3) /* really a rank-1 or rank-2 update */
+   else if (K == 1) /* really rank-1 update, for now just use two-pass */
+   {                /* thru C for BETA!=1, optimize later with axpby */
+      const ATL_iptr_t incA = (TA == AtlasNoTrans) ? 1 : lda;
+      #ifdef Conj_
+         if (rbeta != ATL_rone)
+            Mjoin(PATL,hescal)(Uplo, N, N, rbeta, C, ldc);
+         Mjoin(PATL,her)(Uplo, N, ralpha, A, incA, C, ldc);
+      #else
+         if (!SCALAR_IS_ONE(beta))
+            Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+         Mjoin(PATL,syr)(Uplo, N, alpha, A, incA, C, ldc);
+      #endif
+   }
+@ENDSKIP
 /*
  * Inner-product version calls nothing by SYRK kernels, and is called in
- * LAPACK's default left-looking Cholesky.
+ * LAPACK's default left-looking Cholesky.  _IP handles L1/L2BLAS cases too.
  */
-   #if 0
-   if (N <= ATL_VWsyrk_MAX_NB)
+   #if 1
+   if (N <= ATL_VWsyrk_MAX_NB ||            /* is inner-product or */
+       K < 2 || SCALAR_IS_ZERO(alpha))      /* is a degenerate case */
    {
       #ifdef Conj_
          Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
@@ -32471,11 +32560,6 @@ int syrk_amm
       return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
    #endif
    #endif
-/*
- * For now, if we don't use syrk_IP, report failure, since outer syrk sometimes
- * wrong.
- */
-//   return(-1);
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
  * For now, just pretend syrk time doesn't matter
@@ -32711,6 +32795,77 @@ int syrk_amm
    free(vp);
    return(0);
 }
+
+void syrk_rec
+(
+   const enum ATLAS_UPLO  Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   #ifdef Conj_
+   const TYPE alpha,
+   #else
+   const SCALAR alpha,
+   #endif
+   const TYPE *A,
+   ATL_iptr_t lda,
+   #ifdef Conj_
+   const TYPE beta,
+   #else
+   const SCALAR beta,
+   #endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   #if defined(Conj_) || defined(TREAL)
+      #define ONE ATL_rone
+   #else
+      TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+/*
+ * If we cannot solve problem at this size, recursively cut dims until we can
+ */
+   if (syrk_amm(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc))
+   {
+      if (N > K)
+      {
+         ATL_iptr_t nL=N>>1, nR=N-nL;
+         const TYPE *Ar = A+((TA==AtlasNoTrans)?(nL SHIFT):lda*(nL SHIFT));
+         TYPE *Ct = C + (ldc+1)*(nL SHIFT);
+         const enum ATLAS_TRANS TB =
+         #ifdef Conj_
+               (TA == AtlasNoTrans) ? AtlasConjTrans:AtlasNoTrans;
+            const TYPE galp[2]={alpha,ATL_rzero}, gbet[2]={beta,ATL_rzero};
+         #else
+               (TA == AtlasNoTrans) ? AtlasTrans:AtlasNoTrans;
+            #define galp alpha
+            #define gbet beta
+         #endif
+         syrk_rec(Uplo, TA, nL, K, alpha, A, lda, beta, C, ldc);
+         syrk_rec(Uplo, TA, nR, K, alpha, Ar, lda, beta, Ct, ldc);
+         if (Uplo == AtlasUpper)
+            Mjoin(PATL,gemm)(TA, TB, nL, nR, K, galp, A, lda, Ar, lda, 
+                             gbet, Ct-(nL SHIFT), ldc);
+         else
+            Mjoin(PATL,gemm)(TA, TB, nR, nL, K, galp, Ar, lda, A, lda, 
+                             gbet, C+(nL SHIFT), ldc);
+         #ifndef Conj_
+            #undef galp
+            #undef gbet
+         #endif
+      }
+      else
+      {
+         ATL_iptr_t kL=K>>1, kR=K-kL, incA=((TA == AtlasNoTrans)?lda:1)SHIFT;
+         syrk_rec(Uplo, TA, N, kL, alpha, A, lda, beta, C, ldc);
+         syrk_rec(Uplo, TA, N, kR, alpha, A+incA*kL, lda, ONE, C, ldc);
+      }
+   }
+}
+#if defined(Conj_) || defined(TREAL)
+   #undef ONE
+#endif
 @ROUT ATL_syrk_OP
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_misc.h"
