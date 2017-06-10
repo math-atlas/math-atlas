@@ -33113,7 +33113,8 @@ int syrk_OP
    ablk2cmat_t blk2sy, blk2c;
 
 @skip   Mjoin(PATL,GetSyrkOP)(&op, 1, TA, TB, N, K, lda, ldc, alpha, beta);
-   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+@skip   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+   Mjoin(PATL,opsqinfo)(&op, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
    nnblks = op.nfnblks + op.npnblks;
    sy2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT) : Mjoin(PATL,a2blk_syrkN);
       
@@ -38673,25 +38674,33 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
 @ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@`
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
 #include "atlas_amm.h"
 @ROUT ATL_ipinfo ATL_ipmeninfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #define  ATL_DECL_ 1
 #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
 #undef ATL_DECL_
-@ROUT ATL_opinfo 
+@ROUT ATL_opsyrkInfo
 #define ATL_WANT_ILCM
 #include "atlas_iopt.h"
+@ROUT ATL_opinfo
 #ifdef TREAL
    #define  ATL_DECL_ 1
 #endif
+@ROUT ATL_opinfo ATL_opsyrkInfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
+@ROUT ATL_opinfo
 #ifndef TREAL
    #define  ATL_DECL_ 1
 #endif
+@ROUT ATL_opinfo ATL_opsyrkInfo
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_opsyrkInfo
+@whiledef al 1 N X
+#include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
+@endwhile
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
 @whiledef al 1 N X
    @whiledef ta N T
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
@@ -38701,15 +38710,16 @@ int main(int nargs, char **args)
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
    @endwhile
 #endif
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
    @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a@(al)b@(be).h))
    @endwhile
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
 
 @endwhile
 @ROUT ATL_opinfo
 
-@whiledef rt op opsq
-void Mjoin(PATL,@(rt)info) /* pop opinfo_t using atlas_opgen_view K-3 idx */
+void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    (opinfo_t *out, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta)
@@ -38742,18 +38752,6 @@ void Mjoin(PATL,@(rt)info) /* pop opinfo_t using atlas_opgen_view K-3 idx */
                    mu, nu, ku, vlen, k, k, k);
    #endif
 
-   @mif rt = "opsq
-   {
-      int U, MIN;
-      U = ATL_iLCM(mu, nu);
-      MIN = Mmax(K,8);   /* K can't force below 8 */
-      MIN = Mmin(MIN,N);
-      MIN = Mmin(MIN,M);
-      MIN = Mmin(MIN,MB);
-      MIN = Mmin(MIN,NB);
-      NB = MB = ((MIN+U-1)/U)*U;
-   }
-   @endmif
    if (M > MB)
    {
       mb = MB;
@@ -38987,7 +38985,142 @@ void Mjoin(PATL,@(rt)info) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       *cp = (SCALAR_IS_ZERO(beta)) ? 
             ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
 }
-@endwhile
+@ROUT ATL_opsyrkInfo
+
+void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
+   (opinfo_t *out, int flag, enum ATLAS_TRANS TA,
+    ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldc,
+    const SCALAR alpha, const SCALAR beta)
+{
+   ammkern_t amm1, amm0, ammN;
+   ATL_cparr_t *cp = (ATL_cparr_t *)&out->a2blk;
+   double spmfMM, spmfCP;
+   const int CONJ=flag&1;
+   size_t nfmblks, npmblks, nfnblks, npnblks;
+   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, vlen, flgK;
+   unsigned int sz, nmu, nnu, pnmu, pnnu, mb, pmb, nb, pnb, MB, NB, kb;
+   const unsigned int iv=K-3;
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      ATL_iptr_t iptmp;
+      #define CONE ATL_rone
+   #endif
+
+   ATL_assert(iv < ATL_VWopgen_NCASES);
+   ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
+   ATL_assert(imm < ATL_AMM_NCASES);
+   icpA += icpA;
+   icpB += icpB;
+   icpC += icpC;
+   #ifdef TCPLX
+      ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bn, flgK, 
+                   mu, nu, ku, vlen, k, k, k);
+   #else
+      ATL_AMM_info(imm, &out->amm_b0, &iptmp, &iptmp, flgK, 
+                   mu, nu, ku, vlen, k, k, k);
+   #endif
+
+   {
+      int U, MIN;
+      U = ATL_iLCM(mu, nu);
+      NB = (MB+NB)>>1;
+      MIN = Mmax(K,8);   /* K can't force below 8 */
+      MIN = Mmin(MIN,N);
+      MIN = Mmin(MIN,NB);
+      NB = ((MIN+U-1)/U)*U;
+   }
+   if (N > NB)
+   {
+      nb = NB;
+      nfnblks = N / NB;
+      nnu = NB / nu;
+      out->nF = pnb = N - nfnblks*NB;
+      pnnu = (pnb+nu-1)/nu;
+      pnb = pnnu * nu;
+      npnblks = (pnb) ? 1 : 0;
+   }
+   else
+   {
+      npnblks = 1;
+      pnnu = nnu = (N+nu-1)/nu;
+      pnb = nb = nnu * nu;
+      nfnblks = 0;
+      out->nF = N;
+   }
+
+   kb = ((K+ku-1)/ku)*ku;
+
+   out->nfmblks = out->nfnblks = nfnblks;
+   out->npmblks = out->npnblks = npnblks;
+   out->mb = out->nb = nb;
+   out->pmb = out->pnb = pnb;
+   out->mu = mu;
+   out->nu = nu;
+   out->ku = ku;
+   out->vlen = vlen;
+   out->ldb = out->lda = lda;
+   out->ldc = ldc;
+
+   out->nmu = out->nnu = nnu;
+   out->nmuF = out->pnmu = out->nnuF = out->pnnu = pnnu;
+
+   sz = ((mu*nu+vlen-1)/vlen)*vlen;
+   sz *= (nnu) ? nnu*nnu : pnnu*pnnu;
+   out->szC = sz;
+   out->exsz = (mu*nu)<<1;
+   out->idx = iv;
+   out->kb = K;
+   kb = ((K+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   out->KB = kb;
+   out->pszB = out->pszA = pnb*kb;
+   out->szB = out->szA = kb * nb;
+   out->alpA = out->alpB = CONE;
+   out->beta = beta;
+   out->alpB = alpha;
+   #ifdef TCPLX
+      out->ONE = CONE;
+   if (TA == AtlasNoTrans || TA == AtlasConj)
+   #else
+   if (TA == AtlasNoTrans)
+   #endif
+   {  /* A noTrans, B Trans */
+      *cp = ATL_CpyFromATg_a1[icpA];
+      cp = (ATL_cparr_t *)&out->b2blk;
+      if (SCALAR_IS_NONE(ALPHA))
+         *cp = (CONJ) ? ATL_CpyFromAHg_aN[icpB] : ATL_CpyFromATg_aN[icpB];
+      if (SCALAR_IS_ONE(ALPHA))
+         *cp = (CONJ) ? ATL_CpyFromAHg_a1[icpB] : ATL_CpyFromATg_a1[icpB];
+      else
+         *cp = (CONJ) ? ATL_CpyFromAHg_aX[icpB] : ATL_CpyFromATg_aX[icpB];
+      out->incAm  = nb SHIFT;
+      out->pincAm = pnb SHIFT;
+      out->incBn  = nb SHIFT;
+      out->pincBn = pnb SHIFT;
+   }
+   else  /* A (Conj)transpose, B no trans */
+   {
+      *cp = CONJ ? ATL_CpyFromACg_a1[icpA]:ATL_CpyFromANg_a1[icpA];
+      cp = (ATL_cparr_t *)&out->b2blk;
+      if (SCALAR_IS_NONE(ALPHA))
+         *cp = ATL_CpyFromANg_aN[icpB];
+      else
+         *cp = (SCALAR_IS_ONE(ALPHA)) ?  ATL_CpyFromANg_a1[icpB]
+                                       : ATL_CpyFromANg_aX[icpB]
+      out->incAm = lda*(nb SHIFT);
+      out->pincAm = lda*(pnb SHIFT);
+      out->incBn = lda*(nb SHIFT);
+      out->pincBn = lda*(pnb SHIFT);
+   }
+   cp = (ATL_cparr_t *) &out->blk2C;
+   if (SCALAR_IS_NONE(beta))
+      *cp = ATL_CpyIntoCNg_a1bN[icpC];
+   else if (SCALAR_IS_ONE(beta))
+      *cp = ATL_CpyIntoCNg_a1b1[icpC];
+   else
+      *cp = (SCALAR_IS_ZERO(beta)) ? 
+            ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
+}
 @ROUT ATL_ipinfo ATL_ipmeninfo
 void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
 (
