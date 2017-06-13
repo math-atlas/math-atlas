@@ -624,6 +624,9 @@ void Mjoin(PATL,ipmenInfo)
 double Mjoin(PATL,ipsyrkInfo) /* returns predicted time */
    (ipinfo_t*, enum ATLAS_TRANS,size_t,size_t,size_t,size_t, 
     const SCALAR alpha, const SCALAR beta);
+void Mjoin(PATL,opsyrkInfo)
+   (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
+    ATL_CSZT lda, ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta);
 @whiledef vw ipgen ipmen
 void Mjoin(PATL,@(vw)InfoPop)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
@@ -32480,6 +32483,19 @@ int syrk_amm
    }
 @ENDSKIP
 /*
+ * Outer product version will call outer-product-optimized amm, and since
+ * N is too large to call syrk_IP, we expect amm perf to dominate this case.
+ * Outer product SYRK is used in right-looking Cholesky.
+ */
+   #if 1
+   if (K <= ATL_VWopgen_BEST_KB)
+   #ifdef Conj_
+      return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
+   #else
+      return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
+   #endif
+   #endif
+/*
  * Inner-product version calls nothing by SYRK kernels, and is called in
  * LAPACK's default left-looking Cholesky.  _IP handles L1/L2BLAS cases too.
  */
@@ -32546,19 +32562,6 @@ int syrk_amm
       printf("D=(%u,%u), B=(%u,%u,%u), b=(%u,%u,%u), nB=(%u,%u,%u)\n", 
              (unsigned int)N,(unsigned int)K, ip.mb, ip.nb, ip.kb,
              ip.pmb, ip.pnb, ip.kb0, ip.nfmblks, ip.nfnblks, ip.nfkblks);
-   #endif
-/*
- * Outer product version will call outer-product-optimized amm, and since
- * N is too large to call syrk_IP, we expect amm perf to dominate this case.
- * Outer product SYRK is used in right-looking Cholesky.
- */
-   #if 0
-   if (K <= ATL_VWopgen_BEST_KB)
-   #ifdef Conj_
-      return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
-   #else
-      return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
-   #endif
    #endif
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
@@ -32872,7 +32875,6 @@ void syrk_rec
 #include "atlas_level1.h"
 #include "atlas_level2.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
-#include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #ifdef Conj_
    #define syrkBlk Mjoin(PATL,herkBlk_OP)
@@ -33114,7 +33116,14 @@ int syrk_OP
 
 @skip   Mjoin(PATL,GetSyrkOP)(&op, 1, TA, TB, N, K, lda, ldc, alpha, beta);
 @skip   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
-   Mjoin(PATL,opsqinfo)(&op, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+   #ifdef Conj_
+      Mjoin(PATL,opsyrkInfo)(&op, 1, TA, N, K, lda, ldc, alpha, beta);
+   #else
+      Mjoin(PATL,opsyrkInfo)(&op, 0, TA, N, K, lda, ldc, alpha, beta);
+   #endif
+   fprintf(stderr, "D=(%u,%u), B=(%u,%u,%u), pB=(%u,%u,%u)\n",
+           (unsigned int)N, (unsigned int)K, op.mb, op.nb, op.KB, 
+           op.pmb, op.pnb, op.kb);
    nnblks = op.nfnblks + op.npnblks;
    sy2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT) : Mjoin(PATL,a2blk_syrkN);
       
@@ -33124,10 +33133,10 @@ int syrk_OP
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b1);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_b1):Mjoin(PATL,SyrkIntoC_aX_b1);
+                     Mjoin(PATL,SyrkIntoC_a1b1):Mjoin(PATL,SyrkIntoC_aXb1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
@@ -33140,18 +33149,18 @@ int syrk_OP
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
+                     Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_bX);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_bX):Mjoin(PATL,SyrkIntoC_aX_bX);
+                     Mjoin(PATL,SyrkIntoC_a1bX):Mjoin(PATL,SyrkIntoC_aXbX);
       }
    }
    else  /* C is Upper */
@@ -33160,11 +33169,11 @@ int syrk_OP
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b1_L2UT);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1_L2UT);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                        Mjoin(PATL,SyrkIntoC_a1_b1_L2UT)
-                        :Mjoin(PATL,SyrkIntoC_aX_b1_L2UT);
+                        Mjoin(PATL,SyrkIntoC_a1b1_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aXb1_L2UT);
       }
       else if (SCALAR_IS_NONE(beta))
       {
@@ -33178,28 +33187,28 @@ int syrk_OP
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                        Mjoin(PATL,SyrkIntoC_a1_b0_L2UT)
-                        :Mjoin(PATL,SyrkIntoC_aX_b0_L2UT);
+                        Mjoin(PATL,SyrkIntoC_a1b0_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aXb0_L2UT);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_bX_L2UT);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX_L2UT);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                        Mjoin(PATL,SyrkIntoC_a1_bX_L2UT)
-                        :Mjoin(PATL,SyrkIntoC_aX_bX_L2UT);
+                        Mjoin(PATL,SyrkIntoC_a1bX_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aXbX_L2UT);
       }
 @BEGINSKIP
       szU = N*N;
       if (SCALAR_IS_NONE(alpha))
-         blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
+         blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
       else
          blk2sy = SCALAR_IS_ONE(alpha) ?
-                  Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
+                  Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
 @ENDSKIP
    }
    extra = (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU;
@@ -38697,7 +38706,7 @@ int main(int nargs, char **args)
 @ROUT ATL_opinfo ATL_opsyrkInfo
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
 @ROUT ATL_opsyrkInfo
-@whiledef al 1 N X
+@whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
 @endwhile
 @ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
@@ -38989,7 +38998,7 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
 
 void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA,
-    ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldc,
+    ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldc,
     const SCALAR alpha, const SCALAR beta)
 {
    ammkern_t amm1, amm0, ammN;
@@ -39021,14 +39030,19 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
                    mu, nu, ku, vlen, k, k, k);
    #endif
 
+   if (MB != NB)   /* need to make square */
    {
-      int U, MIN;
+      int U;
       U = ATL_iLCM(mu, nu);
+      ATL_assert(N > U);
       NB = (MB+NB)>>1;
-      MIN = Mmax(K,8);   /* K can't force below 8 */
-      MIN = Mmin(MIN,N);
-      MIN = Mmin(MIN,NB);
-      NB = ((MIN+U-1)/U)*U;
+      NB = Mmin(NB, N);
+      if (NB <= N)
+         NB = U;
+      else if (NB >= 3*U)
+         NB = (NB/U)*U;
+      else
+         NB = ((NB+U-1)/U)*U;
    }
    if (N > NB)
    {
@@ -39036,6 +39050,7 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       nfnblks = N / NB;
       nnu = NB / nu;
       out->nF = pnb = N - nfnblks*NB;
+      pnmu = (pnb+mu-1)/mu;
       pnnu = (pnb+nu-1)/nu;
       pnb = pnnu * nu;
       npnblks = (pnb) ? 1 : 0;
@@ -39044,6 +39059,7 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    {
       npnblks = 1;
       pnnu = nnu = (N+nu-1)/nu;
+      pnmu = nmu = (N+mu-1)/mu;
       pnb = nb = nnu * nu;
       nfnblks = 0;
       out->nF = N;
@@ -39062,16 +39078,17 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->ldb = out->lda = lda;
    out->ldc = ldc;
 
-   out->nmu = out->nnu = nnu;
-   out->nmuF = out->pnmu = out->nnuF = out->pnnu = pnnu;
+   out->nmu = nmu;
+   out->nnu = nnu;
+   out->nmuF = out->pnmu = pnmu;
+   out->nnuF = out->pnnu = pnnu;
 
    sz = ((mu*nu+vlen-1)/vlen)*vlen;
-   sz *= (nnu) ? nnu*nnu : pnnu*pnnu;
+   sz *= (nnu) ? nmu*nnu : pnmu*pnnu;
    out->szC = sz;
    out->exsz = (mu*nu)<<1;
    out->idx = iv;
    out->kb = K;
-   kb = ((K+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    out->KB = kb;
    out->pszB = out->pszA = pnb*kb;
    out->szB = out->szA = kb * nb;
@@ -39087,12 +39104,20 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    {  /* A noTrans, B Trans */
       *cp = ATL_CpyFromATg_a1[icpA];
       cp = (ATL_cparr_t *)&out->b2blk;
-      if (SCALAR_IS_NONE(ALPHA))
-         *cp = (CONJ) ? ATL_CpyFromAHg_aN[icpB] : ATL_CpyFromATg_aN[icpB];
-      if (SCALAR_IS_ONE(ALPHA))
-         *cp = (CONJ) ? ATL_CpyFromAHg_a1[icpB] : ATL_CpyFromATg_a1[icpB];
-      else
-         *cp = (CONJ) ? ATL_CpyFromAHg_aX[icpB] : ATL_CpyFromATg_aX[icpB];
+      #ifdef TCPLX
+         if (SCALAR_IS_NONE(alpha))
+            *cp = (CONJ) ? ATL_CpyFromAHg_aN[icpB] : ATL_CpyFromATg_aN[icpB];
+         else if (SCALAR_IS_ONE(alpha))
+            *cp = (CONJ) ? ATL_CpyFromAHg_a1[icpB] : ATL_CpyFromATg_a1[icpB];
+         else
+            *cp = (CONJ) ? ATL_CpyFromAHg_aX[icpB] : ATL_CpyFromATg_aX[icpB];
+      #else
+         if (SCALAR_IS_NONE(alpha))
+            *cp = ATL_CpyFromATg_aN[icpB];
+         else
+            *cp = (SCALAR_IS_ONE(alpha))? ATL_CpyFromATg_a1[icpB]
+                                         :ATL_CpyFromATg_aX[icpB];
+      #endif
       out->incAm  = nb SHIFT;
       out->pincAm = pnb SHIFT;
       out->incBn  = nb SHIFT;
@@ -39100,13 +39125,17 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    }
    else  /* A (Conj)transpose, B no trans */
    {
-      *cp = CONJ ? ATL_CpyFromACg_a1[icpA]:ATL_CpyFromANg_a1[icpA];
+      #ifdef TCPLX
+         *cp = CONJ ? ATL_CpyFromACg_a1[icpA]:ATL_CpyFromANg_a1[icpA];
+      #else
+         *cp = ATL_CpyFromANg_a1[icpA];
+      #endif
       cp = (ATL_cparr_t *)&out->b2blk;
-      if (SCALAR_IS_NONE(ALPHA))
+      if (SCALAR_IS_NONE(alpha))
          *cp = ATL_CpyFromANg_aN[icpB];
       else
-         *cp = (SCALAR_IS_ONE(ALPHA)) ?  ATL_CpyFromANg_a1[icpB]
-                                       : ATL_CpyFromANg_aX[icpB]
+         *cp = (SCALAR_IS_ONE(alpha)) ?  ATL_CpyFromANg_a1[icpB]
+                                       : ATL_CpyFromANg_aX[icpB];
       out->incAm = lda*(nb SHIFT);
       out->pincAm = lda*(pnb SHIFT);
       out->incBn = lda*(nb SHIFT);
