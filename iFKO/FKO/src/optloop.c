@@ -7174,7 +7174,7 @@ int RedundantScalarComputation(LOOPQ *lp)
    if (ecmvars) free(ecmvars);
    if (inewvars) free(inewvars);
    if (enewvars) free(enewvars);
-0   KillBlockList(ifblks);
+   KillBlockList(ifblks);
    KillBlockList(elseblks);
    KillBlockList(splitblks);
    KillBlockList(mergeblks);
@@ -7380,6 +7380,9 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          st = FST;
          type = T_FLOAT;
          codemask = mask;
+         if (!IS_FLOAT(STflag[mask-1]) )
+            fko_error(__LINE__, "RC failed due to mixed types!");
+
       }
       else if (IS_DOUBLE(STflag[sp[i]-1]))
       {
@@ -7389,6 +7392,8 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          st = FSTD;
          type = T_DOUBLE;
          codemask = mask;
+         if (!IS_DOUBLE(STflag[mask-1]) )
+            fko_error(__LINE__, "RC failed due to mixed types!");
       }
       else if (IS_INT(STflag[sp[i]-1]))/* for int */
       {
