@@ -7381,7 +7381,11 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          type = T_FLOAT;
          codemask = mask;
          if (!IS_FLOAT(STflag[mask-1]) )
-            fko_error(__LINE__, "RC failed due to mixed types!");
+         {
+            /*fko_error(__LINE__, "RC failed due to mixed types!");*/
+            fko_warn(__LINE__, "RC failed due to mixed types!");
+            err = 1;
+         }
 
       }
       else if (IS_DOUBLE(STflag[sp[i]-1]))
@@ -7392,8 +7396,12 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          st = FSTD;
          type = T_DOUBLE;
          codemask = mask;
-         if (!IS_DOUBLE(STflag[mask-1]) )
-            fko_error(__LINE__, "RC failed due to mixed types!");
+         if (!IS_DOUBLE(STflag[mask-1]))
+         {
+            /*fko_error(__LINE__, "RC failed due to mixed types!");*/
+            fko_warn(__LINE__, "RC failed due to mixed types!");
+            err = 1;
+         }
       }
       else if (IS_INT(STflag[sp[i]-1]))/* for int */
       {
