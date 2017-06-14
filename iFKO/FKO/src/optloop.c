@@ -7372,6 +7372,12 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
 
    for (N=sp[0], i=1; i <= N; i++)
    {
+      if (IS_PTR(STflag[sp[i]-1]))
+      {
+         fko_warn(__LINE__, "RC failed due to ptr update!");
+         err = 1;
+      }
+
       if (IS_FLOAT(STflag[sp[i]-1]))
       {
          cmov1 = FCMOV1;
@@ -7380,7 +7386,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          st = FST;
          type = T_FLOAT;
          codemask = mask;
-         if (!IS_FLOAT(STflag[mask-1]) )
+         if (!IS_FLOAT(STflag[mask-1]))
          {
             /*fko_error(__LINE__, "RC failed due to mixed types!");*/
             fko_warn(__LINE__, "RC failed due to mixed types!");
