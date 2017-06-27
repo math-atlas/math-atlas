@@ -32483,19 +32483,6 @@ int syrk_amm
    }
 @ENDSKIP
 /*
- * Outer product version will call outer-product-optimized amm, and since
- * N is too large to call syrk_IP, we expect amm perf to dominate this case.
- * Outer product SYRK is used in right-looking Cholesky.
- */
-   #if 1
-   if (K <= ATL_VWopgen_BEST_KB)
-   #ifdef Conj_
-      return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
-   #else
-      return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
-   #endif
-   #endif
-/*
  * Inner-product version calls nothing by SYRK kernels, and is called in
  * LAPACK's default left-looking Cholesky.  _IP handles L1/L2BLAS cases too.
  */
@@ -32510,6 +32497,19 @@ int syrk_amm
       #endif
       return(0);
    }
+   #endif
+/*
+ * Outer product version will call outer-product-optimized amm, and since
+ * N is too large to call syrk_IP, we expect amm perf to dominate this case.
+ * Outer product SYRK is used in right-looking Cholesky.
+ */
+   #if 1
+   if (K <= ATL_VWopgen_BEST_KB)
+   #ifdef Conj_
+      return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
+   #else
+      return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
+   #endif
    #endif
    #if 0
    timG = Mjoin(PATL,ipsyrkInfo)(&ip, TA, N, K, lda, ldc, alpha, beta);
@@ -33032,6 +33032,7 @@ void syrkBlk
       C += d*op->nb*((ldc+1)SHIFT);
       if (flag&1)  /* Upper matrix */
       {
+         @BEGINSKIP
          #ifdef TCPLX
             const TYPE zero[2] = {ATL_rzero, ATL_rzero};
             blk2c(nb, nb, alp, rC, wC, zero, wU, nb);
@@ -33062,6 +33063,15 @@ void syrkBlk
             #else
                Mjoin(PATL,axpby)(k+1, ATL_rone, wU, nb, beta, C, 1);
             #endif
+         #endif
+         @ENDSKIP
+         #ifdef TCPLX
+            blk2c(nb, nb, alp, rC, wC, beta, C, ldc);
+            #ifdef Conj_  /* must zero complex part of diagonal! */
+               Mjoin(PATLU,zero)(nb, C+1, (ldc+1)SHIFT);
+            #endif
+         #else
+            blk2c(nb, nb, alp, wC, beta, C, ldc);
          #endif
       }
       else
@@ -33187,7 +33197,7 @@ int syrk_OP
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0_L2UT);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
                         Mjoin(PATL,SyrkIntoC_a1b0_L2UT)
@@ -39034,7 +39044,7 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    {
       int U;
       U = ATL_iLCM(mu, nu);
-      ATL_assert(N > U);
+      ATL_assert(N >= U);
       NB = (MB+NB)>>1;
       NB = Mmin(NB, N);
       if (NB <= N)
@@ -39048,8 +39058,9 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    {
       nb = NB;
       nfnblks = N / NB;
+      nmu = NB / mu;
       nnu = NB / nu;
-      out->nF = pnb = N - nfnblks*NB;
+      out->mF = out->nF = pnb = N - nfnblks*NB;
       pnmu = (pnb+mu-1)/mu;
       pnnu = (pnb+nu-1)/nu;
       pnb = pnnu * nu;
@@ -39062,7 +39073,7 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       pnmu = nmu = (N+mu-1)/mu;
       pnb = nb = nnu * nu;
       nfnblks = 0;
-      out->nF = N;
+      out->mF = out->nF = N;
    }
 
    kb = ((K+ku-1)/ku)*ku;
