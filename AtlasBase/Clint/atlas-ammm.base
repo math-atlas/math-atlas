@@ -32511,57 +32511,15 @@ int syrk_amm
       return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
    #endif
    #endif
-   #if 0
-   timG = Mjoin(PATL,ipsyrkInfo)(&ip, TA, N, K, lda, ldc, alpha, beta);
-   if (N <= ATL_VWsyrk_MAX_NB)
-   {
-      double timS;
-      float *tpf;
-      int i, IS;
-      unsigned int nb, nbL=0;
-/*
- *    Find smallest NB syrk kernel that can fully contain N
- */
-      #if ATL_VWsyrk_BEST_IDX != ATL_VWsyrk_LAST_IDX
-         IS=(N <= ATL_VWsyrk_BEST_NB)?ATL_VWsyrk_BEST_IDX:ATL_VWsyrk_LAST_IDX;
-      #else
-         IS = ATL_VWsyrk_BEST_IDX;
-      #endif
-      for (i=IS; i; i--)
-      {
-         nb = ATL_GetVWsyrkNB(i);
-         if (N < nb)
-         {
-            if (i != IS && nbL-N > N-nb)
-               i++;
-            break;
-         }
-         else if (N == nb)
-            break;
-         nbL = nb;
-      }
-      nb = ((N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
-      tpf = (float*)(ATL_VIEW_syrk+ATL_VWsyrk_IDXMUL(i));
-      timS = *tpf * nb * nb * K;
-      if (timS <= timG)
-      {
-         printf("timS=%e, timG=%e : use SYRK_IP D=(%u,%u)\n", timS, timG, N, K);
-         #ifdef Conj_
-            Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
-         #else
-            Mjoin(PATL,syrk_IP)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
-         #endif
-         return(0);
-      }
-      else
-         printf("timS=%e, timG=%e: D=(%u,%u), B=(%u,%u)\n", timS, timG,
-                N, K, ip.mb, ip.nb);
-   }
+   #if 1
+      timG = Mjoin(PATL,ipsyrkInfo)(&ip, TA, N, K, lda, ldc, alpha, beta);
    #else
       Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
-      printf("D=(%u,%u), B=(%u,%u,%u), b=(%u,%u,%u), nB=(%u,%u,%u)\n", 
-             (unsigned int)N,(unsigned int)K, ip.mb, ip.nb, ip.kb,
-             ip.pmb, ip.pnb, ip.kb0, ip.nfmblks, ip.nfnblks, ip.nfkblks);
+   #endif
+   #if 0
+   printf("D=(%u,%u), B=(%u,%u,%u), b=(%u,%u,%u), nB=(%u,%u,%u)\n", 
+          (unsigned int)N,(unsigned int)K, ip.mb, ip.nb, ip.kb,
+          ip.pmb, ip.pnb, ip.kb0, ip.nfmblks, ip.nfnblks, ip.nfkblks);
    #endif
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
@@ -39609,7 +39567,8 @@ double Mjoin(PATL,ipsyrkInfo)
 {
    size_t nfnblks;
    unsigned int npnblks, mb, nb, pnb, pmb, mu, nu;
-   unsigned int i, idB=ATL_VWipmen_BEST_IDX, nbB=0;
+   unsigned int idB=ATL_VWipmen_BEST_IDX, nbB=0;
+   int i;
    double timB=N*N*K;
    const enum ATLAS_TRANS TB = (TA == AtlasNoTrans) ? 
       #ifdef Conj_
@@ -39618,7 +39577,7 @@ double Mjoin(PATL,ipsyrkInfo)
           AtlasTrans : AtlasNoTrans;
       #endif
 
-   for (i=0; i <= ATL_VWipmen_BEST_IDX; i++)
+   for (i=ATL_VWipmen_BEST_IDX; i >= 0; i--)
    {
       double tim;
       float *tpf, *stpf;
@@ -39627,7 +39586,7 @@ double Mjoin(PATL,ipsyrkInfo)
 
       nb = ATL_GetVWipmenNB(i);
       if (nb+nb > N)
-         break;
+         continue;
       nfdiag = N / nb;
       pnb = N - nb*nfdiag;
       ngblk = ((nfdiag-1)*nfdiag)>>1;
@@ -39653,14 +39612,18 @@ double Mjoin(PATL,ipsyrkInfo)
          ts *= *stpf * nf;
          tim += tg + ts;
       }
-      if (tim < timB)
+      #ifdef DEBUG
+         printf("%u: D=(%u,%u), NB=%u(%u) tim=%e\n", i, N, K, nb, pnb, tim);
+      #endif
+      if (tim > timB)  /* don't keep looking if we are getting slower */
+         break;        /* assume get smaller to reduce SYRK cost */
+@skip      if (tim < timB)
       {
          idB = i;
          nbB = nb;
          nfnblks = nfdiag;
          timB = tim;
       }
-      printf("%u: D=(%u,%u), NB=%u(%u) tim=%e\n", i, N, K, nb, pnb, tim);
    }
    i = ATL_GetVWipmenAMMI(idB);
    ATL_AMM_GetMNU(i, mu, nu);
@@ -39685,7 +39648,9 @@ double Mjoin(PATL,ipsyrkInfo)
       else
          npnblks = pnb = pmb = 0;
    }
-   printf("F%u: D=(%u,%u), NB=%u(%u)\n", idB, N, K, nbB, pnb);
+   #ifdef DEBUG
+      printf("F%u: D=(%u,%u), NB=%u(%u)\n", idB, N, K, nbB, pnb);
+   #endif
    Mjoin(PATL,@(vwf)InfoPop)(ip, idB, TA, TB, N, N, K, lda, lda, ldc, alpha,
                              beta, nfnblks, npnblks, mb, pmb, nfnblks,
                              npnblks, nb, pnb);
