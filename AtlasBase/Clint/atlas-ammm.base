@@ -33543,6 +33543,118 @@ static INLINE void ATL_syr1
 
 #include "atlas_cache.h"
 #include "atlas_reflevel3.h"
+/*
+ * This routine assumes 1st col of A is x, 2nd y, and NoTrans case
+ */
+static void ATL_syr2_axpy
+(
+   const enum ATLAS_UPLO Uplo,
+   ATL_CSZT N,
+#ifdef Conj_
+   const TYPE ralpha,
+#else
+   const SCALAR alpha,
+#endif
+   const TYPE *x,
+   const TYPE *y,
+#ifdef Conj_
+   const TYPE rbeta,
+#else
+   const SCALAR beta,
+#endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   #ifdef Conj_
+      const TYPE beta[2] ={rbeta,  ATL_rzero};
+   #endif
+   if (Uplo == AtlasLower)
+   {
+      ATL_CSZT ldcp1 = (ldc+1)SHIFT;
+      ATL_SZT j;
+      for (j=0; j < N; j++, C += ldcp1)
+      {
+         ATL_CSZT n = N-j;
+         #ifdef Conj_
+            const TYPE alpx[2] = {ralpha*x[j+j], -ralpha*x[j+j+1]};
+            const TYPE alpy[2] = {ralpha*y[j+j], -ralpha*y[j+j+1]};
+         #elif defined(TCPLX)
+            const TYPE ralp=alpha[0], ialp=alpha[1];
+            TYPE alpx[2], alpy[2], rx=x[j+j], ix=x[j+j+1];
+            if (ialp == ATL_rzero)
+            {
+               alpx[0] = ralp*rx;
+               alpx[1] = ralp*ix;
+               rx=y[j+j], ix=y[j+j+1];
+               alpy[0] = ralp*rx;
+               alpy[1] = ralp*ix;
+            }
+            else
+            {
+               alpx[0] = ralp*rx - ialp*ix;
+               alpx[1] = ralp*ix + ialp*rx;
+               rx=y[j+j], ix=y[j+j+1];
+               alpy[0] = ralp*rx - ialp*ix;
+               alpy[1] = ralp*ix + ialp*rx;
+            }
+         #else
+            const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
+         #endif
+         Mjoin(PATL,axpby)(n, alpx, x+(j SHIFT), 1, beta, C, 1);
+         Mjoin(PATL,axpy)(n, alpy, y+(j SHIFT), 1, C, 1);
+         #ifdef Conj_
+            C[1] = ATL_rzero;
+         #endif
+      }
+   }
+   else /* Uplo == AtlasUpper */
+   {
+      ATL_CSZT ldc2 = ldc SHIFT;
+      ATL_SZT j;
+      for (j=0; j < N; j++, C += ldc2)
+      {
+         #ifdef Conj_
+            const TYPE alpx[2] = {ralpha*x[j+j], -ralpha*x[j+j+1]};
+            const TYPE alpy[2] = {ralpha*y[j+j], -ralpha*y[j+j+1]};
+         #elif defined(TCPLX)
+            const TYPE ralp=alpha[0], ialp=alpha[1];
+            TYPE alpx[2], alpy[2], rx=x[j+j], ix=x[j+j+1];
+            if (ialp == ATL_rzero)
+            {
+               alpx[0] = ralp*rx;
+               alpx[1] = ralp*ix;
+               rx=y[j+j], ix=y[j+j+1];
+               alpy[0] = ralp*rx;
+               alpy[1] = ralp*ix;
+            }
+            else
+            {
+               alpx[0] = ralp*rx - ialp*ix;
+               alpx[1] = ralp*ix + ialp*rx;
+               rx=y[j+j], ix=y[j+j+1];
+               alpy[0] = ralp*rx - ialp*ix;
+               alpy[1] = ralp*ix + ialp*rx;
+            }
+         #else
+            const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
+         #endif
+         Mjoin(PATL,axpby)(j+1, alpx, x, 1, beta, C, 1);
+         Mjoin(PATL,axpy)(j+1, alpy, y, 1, C, 1);
+         #ifdef Conj_
+            C[j+j+1] = ATL_rzero;
+         #endif
+      }
+   }
+}
+
+#ifdef Conj_
+   #define ATL_ger2 Mjoin(PATL,ger2c)
+#elif defined(TCPLX)
+   #define ATL_ger2 Mjoin(PATL,ger2u)
+#else
+   #define ATL_ger2 Mjoin(PATL,ger2)
+#endif
 static void ATL_syr2
 (
    const enum ATLAS_UPLO Uplo,
@@ -33597,112 +33709,73 @@ static void ATL_syr2
    else
    {
       x = (TYPE *) A;
-      y = (TYPE *) ((TA == AtlasNoTrans) ? (A + lda2) : A + (1 SHIFT));
+      y = (TYPE *) (A + lda2);
    }
 /*
  * If BETA != 1, then we must pass through C twice, so use daxpy-based code
  */
-   #if 0
    #ifdef Conj_
    if (rbeta != ATL_rone)
    #else
    if (!SCALAR_IS_ONE(beta))
    #endif
-   #else
-   if (1)
-   #endif
    {
-      if (Uplo == AtlasLower)
-      {
-         ATL_CSZT ldcp1 = (ldc+1)SHIFT;
-         ATL_SZT j;
-         for (j=0; j < N; j++, C += ldcp1)
-         {
-            ATL_CSZT n = N-j;
-            #ifdef Conj_
-               const TYPE alpx[2] = {ralpha*x[j+j], -ralpha*x[j+j+1]};
-               const TYPE alpy[2] = {ralpha*y[j+j], -ralpha*y[j+j+1]};
-            #elif defined(TCPLX)
-               const TYPE ralp=alpha[0], ialp=alpha[1];
-               TYPE alpx[2], alpy[2], rx=x[j+j], ix=x[j+j+1];
-               if (ialp == ATL_rzero)
-               {
-                  alpx[0] = ralp*rx;
-                  alpx[1] = ralp*ix;
-                  rx=y[j+j], ix=y[j+j+1];
-                  alpy[0] = ralp*rx;
-                  alpy[1] = ralp*ix;
-               }
-               else
-               {
-                  alpx[0] = ralp*rx - ialp*ix;
-                  alpx[1] = ralp*ix + ialp*rx;
-                  rx=y[j+j], ix=y[j+j+1];
-                  alpy[0] = ralp*rx - ialp*ix;
-                  alpy[1] = ralp*ix + ialp*rx;
-               }
-            #else
-               const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
-            #endif
-            Mjoin(PATL,axpby)(n, alpx, x+(j SHIFT), 1, beta, C, 1);
-            Mjoin(PATL,axpy)(n, alpy, y+(j SHIFT), 1, C, 1);
-            #ifdef Conj_
-               C[1] = ATL_rzero;
-            #endif
-         }
-      }
-      else /* Uplo == AtlasUpper */
-      {
-         ATL_SZT j;
-         for (j=0; j < N; j++, C += ldc2)
-         {
-            #ifdef Conj_
-               const TYPE alpx[2] = {ralpha*x[j+j], -ralpha*x[j+j+1]};
-               const TYPE alpy[2] = {ralpha*y[j+j], -ralpha*y[j+j+1]};
-            #elif defined(TCPLX)
-               const TYPE ralp=alpha[0], ialp=alpha[1];
-               TYPE alpx[2], alpy[2], rx=x[j+j], ix=x[j+j+1];
-               if (ialp == ATL_rzero)
-               {
-                  alpx[0] = ralp*rx;
-                  alpx[1] = ralp*ix;
-                  rx=y[j+j], ix=y[j+j+1];
-                  alpy[0] = ralp*rx;
-                  alpy[1] = ralp*ix;
-               }
-               else
-               {
-                  alpx[0] = ralp*rx - ialp*ix;
-                  alpx[1] = ralp*ix + ialp*rx;
-                  rx=y[j+j], ix=y[j+j+1];
-                  alpy[0] = ralp*rx - ialp*ix;
-                  alpy[1] = ralp*ix + ialp*rx;
-               }
-            #else
-               const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
-            #endif
-            Mjoin(PATL,axpby)(j+1, alpx, x, 1, beta, C, 1);
-            Mjoin(PATL,axpy)(j+1, alpy, y, 1, C, 1);
-            #ifdef Conj_
-               C[j+j+1] = ATL_rzero;
-            #endif
-         }
-      }
+      #ifdef Conj_
+         ATL_syr2_axpy(Uplo, N, ralpha, x, y, rbeta, C, ldc);
+      #else
+         ATL_syr2_axpy(Uplo, N, alpha, x, y, beta, C, ldc);
+      #endif
    }
    else /* beta=1 can use ger2 based code, make only 1 pass thru C */
    {
-      #if L1C_ELTS >= 16384
-         const unsigned int Np = (N > 128) ? 120 : N;
-      #elif L1C_ELTS >= 8192
-         const unsigned int Np = (N > 90) ? 80 : N;
-      #elif L1C_ELTS >= 4096
-         const unsigned int Np = (N > 64) ? 60 : N;
-      #elif L1C_ELTS >= 2048
-         const unsigned int Np = (N > 48) ? 40 : N;
-      #else
-         const unsigned int Np = (N > 40) ? 24 : N;
+      #ifdef Conj_
+         const TYPE alpha[2] = {ralpha, ATL_rzero};
       #endif
-      ATL_assert(0);
+      #if L1C_ELTS >= 16384
+         unsigned int Np = (N > 128) ? 120 : N;
+      #elif L1C_ELTS >= 8192
+         unsigned int Np = (N > 90) ? 80 : N;
+      #elif L1C_ELTS >= 4096
+         unsigned int Np = (N > 64) ? 60 : N;
+      #elif L1C_ELTS >= 2048
+         unsigned int Np = (N > 48) ? 40 : N;
+      #else
+         unsigned int Np = (N > 40) ? 24 : N;
+      #endif
+      if (Uplo == AtlasLower)
+      {
+         ATL_CSZT incC=((ldc+1)SHIFT)*Np, incX=(Np SHIFT);
+         ATL_SZT j;
+         for (j=0; j < N; j += Np, C += incC, x += incX, y += incX)
+         {
+            const unsigned nb = Mmin(N-j, Np), nb2=nb SHIFT;
+            #ifdef Conj_
+               ATL_syr2_axpy(Uplo, nb, ralpha, x, y, rbeta, C, ldc);
+            #else
+               ATL_syr2_axpy(Uplo, nb, alpha, x, y, beta, C, ldc);
+            #endif
+            ATL_ger2(N-j-nb, nb, alpha, x+nb2, 1, x, 1, alpha, y+nb2, 1, y, 1, 
+                     C+nb2, ldc);
+         }
+      }
+      else
+      {
+         const TYPE *x0 = x, *y0 = y;
+         ATL_CSZT incC=((ldc)SHIFT)*Np, incX=(Np SHIFT);
+         ATL_SZT j;
+         for (j=0; j < N; j += Np, C += incC, x += incX, y += incX)
+         {
+            const unsigned nb = Mmin(N-j, Np), nb2=nb SHIFT;
+            if (j)
+               ATL_ger2(j, nb, alpha, x0, 1, x, 1, alpha, y0, 1, y, 1,
+                        C, ldc);
+            #ifdef Conj_
+               ATL_syr2_axpy(Uplo, nb, ralpha, x, y, rbeta, C+(j SHIFT), ldc);
+            #else
+               ATL_syr2_axpy(Uplo, nb, alpha, x, y, beta, C+(j SHIFT), ldc);
+            #endif
+         }
+      }
    }
    if (vp)
       free(vp);
