@@ -32486,7 +32486,7 @@ int syrk_amm
       #endif
    }
 @ENDSKIP
-   if (K < 2 || SCALAR_IS_ZERO(alpha))      /* degenerate case handled by*/
+   if (K < 3 || SCALAR_IS_ZERO(alpha))      /* degenerate case handled by*/
    {
       #ifdef Conj_
          syrk_IP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
@@ -33522,6 +33522,107 @@ static INLINE void ATL_syr1
    #endif
 }
 
+#include "atlas_cache.h"
+#include "atlas_reflevel3.h"
+static void ATL_syr2
+(
+   const enum ATLAS_UPLO Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CSZT N,
+#ifdef Conj_
+   const TYPE ralpha,
+#else
+   const SCALAR alpha,
+#endif
+   const TYPE *A,
+   ATL_CSZT lda,
+#ifdef Conj_
+   const TYPE rbeta,
+#else
+   const SCALAR beta,
+#endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   void *vp=NULL;
+   TYPE *x, *y;
+   #ifdef TCPLX
+      ATL_CSZT lda2 = lda+lda, ldc2 = ldc+ldc;
+   #else
+      #define lda2 lda
+      #define ldc2 ldc
+   #endif
+   #ifdef Conj_
+      const TYPE alpha[2]={ralpha, ATL_rzero};
+      const TYPE beta[2] ={rbeta,  ATL_rzero};
+   #endif
+/*
+ * If A cols are strided, copy them to contiguous & aligned storage
+ */
+   if (TA != AtlasNoTrans)
+   {
+      vp = malloc(ATL_MulBySize((N+N)SHIFT) + ATL_Cachelen+ATL_Cachelen);
+      ATL_assert(vp);
+      x = ATL_AlignPtr(vp);
+      y = x + N;
+      y = ATL_AlignPtr(y);
+      Mjoin(PATL,copy)(N, A, lda, x, 1);
+      Mjoin(PATL,copy)(N, A+(1 SHIFT), lda, y, 1);
+   }
+   else
+   {
+      x = (TYPE *) A;
+      y = (TYPE *) ((TA == AtlasNoTrans) ? (A + lda2) : A + (1 SHIFT));
+   }
+/*
+ * If BETA != 1, then we must pass through C twice, so use daxpy-based code
+ */
+   #if 0
+   #ifdef Conj_
+   if (rbeta != ATL_rone)
+   #else
+   if (!SCALAR_IS_ONE(beta))
+   #endif
+   #else
+   if (1)
+   #endif
+   {
+      if (Uplo == AtlasLower)
+      {
+         ATL_CSZT ldcp1 = (ldc+1)SHIFT;
+         ATL_SZT j;
+         for (j=0; j < N; j++, C += ldcp1)
+         {
+            ATL_CSZT n = N-j;
+            #ifdef TCPLX
+            #else
+               const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
+            #endif
+            Mjoin(PATL,axpby)(n, alpx, x+j, 1, beta, C, 1);
+            Mjoin(PATL,axpy)(n, alpy, y+j, 1, C, 1);
+         }
+      }
+   }
+   else /* beta=1 can use ger2 based code, make only 1 pass thru C */
+   {
+      #if L1C_ELTS >= 16384
+         const unsigned int Np = (N > 128) ? 120 : N;
+      #elif L1C_ELTS >= 8192
+         const unsigned int Np = (N > 90) ? 80 : N;
+      #elif L1C_ELTS >= 4096
+         const unsigned int Np = (N > 64) ? 60 : N;
+      #elif L1C_ELTS >= 2048
+         const unsigned int Np = (N > 48) ? 40 : N;
+      #else
+         const unsigned int Np = (N > 40) ? 24 : N;
+      #endif
+      ATL_assert(0);
+   }
+   if (vp)
+      free(vp);
+}
+
 @ROUT ATL_syrk_IP N2Idx
 static INLINE int N2Idx(const unsigned int N)
 /*
@@ -33637,6 +33738,15 @@ void Mjoin(PATL,syrk_IP)
          ATL_syr1(Uplo, TA, N, ralpha, A, lda, rbeta, C, ldc);
       #else
          ATL_syr1(Uplo, TA, N, alpha, A, lda, beta, C, ldc);
+      #endif
+      return;
+   }
+   if (K == 2)  /* Level-2/1 BLAS */
+   {
+      #ifdef Conj_
+         ATL_syr2(Uplo, TA, N, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         ATL_syr2(Uplo, TA, N, alpha, A, lda, beta, C, ldc);
       #endif
       return;
    }
