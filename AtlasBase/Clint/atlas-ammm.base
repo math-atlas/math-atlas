@@ -33562,13 +33562,18 @@ static void ATL_syr2
  */
    if (TA != AtlasNoTrans)
    {
-      vp = malloc(ATL_MulBySize((N+N)SHIFT) + ATL_Cachelen+ATL_Cachelen);
+      vp = malloc(ATL_MulBySize(N+N) + ATL_Cachelen+ATL_Cachelen);
       ATL_assert(vp);
       x = ATL_AlignPtr(vp);
-      y = x + N;
+      y = x + (N SHIFT);
       y = ATL_AlignPtr(y);
-      Mjoin(PATL,copy)(N, A, lda, x, 1);
-      Mjoin(PATL,copy)(N, A+(1 SHIFT), lda, y, 1);
+      #ifdef Conj_
+         Mjoin(PATL,copyConj)(N, A, lda, x, 1);
+         Mjoin(PATL,copyConj)(N, A+(1 SHIFT), lda, y, 1);
+      #else
+         Mjoin(PATL,copy)(N, A, lda, x, 1);
+         Mjoin(PATL,copy)(N, A+(1 SHIFT), lda, y, 1);
+      #endif
    }
    else
    {
@@ -33595,12 +33600,73 @@ static void ATL_syr2
          for (j=0; j < N; j++, C += ldcp1)
          {
             ATL_CSZT n = N-j;
-            #ifdef TCPLX
+            #ifdef Conj_
+               const TYPE alpx[2] = {ralpha*x[j+j], -ralpha*x[j+j+1]};
+               const TYPE alpy[2] = {ralpha*y[j+j], -ralpha*y[j+j+1]};
+            #elif defined(TCPLX)
+               const TYPE ralp=alpha[0], ialp=alpha[1];
+               TYPE alpx[2], alpy[2], rx=x[j+j], ix=x[j+j+1];
+               if (ialp == ATL_rzero)
+               {
+                  alpx[0] = ralp*rx;
+                  alpx[1] = ralp*ix;
+                  rx=y[j+j], ix=y[j+j+1];
+                  alpy[0] = ralp*rx;
+                  alpy[1] = ralp*ix;
+               }
+               else
+               {
+                  alpx[0] = ralp*rx - ialp*ix;
+                  alpx[1] = ralp*ix + ialp*rx;
+                  rx=y[j+j], ix=y[j+j+1];
+                  alpy[0] = ralp*rx - ialp*ix;
+                  alpy[1] = ralp*ix + ialp*rx;
+               }
             #else
                const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
             #endif
-            Mjoin(PATL,axpby)(n, alpx, x+j, 1, beta, C, 1);
-            Mjoin(PATL,axpy)(n, alpy, y+j, 1, C, 1);
+            Mjoin(PATL,axpby)(n, alpx, x+(j SHIFT), 1, beta, C, 1);
+            Mjoin(PATL,axpy)(n, alpy, y+(j SHIFT), 1, C, 1);
+            #ifdef Conj_
+               C[1] = ATL_rzero;
+            #endif
+         }
+      }
+      else /* Uplo == AtlasUpper */
+      {
+         ATL_SZT j;
+         for (j=0; j < N; j++, C += ldc2)
+         {
+            #ifdef Conj_
+               const TYPE alpx[2] = {ralpha*x[j+j], -ralpha*x[j+j+1]};
+               const TYPE alpy[2] = {ralpha*y[j+j], -ralpha*y[j+j+1]};
+            #elif defined(TCPLX)
+               const TYPE ralp=alpha[0], ialp=alpha[1];
+               TYPE alpx[2], alpy[2], rx=x[j+j], ix=x[j+j+1];
+               if (ialp == ATL_rzero)
+               {
+                  alpx[0] = ralp*rx;
+                  alpx[1] = ralp*ix;
+                  rx=y[j+j], ix=y[j+j+1];
+                  alpy[0] = ralp*rx;
+                  alpy[1] = ralp*ix;
+               }
+               else
+               {
+                  alpx[0] = ralp*rx - ialp*ix;
+                  alpx[1] = ralp*ix + ialp*rx;
+                  rx=y[j+j], ix=y[j+j+1];
+                  alpy[0] = ralp*rx - ialp*ix;
+                  alpy[1] = ralp*ix + ialp*rx;
+               }
+            #else
+               const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
+            #endif
+            Mjoin(PATL,axpby)(j+1, alpx, x, 1, beta, C, 1);
+            Mjoin(PATL,axpy)(j+1, alpy, y, 1, C, 1);
+            #ifdef Conj_
+               C[j+j+1] = ATL_rzero;
+            #endif
          }
       }
    }
