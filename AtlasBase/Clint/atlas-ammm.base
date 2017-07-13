@@ -624,7 +624,7 @@ void Mjoin(PATL,ipmenInfo)
 double Mjoin(PATL,ipsyrkInfo) /* returns predicted time */
    (ipinfo_t*, int, enum ATLAS_TRANS,size_t,size_t,size_t,size_t, 
     const SCALAR alpha, const SCALAR beta);
-void Mjoin(PATL,opsyrkInfo)
+int Mjoin(PATL,opsyrkInfo)
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
     ATL_CSZT lda, ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta);
 @whiledef vw ipgen ipmen
@@ -32487,7 +32487,7 @@ int syrk_amm
    }
 @ENDSKIP
    if (K < 3 || SCALAR_IS_ZERO(alpha))      /* degenerate case handled by*/
-   {
+   {                                        /* syrk_IP */
       #ifdef Conj_
          syrk_IP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
       #else
@@ -32501,6 +32501,7 @@ int syrk_amm
  * LAPACK's default left-looking Cholesky.  _IP handles L1/L2BLAS cases too.
  */
    timG = Mjoin(PATL,ipsyrkInfo)(&ip,herk_FLG, TA, N, K, lda, ldc, alpha, beta);
+   nb = (ip.nfnblks) ? ip.nb : ip.pnb;
    #if 1
    if (timG < 0.0)
    {
@@ -32519,11 +32520,28 @@ int syrk_amm
  */
    #if 1
    if (K <= ATL_VWopgen_BEST_KB)
+   {
+      int ierr;
    #ifdef Conj_
-      return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
+      ierr = syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
    #else
-      return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
+      ierr = syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
    #endif
+      if (ierr)
+      {
+         if (ierr == 1)  /* if we failed to malloc */
+            return(1);   /* tell recursion to continue */
+         if (nb >= N)    /* if we can do it with syrk_IP or syrk_OP */
+         {               /* use syrk_IP if syrk_OP fails */
+            #ifdef Conj_
+               syrk_IP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+            #else
+               syrk_IP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+            #endif
+            return(0);
+         }
+      }
+   }
    #endif
    #if 1
    #else
@@ -33098,10 +33116,11 @@ int syrk_OP
 @skip   Mjoin(PATL,GetSyrkOP)(&op, 1, TA, TB, N, K, lda, ldc, alpha, beta);
 @skip   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
    #ifdef Conj_
-      Mjoin(PATL,opsyrkInfo)(&op, 1, TA, N, K, lda, ldc, alpha, beta);
+      if (Mjoin(PATL,opsyrkInfo)(&op, 1, TA, N, K, lda, ldc, alpha, beta))
    #else
-      Mjoin(PATL,opsyrkInfo)(&op, 0, TA, N, K, lda, ldc, alpha, beta);
+      if (Mjoin(PATL,opsyrkInfo)(&op, 0, TA, N, K, lda, ldc, alpha, beta))
    #endif
+         return(2);
    fprintf(stderr, "D=(%u,%u), B=(%u,%u,%u), pB=(%u,%u,%u)\n",
            (unsigned int)N, (unsigned int)K, op.mb, op.nb, op.KB, 
            op.pmb, op.pnb, op.kb);
@@ -39153,10 +39172,14 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
 }
 @ROUT ATL_opsyrkInfo
 
-void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
+int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA,
     ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldc,
     const SCALAR alpha, const SCALAR beta)
+/*
+ * RETURNS: 0 if opsyrk can do this, problem, non-zero if it can't.
+ *          If non-zero is returned, out may not be fully populated.
+ */
 {
    ammkern_t amm1, amm0, ammN;
    ATL_cparr_t *cp = (ATL_cparr_t *)&out->a2blk;
@@ -39173,7 +39196,8 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       #define CONE ATL_rone
    #endif
 
-   ATL_assert(iv < ATL_VWopgen_NCASES);
+   if (iv < ATL_VWopgen_NCASES)
+      return(1);
    ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
    ATL_assert(imm < ATL_AMM_NCASES);
    icpA += icpA;
@@ -39191,7 +39215,8 @@ void Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    {
       int U;
       U = ATL_iLCM(mu, nu);
-      ATL_assert(N >= U);
+      if (N < U)
+        return(2);
       NB = (MB+NB)>>1;
       NB = Mmin(NB, N);
       if (NB <= N)
