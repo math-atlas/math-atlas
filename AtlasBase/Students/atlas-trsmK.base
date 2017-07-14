@@ -1,0 +1,1183 @@
+@ROUT ATL_trsmKL_amm
+/* This file implements TRSM kernels for left-cases using AMM kernels. */
+
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+
+#ifdef TRSMK_PRE
+   void Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_b0))
+      (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,
+       const TYPE*,const TYPE*,const TYPE*);
+   void Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_b1))
+      (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,
+       const TYPE*,const TYPE*,const TYPE*);
+   void Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_bn))
+      (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,
+       const TYPE*,const TYPE*,const TYPE*);
+   #ifdef TCPLX
+      #define CPROTO ,TYPE*
+   #else
+      #define CPROTO
+   #endif
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Na1))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Na1))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Nan))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Nan))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Tan))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Tan))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Can))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Can))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   #undef CPROTO
+#else
+   #error "ERROR: TRSMK_PRE must be defined!!"
+#endif
+
+#ifdef TCPLX
+   void Mjoin(PATL,cplxinvert)(ATL_CINT, TYPE*, ATL_CINT, TYPE*, ATL_CINT);
+#endif
+
+/* best with fully rolled kernel and no prefetch ins. */
+
+#ifndef ATL_MU
+   #define ATL_MU 4
+#endif
+#ifndef ATL_NU
+   #define ATL_NU 12
+#endif
+#define ATL_MUNU (ATL_MU*ATL_NU)
+
+#include Mstr(Mjoin(ATLAS_PRE,trsmKL.h))
+#include Mstr(Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(ATLAS_PRE,cpFromBlkC_),\
+		  ATL_MU),x),ATL_NU),_.h))
+
+static INLINE void ATL_ltrcopy(const int IsConj, 
+                               const int n, TYPE *A, const int lda, 
+                               TYPE *W, const int ldw, TYPE *diag)
+{
+   register int i, j;
+   TYPE *a = A, *w = W;
+   for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
+   {
+      if(diag)
+      {
+         #ifdef TCPLX /* invert diag later */
+            diag[j SHIFT] = w[j SHIFT] = a[j SHIFT];
+            diag[(j SHIFT)+1] = w[(j SHIFT)+1] = IsConj ? 
+                                -a[(j SHIFT)+1] : a[(j SHIFT)+1]; 
+         #else
+            diag[j] = ATL_rone / a[j];
+            w[j] = a[j];
+         #endif
+      }
+      for (i=j+1; i<n; i++)
+      {
+         w[i SHIFT] = a[i SHIFT];
+         #ifdef TCPLX
+            w[(i SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+         #endif
+      }
+   }
+   #ifdef TCPLX
+      if (diag)
+      {
+         Mjoin(PATL,cplxinvert)(n, diag, 1, diag, 1);
+      }
+   #endif
+}
+
+static INLINE void ATL_utrcopy(const int IsConj, 
+                               const int n, TYPE *A, const int lda, 
+                               TYPE *W, const int ldw, TYPE *diag)
+{
+   register int i, j;
+   TYPE *a = A, *w = W;
+   for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
+   {
+      for (i=0; i<j; i++)
+      {
+         w[i SHIFT] = a[i SHIFT];
+         #ifdef TCPLX
+            w[(i SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+         #endif
+      }
+      if(diag)
+      {
+         #ifdef TCPLX /* invert diag later */
+            diag[j SHIFT] = w[j SHIFT] = a[j SHIFT];
+            diag[(j SHIFT)+1] = w[(j SHIFT)+1] = IsConj ? 
+                                -a[(j SHIFT)+1] : a[(j SHIFT)+1]; 
+         #else
+            w[j] = a[j];
+            diag[j] = ATL_rone / a[j];
+         #endif
+      }
+   }
+   #ifdef TCPLX
+      if (diag)
+      {
+         Mjoin(PATL,cplxinvert)(n, diag, 1, diag, 1);
+      }
+   #endif
+}
+
+int Mjoin(PATL,GetTRSMkLMU)() { return(ATL_MU); }
+int Mjoin(PATL,GetTRSMkLNU)() { return(ATL_NU); }
+
+void* GetWorkspaceL(int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w)
+{
+   int mb = (N + ATL_MU - 1) / ATL_MU;
+   const int MUMU = ATL_MU*ATL_MU;
+   const int MUNU = ATL_MU*ATL_NU;
+   void *vp;
+   vp = malloc( ATL_MulBySize( N + (MUMU*mb*(mb+1)/2) + mb*MUNU + 2*MUNU )
+                           + 3*ATL_Cachelen);
+   ATL_assert(vp);
+   *Diag = vp;
+   *L = (*Diag) + (N SHIFT);
+   *L = ATL_AlignPtr(*L);
+   *R = (*L) + ((MUMU*mb*(mb+1)/2) SHIFT);
+   *R = ATL_AlignPtr(*R);
+   *w = (*R) + ((mb*MUNU) SHIFT);
+   *w = ATL_AlignPtr(*w);
+   return(vp);
+}
+
+#define CA2CC_POST Mjoin(Mjoin(Mjoin(ATL_MU,_),ATL_NU),_a1_bX_RR)
+#ifndef USE_TRANS
+   #define ca2ccRR Mjoin(cpFromBlkCN_,CA2CC_POST)
+#else
+   #define ca2ccRR Mjoin(cpFromBlkCT_,CA2CC_POST)
+#endif
+static INLINE void GetInfo(const enum ATLAS_TRANS TransA, ammkern_t *amm_b0, 
+                           ammkern_t *amm_b1, ammkern_t *amm_bn, 
+                           cm2am_t *l2a, cm2am_t *r2a)
+{
+   *amm_b0 = Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_b0));
+   *amm_b1 = Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_b1));
+   *amm_bn = Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_bn));
+   #ifndef USE_TRANS
+      #define TRSMK_APRE Mjoin(PATL,Mjoin(Mjoin(TRSMK_PRE, _cp),ATL_MU))
+      #define TRSMK_BPRE Mjoin(PATL,Mjoin(Mjoin(TRSMK_PRE, _cp),ATL_NU))
+      *r2a = Mjoin(TRSMK_BPRE,_Na1);
+      if (TransA == AtlasTrans)
+         *l2a = Mjoin(TRSMK_APRE,_Nan);
+      else if (TransA == AtlasNoTrans)
+         *l2a = Mjoin(TRSMK_APRE,_Tan);
+      #ifdef TCPLX
+         else /* if (TransA == AtlasConjTrans) */
+            *l2a = Mjoin(TRSMK_APRE,_Can);
+      #endif
+   #else
+      #define TRSMK_APRE Mjoin(PATL,Mjoin(Mjoin(TRSMK_PRE, _cp),ATL_NU))
+      #define TRSMK_BPRE Mjoin(PATL,Mjoin(Mjoin(TRSMK_PRE, _cp),ATL_MU))
+      *r2a = Mjoin(TRSMK_APRE,_Na1);
+      if (TransA == AtlasTrans)
+         *l2a = Mjoin(TRSMK_BPRE,_Nan);
+      else if (TransA == AtlasNoTrans)
+         *l2a = Mjoin(TRSMK_BPRE,_Tan);
+      #ifdef TCPLX
+         else /* if (TransA == AtlasConjTrans) */
+            *l2a = Mjoin(TRSMK_BPRE,_Can);
+      #endif
+   #endif
+}
+
+static INLINE void Mjoin(PATL,trsmK_ammL_LTUN)
+   (const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag, 
+    ATL_CINT N, ATL_CINT R, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   cm2am_t r2a = NULL;
+   cm2am_t l2a = NULL;
+   ammkern_t amm_b0 = NULL, amm_b1 = NULL, amm_bn = NULL;
+   #ifdef TCPLX
+      TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   const int MU = ATL_MU, MUMU = ATL_MU*ATL_MU;
+   const int NU = ATL_NU, MUNU = ATL_MU*ATL_NU;
+   const int UnitAlpha = SCALAR_IS_ONE(alpha);
+   const int NeedCopyA = (A != NULL);
+   const int ainc = (TransA != AtlasNoTrans) ? 1 : lda;
+   const int IsConj = (TransA == AtlasConjTrans);
+   TYPE *l, *x=X;
+   int mb = (N + MU - 1) / MU;
+   const int iRWoff = mb*MUNU;
+   ATL_SZT r;
+   int i, ix=-1, mbi;
+
+   GetInfo(TransA, &amm_b0, &amm_b1, &amm_bn, &l2a, &r2a);
+
+   for (r=0; r < R; r += NU, x += (NU SHIFT)*ldx)
+   {
+      int mu, nu = R - r;
+      const int DoCopy = (!r && NeedCopyA);
+      TYPE *d, *Ac = ((TYPE*)A), *xc = x;
+      nu = Mmin(nu, NU);
+      mu = Mmin(MU, N);
+      Ac += ((N - mu) SHIFT) * (lda+1);
+      xc += ((N - mu) SHIFT);
+
+      /* do the first triangle */
+      if (Diag == AtlasUnit) d = NULL;
+      else d = diag;
+      if (DoCopy)
+      {
+         if (TransA == AtlasNoTrans)
+            ATL_utrcopy(IsConj, mu, Ac, lda, L, MU, d);
+         else
+            ATL_ltrcopy(IsConj, mu, Ac, lda, L, MU, d);
+      }
+      if (mu == ATL_MU)
+      {
+         if (!UnitAlpha) { Mjoin(PATL,scalK)(nu, alpha, xc, ldx); }
+         if (TransA == AtlasNoTrans)
+            Mjoin(Mjoin(PATL,trsmUN),ATL_MU)(nu, d, L, MU, xc, ldx);
+         else
+            Mjoin(Mjoin(PATL,trsmLT),ATL_MU)(nu, d, L, MU, xc, ldx);
+      }
+      else
+      {
+         if (!UnitAlpha) { Mjoin(PATL,scalKRR)(mu, nu, alpha, xc, ldx); }
+         if (TransA == AtlasNoTrans)
+            Mjoin(Mjoin(PATL,trsmUN),RR)(mu, nu, d, L, MU, xc, ldx);
+         else
+            Mjoin(Mjoin(PATL,trsmLT),RR)(mu, nu, d, L, MU, xc, ldx);
+      }
+
+      for (i=N-mu, mbi=1, l=L+(MUMU SHIFT); 
+            i > 0; i -= MU, mbi++, l+=(MUMU SHIFT))
+      {
+         mu = Mmin(i, MU);
+         Ac -= (mu SHIFT) * (lda+1);
+         xc -= (mu SHIFT);
+         #ifdef TCPLX
+         {
+            TYPE *rL, *iL, *rR, *iR;
+            iR = RW + (mb-mbi)*MUNU;
+            rR = iR + iRWoff;
+            rL = l + mbi*MUMU;
+            iL = l;
+            r2a(MU, nu, ONE, xc+(mu SHIFT), ldx, rR, iR);
+            if (DoCopy) /* do the copy as needed for in-cache comp. */
+            {
+               l2a(N-i, mu, NONE, Ac+(mu SHIFT)*ainc, lda, rL, iL);
+            }
+            #ifndef USE_TRANS
+               amm_b0(1, 1, N-i, iL, iR, w, rL, iR, w+MUNU);
+               amm_b0(1, 1, N-i, rL, iR, w+MUNU, rL, rR, w);
+               amm_bn(1, 1, N-i, rL, rR, w, iL, rR, w+MUNU);
+               amm_b1(1, 1, N-i, iL, rR, w+MUNU, 
+                      l+(mbi SHIFT)*MUMU, RW+(mb-mbi-1)*MUNU, w);
+            #else
+               amm_b0(1, 1, N-i, iR, iL, w, rR, iL, w+MUNU);
+               amm_b0(1, 1, N-i, rR, iL, w+MUNU, rR, rL, w);
+               amm_bn(1, 1, N-i, rR, rL, w, iR, rL, w+MUNU);
+               amm_b1(1, 1, N-i, iR, rL, w+MUNU, 
+                      RW+(mb-mbi-1)*MUNU, l+(mbi SHIFT)*MUMU, w);
+            #endif
+            ca2ccRR(mu, nu, ONE, w, w+MUNU, alpha, xc, ldx);
+         }
+         #else
+            r2a(MU, nu, ONE, xc+mu, ldx, RW+((mb-mbi)*MUNU));
+            if (DoCopy) /* do the copy as needed for in-cache comp. */
+            {
+               l2a(N-i, mu, NONE, Ac+mu*ainc, lda, l);
+            }
+            #ifndef USE_TRANS
+               amm_b0(1, 1, N-i, l, RW+(mb-mbi)*MUNU, w, 
+                     l+mbi*MUMU, RW+(mb-mbi-1)*MUNU, w);
+            #else
+               amm_b0(1, 1, N-i, RW+(mb-mbi)*MUNU, l, w, 
+                     RW+(mb-mbi-1)*MUNU, l+mbi*MUMU, w);
+            #endif
+            ca2ccRR(mu, nu, ONE, w, alpha, xc, ldx);
+         #endif
+         /* now do the diagonal trsm */
+         l += (mbi SHIFT) * MUMU;
+         if (Diag == AtlasUnit) d = NULL;
+         else d = diag + ((N-i) SHIFT);
+         if (DoCopy)
+         {
+            if (TransA == AtlasNoTrans)
+               ATL_utrcopy(IsConj, mu, Ac, lda, l, MU, d);
+            else
+               ATL_ltrcopy(IsConj, mu, Ac, lda, l, MU, d);
+         }
+         if (mu == ATL_MU)
+         {
+            if (TransA == AtlasNoTrans)
+               Mjoin(Mjoin(PATL,trsmUN),ATL_MU)(nu, d, l, MU, xc, ldx);
+            else
+               Mjoin(Mjoin(PATL,trsmLT),ATL_MU)(nu, d, l, MU, xc, ldx);
+         }
+         else
+         {
+            if (TransA == AtlasNoTrans)
+               Mjoin(Mjoin(PATL,trsmUN),RR)(mu, nu, d, l, MU, xc, ldx);
+            else
+               Mjoin(Mjoin(PATL,trsmLT),RR)(mu, nu, d, l, MU, xc, ldx);
+         }
+      }
+   }
+}
+
+static INLINE void Mjoin(PATL,trsmK_ammL_LNUT)
+   (const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag, 
+    ATL_CINT N, ATL_CINT R, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   cm2am_t r2a = NULL;
+   cm2am_t l2a = NULL;
+   ammkern_t amm_b0 = NULL, amm_b1 = NULL, amm_bn = NULL;
+   #ifdef TCPLX
+      TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   const int MU = ATL_MU, MUMU = ATL_MU*ATL_MU;
+   const int NU = ATL_NU, MUNU = ATL_MU*ATL_NU;
+   const int UnitAlpha = SCALAR_IS_ONE(alpha);
+   const int NeedCopyA = (A != NULL);
+   const int ainc = (TransA != AtlasNoTrans) ? 1 : lda;
+   const int IsConj = (TransA == AtlasConjTrans);
+   TYPE *l, *x=X;
+   int mb = (N + MU - 1) / MU;
+   const int iRWoff = mb*MUNU;
+   ATL_SZT r;
+   int i, ix=-1, mbi;
+
+   GetInfo(TransA, &amm_b0, &amm_b1, &amm_bn, &l2a, &r2a);
+
+   for (r=0; r < R; r += NU, x += (NU SHIFT)*ldx)
+   {
+      int mu, nu = R - r;
+      const int DoCopy = (!r && NeedCopyA);
+      TYPE *d, *Ac = ((TYPE*)A), *xc = x;
+      nu = Mmin(nu,NU);
+      mu = Mmin(MU, N);
+
+      /* do the first triangle */
+      if (Diag == AtlasUnit) d = NULL;
+      else d = diag;
+      if (DoCopy)
+      {
+         if (TransA == AtlasNoTrans)
+            ATL_ltrcopy(IsConj, mu, Ac, lda, L, MU, d);
+         else
+            ATL_utrcopy(IsConj, mu, Ac, lda, L, MU, d);
+      }
+      if (mu == ATL_MU)
+      {
+         if (!UnitAlpha) { Mjoin(PATL,scalK)(nu, alpha, xc, ldx); }
+         if (TransA == AtlasNoTrans)
+            Mjoin(Mjoin(PATL,trsmLN),ATL_MU)(nu, d, L, MU, xc, ldx);
+         else
+            Mjoin(Mjoin(PATL,trsmUT),ATL_MU)(nu, d, L, MU, xc, ldx);
+      }
+      else
+      {
+         if (!UnitAlpha) { Mjoin(PATL,scalKRR)(mu, nu, alpha, xc, ldx); }
+         if (TransA == AtlasNoTrans)
+            Mjoin(Mjoin(PATL,trsmLN),RR)(mu, nu, d, L, MU, xc, ldx);
+         else
+            Mjoin(Mjoin(PATL,trsmUT),RR)(mu, nu, d, L, MU, xc, ldx);
+      }
+
+      for (i=mu, mbi=1, l=L+(MUMU SHIFT); 
+            i < N; i += MU, mbi++, l+=(MUMU SHIFT))
+      {
+         mu = Mmin(N-i, MU);
+         Ac += (MU SHIFT) * (lda+1);
+         xc += (MU SHIFT);
+         #ifdef TCPLX
+         {
+            TYPE *rL, *iL, *rR, *iR;
+            iR = RW + (mbi-1)*MUNU;
+            rR = iR + iRWoff;
+            rL = l + mbi*MUMU;
+            iL = l;
+            r2a(MU, nu, ONE, xc-(MU SHIFT), ldx, rR, iR);
+            if (DoCopy) /* do the copy as needed for in-cache comp. */
+            {
+               l2a(i, mu, NONE, Ac-(i SHIFT)*ainc, lda, rL, iL);
+            }
+            iR = RW;
+            rR = iR + iRWoff;
+            #ifndef USE_TRANS
+               amm_b0(1, 1, i, iL, iR, w, rL, iR, w+MUNU);
+               amm_b0(1, 1, i, rL, iR, w+MUNU, rL, rR, w);
+               amm_bn(1, 1, i, rL, rR, w, iL, rR, w+MUNU);
+               amm_b1(1, 1, i, iL, rR, w+MUNU, l+(mbi SHIFT)*MUMU, RW, w);
+            #else
+               amm_b0(1, 1, i, iR, iL, w, rR, iL, w+MUNU);
+               amm_b0(1, 1, i, rR, iL, w+MUNU, rR, rL, w);
+               amm_bn(1, 1, i, rR, rL, w, iR, rL, w+MUNU);
+               amm_b1(1, 1, i, iR, rL, w+MUNU, RW, l+(mbi SHIFT)*MUMU, w);
+            #endif
+            ca2ccRR(mu, nu, ONE, w, w+MUNU, alpha, xc, ldx);
+         }
+         #else
+            r2a(MU, nu, ONE, xc-MU, ldx, RW+(mbi-1)*MUNU);
+            if (DoCopy) /* do the copy as needed for in-cache comp. */
+            {
+               l2a(i, mu, NONE, Ac-i*ainc, lda, l);
+            }
+            #ifndef USE_TRANS
+               amm_b0(1, 1, i, l, RW, w, l+mbi*MUMU, RW, w);
+            #else
+               amm_b0(1, 1, i, RW, l, w, RW, l+mbi*MUMU, w);
+            #endif
+            ca2ccRR(mu, nu, ONE, w, alpha, xc, ldx);
+         #endif
+         /* now do the diagonal trsm */
+         l += (mbi SHIFT) * MUMU;
+         if (Diag == AtlasUnit) d = NULL;
+         else d = diag + (i SHIFT);
+         if (DoCopy)
+         {
+            if (TransA == AtlasNoTrans)
+               ATL_ltrcopy(IsConj, mu, Ac, lda, l, MU, d);
+            else
+               ATL_utrcopy(IsConj, mu, Ac, lda, l, MU, d);
+         }
+         if (mu == ATL_MU)
+         {
+            if (TransA == AtlasNoTrans)
+               Mjoin(Mjoin(PATL,trsmLN),ATL_MU)(nu, d, l, MU, xc, ldx);
+            else
+               Mjoin(Mjoin(PATL,trsmUT),ATL_MU)(nu, d, l, MU, xc, ldx);
+         }
+         else
+         {
+            if (TransA == AtlasNoTrans)
+               Mjoin(Mjoin(PATL,trsmLN),RR)(mu, nu, d, l, MU, xc, ldx);
+            else
+               Mjoin(Mjoin(PATL,trsmUT),RR)(mu, nu, d, l, MU, xc, ldx);
+         }
+      }
+   }
+}
+
+void Mjoin(PATL,trsmK_ammLUN)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R, 
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx, 
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammL_LTUN)(AtlasNoTrans, Diag, N, R, alpha, A, lda, 
+         X, ldx, diag, L, RW, w);
+}
+
+void Mjoin(PATL,trsmK_ammLUT)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R, 
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx, 
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammL_LNUT)(AtlasTrans, Diag, N, R, alpha, A, lda, 
+         X, ldx, diag, L, RW, w);
+}
+
+#ifdef TCPLX
+void Mjoin(PATL,trsmK_ammLUC)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R, 
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx, 
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammL_LNUT)(AtlasConjTrans, Diag, N, R, alpha, A, lda, 
+         X, ldx, diag, L, RW, w);
+}
+#endif
+
+void Mjoin(PATL,trsmK_ammLLN)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R, 
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx, 
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammL_LNUT)(AtlasNoTrans, Diag, N, R, alpha, A, lda, 
+         X, ldx, diag, L, RW, w);
+}
+
+void Mjoin(PATL,trsmK_ammLLT)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R, 
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx, 
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammL_LTUN)(AtlasTrans, Diag, N, R, alpha, A, lda, 
+         X, ldx, diag, L, RW, w);
+}
+
+#ifdef TCPLX
+void Mjoin(PATL,trsmK_ammLLC)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R, 
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx, 
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammL_LTUN)(AtlasConjTrans, Diag, N, R, alpha, A, lda, 
+         X, ldx, diag, L, RW, w);
+}
+#endif
+
+#ifdef NO_AMM_NAME
+   void Mjoin(PATL,trsm)
+      (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo, 
+       const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag, 
+       ATL_CINT N, ATL_CINT R, const SCALAR alpha, 
+       const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx)
+#else
+   int Mjoin(PATL,trsmK_ammL)
+      (const enum ATLAS_UPLO Uplo, 
+       const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag, 
+       ATL_CINT N, ATL_CINT R, const SCALAR alpha, 
+       const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx)
+#endif
+{
+   const int UPPER = (Uplo == AtlasUpper);
+   void *vp;
+   TYPE *diag, *L, *RW, *w;
+   vp = GetWorkspaceL(N, &diag, &L, &RW, &w);
+   #ifndef NO_AMM_NAME
+      if (!vp) return(-1);
+   #endif
+   if (!UPPER)
+   {
+      if (TransA == AtlasNoTrans)
+         Mjoin(PATL,trsmK_ammLLN)(Diag, N, R, alpha, A, lda, X, ldx, 
+               diag, L, RW, w);
+      else if (TransA == AtlasTrans)
+         Mjoin(PATL,trsmK_ammLLT)(Diag, N, R, alpha, A, lda, X, ldx, 
+               diag, L, RW, w);
+      #ifdef TCPLX
+         else /* (TransA == AtlasConjTrans) */
+            Mjoin(PATL,trsmK_ammLLC)(Diag, N, R, alpha, A, lda, X, ldx, 
+                  diag, L, RW, w);
+      #endif
+   }
+   else
+   {
+      if (TransA == AtlasNoTrans)
+         Mjoin(PATL,trsmK_ammLUN)(Diag, N, R, alpha, A, lda, X, ldx, 
+               diag, L, RW, w);
+      else if (TransA == AtlasTrans)
+         Mjoin(PATL,trsmK_ammLUT)(Diag, N, R, alpha, A, lda, X, ldx, 
+               diag, L, RW, w);
+   #ifdef TCPLX
+      else /* (TransA == AtlasConjTrans) */
+         Mjoin(PATL,trsmK_ammLUC)(Diag, N, R, alpha, A, lda, X, ldx, 
+               diag, L, RW, w);
+   #endif
+   }
+   free(vp);
+   #ifndef NO_AMM_NAME
+      return(0);
+   #endif
+}
+@ROUT ATL_trsmKR_amm
+/* This file implements TRSM kernels for right-cases using AMM kernels. */
+
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+
+#ifdef TRSMK_PRE
+   void Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_b0))
+      (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,
+       const TYPE*,const TYPE*,const TYPE*);
+   void Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_b1))
+      (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,
+       const TYPE*,const TYPE*,const TYPE*);
+   void Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_bn))
+      (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,
+       const TYPE*,const TYPE*,const TYPE*);
+   #ifdef TCPLX
+      #define CPROTO ,TYPE*
+   #else
+      #define CPROTO
+   #endif
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Na1))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Na1))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Ta1))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Ta1))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Nan))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Nan))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Tan))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Tan))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Can))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Can))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_MU),_Han))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   void Mjoin(PATL,Mjoin(Mjoin(Mjoin(TRSMK_PRE,_cp),ATL_NU),_Han))
+      (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE* CPROTO);
+   #undef CPROTO
+#else
+   #error "ERROR: TRSMK_PRE must be defined!!"
+#endif
+
+#ifdef TCPLX
+   void Mjoin(PATL,cplxinvert)(ATL_CINT, TYPE*, ATL_CINT, TYPE*, ATL_CINT);
+#endif
+
+/* best with fully rolled kernel and no prefetch ins. */
+
+#ifndef ATL_MU
+   #define ATL_MU 12
+#endif
+#ifndef ATL_NU
+   #define ATL_NU 4
+#endif
+#define ATL_MUNU (ATL_MU*ATL_NU)
+
+#include Mstr(Mjoin(ATLAS_PRE,trsmKR.h))
+#include Mstr(Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(ATLAS_PRE,cpFromBlkC_),\
+		  ATL_MU),x),ATL_NU),_.h))
+
+static INLINE void ATL_ltrcopy(const int IsConj,
+                               const int n, TYPE *A, const int lda,
+                               TYPE *W, const int ldw, TYPE *diag)
+{
+   register int i, j;
+   TYPE *a = A, *w = W;
+   for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
+   {
+      if(diag)
+      {
+         #ifdef TCPLX /* invert diag later */
+            diag[j SHIFT] = w[j SHIFT] = a[j SHIFT];
+            diag[(j SHIFT)+1] = w[(j SHIFT)+1] = IsConj ?
+                                -a[(j SHIFT)+1] : a[(j SHIFT)+1];
+         #else
+            diag[j] = ATL_rone / a[j];
+            w[j] = a[j];
+         #endif
+      }
+      for (i=j+1; i<n; i++)
+      {
+         w[i SHIFT] = a[i SHIFT];
+         #ifdef TCPLX
+            w[(i SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+         #endif
+      }
+   }
+   #ifdef TCPLX
+      if (diag)
+      {
+         Mjoin(PATL,cplxinvert)(n, diag, 1, diag, 1);
+      }
+   #endif
+}
+
+static INLINE void ATL_utrcopy(const int IsConj,
+                               const int n, TYPE *A, const int lda,
+                               TYPE *W, const int ldw, TYPE *diag)
+{
+   register int i, j;
+   TYPE *a = A, *w = W;
+   for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
+   {
+      for (i=0; i<j; i++)
+      {
+         w[i SHIFT] = a[i SHIFT];
+         #ifdef TCPLX
+            w[(i SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+         #endif
+      }
+      if(diag)
+      {
+         #ifdef TCPLX /* invert diag later */
+            diag[j SHIFT] = w[j SHIFT] = a[j SHIFT];
+            diag[(j SHIFT)+1] = w[(j SHIFT)+1] = IsConj ?
+                                -a[(j SHIFT)+1] : a[(j SHIFT)+1];
+         #else
+            w[j] = a[j];
+            diag[j] = ATL_rone / a[j];
+         #endif
+      }
+   }
+   #ifdef TCPLX
+      if (diag)
+      {
+         Mjoin(PATL,cplxinvert)(n, diag, 1, diag, 1);
+      }
+   #endif
+}
+
+int Mjoin(PATL,GetTRSMkRMU)() { return(ATL_MU); }
+int Mjoin(PATL,GetTRSMkRNU)() { return(ATL_NU); }
+
+void* GetWorkspaceR(int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w)
+{
+   int mb = (N + ATL_NU - 1) / ATL_NU;
+   const int NUNU = ATL_NU*ATL_NU;
+   const int MUNU = ATL_MU*ATL_NU;
+   void *vp;
+   vp = malloc( ATL_MulBySize( N + (NUNU*mb*(mb+1)/2) + mb*MUNU + 2*MUNU )
+                           + 3*ATL_Cachelen);
+   ATL_assert(vp);
+   *Diag = vp;
+   *L = (*Diag) + (N SHIFT);
+   *L = ATL_AlignPtr(*L);
+   *R = (*L) + ((NUNU*mb*(mb+1)/2) SHIFT);
+   *R = ATL_AlignPtr(*R);
+   *w = (*R) + ((mb*MUNU) SHIFT);
+   *w = ATL_AlignPtr(*w);
+   return(vp);
+}
+
+#define CA2CC_POST Mjoin(Mjoin(Mjoin(ATL_MU,_),ATL_NU),_a1_bX_RR)
+#ifdef USE_TRANS
+   #define ca2ccRR Mjoin(cpFromBlkCT_,CA2CC_POST)
+#else
+   #define ca2ccRR Mjoin(cpFromBlkCN_,CA2CC_POST)
+#endif
+static INLINE void GetInfo(const enum ATLAS_TRANS TransA, ammkern_t *amm_b0,
+                           ammkern_t *amm_b1, ammkern_t *amm_bn,
+                           cm2am_t *l2a, cm2am_t *r2a)
+{
+   *amm_b0 = Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_b0));
+   *amm_b1 = Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_b1));
+   *amm_bn = Mjoin(PATL,Mjoin(TRSMK_PRE,_AMM_bn));
+   #ifdef USE_TRANS
+      #define TRSMK_APRE Mjoin(PATL,Mjoin(Mjoin(TRSMK_PRE, _cp),ATL_NU))
+      #define TRSMK_BPRE Mjoin(PATL,Mjoin(Mjoin(TRSMK_PRE, _cp),ATL_MU))
+      *r2a = Mjoin(TRSMK_BPRE,_Ta1);
+      if (TransA == AtlasTrans)
+         *l2a = Mjoin(TRSMK_APRE,_Tan);
+      else if (TransA == AtlasNoTrans)
+         *l2a = Mjoin(TRSMK_APRE,_Nan);
+      #ifdef TCPLX
+         else /* if (TransA == AtlasConjTrans) */
+            *l2a = Mjoin(TRSMK_APRE,_Han);
+      #endif
+   #else
+      #define TRSMK_APRE Mjoin(PATL,Mjoin(Mjoin(TRSMK_PRE, _cp),ATL_MU))
+      #define TRSMK_BPRE Mjoin(PATL,Mjoin(Mjoin(TRSMK_PRE, _cp),ATL_NU))
+      *r2a = Mjoin(TRSMK_APRE,_Ta1);
+      if (TransA == AtlasTrans)
+         *l2a = Mjoin(TRSMK_BPRE,_Tan);
+      else if (TransA == AtlasNoTrans)
+         *l2a = Mjoin(TRSMK_BPRE,_Nan);
+      #ifdef TCPLX
+         else /* if (TransA == AtlasConjTrans) */
+            *l2a = Mjoin(TRSMK_BPRE,_Han);
+      #endif
+   #endif
+}
+
+static INLINE void Mjoin(PATL,trsmK_ammR_LTUN)
+   (const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag,
+    ATL_CINT R, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   cm2am_t r2a = NULL;
+   cm2am_t l2a = NULL;
+   ammkern_t amm_b0 = NULL, amm_b1 = NULL, amm_bn = NULL;
+   #ifdef TCPLX
+      TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   const int NU = ATL_NU, NUNU = ATL_NU*ATL_NU;
+   const int MU = ATL_MU, MUNU = ATL_MU*ATL_NU;
+   const int UnitAlpha = SCALAR_IS_ONE(alpha);
+   const int NeedCopyA = (A != NULL);
+   const int ainc = (TransA == AtlasNoTrans) ? 1 : lda;
+   const int IsConj = (TransA == AtlasConjTrans);
+   TYPE *l, *x=X;
+   int mb = (N + NU - 1) / NU;
+   const int iRWoff = mb*MUNU;
+   ATL_SZT r;
+   int i, ix=-1, mbi;
+
+   GetInfo(TransA, &amm_b0, &amm_b1, &amm_bn, &l2a, &r2a);
+
+   for (r=0; r < R; r += MU, x += (MU SHIFT))
+   {
+      int nu, mu = R - r;
+      const int DoCopy = (!r && NeedCopyA);
+      TYPE *d, *Ac = ((TYPE*)A), *xc = x;
+      mu = Mmin(mu, MU);
+      nu = Mmin(NU, N);
+      /* do the first triangle */
+      if (Diag == AtlasUnit) d = NULL;
+      else d = diag;
+      if (DoCopy)
+      {
+         if (TransA == AtlasNoTrans)
+            ATL_utrcopy(IsConj, nu, Ac, lda, L, NU, d);
+         else
+            ATL_ltrcopy(IsConj, nu, Ac, lda, L, NU, d);
+      }
+      if (nu == ATL_NU)
+      {
+         if (!UnitAlpha) { Mjoin(PATL,scalK)(mu, alpha, xc, ldx); }
+         if (TransA == AtlasNoTrans)
+            Mjoin(Mjoin(PATL,trsmUN),ATL_NU)(mu, d, L, NU, xc, ldx);
+         else
+            Mjoin(Mjoin(PATL,trsmLT),ATL_NU)(mu, d, L, NU, xc, ldx);
+      }
+      else
+      {
+         if (!UnitAlpha) { Mjoin(PATL,scalKRR)(mu, nu, alpha, xc, ldx); }
+         if (TransA == AtlasNoTrans)
+            Mjoin(Mjoin(PATL,trsmUN),RR)(mu, nu, d, L, NU, xc, ldx);
+         else
+            Mjoin(Mjoin(PATL,trsmLT),RR)(mu, nu, d, L, NU, xc, ldx);
+      }
+
+      for (i=nu, mbi=1, l=L+(NUNU SHIFT); 
+            i < N; i += NU, mbi++, l+=(NUNU SHIFT))
+      {
+         nu = Mmin(N-i, NU);
+         Ac += (NU SHIFT) * (lda+1);
+         xc += (NU SHIFT) * ldx;
+         #ifdef TCPLX
+         {
+            TYPE *rL, *iL, *rR, *iR;
+            iR = RW + (mbi-1)*MUNU;
+            rR = iR + iRWoff;
+            rL = l + mbi*NUNU;
+            iL = l;
+            r2a(NU, mu, ONE, xc-(NU SHIFT)*ldx, ldx, rR, iR);
+            if (DoCopy) /* do the copy as needed for in-cache comp. */
+            {
+               l2a(i, nu, NONE, Ac-(i SHIFT)*ainc, lda, rL, iL);
+            }
+            iR = RW;
+            rR = iR + iRWoff;
+            #ifdef USE_TRANS
+               amm_b0(1, 1, i, iL, iR, w, rL, iR, w+MUNU);
+               amm_b0(1, 1, i, rL, iR, w+MUNU, rL, rR, w);
+               amm_bn(1, 1, i, rL, rR, w, iL, rR, w+MUNU);
+               amm_b1(1, 1, i, iL, rR, w+MUNU, l+(mbi SHIFT)*NUNU, RW, w);
+            #else
+               amm_b0(1, 1, i, iR, iL, w, rR, iL, w+MUNU);
+               amm_b0(1, 1, i, rR, iL, w+MUNU, rR, rL, w);
+               amm_bn(1, 1, i, rR, rL, w, iR, rL, w+MUNU);
+               amm_b1(1, 1, i, iR, rL, w+MUNU, RW, l+(mbi SHIFT)*NUNU, w);
+            #endif
+            ca2ccRR(mu, nu, ONE, w, w+MUNU, alpha, xc, ldx);
+         }
+         #else
+            r2a(NU, mu, ONE, xc-(NU*ldx), ldx, RW+(mbi-1)*MUNU);
+            if (DoCopy) /* do the copy as needed for in-cache comp. */
+            {
+               l2a(i, nu, NONE, Ac-i*ainc, lda, l);
+            }
+            #ifdef USE_TRANS
+               amm_b0(1, 1, i, l, RW, w, l+mbi*NUNU, RW, w);
+            #else
+               amm_b0(1, 1, i, RW, l, w, RW, l+mbi*NUNU, w);
+            #endif
+            ca2ccRR(mu, nu, ONE, w, alpha, xc, ldx);
+         #endif
+         /* now do the diagonal trsm */
+         l += (mbi SHIFT) * NUNU;
+         if (Diag == AtlasUnit) d = NULL;
+         else d = diag + (i SHIFT);
+         if (DoCopy)
+         {
+            if (TransA == AtlasNoTrans)
+               ATL_utrcopy(IsConj, nu, Ac, lda, l, NU, d);
+            else
+               ATL_ltrcopy(IsConj, nu, Ac, lda, l, NU, d);
+         }
+         if (nu == ATL_NU)
+         {
+            if (TransA == AtlasNoTrans)
+               Mjoin(Mjoin(PATL,trsmUN),ATL_NU)(mu, d, l, NU, xc, ldx);
+            else
+               Mjoin(Mjoin(PATL,trsmLT),ATL_NU)(mu, d, l, NU, xc, ldx);
+         }
+         else
+         {
+            if (TransA == AtlasNoTrans)
+               Mjoin(Mjoin(PATL,trsmUN),RR)(mu, nu, d, l, NU, xc, ldx);
+            else
+               Mjoin(Mjoin(PATL,trsmLT),RR)(mu, nu, d, l, NU, xc, ldx);
+         }
+      }
+   }
+}
+
+static INLINE void Mjoin(PATL,trsmK_ammR_LNUT)
+   (const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag,
+    ATL_CINT R, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   cm2am_t r2a = NULL;
+   cm2am_t l2a = NULL;
+   ammkern_t amm_b0 = NULL, amm_b1 = NULL, amm_bn = NULL;
+   #ifdef TCPLX
+      TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   const int NU = ATL_NU, NUNU = ATL_NU*ATL_NU;
+   const int MU = ATL_MU, MUNU = ATL_MU*ATL_NU;
+   const int UnitAlpha = SCALAR_IS_ONE(alpha);
+   const int NeedCopyA = (A != NULL);
+   const int ainc = (TransA == AtlasNoTrans) ? 1 : lda;
+   const int IsConj = (TransA == AtlasConjTrans);
+   TYPE *l, *x=X;
+   int mb = (N + NU - 1) / NU;
+   const int iRWoff = mb*MUNU;
+   ATL_SZT r;
+   int i, ix=-1, mbi;
+
+   GetInfo(TransA, &amm_b0, &amm_b1, &amm_bn, &l2a, &r2a);
+
+   for (r=0; r < R; r += MU, x += (MU SHIFT))
+   {
+      int nu, mu = R - r;
+      const int DoCopy = (!r && NeedCopyA);
+      TYPE *d, *Ac = ((TYPE*)A), *xc = x;
+      mu = Mmin(mu, MU);
+      nu = Mmin(NU, N);
+      Ac += ((N - nu) SHIFT) * (lda+1);
+      xc += ((N - nu) SHIFT) * ldx;
+      /* do the first triangle */
+      if (Diag == AtlasUnit) d = NULL;
+      else d = diag;
+      if (DoCopy)
+      {
+         if (TransA == AtlasNoTrans)
+            ATL_ltrcopy(IsConj, nu, Ac, lda, L, NU, d);
+         else
+            ATL_utrcopy(IsConj, nu, Ac, lda, L, NU, d);
+      }
+      if (nu == ATL_NU)
+      {
+         if (!UnitAlpha) { Mjoin(PATL,scalK)(mu, alpha, xc, ldx); }
+         if (TransA == AtlasNoTrans)
+            Mjoin(Mjoin(PATL,trsmLN),ATL_NU)(mu, d, L, NU, xc, ldx);
+         else
+            Mjoin(Mjoin(PATL,trsmUT),ATL_NU)(mu, d, L, NU, xc, ldx);
+      }
+      else
+      {
+         if (!UnitAlpha) { Mjoin(PATL,scalKRR)(mu, nu, alpha, xc, ldx); }
+         if (TransA == AtlasNoTrans)
+            Mjoin(Mjoin(PATL,trsmLN),RR)(mu, nu, d, L, NU, xc, ldx);
+         else
+            Mjoin(Mjoin(PATL,trsmUT),RR)(mu, nu, d, L, NU, xc, ldx);
+      }
+
+      for (i=N-nu, mbi=1, l=L+(NUNU SHIFT); 
+            i > 0; i -= NU, mbi++, l+=(NUNU SHIFT))
+      {
+         nu = Mmin(i, NU);
+         Ac -= (nu SHIFT) * (lda+1);
+         xc -= (nu SHIFT) * ldx;
+         #ifdef TCPLX
+         {
+            TYPE *rL, *iL, *rR, *iR;
+            iR = RW + (mb-mbi)*MUNU;
+            rR = iR + iRWoff;
+            rL = l + mbi*NUNU;
+            iL = l;
+            r2a(NU, mu, ONE, xc+(nu SHIFT)*ldx, ldx, rR, iR);
+            if (DoCopy) /* do the copy as needed for in-cache comp. */
+            {
+               l2a(N-i, nu, NONE, Ac+(nu SHIFT)*ainc, lda, rL, iL);
+            }
+            #ifdef USE_TRANS
+               amm_b0(1, 1, N-i, iL, iR, w, rL, iR, w+MUNU);
+               amm_b0(1, 1, N-i, rL, iR, w+MUNU, rL, rR, w);
+               amm_bn(1, 1, N-i, rL, rR, w, iL, rR, w+MUNU);
+               amm_b1(1, 1, N-i, iL, rR, w+MUNU, 
+                      l+(mbi SHIFT)*NUNU, RW+(mb-mbi-1)*MUNU, w);
+            #else
+               amm_b0(1, 1, N-i, iR, iL, w, rR, iL, w+MUNU);
+               amm_b0(1, 1, N-i, rR, iL, w+MUNU, rR, rL, w);
+               amm_bn(1, 1, N-i, rR, rL, w, iR, rL, w+MUNU);
+               amm_b1(1, 1, N-i, iR, rL, w+MUNU, 
+                      RW+(mb-mbi-1)*MUNU, l+(mbi SHIFT)*NUNU, w);
+            #endif
+            ca2ccRR(mu, nu, ONE, w, w+MUNU, alpha, xc, ldx);
+         }
+         #else
+            r2a(NU, mu, ONE, xc+nu*ldx, ldx, RW+((mb-mbi)*MUNU));
+            if (DoCopy) /* do the copy as needed for in-cache comp. */
+            {
+               l2a(N-i, nu, NONE, Ac+nu*ainc, lda, l);
+            }
+            #ifdef USE_TRANS
+               amm_b0(1, 1, N-i, l, RW+(mb-mbi)*MUNU, w, 
+                     l+mbi*NUNU, RW+(mb-mbi-1)*MUNU, w);
+            #else
+               amm_b0(1, 1, N-i, RW+(mb-mbi)*MUNU, l, w, 
+                     RW+(mb-mbi-1)*MUNU, l+mbi*NUNU, w);
+            #endif
+            ca2ccRR(mu, nu, ONE, w, alpha, xc, ldx);
+         #endif
+         /* now do the diagonal trsm */
+         l += (mbi SHIFT) * NUNU;
+         if (Diag == AtlasUnit) d = NULL;
+         else d = diag + ((N-i) SHIFT);
+         if (DoCopy)
+         {
+            if (TransA == AtlasNoTrans)
+               ATL_ltrcopy(IsConj, nu, Ac, lda, l, NU, d);
+            else
+               ATL_utrcopy(IsConj, nu, Ac, lda, l, NU, d);
+         }
+         if (nu == ATL_NU)
+         {
+            if (TransA == AtlasNoTrans)
+               Mjoin(Mjoin(PATL,trsmLN),ATL_NU)(mu, d, l, NU, xc, ldx);
+            else
+               Mjoin(Mjoin(PATL,trsmUT),ATL_NU)(mu, d, l, NU, xc, ldx);
+         }
+         else
+         {
+            if (TransA == AtlasNoTrans)
+               Mjoin(Mjoin(PATL,trsmLN),RR)(mu, nu, d, l, NU, xc, ldx);
+            else
+               Mjoin(Mjoin(PATL,trsmUT),RR)(mu, nu, d, l, NU, xc, ldx);
+         }
+      }
+   }
+}
+
+void Mjoin(PATL,trsmK_ammRUN)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R,
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammR_LTUN)(AtlasNoTrans, Diag, N, R, alpha, A, lda,
+         X, ldx, diag, L, RW, w);
+}
+
+void Mjoin(PATL,trsmK_ammRUT)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R,
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammR_LNUT)(AtlasTrans, Diag, N, R, alpha, A, lda,
+         X, ldx, diag, L, RW, w);
+}
+
+#ifdef TCPLX
+void Mjoin(PATL,trsmK_ammRUC)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R,
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammR_LNUT)(AtlasConjTrans, Diag, N, R, alpha, A, lda,
+         X, ldx, diag, L, RW, w);
+}
+#endif
+
+void Mjoin(PATL,trsmK_ammRLN)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R,
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammR_LNUT)(AtlasNoTrans, Diag, N, R, alpha, A, lda,
+         X, ldx, diag, L, RW, w);
+}
+
+void Mjoin(PATL,trsmK_ammRLT)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R,
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammR_LTUN)(AtlasTrans, Diag, N, R, alpha, A, lda,
+         X, ldx, diag, L, RW, w);
+}
+
+#ifdef TCPLX
+void Mjoin(PATL,trsmK_ammRLC)
+      (const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT R,
+       const SCALAR alpha, const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
+{
+   Mjoin(PATL,trsmK_ammR_LTUN)(AtlasConjTrans, Diag, N, R, alpha, A, lda,
+         X, ldx, diag, L, RW, w);
+}
+#endif
+
+#ifdef NO_AMM_NAME
+   void Mjoin(PATL,trsm)
+      (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,   
+       const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag,
+       ATL_CINT N, ATL_CINT R, const SCALAR alpha,        
+       const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx)
+#else
+   int Mjoin(PATL,trsmK_ammR)
+      (const enum ATLAS_UPLO Uplo,   
+       const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag,
+       ATL_CINT N, ATL_CINT R, const SCALAR alpha,        
+       const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx)
+#endif
+{
+   const int UPPER = (Uplo == AtlasUpper);
+   void *vp;
+   TYPE *diag, *L, *RW, *w;
+   vp = GetWorkspaceR(R, &diag, &L, &RW, &w);
+   #ifndef NO_AMM_NAME
+      if (!vp) return(-1);
+   #endif
+   if (!UPPER)                   
+   {                                                                
+      if (TransA == AtlasNoTrans)                                   
+         Mjoin(PATL,trsmK_ammRLN)(Diag, N, R, alpha, A, lda, X, ldx,
+               diag, L, RW, w);
+      else if (TransA == AtlasTrans)
+         Mjoin(PATL,trsmK_ammRLT)(Diag, N, R, alpha, A, lda, X, ldx,
+               diag, L, RW, w);
+      #ifdef TCPLX
+         else /* (TransA == AtlasConjTrans) */
+            Mjoin(PATL,trsmK_ammRLC)(Diag, N, R, alpha, A, lda, X, ldx,
+                  diag, L, RW, w);
+      #endif
+   }
+   else
+   {
+      if (TransA == AtlasNoTrans)
+         Mjoin(PATL,trsmK_ammRUN)(Diag, N, R, alpha, A, lda, X, ldx,
+               diag, L, RW, w);
+      else if (TransA == AtlasTrans)
+         Mjoin(PATL,trsmK_ammRUT)(Diag, N, R, alpha, A, lda, X, ldx,
+               diag, L, RW, w);
+   #ifdef TCPLX
+      else /* (TransA == AtlasConjTrans) */
+         Mjoin(PATL,trsmK_ammRUC)(Diag, N, R, alpha, A, lda, X, ldx,
+               diag, L, RW, w);
+   #endif
+   }
+   free(vp);
+   #ifndef NO_AMM_NAME
+      return(0);
+   #endif
+}
+@ROUT !

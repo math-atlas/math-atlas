@@ -1,0 +1,1318 @@
+@define INLINE_VAL @static INLINE@
+@beginproc proc_mblk
+   @addkeys TA=@(ta)
+   @MUN R
+      for (i=0; i<M; i++)
+      {
+      @TA N
+         @NUN U
+         #ifdef TCPLX
+            rC=c[i SHIFT]; iC=c[(i SHIFT)+1];
+            rX = rC*rB - iC*iB + p[i+@(j)*@(mu)];
+            iC = rC*iB + iC*rB + ip[i+@(j)*@(mu)]; rC = rX;
+            c[i SHIFT] = rC;
+            c[(i SHIFT)+1] = iC;
+         #else
+            c[i] = beta*c[i] + p[i+@(j)*@(mu)];
+         #endif
+         @NUN R
+         #ifdef TCPLX
+            rC=c[i SHIFT]; iC=c[(i SHIFT)+1];
+            rX = rC*rB - iC*iB + p[i+j*@(mu)];
+            iC = rC*iB + iC*rB + ip[i+j*@(mu)]; rC = rX;
+            c[i SHIFT] = rC;
+            c[(i SHIFT)+1] = iC;
+         #else
+            c[i] = beta*c[i] + p[i+j*@(mu)];
+         #endif
+         @NUN !
+      @TA T
+         @NUN U
+         #ifdef TCPLX
+            rC=c[i SHIFT]; iC=c[(i SHIFT)+1];
+            rX = rC*rB - iC*iB + p[@(j)+i*@(nu)];
+            iC = rC*iB + iC*rB + ip[@(j)+i*@(nu)]; rC = rX;
+            c[i SHIFT] = rC;
+            c[(i SHIFT)+1] = iC;
+         #else
+            c[i] = beta*c[i] + p[@(j)+i*@(nu)];
+         #endif
+         @NUN R
+         #ifdef TCPLX
+            rC=c[i SHIFT]; iC=c[(i SHIFT)+1];
+            rX = rC*rB - iC*iB + p[j+i*@(nu)];
+            iC = rC*iB + iC*rB + ip[j+i*@(nu)]; rC = rX;
+            c[i SHIFT] = rC;
+            c[(i SHIFT)+1] = iC;
+         #else
+            c[i SHIFT] = beta*c[i SHIFT] + p[j+i*@(nu)];
+         #endif
+         @NUN !
+      @TA !
+      }
+   @MUN U
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @TA N
+            @NUN U
+      #ifdef TCPLX
+         rC=c[@(i) SHIFT]; iC=c[(@(i) SHIFT)+1];
+         rX = rC*rB - iC*iB + p[@(i)+@(j)*@(mu)];
+         iC = rC*iB + iC*rB + ip[@(i)+@(j)*@(mu)]; rC = rX;
+         c[@(i) SHIFT] = rC;
+         c[(@(i) SHIFT)+1] = iC;
+      #else
+         c[@(i)] = beta*c[@(i)] + p[@(i)+@(j)*@(mu)];
+      #endif
+            @NUN R
+      #ifdef TCPLX
+         rC=c[@(i) SHIFT]; iC=c[(@(i) SHIFT)+1];
+         rX = rC*rB - iC*iB + p[@(i)+j*@(mu)];
+         iC = rC*iB + iC*rB + ip[@(i)+j*@(mu)]; rC = rX;
+         c[@(i) SHIFT] = rC;
+         c[(@(i) SHIFT)+1] = iC;
+      #else
+         c[@(i) SHIFT] = beta*c[@(i) SHIFT] + p[@(i)+j*@(mu)];
+      #endif
+            @NUN !
+         @TA T
+            @NUN U
+      #ifdef TCPLX
+         rC=c[@(i) SHIFT]; iC=c[(@(i) SHIFT)+1];
+         rX = rC*rB - iC*iB + p[@(j)+@(i)*@(nu)];
+         iC = rC*iB + iC*rB + ip[@(j)+@(i)*@(nu)]; rC = rX;
+         c[@(i) SHIFT] = rC;
+         c[(@(i) SHIFT)+1] = iC;
+      #else
+         c[@(i) SHIFT] = beta*c[@(i) SHIFT] + p[@(j)+@(i)*@(nu)];
+      #endif
+            @NUN R
+      #ifdef TCPLX
+         rC=c[@(i) SHIFT]; iC=c[(@(i) SHIFT)+1];
+         rX = rC*rB - iC*iB + p[j+@(i)*@(nu)];
+         iC = rC*iB + iC*rB + ip[j+@(i)*@(nu)]; rC = rX;
+         c[@(i) SHIFT] = rC;
+         c[(@(i) SHIFT)+1] = iC;
+      #else
+         c[@(i) SHIFT] = beta*c[@(i) SHIFT] + p[j+@(i)*@(nu)];
+      #endif
+            @NUN !
+         @TA !
+         @iexp i @(i) 1 +
+      @endiwhile
+   @MUN !
+   @killkeys TA
+@endproc
+@ROUT ccp
+#include "atlas_misc.h"
+#define RINLINE @(INLINE_VAL)
+
+@multidef munroll U R U R
+@multidef nunroll U U R R
+@whiledef conf UU RU UR RR
+   @addkeys MUN=@(munroll)
+   @addkeys NUN=@(nunroll)
+   @whiledef ta T N
+RINLINE void cpFromBlkC@(ta)_@(mu)_@(nu)_a1_bX_@(conf)
+(
+#ifdef TCPLX
+   ATL_CSZT M, ATL_CSZT N, const SCALAR alpha, const TYPE *b, const TYPE *ib, 
+#else
+   ATL_CSZT M, ATL_CSZT N, const SCALAR alpha, const TYPE *b, 
+#endif
+   const SCALAR beta, TYPE *C, ATL_CSZT ldc
+)
+{
+   /* this routine copies a M-major C block to transpose column-major */
+   int i, j;
+   const TYPE *p=b;
+   #ifdef TCPLX
+      const TYPE *ip=ib;
+      const register TYPE rB=(*beta), iB=beta[1];
+      register TYPE rC, iC, rX;
+   #endif
+   TYPE *c = C;
+   @NUN R
+   for (j=0; j<N; j++, c+=(ldc SHIFT))
+   {
+      @callproc proc_mblk
+   }
+   @NUN U
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+      @callproc proc_mblk
+   c += (ldc SHIFT);
+         @iexp j @(j) 1 +
+      @endiwhile
+   @NUN !
+}
+
+   @endwhile
+   @killkeys MUN
+   @killkeys NUN
+   @undef munroll
+   @undef nunroll
+@endwhile
+@ROUT trsmKR
+@skip nu must be defined.
+#include "atlas_misc.h"
+#define RINLINE @(INLINE_VAL)
+
+#define RTYPE register TYPE
+@multidef up   U  U  L  L
+@multidef ta   T  N  T  N
+
+@whiledef conf UT UN LT LN
+@define lowup @@low@(up)@
+RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
+(
+ ATL_CINT m, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+)
+   /* 
+    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+    */
+{
+   @declare "   RTYPE " y n ";"
+      @iexp i 0 0 +
+      @iwhile i < @(nu)
+         @(up)@(i)
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   @declare "   ATL_CINT " y n ";"
+      @iexp i 0 0 +
+      @iwhile i < @(nu)
+         ldr@(i)=ldr*@(i)
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   @mif up = "L
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 1 @(j) +
+         @iwhile i < @(nu)
+   const RTYPE L@(i)_@(j) = L[ldl*@(j)+@(i)];
+            @iexp i 1 @(i) +
+         @endiwhile
+         @iexp j 1 @(j) +
+      @endiwhile
+   @endmif
+   @mif up = "U
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 0 0 +
+         @iwhile i < @(j)
+   const RTYPE U@(i)_@(j) = U[ldu*@(j)+@(i)];
+            @iexp i 1 @(i) +
+         @endiwhile
+         @iexp j 1 @(j) +
+      @endiwhile
+   @endmif
+   register int i;
+   TYPE *rc = r;
+   if (d)
+   {
+   @iexp i 0 0 +
+   @iwhile i < @(nu)
+      @(up)@(i) = d[@(i)];
+   @iexp i @(i) 1 +
+   @endiwhile
+   }
+   else
+   {
+   @iexp i 0 0 +
+   @iwhile i < @(nu)
+      @(up)@(i) = ATL_rone;
+   @iexp i @(i) 1 +
+   @endiwhile
+   }
+   for (i=0; i<m; i++, rc++)
+   {
+      @declare "      RTYPE " y n ";"
+         @iexp i 0 0 +
+         @iwhile i < @(nu)
+            rB@(i)=rc[ldr@(i)]
+            @iexp i @(i) 1 +
+         @endiwhile
+      @enddeclare
+      @addkeys CONF=@(up)@(ta)
+      @CONF LT UN
+      rB0 *= @(up)0;
+         @iexp i 0 1 +
+         @iwhile i < @(nu)
+      rB@(i) = (rB@(i) 
+            @iexp k 0 0 +
+            @iwhile k < @(i)
+               @mif up = "L
+               - L@(i)_@(k)*rB@(k)
+               @endmif
+               @mif up = "U
+               - U@(k)_@(i)*rB@(k)
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+            ) * @(up)@(i);
+            @iexp i @(i) 1 +
+         @endiwhile
+      @CONF LN UT
+         @iexp i @(nu) -1 +
+      rB@(i) *= @(up)@(i);
+         @iexp i @(nu) -2 +
+         @iwhile i > -1
+      rB@(i) = (rB@(i) 
+            @iexp k @(i) 1 +
+            @iwhile k < @(nu)
+               @mif up = "L
+               - L@(k)_@(i)*rB@(k)
+               @endmif
+               @mif up = "U
+               - U@(i)_@(k)*rB@(k)
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+            ) * @(up)@(i);
+            @iexp i @(i) -1 +
+         @endiwhile
+      @CONF !
+      @killkeys CONF
+      @iexp i 0 0 +
+      @iwhile i < @(nu)
+      rc[ldr@(i)] = rB@(i);
+         @iexp i @(i) 1 +
+      @endiwhile
+   }
+}
+
+RINLINE void Mjoin(PATL,trsm@(conf)RR)
+(
+   ATL_CINT m, ATL_CINT n, const TYPE *d, const TYPE *@(up), 
+   ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+)
+   /* 
+    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+    */
+{
+   register int i, j, k;
+   TYPE *rc = r;
+   if (d)
+   {
+      for (i=0; i<m; i++, rc++)
+      {
+         @addkeys CONF=@(up)@(ta)
+         @CONF LT UN
+         for (j=0; j<n; j++)
+         {
+            for (k=0; k<j; k++)
+               @CONF LT
+               rc[ldr*j] -= L[ldl*k+j]*rc[ldr*k];
+               @CONF UN
+               rc[ldr*j] -= U[ldu*j+k]*rc[ldr*k];
+               @CONF LT UN
+            rc[ldr*j] *= d[j];
+         }
+         @CONF LN UT
+         for (j=n-1; j>=0; j--)
+         {
+            for (k=j+1; k<n; k++)
+               @CONF LN
+               rc[ldr*j] -= L[ldl*j+k]*rc[ldr*k];
+               @CONF UT
+               rc[ldr*j] -= U[ldu*k+j]*rc[ldr*k];
+               @CONF LN UT
+            rc[ldr*j] *= d[j];
+         }
+         @CONF !
+      }
+   }
+   else
+   {
+      for (i=0; i<m; i++, rc++)
+      {
+         @addkeys CONF=@(up)@(ta)
+         @CONF LT UN
+         for (j=0; j<n; j++)
+         {
+            for (k=0; k<j; k++)
+               @CONF LT
+               rc[ldr*j] -= L[ldl*k+j]*rc[ldr*k];
+               @CONF UN
+               rc[ldr*j] -= U[ldu*j+k]*rc[ldr*k];
+               @CONF LT UN
+         }
+         @CONF LN UT
+         for (j=n-1; j>=0; j--)
+         {
+            for (k=j+1; k<n; k++)
+               @CONF LN
+               rc[ldr*j] -= L[ldl*j+k]*rc[ldr*k];
+               @CONF UT
+               rc[ldr*j] -= U[ldu*k+j]*rc[ldr*k];
+               @CONF LN UT
+         }
+         @CONF !
+      }
+   }
+}
+
+@undef up
+@undef ta
+@endwhile
+RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const TYPE alp, TYPE *r, 
+                               ATL_CINT ldr)
+{
+   register int i;
+   TYPE *rc = r;
+      @iexp i 0 0 +
+      @iwhile i < @(nu)
+   for (i=0; i<m; i++)
+      rc[i] *= alp;
+   rc += ldr;
+         @iexp i @(i) 1 +
+      @endiwhile
+}
+@ROUT trsmKL
+@skip mu must be defined.
+#include "atlas_misc.h"
+#define RINLINE @(INLINE_VAL)
+
+#define RTYPE register TYPE
+@multidef up   U  U  L  L
+@multidef ta   T  N  T  N
+
+@whiledef conf UT UN LT LN
+@define lowup @@low@(up)@
+RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
+(
+ ATL_CINT n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+)
+   /* 
+    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+    */
+{
+   @declare "   RTYPE " y n ";"
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @(up)@(i)
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   @beginskip
+   @declare "   const register int " y n ";"
+      @iexp i 0 2 +
+      @iwhile i < @(mu)
+         ld@(lowup)@(i)=ld@(lowup)*@(i)
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   @endskip
+   @mif up = "L
+      @iexp j 0 0 +
+      @iwhile j < @(mu)
+         @iexp i 1 @(j) +
+         @iwhile i < @(mu)
+   const RTYPE L@(i)_@(j) = L[ldl*@(j)+@(i)];
+            @iexp i 1 @(i) +
+         @endiwhile
+         @iexp j 1 @(j) +
+      @endiwhile
+   @endmif
+   @mif up = "U
+      @iexp j 0 0 +
+      @iwhile j < @(mu)
+         @iexp i 0 0 +
+         @iwhile i < @(j)
+   const RTYPE U@(i)_@(j) = U[ldu*@(j)+@(i)];
+            @iexp i 1 @(i) +
+         @endiwhile
+         @iexp j 1 @(j) +
+      @endiwhile
+   @endmif
+   register int j;
+   TYPE *rc = r;
+   if (d)
+   {
+   @iexp i 0 0 +
+   @iwhile i < @(mu)
+      @(up)@(i) = d[@(i)];
+   @iexp i @(i) 1 +
+   @endiwhile
+   }
+   else
+   {
+   @iexp i 0 0 +
+   @iwhile i < @(mu)
+      @(up)@(i) = ATL_rone;
+   @iexp i @(i) 1 +
+   @endiwhile
+   }
+   for (j=0; j<n; j++, rc += ldr)
+   {
+      @declare "      RTYPE " y n ";"
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            rB@(i)=rc[@(i)]
+            @iexp i @(i) 1 +
+         @endiwhile
+      @enddeclare
+      @addkeys CONF=@(up)@(ta)
+      @CONF LN UT
+      rB0 *= @(up)0;
+         @iexp i 0 1 +
+         @iwhile i < @(mu)
+      rB@(i) = (rB@(i) 
+            @iexp k 0 0 +
+            @iwhile k < @(i)
+               @mif up = "L
+               - L@(i)_@(k)*rB@(k)
+               @endmif
+               @mif up = "U
+               - U@(k)_@(i)*rB@(k)
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+            ) * @(up)@(i);
+            @iexp i @(i) 1 +
+         @endiwhile
+      @CONF LT UN
+         @iexp i @(mu) -1 +
+      rB@(i) *= @(up)@(i);
+         @iexp i @(mu) -2 +
+         @iwhile i > -1
+      rB@(i) = (rB@(i) 
+            @iexp k @(i) 1 +
+            @iwhile k < @(mu)
+               @mif up = "L
+               - L@(k)_@(i)*rB@(k)
+               @endmif
+               @mif up = "U
+               - U@(i)_@(k)*rB@(k)
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+            ) * @(up)@(i);
+            @iexp i @(i) -1 +
+         @endiwhile
+      @CONF !
+      @killkeys CONF
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+      rc[@(i)] = rB@(i);
+         @iexp i @(i) 1 +
+      @endiwhile
+   }
+}
+
+RINLINE void Mjoin(PATL,trsm@(conf)RR)
+(
+   ATL_CINT m, ATL_CINT n, const TYPE *d, const TYPE *@(up), 
+   ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+)
+   /* 
+    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+    */
+{
+   register int i, j, k;
+   TYPE *rc = r;
+   if (d)
+   {
+      for (j=0; j<n; j++, rc+=ldr)
+      {
+         @addkeys CONF=@(up)@(ta)
+         @CONF LN UT
+         for (i=0; i<m; i++)
+         {
+            for (k=0; k<i; k++)
+               @CONF LN
+               rc[i] -= L[ldl*k+i]*rc[k];
+               @CONF UT
+               rc[i] -= U[ldu*i+k]*rc[k];
+               @CONF LN UT
+            rc[i] *= d[i];
+         }
+         @CONF LT UN
+         for (i=m-1; i>=0; i--)
+         {
+            for (k=i+1; k<m; k++)
+               @CONF LT
+               rc[i] -= L[ldl*i+k]*rc[k];
+               @CONF UN
+               rc[i] -= U[ldu*k+i]*rc[k];
+               @CONF LT UN
+            rc[i] *= d[i];
+         }
+         @CONF !
+      }
+   }
+   else
+   {
+      for (j=0; j<n; j++, rc+=ldr)
+      {
+         @addkeys CONF=@(up)@(ta)
+         @CONF LN UT
+         for (i=0; i<m; i++)
+         {
+            for (k=0; k<i; k++)
+               @CONF LN
+               rc[i] -= L[ldl*k+i]*rc[k];
+               @CONF UT
+               rc[i] -= U[ldu*i+k]*rc[k];
+               @CONF LN UT
+         }
+         @CONF LT UN
+         for (i=m-1; i>=0; i--)
+         {
+            for (k=i+1; k<m; k++)
+               @CONF LT
+               rc[i] -= L[ldl*i+k]*rc[k];
+               @CONF UN
+               rc[i] -= U[ldu*k+i]*rc[k];
+               @CONF LT UN
+         }
+         @CONF !
+      }
+   }
+}
+
+@undef up
+@undef ta
+@endwhile
+RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const TYPE alp, TYPE *r, 
+                               ATL_CINT ldr)
+{
+   register int j;
+   TYPE *rc = r;
+   for (j=0; j<n; j++, rc+=ldr)
+   {
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+      rc[@(i)] *= alp;
+         @iexp i @(i) 1 +
+      @endiwhile
+   }
+}
+
+@ROUT trsmKL trsmKR
+RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const TYPE alp, 
+                                 TYPE *r, ATL_CINT ldr)
+{
+   register int i, j;
+   TYPE *rc = r;
+   for (j=0; j<n; j++, rc+=ldr)
+   {
+      for (i=0; i<m; i++)
+         rc[i] *= alp;
+   }
+}
+@ROUT ctrsmKR
+@skip nu must be defined.
+#include "atlas_misc.h"
+#define RINLINE @(INLINE_VAL)
+
+#define RTYPE register TYPE
+@multidef up   U  U  L  L
+@multidef ta   T  N  T  N
+
+@whiledef conf UT UN LT LN
+@define lowup @@low@(up)@
+RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
+(
+ ATL_CINT m, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+)
+   /* 
+    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+    */
+{
+   @declare "   RTYPE " y n ";"
+      @iexp i 0 0 +
+      @iwhile i < @(nu)
+         @whiledef imag i r
+            @(imag)@(up)@(i)
+         @endwhile
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   @declare "   ATL_CINT " y n ";"
+      @iexp i 0 0 +
+      @iwhile i < @(nu)
+         ldr@(i)=ldr*@(i)
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   @mif up = "L
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 1 @(j) +
+         @iwhile i < @(nu)
+            @multidef ioff 1 0
+            @whiledef imag i r
+   const RTYPE @(imag)L@(i)_@(j) = L[((ldl*@(j)+@(i)) SHIFT)+@(ioff)];
+               @undef ioff
+            @endwhile
+            @iexp i 1 @(i) +
+         @endiwhile
+         @iexp j 1 @(j) +
+      @endiwhile
+   @endmif
+   @mif up = "U
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 0 0 +
+         @iwhile i < @(j)
+            @multidef ioff 1 0
+            @whiledef imag i r
+   const RTYPE @(imag)U@(i)_@(j) = U[((ldu*@(j)+@(i)) SHIFT)+@(ioff)];
+               @undef ioff
+            @endwhile
+            @iexp i 1 @(i) +
+         @endiwhile
+         @iexp j 1 @(j) +
+      @endiwhile
+   @endmif
+   register int i;
+   TYPE *rc = r;
+   if (d)
+   {
+   @iexp i 0 0 +
+   @iwhile i < @(nu)
+      @multidef ioff 1 0
+      @whiledef imag i r
+      @(imag)@(up)@(i) = d[(@(i) SHIFT)+@(ioff)];
+         @undef ioff
+      @endwhile
+   @iexp i @(i) 1 +
+   @endiwhile
+   }
+   else
+   {
+   @iexp i 0 0 +
+   @iwhile i < @(nu)
+      @multidef ival ATL_rzero ATL_rone
+      @whiledef imag i r
+      @(imag)@(up)@(i) = @(ival);
+         @undef ival
+      @endwhile
+   @iexp i @(i) 1 +
+   @endiwhile
+   }
+   for (i=0; i<m; i++, rc += (1 SHIFT))
+   {
+      @declare "      RTYPE " y n ";"
+         @iexp i 0 0 +
+         @iwhile i < @(nu)
+            @multidef ioff 1 0
+            @whiledef imag i r
+               @(imag)B@(i)=rc[(ldr@(i) SHIFT)+@(ioff)]
+               @undef ioff
+            @endwhile
+            @iexp i @(i) 1 +
+         @endiwhile
+      @enddeclare
+      RTYPE rX;
+      @addkeys CONF=@(up)@(ta)
+      @CONF LT UN
+      rX = rB0*r@(up)0 - iB0*i@(up)0;
+      iB0 = rB0*i@(up)0 + iB0*r@(up)0; rB0 = rX;
+         @iexp i 0 1 +
+         @iwhile i < @(nu)
+      rB@(i) = rB@(i) 
+            @iexp k 0 0 +
+            @iwhile k < @(i)
+               @mif up = "L
+            - (rL@(i)_@(k)*rB@(k) - iL@(i)_@(k)*iB@(k))
+               @endmif
+               @mif up = "U
+            - (rU@(k)_@(i)*rB@(k) - iU@(k)_@(i)*iB@(k))
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+         ;
+      iB@(i) = iB@(i) 
+            @iexp k 0 0 +
+            @iwhile k < @(i)
+               @mif up = "L
+            - (rL@(i)_@(k)*iB@(k) + iL@(i)_@(k)*rB@(k))
+               @endmif
+               @mif up = "U
+            - (rU@(k)_@(i)*iB@(k) + iU@(k)_@(i)*rB@(k))
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+         ;
+      rX = rB@(i)*r@(up)@(i) - iB@(i)*i@(up)@(i);
+      iB@(i) = rB@(i)*i@(up)@(i) + iB@(i)*r@(up)@(i); rB@(i) = rX;
+            @iexp i @(i) 1 +
+         @endiwhile
+      @CONF LN UT
+         @iexp i @(nu) -1 +
+      rX = rB@(i)*r@(up)@(i) - iB@(i)*i@(up)@(i);
+      iB@(i) = rB@(i)*i@(up)@(i) + iB@(i)*r@(up)@(i); rB@(i) = rX;
+         @iexp i @(nu) -2 +
+         @iwhile i > -1
+      rB@(i) = rB@(i) 
+            @iexp k @(i) 1 +
+            @iwhile k < @(nu)
+               @mif up = "L
+            - (rL@(k)_@(i)*rB@(k) - iL@(k)_@(i)*iB@(k))
+               @endmif
+               @mif up = "U
+            - (rU@(i)_@(k)*rB@(k) - iU@(i)_@(k)*iB@(k))
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+         ;
+      iB@(i) = iB@(i) 
+            @iexp k @(i) 1 +
+            @iwhile k < @(nu)
+               @mif up = "L
+            - (rL@(k)_@(i)*iB@(k) + iL@(k)_@(i)*rB@(k))
+               @endmif
+               @mif up = "U
+            - (rU@(i)_@(k)*iB@(k) + iU@(i)_@(k)*rB@(k))
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+         ;
+      rX = rB@(i)*r@(up)@(i) - iB@(i)*i@(up)@(i);
+      iB@(i) = rB@(i)*i@(up)@(i) + iB@(i)*r@(up)@(i); rB@(i) = rX;
+            @iexp i @(i) -1 +
+         @endiwhile
+      @CONF !
+      @killkeys CONF
+      @iexp i 0 0 +
+      @iwhile i < @(nu)
+         @multidef ioff 1 0
+         @whiledef imag i r
+      rc[(ldr@(i) SHIFT)+@(ioff)] = @(imag)B@(i);
+            @undef ioff
+         @endwhile
+         @iexp i @(i) 1 +
+      @endiwhile
+   }
+}
+
+RINLINE void Mjoin(PATL,trsm@(conf)RR)
+(
+   ATL_CINT m, ATL_CINT n, const TYPE *d, const TYPE *@(up), 
+   ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+)
+   /* 
+    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+    */
+{
+   register int i, j, k;
+   TYPE *rc = r;
+   RTYPE rB, iB, rX;
+   if (d)
+   {
+      for (i=0; i<m; i++, rc += (1 SHIFT))
+      {
+         @addkeys CONF=@(up)@(ta)
+         @CONF LT UN
+         for (j=0; j<n; j++)
+         {
+            rB = rc[ldr*(j SHIFT)];
+            iB = rc[ldr*(j SHIFT) + 1];
+            for (k=0; k<j; k++)
+            {
+               @CONF LT
+               rB -= (L[(ldl*k+j) SHIFT]*rc[(ldr*k) SHIFT] 
+                     - L[((ldl*k+j) SHIFT)+1]*rc[((ldr*k) SHIFT)+1]);
+               iB -= (L[(ldl*k+j) SHIFT]*rc[((ldr*k) SHIFT)+1] 
+                     + L[((ldl*k+j) SHIFT)+1]*rc[(ldr*k) SHIFT]);
+               @CONF UN
+               rB -= (U[(ldu*j+k) SHIFT]*rc[(ldr*k) SHIFT]
+                     - U[((ldu*j+k) SHIFT)+1]*rc[((ldr*k) SHIFT)+1]);
+               iB -= (U[(ldu*j+k) SHIFT]*rc[((ldr*k) SHIFT)+1]
+                     + U[((ldu*j+k) SHIFT)+1]*rc[(ldr*k) SHIFT]);
+               @CONF LT UN
+            }
+            rX = rB * d[j SHIFT] - iB * d[(j SHIFT)+1];
+            iB = rB * d[(j SHIFT)+1] + iB * d[j SHIFT]; rB = rX;
+            rc[ldr*(j SHIFT)] = rB;
+            rc[ldr*(j SHIFT) + 1] = iB;
+         }
+         @CONF LN UT
+         for (j=n-1; j>=0; j--)
+         {
+            rB = rc[ldr*(j SHIFT)];
+            iB = rc[ldr*(j SHIFT) + 1];
+            for (k=j+1; k<n; k++)
+            {
+               @CONF LN
+               rB -= (L[(ldl*j+k) SHIFT]*rc[(ldr*k) SHIFT]
+                     - L[((ldl*j+k) SHIFT)+1]*rc[((ldr*k) SHIFT)+1]);
+               iB -= (L[(ldl*j+k) SHIFT]*rc[((ldr*k) SHIFT)+1]
+                     + L[((ldl*j+k) SHIFT)+1]*rc[(ldr*k) SHIFT]);
+               @CONF UT
+               rB -= (U[(ldu*k+j) SHIFT]*rc[(ldr*k) SHIFT]
+                     - U[((ldu*k+j) SHIFT)+1]*rc[((ldr*k) SHIFT)+1]);
+               iB -= (U[(ldu*k+j) SHIFT]*rc[((ldr*k) SHIFT)+1]
+                     + U[((ldu*k+j) SHIFT)+1]*rc[(ldr*k) SHIFT]);
+               @CONF LN UT
+            }
+            rX = rB * d[j SHIFT] - iB * d[(j SHIFT)+1];
+            iB = rB * d[(j SHIFT)+1] + iB * d[j SHIFT]; rB = rX;
+            rc[ldr*(j SHIFT)] = rB;
+            rc[ldr*(j SHIFT) + 1] = iB;
+         }
+         @CONF !
+      }
+   }
+   else
+   {
+      for (i=0; i<m; i++, rc += (1 SHIFT))
+      {
+         @addkeys CONF=@(up)@(ta)
+         @CONF LT UN
+         for (j=0; j<n; j++)
+         {
+            rB = rc[ldr*(j SHIFT)];
+            iB = rc[ldr*(j SHIFT) + 1];
+            for (k=0; k<j; k++)
+            {
+               @CONF LT
+               rB -= (L[(ldl*k+j) SHIFT]*rc[(ldr*k) SHIFT] 
+                     - L[((ldl*k+j) SHIFT)+1]*rc[((ldr*k) SHIFT)+1]);
+               iB -= (L[(ldl*k+j) SHIFT]*rc[((ldr*k) SHIFT)+1] 
+                     + L[((ldl*k+j) SHIFT)+1]*rc[(ldr*k) SHIFT]);
+               @CONF UN
+               rB -= (U[(ldu*j+k) SHIFT]*rc[(ldr*k) SHIFT]
+                     - U[((ldu*j+k) SHIFT)+1]*rc[((ldr*k) SHIFT)+1]);
+               iB -= (U[(ldu*j+k) SHIFT]*rc[((ldr*k) SHIFT)+1]
+                     + U[((ldu*j+k) SHIFT)+1]*rc[(ldr*k) SHIFT]);
+               @CONF LT UN
+            }
+            rc[ldr*(j SHIFT)] = rB;
+            rc[ldr*(j SHIFT) + 1] = iB;
+         }
+         @CONF LN UT
+         for (j=n-1; j>=0; j--)
+         {
+            rB = rc[ldr*(j SHIFT)];
+            iB = rc[ldr*(j SHIFT) + 1];
+            for (k=j+1; k<n; k++)
+            {
+               @CONF LN
+               rB -= (L[(ldl*j+k) SHIFT]*rc[(ldr*k) SHIFT]
+                     - L[((ldl*j+k) SHIFT)+1]*rc[((ldr*k) SHIFT)+1]);
+               iB -= (L[(ldl*j+k) SHIFT]*rc[((ldr*k) SHIFT)+1]
+                     + L[((ldl*j+k) SHIFT)+1]*rc[(ldr*k) SHIFT]);
+               @CONF UT
+               rB -= (U[(ldu*k+j) SHIFT]*rc[(ldr*k) SHIFT]
+                     - U[((ldu*k+j) SHIFT)+1]*rc[((ldr*k) SHIFT)+1]);
+               iB -= (U[(ldu*k+j) SHIFT]*rc[((ldr*k) SHIFT)+1]
+                     + U[((ldu*k+j) SHIFT)+1]*rc[(ldr*k) SHIFT]);
+               @CONF LN UT
+            }
+            rc[ldr*(j SHIFT)] = rB;
+            rc[ldr*(j SHIFT) + 1] = iB;
+         }
+         @CONF !
+      }
+   }
+}
+
+@undef up
+@undef ta
+@endwhile
+RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const SCALAR alp, TYPE *r, 
+                              ATL_CINT ldr)
+{
+   register int i;
+   TYPE *rc = r;
+      @iexp i 0 0 +
+      @iwhile i < @(nu)
+   for (i=0; i<m; i++)
+   {
+      RTYPE rB, iB, rX;
+      rB = rc[(i SHIFT)+0];
+      iB = rc[(i SHIFT)+1];
+      rX = rB*alp[0] - iB*alp[1];
+      iB = iB*alp[0] + rB*alp[1]; rB = rX;
+      rc[(i SHIFT)+0] = rB;
+      rc[(i SHIFT)+1] = iB;
+   }
+   rc += (ldr SHIFT);
+         @iexp i @(i) 1 +
+      @endiwhile
+}
+@ROUT ctrsmKL
+@skip mu must be defined.
+#include "atlas_misc.h"
+#define RINLINE @(INLINE_VAL)
+
+#define RTYPE register TYPE
+@multidef up   U  U  L  L
+@multidef ta   T  N  T  N
+
+@whiledef conf UT UN LT LN
+@define lowup @@low@(up)@
+RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
+(
+ ATL_CINT n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+)
+   /* 
+    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+    */
+{
+   @declare "   RTYPE " y n ";"
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @whiledef imag i r
+            @(imag)@(up)@(i)
+         @endwhile
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   @mif up = "L
+      @iexp j 0 0 +
+      @iwhile j < @(mu)
+         @iexp i 1 @(j) +
+         @iwhile i < @(mu)
+            @multidef ioff 1 0
+            @whiledef imag i r
+   const RTYPE @(imag)L@(i)_@(j) = L[((ldl*@(j)+@(i)) SHIFT)+@(ioff)];
+               @undef ioff
+            @endwhile
+            @iexp i 1 @(i) +
+         @endiwhile
+         @iexp j 1 @(j) +
+      @endiwhile
+   @endmif
+   @mif up = "U
+      @iexp j 0 0 +
+      @iwhile j < @(mu)
+         @iexp i 0 0 +
+         @iwhile i < @(j)
+            @multidef ioff 1 0
+            @whiledef imag i r
+   const RTYPE @(imag)U@(i)_@(j) = U[((ldu*@(j)+@(i)) SHIFT)+@(ioff)];
+               @undef ioff
+            @endwhile
+            @iexp i 1 @(i) +
+         @endiwhile
+         @iexp j 1 @(j) +
+      @endiwhile
+   @endmif
+   register int j;
+   TYPE *rc = r;
+   if (d)
+   {
+   @iexp i 0 0 +
+   @iwhile i < @(mu)
+      @multidef ioff 1 0
+      @whiledef imag i r
+      @(imag)@(up)@(i) = d[(@(i) SHIFT)+@(ioff)];
+         @undef ioff
+      @endwhile
+   @iexp i @(i) 1 +
+   @endiwhile
+   }
+   else
+   {
+   @iexp i 0 0 +
+   @iwhile i < @(mu)
+      @multidef ival ATL_rzero ATL_rone
+      @whiledef imag i r
+      @(imag)@(up)@(i) = @(ival);
+         @undef ival
+      @endwhile
+   @iexp i @(i) 1 +
+   @endiwhile
+   }
+   for (j=0; j<n; j++, rc += (ldr SHIFT))
+   {
+      @declare "      RTYPE " y n ";"
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            @multidef ioff 1 0
+            @whiledef imag i r
+               @(imag)B@(i)=rc[(@(i) SHIFT)+@(ioff)]
+               @undef ioff
+            @endwhile
+            @iexp i @(i) 1 +
+         @endiwhile
+      @enddeclare
+      RTYPE rX;
+      @addkeys CONF=@(up)@(ta)
+      @CONF LN UT
+      rX = rB0*r@(up)0 - iB0*i@(up)0;
+      iB0 = rB0*i@(up)0 + iB0*r@(up)0; rB0 = rX;
+         @iexp i 0 1 +
+         @iwhile i < @(mu)
+      rB@(i) = rB@(i) 
+            @iexp k 0 0 +
+            @iwhile k < @(i)
+               @mif up = "L
+            - (rL@(i)_@(k)*rB@(k) - iL@(i)_@(k)*iB@(k))
+               @endmif
+               @mif up = "U
+            - (rU@(k)_@(i)*rB@(k) - iU@(k)_@(i)*iB@(k))
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+         ;
+      iB@(i) = iB@(i) 
+            @iexp k 0 0 +
+            @iwhile k < @(i)
+               @mif up = "L
+            - (rL@(i)_@(k)*iB@(k) + iL@(i)_@(k)*rB@(k))
+               @endmif
+               @mif up = "U
+            - (rU@(k)_@(i)*iB@(k) + iU@(k)_@(i)*rB@(k))
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+         ;
+      rX = rB@(i)*r@(up)@(i) - iB@(i)*i@(up)@(i);
+      iB@(i) = rB@(i)*i@(up)@(i) + iB@(i)*r@(up)@(i); rB@(i) = rX;
+            @iexp i @(i) 1 +
+         @endiwhile
+      @CONF LT UN
+         @iexp i @(mu) -1 +
+      rX = rB@(i)*r@(up)@(i) - iB@(i)*i@(up)@(i);
+      iB@(i) = rB@(i)*i@(up)@(i) + iB@(i)*r@(up)@(i); rB@(i) = rX;
+         @iexp i @(mu) -2 +
+         @iwhile i > -1
+      rB@(i) = rB@(i) 
+            @iexp k @(i) 1 +
+            @iwhile k < @(mu)
+               @mif up = "L
+            - (rL@(k)_@(i)*rB@(k) - iL@(k)_@(i)*iB@(k))
+               @endmif
+               @mif up = "U
+            - (rU@(i)_@(k)*rB@(k) - iU@(i)_@(k)*iB@(k))
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+         ;
+      iB@(i) = iB@(i) 
+            @iexp k @(i) 1 +
+            @iwhile k < @(mu)
+               @mif up = "L
+            - (rL@(k)_@(i)*iB@(k) + iL@(k)_@(i)*rB@(k))
+               @endmif
+               @mif up = "U
+            - (rU@(i)_@(k)*iB@(k) + iU@(i)_@(k)*rB@(k))
+               @endmif
+               @iexp k @(k) 1 +
+            @endiwhile
+         ;
+      rX = rB@(i)*r@(up)@(i) - iB@(i)*i@(up)@(i);
+      iB@(i) = rB@(i)*i@(up)@(i) + iB@(i)*r@(up)@(i); rB@(i) = rX;
+            @iexp i @(i) -1 +
+         @endiwhile
+      @CONF !
+      @killkeys CONF
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @multidef ioff 1 0
+         @whiledef imag i r
+      rc[(@(i) SHIFT)+@(ioff)] = @(imag)B@(i);
+            @undef ioff
+         @endwhile
+         @iexp i @(i) 1 +
+      @endiwhile
+   }
+}
+
+RINLINE void Mjoin(PATL,trsm@(conf)RR)
+(
+   ATL_CINT m, ATL_CINT n, const TYPE *d, const TYPE *@(up), 
+   ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+)
+   /* 
+    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+    */
+{
+   register int i, j, k;
+   TYPE *rc = r;
+   RTYPE rB, iB, rX;
+   if (d)
+   {
+      for (j=0; j<n; j++, rc+=(ldr SHIFT))
+      {
+         @addkeys CONF=@(up)@(ta)
+         @CONF LN UT
+         for (i=0; i<m; i++)
+         {
+            rB = rc[(i SHIFT)];
+            iB = rc[(i SHIFT) + 1];
+            for (k=0; k<i; k++)
+            {
+               @CONF LN
+               rB -= (L[(ldl*k+i) SHIFT]*rc[k SHIFT]
+                     - L[((ldl*k+i) SHIFT)+1]*rc[(k SHIFT)+1]);
+               iB -= (L[(ldl*k+i) SHIFT]*rc[(k SHIFT)+1]
+                     + L[((ldl*k+i) SHIFT)+1]*rc[k SHIFT]);
+               @CONF UT
+               rB -= (U[(ldu*i+k) SHIFT]*rc[k SHIFT]
+                     - U[((ldu*i+k) SHIFT)+1]*rc[(k SHIFT)+1]);
+               iB -= (U[(ldu*i+k) SHIFT]*rc[(k SHIFT)+1]
+                     + U[((ldu*i+k) SHIFT)+1]*rc[k SHIFT]);
+               @CONF LN UT
+            }
+            rX = rB * d[(i SHIFT)] - iB * d[(i SHIFT)+1];
+            iB = rB * d[(i SHIFT)+1] + iB * d[(i SHIFT)]; rB = rX;
+            rc[(i SHIFT)] = rB;
+            rc[(i SHIFT) + 1] = iB;
+         }
+         @CONF LT UN
+         for (i=m-1; i>=0; i--)
+         {
+            rB = rc[(i SHIFT)];
+            iB = rc[(i SHIFT) + 1];
+            for (k=i+1; k<m; k++)
+            {
+               @CONF LT
+               rB -= (L[(ldl*i+k) SHIFT]*rc[k SHIFT]
+                     - L[((ldl*i+k) SHIFT)+1]*rc[(k SHIFT)+1]);
+               iB -= (L[(ldl*i+k) SHIFT]*rc[(k SHIFT)+1]
+                     + L[((ldl*i+k) SHIFT)+1]*rc[k SHIFT]);
+               @CONF UN
+               rB -= (U[(ldu*k+i) SHIFT]*rc[k SHIFT]
+                     - U[((ldu*k+i) SHIFT)+1]*rc[(k SHIFT)+1]);
+               iB -= (U[(ldu*k+i) SHIFT]*rc[(k SHIFT)+1]
+                     + U[((ldu*k+i) SHIFT)+1]*rc[k SHIFT]);
+               @CONF LT UN
+            }
+            rX = rB * d[(i SHIFT)] - iB * d[(i SHIFT)+1];
+            iB = rB * d[(i SHIFT)+1] + iB * d[(i SHIFT)]; rB = rX;
+            rc[(i SHIFT)] = rB;
+            rc[(i SHIFT) + 1] = iB;
+         }
+         @CONF !
+      }
+   }
+   else
+   {
+      for (j=0; j<n; j++, rc+=(ldr SHIFT))
+      {
+         @addkeys CONF=@(up)@(ta)
+         @CONF LN UT
+         for (i=0; i<m; i++)
+         {
+            rB = rc[(i SHIFT)];
+            iB = rc[(i SHIFT) + 1];
+            for (k=0; k<i; k++)
+            {
+               @CONF LN
+               rB -= (L[(ldl*k+i) SHIFT]*rc[k SHIFT]
+                     - L[((ldl*k+i) SHIFT)+1]*rc[(k SHIFT)+1]);
+               iB -= (L[(ldl*k+i) SHIFT]*rc[(k SHIFT)+1]
+                     + L[((ldl*k+i) SHIFT)+1]*rc[k SHIFT]);
+               @CONF UT
+               rB -= (U[(ldu*i+k) SHIFT]*rc[k SHIFT]
+                     - U[((ldu*i+k) SHIFT)+1]*rc[(k SHIFT)+1]);
+               iB -= (U[(ldu*i+k) SHIFT]*rc[(k SHIFT)+1]
+                     + U[((ldu*i+k) SHIFT)+1]*rc[k SHIFT]);
+               @CONF LN UT
+            }
+            rc[(i SHIFT)] = rB;
+            rc[(i SHIFT) + 1] = iB;
+         }
+         @CONF LT UN
+         for (i=m-1; i>=0; i--)
+         {
+            rB = rc[(i SHIFT)];
+            iB = rc[(i SHIFT) + 1];
+            for (k=i+1; k<m; k++)
+            {
+               @CONF LT
+               rB -= (L[(ldl*i+k) SHIFT]*rc[k SHIFT]
+                     - L[((ldl*i+k) SHIFT)+1]*rc[(k SHIFT)+1]);
+               iB -= (L[(ldl*i+k) SHIFT]*rc[(k SHIFT)+1]
+                     + L[((ldl*i+k) SHIFT)+1]*rc[k SHIFT]);
+               @CONF UN
+               rB -= (U[(ldu*k+i) SHIFT]*rc[k SHIFT]
+                     - U[((ldu*k+i) SHIFT)+1]*rc[(k SHIFT)+1]);
+               iB -= (U[(ldu*k+i) SHIFT]*rc[(k SHIFT)+1]
+                     + U[((ldu*k+i) SHIFT)+1]*rc[k SHIFT]);
+               @CONF LT UN
+            }
+            rc[(i SHIFT)] = rB;
+            rc[(i SHIFT) + 1] = iB;
+         }
+         @CONF !
+      }
+   }
+}
+
+@undef up
+@undef ta
+@endwhile
+RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const SCALAR alp, TYPE *r, 
+                              ATL_CINT ldr)
+{
+   register int j;
+   TYPE *rc = r;
+   for (j=0; j<n; j++, rc+=(ldr SHIFT))
+   {
+      RTYPE rB, iB, rX;
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+      rB = rc[(@(i) SHIFT)+0];
+      iB = rc[(@(i) SHIFT)+1];
+      rX = rB*alp[0] - iB*alp[1];
+      iB = iB*alp[0] + rB*alp[1]; rB = rX;
+      rc[(@(i) SHIFT)+0] = rB;
+      rc[(@(i) SHIFT)+1] = iB;
+         @iexp i @(i) 1 +
+      @endiwhile
+   }
+}
+
+@ROUT ctrsmKL ctrsmKR
+RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const SCALAR alp, 
+                                 TYPE *r, ATL_CINT ldr)
+{
+   register int i, j;
+   TYPE *rc = r;
+   for (j=0; j<n; j++, rc+=(ldr SHIFT))
+   {
+      RTYPE rB, iB, rX;
+      for (i=0; i<m; i++)
+      {
+         rB = rc[(i SHIFT)+0];
+         iB = rc[(i SHIFT)+1];
+         rX = rB*alp[0] - iB*alp[1];
+         iB = iB*alp[0] + rB*alp[1]; rB = rX;
+         rc[(i SHIFT)+0] = rB;
+         rc[(i SHIFT)+1] = iB;
+      }
+   }
+}
+@ROUT trsmh
+#ifndef ATLAS_TRSMKH
+   #define ATLAS_TRSMKH
+#define RINLINE @(INLINE_VAL)
+
+typedef void (*trsmK_t)
+   (const int n, const TYPE *d, const TYPE *L, const int ldl, 
+    TYPE *r, const int ldr);
+
+@whiledef conf UU RU UR RR
+RINLINE void cpFromBlkCN_@(mu)_@(nu)_a1_bX_@(conf)
+(
+   ATL_CSZT M, ATL_CSZT N, const SCALAR alpha, const TYPE *b, 
+   const SCALAR beta, TYPE *C, ATL_CSZT ldc
+);
+RINLINE void cpFromBlkCT_@(mu)_@(nu)_a1_bX_@(conf)
+(
+   ATL_CSZT M, ATL_CSZT N, const SCALAR alpha, const TYPE *b, 
+   const SCALAR beta, TYPE *C, ATL_CSZT ldc
+);
+@endwhile
+
+@multidef up   U  U  L  L
+@whiledef conf UT UN LT LN
+@define lowup @@low@(up)@
+RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
+(  
+ int n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
+);
+@undef up
+@endwhile
+
+#endif
+@ROUT !
