@@ -35944,19 +35944,44 @@ gemm(...)
 #define CINT const int
 
 #ifdef TIME_TRMVK
-   #ifdef TCPLX
-      #error "Complex TRSM kernel timing not yet supported!"
-   #else
-      #ifdef SD_Right
-         #error "Side=Right not yet supported!"
+   #ifdef TIME_AMM_SM
+      #if defined(SDN) && (SDN == 1)
+         #define SD_Right 1
       #else
-         #ifdef UDIAG
-            #define my_trsmk Mjoin(PATL,ktrsmLLNU_rk4)
+         #define SD_Right 0
+      #endif
+      #ifdef TCPLX
+         #error "Complex TRSM kernel timing not yet supported!"
+      #else
+         #if SD_Right == 1
+	    #define my_trsmk Mjoin(PATL,trsmK_ammRLN)
+	       void my_trsmk(const enum ATLAS_DIAG Diag,
+		ATL_CINT N, ATL_CINT R, const SCALAR alpha,
+		const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+		TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
          #else
-            #define my_trsmk Mjoin(PATL,ktrsmLLN_rk4)
+	    #define my_trsmk Mjoin(PATL,trsmK_ammLLN)
+            void my_trsmk(const enum ATLAS_DIAG Diag,
+		ATL_CINT N, ATL_CINT R, const SCALAR alpha,
+		const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+		TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
          #endif
-      void my_trsmk(ATL_CINT M, ATL_CINT N, const SCALAR alpha,
-          const TYPE *T, TYPE *B, ATL_CINT ldb, TYPE *W);
+      #endif
+   #else
+      #ifdef TCPLX
+         #error "Complex TRSM kernel timing not yet supported!"
+      #else
+         #ifdef SD_Right
+            #error "Side=Right not yet supported!"
+         #else
+            #ifdef UDIAG
+               #define my_trsmk Mjoin(PATL,ktrsmLLNU_rk4)
+            #else
+               #define my_trsmk Mjoin(PATL,ktrsmLLN_rk4)
+            #endif
+         void my_trsmk(ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+             const TYPE *T, TYPE *B, ATL_CINT ldb, TYPE *W);
+         #endif
       #endif
    #endif
 #elif defined(TCPLX)
@@ -36112,6 +36137,68 @@ double GetKmmMflop
    void *vp=NULL;
    unsigned int seed = mb*kb + (nb<<14);
    size_t nseta, nsetb, nsetc, ja, jb, jc;
+
+#ifdef TIME_TRMVK
+   size_t lda, ldc;
+   #ifdef TIME_AMM_SM
+      void *wp;
+      TYPE *diag, *L, *R, *w;
+      void* Mjoin(GetWorkspace,SD)(const int, TYPE**, TYPE**, TYPE**, TYPE**);
+      wp = Mjoin(GetWorkspace,SD)(mb, &diag, &L, &R, &w);
+   #endif
+   setsz = mb*kb + mb*nb;
+   if (!NOMOVE && FLSIZE)
+      nsets = (ATL_DivBySize(FLSIZE)+setsz-1) / setsz;
+   else
+      movA = movB = movC = nsets = 0;
+   if (nsets < 1) nsets=1;
+   i = Mmax(nsets*mb, 2000) / mb;
+   i = (i > 1) ? i : 2;
+   nsets = i;
+   lda = ldc = (i*mb)|1;
+   incA = mb SHIFT; incC = mb SHIFT; incB = 0;
+   vp = malloc(ATL_MulBySize(mb*lda + nb*ldc + mb*nb) + ATL_Cachelen);
+   A = ATL_AlignPtr(vp);
+   B = A + ((mb*lda) SHIFT);
+   C = B + ((mb*nb) SHIFT);
+   /* initialization */
+   for (i=0; i<mb*(nb SHIFT); i++) B[i] = dumb_prand(&seed);
+   for (i=0; i<lda*(mb SHIFT); i++) A[i] = ATL_rzero;
+   for (i=0; i<ldc*(nb SHIFT); i++) C[i] = dumb_prand(&seed);
+
+   #ifndef TIME_AMM_SM
+      //incA *= mb;
+   #else
+      {
+         #if SD_Right == 1
+            int Mjoin(PATL, GetTRSMkRNU)();
+            const int TU = Mjoin(PATL,GetTRSMkRNU)();
+            const int TUTU = TU*TU;
+         #else
+            int Mjoin(PATL, GetTRSMkLMU)();
+            const int TU = Mjoin(PATL,GetTRSMkLMU)();
+            const int TUTU = TU*TU;
+         #endif
+         TYPE *dd;
+         for (a=L; a!=R; a++) *a = ATL_rzero; /* zero everything */
+         /* now make diag blks identity */
+         for (a=L, dd=diag, i=0; a<R; i++, a+=i*(TUTU SHIFT), dd+=(TU SHIFT))
+         {
+            int ii;
+            for (ii=0; ii<TU; ii++)
+            {
+               a[(ii*TU+ii) SHIFT] = ATL_rone;
+               dd[ii SHIFT] = ATL_rone;
+            }
+         }
+      }
+   #endif
+   for (a=A, i=0; i<nsets; i++, a+=(incA) SHIFT)
+   {
+      int ii;
+      for (ii=0; ii < mb; ii++) a[(ii*lda+ii) SHIFT] = ATL_rone;
+   }
+#else
 /*
  * Get size for each matrix, and round up to ensure we keep alignment
  */
@@ -36208,6 +36295,7 @@ double GetKmmMflop
       B[i] = dumb_prand(&seed);
    for (i=0; i<nsetc*szC; i++)
       C[i] = dumb_prand(&seed);
+#endif
 
    a = A; b = B; c = C;
    t0 = ATL_walltime();
@@ -36233,7 +36321,12 @@ double GetKmmMflop
          jc = 0; cn = C;
       }
       #ifdef TIME_TRMVK
-         my_trsmk(mb, nb, 1.0, a, c, mb, b);
+         #ifdef TIME_AMM_SM
+            my_trsmk(AtlasNonUnit, mb, nb, ATL_rone, NULL, lda, c, ldc, 
+                     diag, L, R, w);
+         #else
+            my_trsmk(mb, nb, 1.0, a, c, mb, b);
+         #endif
       #elif defined(TIME_SYRKK)
          KMM(mblks, nblks, kb, a, a, c, an, an, cn);
       #else
@@ -36247,6 +36340,9 @@ double GetKmmMflop
    mf = reps*getMflops(mb, nb, kb) / t1;
    #ifdef TCPLX
       mf *= 4.0;
+   #endif
+   #if defined(TIME_TRMVK) && defined(TIME_AMM_SM)
+      free(wp);
    #endif
    free(vp);
    return(mf);
@@ -36863,15 +36959,44 @@ int main(int nargs, char **args)
 #define CINT const int
 
 #ifdef TIME_TRMVK
-   #ifdef TCPLX
-      #error "Complex TRSM kernel timing not yet supported!"
-   #else
-      #ifdef SD_Right
-         #error "Side=Right not yet supported!"
+   #ifdef TIME_AMM_SM
+      #if defined(SDN) && (SDN == 1)
+         #define SD_Right 1
       #else
-      void Mjoin(PATL,ktrsmLLN_rk4)
-         (ATL_CINT M, ATL_CINT N, const SCALAR alpha, 
-          const TYPE *T, TYPE *B, ATL_CINT ldb, TYPE *W);
+         #define SD_Right 0
+      #endif
+      #ifdef TCPLX
+         #error "Complex TRSM kernel timing not yet supported!"
+      #else
+         #if SD_Right == 1
+	    #define my_trsmk Mjoin(PATL,trsmK_ammRLN)
+	       void my_trsmk(const enum ATLAS_DIAG Diag,
+		ATL_CINT N, ATL_CINT R, const SCALAR alpha,
+		const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+		TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+         #else
+	    #define my_trsmk Mjoin(PATL,trsmK_ammLLN)
+            void my_trsmk(const enum ATLAS_DIAG Diag,
+		ATL_CINT N, ATL_CINT R, const SCALAR alpha,
+		const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+		TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+         #endif
+      #endif
+   #else
+      #ifdef TCPLX
+         #error "Complex TRSM kernel timing not yet supported!"
+      #else
+         #ifdef SD_Right
+            #error "Side=Right not yet supported!"
+         #else
+            #ifdef UDIAG
+               #define my_trsmk Mjoin(PATL,ktrsmLLNU_rk4)
+            #else
+               #define my_trsmk Mjoin(PATL,ktrsmLLN_rk4)
+            #endif
+         void my_trsmk(ATL_CINT M, ATL_CINT N, const SCALAR alpha, 
+             const TYPE *T, TYPE *B, ATL_CINT ldb, TYPE *W);
+         #endif
       #endif
    #endif
 #elif defined(TIME_COPY)
@@ -37140,6 +37265,67 @@ double GetKmmMflop
    const int NOMOVE = !(movA|movB|movC);
    unsigned int seed = mb*kb + (nb<<14);
 
+#ifdef TIME_TRMVK
+   size_t lda, ldc;
+   #ifdef TIME_AMM_SM
+      void *wp;
+      TYPE *diag, *L, *R, *w;
+      void* Mjoin(GetWorkspace,SD)(const int, TYPE**, TYPE**, TYPE**, TYPE**);
+      wp = Mjoin(GetWorkspace,SD)(mb, &diag, &L, &R, &w);
+   #endif
+   setsz = mb*kb + mb*nb;
+   if (!NOMOVE && FLSIZE)
+      nsets = (ATL_DivBySize(FLSIZE)+setsz-1) / setsz;
+   else
+      movA = movB = movC = nsets = 0;
+   if (nsets < 1) nsets=1;
+   i = Mmax(nsets*mb, 2000) / mb;
+   i = (i > 1) ? i : 2;
+   nsets = i;
+   lda = ldc = (i*mb)|1;
+   incA = mb SHIFT; incC = mb SHIFT; incB = 0;
+   vp = malloc(ATL_MulBySize(mb*lda + nb*ldc + mb*nb) + ATL_Cachelen);
+   A = ATL_AlignPtr(vp);
+   B = A + ((mb*lda) SHIFT);
+   C = B + ((mb*nb) SHIFT);
+   /* initialization */
+   for (i=0; i<mb*(nb SHIFT); i++) B[i] = dumb_prand(&seed);
+   for (i=0; i<lda*(mb SHIFT); i++) A[i] = ATL_rzero;
+   for (i=0; i<ldc*(nb SHIFT); i++) C[i] = dumb_prand(&seed);
+
+   #ifndef TIME_AMM_SM
+      //incA *= mb;
+   #else
+      {
+         #if SD_Right == 1
+            int Mjoin(PATL, GetTRSMkRNU)();
+            const int TU = Mjoin(PATL,GetTRSMkRNU)();
+            const int TUTU = TU*TU;
+         #else
+            int Mjoin(PATL, GetTRSMkLMU)();
+            const int TU = Mjoin(PATL,GetTRSMkLMU)();
+            const int TUTU = TU*TU;
+         #endif
+         TYPE *dd;
+         for (a=L; a!=R; a++) *a = ATL_rzero; /* zero everything */
+         /* now make diag blks identity */
+         for (a=L, dd=diag, i=0; a<R; i++, a+=i*(TUTU SHIFT), dd+=(TU SHIFT))
+         {
+            int ii;
+            for (ii=0; ii<TU; ii++)
+            {
+               a[(ii*TU+ii) SHIFT] = ATL_rone;
+               dd[ii SHIFT] = ATL_rone;
+            }
+         }
+      }
+   #endif
+   for (a=A, i=0; i<nsets; i++, a+=(incA) SHIFT)
+   {
+      int ii;
+      for (ii=0; ii < mb; ii++) a[(ii*lda+ii) SHIFT] = ATL_rone;
+   }
+#else
    #ifdef TIME_COPY
       if (pd->COLWISE)
       {
@@ -37232,6 +37418,7 @@ double GetKmmMflop
    sp = ATL_AlignPtr(vp);
    for (i=0; i < tsz; i++) 
       sp[i] = dumb_prand(&seed);
+#endif
 
    a = A; b = B; c = C;
    t0 = ATL_walltime();
@@ -37250,7 +37437,12 @@ double GetKmmMflop
          an = A; bn = B; cn = C;
       }
       #ifdef TIME_TRMVK
-         Mjoin(PATL,ktrsmLLN_rk4)(mb, nb, 1.0, a, c, mb, B);
+         #ifdef TIME_AMM_SM
+            my_trsmk(AtlasNonUnit, mb, nb, ATL_rone, NULL, lda, c, ldc, 
+                     diag, L, R, w);
+         #else
+            my_trsmk(mb, nb, 1.0, a, c, mb, B);
+         #endif
       #elif defined(TIME_SYRKK)
          KMM(mblks, nblks, kb, a, a, c, an, an, cn);
       #elif defined(TIME_COPY)
@@ -37334,6 +37526,9 @@ double GetKmmMflop
       #ifdef TCPLX
          mf *= 4.0;
       #endif
+   #endif
+   #if defined(TIME_TRMVK) && defined(TIME_AMM_SM)
+      free(wp);
    #endif
    free(vp);
    return(mf);
