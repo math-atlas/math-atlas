@@ -5147,8 +5147,9 @@ void ATL_UAXPBY(const int N, const SCALAR alpha, const TYPE *X, const int incx,
  3  1  2  1  1  axpby32_a1bXx1y1.c     "R. Clint Whaley"
  4  2  2  1  1  axpby_simd_x1y1.c      "R. Clint Whaley"
 @ROUT zcases.axpby ccases.axpby
-1
- 1  2  2  0  0  caxpby1_x0y0.c         "R. Clint Whaley"
+2
+ 1  2  2  0  0  caxpby1_x0y0.c          "R. Clint Whaley"
+ 2  2  0  1  1  caxpby_simd_aXbr_x1y1.c "R. Clint Whaley"
 @ROUT scases.axpby dcases.axpby ccases.axpby zcases.axpby
 <ID> <alpha> <beta> <incX> <incY> <rout> <auth>
 @ROUT iamax_stub
@@ -7999,7 +8000,7 @@ YBADALIGN:
    }
    goto CLEANUP;
 }
-@ROUT caxpby_simd_x1y1
+@ROUT caxpby_simd_aXbr_x1y1
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
 #include "atlas_cplxsimd.h"
@@ -8011,18 +8012,22 @@ YBADALIGN:
    #define MY_SIZEOF ATL_ZSIZE
 #endif
 #define YDIST 96
-
-void ATL_UAXPY(const int N, const TYPE *alpha, const TYPE *pX, const int incX,
-               const TYPE *beta, TYPE *pY, const int incY)
+/*
+ * This axpby specialized for complex ALPHA, real BETA.  BETA's most commen
+ * values are real: 1, -1, 0
+ */
+void ATL_UAXPBY(const int N, const TYPE *alpha, const TYPE *pX, const int incX,
+                const TYPE *beta, TYPE *pY, const int incY)
 {
    int NV = N;
    int i, nr;
    ATL_VTYPE rALn, rALs;       /* natural order alpha, scaled/perm alpha */
+   ATL_VTYPE rBET;             /* real BETA entries */
    ATL_VTYPE rXr, rXi, rYn;
 
-   ATL_vcxuld1(rALn, alpha);
-   ATL_vcxPrepAlpha(rALn, rALs);        /* rALs = {ral, -ial}*(VLEN/2) */
-                                        /* rALn = {ial,  ral}*(VLEN/2 */
+   ATL_vbcast(rBET, beta);
+   ATL_vcxuld1(rALn, alpha);        /* rALs = {ral, -ial}*(VLEN/2) */
+   ATL_vcxPrepAlpha(rALn, rALs);    /* rALn = {ial,  ral}*(VLEN/2) */
 /*
  * If pY has lower alignment than complex length, no peeling can fix Y align
  */
@@ -8041,6 +8046,7 @@ void ATL_UAXPY(const int N, const TYPE *alpha, const TYPE *pX, const int incX,
    if (i)
    {
       ATL_vcxlduXuYR(rYn, pY, rXi, pX, i);
+      ATL_vmul(rYn, rYn, rBET);
       ATL_vcxsplitRI(rXr, rXi);
       ATL_vmac(rYn, rXi, rALs);
       ATL_vmac(rYn, rXr, rALn);
@@ -8070,8 +8076,9 @@ void ATL_UAXPY(const int N, const TYPE *alpha, const TYPE *pX, const int incX,
  */
    do
    {
+      ATL_vld(rYn, pY);
+      ATL_vmul(rYn, rYn, rBET);            /* rYN scaled by real part of beta */
       ATL_vcxsplitRIld(rXr, rXi, pX);      /* rXr={rX,rX..}, rXi={iX,iX...} */
-      ATL_vld(rYn, pY);                    /* rYn  = {iY,  rY  } */
       ATL_vmac(rYn, rXi, rALs);            /* rYn += {ral*iX, -ial*iX} */
       ATL_vmac(rYn, rXr, rALn);            /* rYn += {ial*rX, ral*rX} */
       ATL_vst(pY, rYn);
@@ -8092,6 +8099,7 @@ CLEANUP:
       #else
          ATL_vcxlduXuYR(rXi, pX, rYn, pY, nr);
       #endif
+      ATL_vmul(rYn, rYn, rBET);
       ATL_vcxsplitRI(rXr, rXi);
       ATL_vmac(rYn, rXi, rALs);
       ATL_vmac(rYn, rXr, rALn);
@@ -8102,9 +8110,10 @@ CLEANUP:
 XBADALIGN:  /* Y is aligned, but X is not */
    do
    {
+      ATL_vld(rYn, pY);
+      ATL_vmul(rYn, rYn, rBET);            /* rYN scaled by real part of beta */
       ATL_vuld(rXi, pX);
       ATL_vcxsplitRI(rXr, rXi);            /* rXr={rX,rX..}, rXi={iX,iX...} */
-      ATL_vld(rYn, pY);                    /* rYn  = {iY,  rY  } */
       ATL_vmac(rYn, rXi, rALs);            /* rYn += {ral*iX, -ial*iX} */
       ATL_vmac(rYn, rXr, rALn);            /* rYn += {ial*rX, ral*rX} */
       ATL_vst(pY, rYn);
