@@ -1,3 +1,134 @@
+@ROUT trsmsrch
+#define ATL_WANT ILCM 1
+#include "atlas_iopt.h"
+#include "atlas_cache.h"
+#include "atlas_genparse.h"
+#include "atlas_mmtesttime.h"
+
+#define TSM_RIGHT 0
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -S [L/R] : search Left or Right TRSM\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_mmnode_t *getAllCandKerns(char pre, int flag)
+{
+   ATL_mmnode_t *mb, *mp;
+   mb = ReadMMFileWithPath(pre, "res", "opmek.sum");
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "opnek.sum"));
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "opgen.sum"));
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "ipgen.sum"));
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "ipmen.sum"));
+   mp = AddUniqueMMKernsToList(NULL, mb);
+   KillAllMMNodes(mb);
+   mb = mp;
+   while (mp)
+   {
+      ATL_mmnode_t *nxt = mp->next;
+      int KILL;
+      KILL = !(mp->flag & (1<<MMF_KRUNTIME));  /* kill compile-time K */
+      if (flag&(1<<TSM_RIGHT))      /* Right case requires */
+         KILL |= (mp->nu % mp->ku); /* nu a multiple of ku */
+      else                          /* Left case requires */
+         KILL |= (mp->mu % mp->ku); /* mu a multiple of ku */
+      if (KILL)
+         mb = KillMMNodeFromQ(mb, mp);
+      mp = nxt;
+   }
+   assert(mb);  /* later create one in this case, for now assert */
+   return(mb);
+}
+
+char GetFlags(int nargs, char **args, int *FLG)
+{
+   char pre = 'd';
+   int flg=0;
+   int i;
+
+   for (i=1; i < nargs; i++)
+   {
+      int wch, *ip, **ipp, TST=0;
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'S':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        wch = args[i][0];
+        if (wch == 'R' || wch == 'r')
+           flg |= 1<<TSM_RIGHT;
+        else
+           flg &= ~(1<<TSM_RIGHT);
+        break;
+      @BEGINSKIP
+      case 'F':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         FULLSRCH = atoi(args[i]);
+         break;
+      @ENDSKIP
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   *FLG = flg;
+   return(pre);
+}
+
+void findBestTRSM(char pre, int flag, ATL_mmnode_t *kb)
+{
+   ATL_mmnode_t *bb;   /* blocking base det by left or right setting */
+   ATL_mmnode_t *tb;   /* trsm's best case queue, 1 for each entry in opmek */
+   ATL_mmnode_t *bp, *mp;
+   int R=1, maxB=1;
+   if (flag & (1<<TSM_RIGHT))
+      bb = ReadMMFileWithPath(pre, "res", "opnek.sum");
+   else
+      bb = ReadMMFileWithPath(pre, "res", "opmek.sum");
+   for (mp=kb; mp; mp = mp->next)
+   {
+      unsigned int b;
+      R = ATL_iLCM(R, mp->nu);
+      R = ATL_iLCM(R, mp->mu);
+      b = (flag & (1<<TSM_RIGHT)) ? mp->nbB : mp->mbB;
+      maxB = Mmax(maxB, b);
+   }
+   if (maxB > R)
+      R = (maxB/R)*R;  /* NRHS to time */
+   else
+      R = maxB;
+   KillAllMMNodes(bb);
+}
+
+int main(int nargs, char **args)
+{
+   char pre;
+   int flag;
+   ATL_mmnode_t *mb;
+
+   pre = GetFlags(nargs, args, &flag);
+   mb = getAllCandKerns(pre, flag);
+   PrintMMNodes(stdout, mb);
+   findBestTRSM(pre, flag, mb);
+   KillAllMMNodes(mb);
+   return(0);
+}
 @ROUT atlas_trsmK.h
 /*
  * Prototypes trsm kernel routines used in gemm or amm-based BLAS routines
