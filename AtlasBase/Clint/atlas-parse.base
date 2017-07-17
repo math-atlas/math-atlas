@@ -6953,6 +6953,8 @@ double TimeMMKernel
  * flag - take actions the following actions if specified bit position is set:
  *    0 : ignore any prior output file on output
  *    1 : time in serial rather than parallel
+ *    2 : time Right case rather than Left
+ *    3 : do C^T = B^T * A^T, rather than C=A*B
  */
 {
    char fnam[128], ln[4096];  /* security from 1991 */
@@ -6962,6 +6964,7 @@ double TimeMMKernel
    int MB, NB, KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+vl-1)/vl)*vl;
    const int FORCETIME = flag&1, SERIAL=flag&2; 
    const int PUTC=FLAG_IS_SET(mmp->flag, MMF_CPC);
+   const int RIGHT=(flag&4), TRANS=(flag&8);
    int KU=mmp->ku;
    int DOTIME=1;
    char *be, *gs0=mmp->genstr;
@@ -7053,8 +7056,8 @@ double TimeMMKernel
       case ATL_KTRSM:
          fnam[5] = 't';
          fnam[6] = 's';
-         fnam[7] = 'm';
-         fnam[8] = 'm';
+         fnam[7] = (RIGHT)?'R' : 'L';
+         fnam[8] = (TRANS)?'T' : 'N';
          break;
       case ATL_KTRMM:
          fnam[5] = 't';
@@ -7147,8 +7150,12 @@ double TimeMMKernel
       }
       else
       {
-         i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
-                     pre, nm, MB, NB, KB);
+         if (mmp->blask == ATL_KTRSM)
+            i = sprintf(ln, "make %ctrsmcase kb=%d nb=%d SD=%c ta=%c",
+                        pre, KB, NB, RIGHT?'R':'L', TRANS?'t':'n');
+         else
+            i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
+                        pre, nm, MB, NB, KB);
          if (mmp->genstr)
             i += sprintf(ln+i, " mmrout=%s", mmp->rout);
          else

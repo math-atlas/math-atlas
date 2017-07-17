@@ -91,24 +91,63 @@ char GetFlags(int nargs, char **args, int *FLG)
    return(pre);
 }
 
-ATL_mmnode_t *findBest1D(char pre, int flag)
+ATL_mmnode_t *findBestU1(char pre, int flag, int B, int R)
 /*
  * Finds the best case with ku=1, and either mu OR nu = 1
- * I think mod it to accept U of 1 OR 2.
  */
 {
-   ATL_mmnode_t *mb, *mp;
-   mp = mb = GetWorkingUserCases(0, pre);
-   while (mp)
+   ATL_mmnode_t *mmb, *mmp, *mmB=NULL;
+   int mb, nb, transB=0;
+   double mfB=0.0;
+   const int RIGHT=(flag&(1<<TSM_RIGHT));
+   const int tflag= (RIGHT) ? 4 : 0;
+   const char TA[2] = {'N', 'T'};
+
+   mmp = mmb = GetWorkingUserCases(0, pre);
+   while (mmp)
    {
-      ATL_mmnode_t *nxt=mp->next;
-      if ((mp->mu != 1 && mp->nu != 1) || mp->ku != 1)
-         mb = KillMMNodeFromQ(mb, mp);
-      mp = nxt;
+      ATL_mmnode_t *nxt=mmp->next;
+      if ((mmp->mu != 1 && mmp->nu != 1) || mmp->ku != 1 || 
+          !FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
+         mmb = KillMMNodeFromQ(mmb, mmp);
+      mmp = nxt;
    }
    printf("1-D CASES:\n");
-   PrintMMNodes(stdout, mb);
-   return(mb);
+   PrintMMNodes(stdout, mmb);
+   printf("\nTIMING 1-D CASES FOR B=%u, NRHS=%u:\n", B, R);
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      int it;
+      mmp->blask = ATL_KTRSM;
+      for (it=0; it < 2; it++)
+      {
+         double mf;
+         const int tfl = tflag | ((it)?8:0);
+         mf = TimeMMKernel(0, tfl, mmp, pre, R, R, B, 1, 0, -1);
+         printf("   ID=%d : B=%u, NRHS=%u U=(%2u,%2u) TRANS=%c, mf=%.2f\n", 
+                mmp->ID, B, R, mmp->mu, mmp->nu, TA[it], mf);
+         if (mf > mfB)
+         {
+            mmB = mmp;
+            mfB = mf;
+            transB = it;
+         }
+      }
+   }
+   assert(mmB);
+   mmb = RemoveMMNodeFromQ(mmb, mmB);
+   KillAllMMNodes(mmb);
+   mmB->mbB = mmB->kbB = mmB->nbB = B;
+   if (RIGHT)
+      mmB->mbB = R;
+   else
+      mmB->nbB = R;
+   mmB->mflop[0] = mfB;
+   mmB->TA = mmB->TB = transB;
+   printf("BEST 1-D CASE FOR B=%u,%u: ID=%u, U=(%u,%u), TRANS=%c, mf=%.2f\n\n",
+          B, R, mmB->ID, mmB->mu, mmB->nu, transB?'T':'N', mfB);
+          
+   return(mmB);
 }
 
 void findBestTRSM(char pre, int flag, ATL_mmnode_t *kb)
@@ -133,6 +172,9 @@ void findBestTRSM(char pre, int flag, ATL_mmnode_t *kb)
       R = (maxB/R)*R;  /* NRHS to time */
    else
       R = maxB;
+   mp = findBestU1(pre, flag, bb->kbB, R);
+   mp->next = bb;
+   bb = mp;
    KillAllMMNodes(bb);
 }
 
@@ -146,8 +188,6 @@ int main(int nargs, char **args)
    mb = getAllCandKerns(pre, flag);
    PrintMMNodes(stdout, mb);
    findBestTRSM(pre, flag, mb);
-   KillAllMMNodes(mb);
-   mb = findBest1D(pre, flag);
    KillAllMMNodes(mb);
    return(0);
 }
