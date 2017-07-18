@@ -5,6 +5,7 @@
    It also contains the C copy nanokernel, that copies a Um x Un section 
    of C to same col-major, or to Un x Um C^T.
 @ENDSKIP
+@ROUT !
 @define INLINE_VAL @static INLINE@
 @beginproc proc_mblk
    @addkeys TA=@(ta)
@@ -160,8 +161,143 @@ RINLINE void cpFromBlkC@(ta)_@(mu)_@(nu)_a1_bX_@(conf)
    @undef munroll
    @undef nunroll
 @endwhile
+@ROUT ATL_ntrcopyL ATL_trsmKR ATL_trsmKL
+@ifdef ! U
+   @abort U must be defined!
+@endifdef
+/*
+ * Nanocopy to copy @(U)x@(U) Lower diagonal block of a triangular
+ * matrix to the format used by the ATL_utrsmL (trsm microrkernel).
+ * W has row stride of @(U), and the inverted diagonals are copied
+ * to diag.  N <= @(U) (will be < @(U) only for cleanup
+ */
+#if 0
+static INLINE void ATL_ntrcopyL
+   (ATL_CINT N, const TYPE *A, ATL_CSZT lda, TYPE *W, TYPE *diag)
+{
+   #ifdef TCPLX
+      ATL_CSZT lda2=lda+lda;
+      #define LDA lda2
+   #else
+      #define LDA lda
+   #endif
+   if (N == @(U))
+   {
+      @declare "      const TYPE " n n ";"
+         *A0=A;
+         @iexp jj @1@
+         @iwhile @(jj) < @(U)
+            @iexp @(ii) @(jj) -1 +
+            *A@(jj) = A@(ii)+LDA
+            @iexp jj @(jj) 1 +
+         @endiwhile
+      @enddeclare
+      @iexp jj 0
+      @iwhile jj < @(U)
+      if (diag)
+      #ifdef TCPLX
+         #ifdef Conj_
+            @iexp k0 2 @(jj) + @(jj) @(U) * *
+            @iexp k1 @(jj) @(jj) +
+            diag[@(k1)] = A@(jj)[@(jj)];
+            diag[@(K1)+1] = -
+         #else
+            CXINV(diag+@(jj), A@(jj)+@(ii));
+         #endif
+      #else
+         diag[@(jj)] = ATL_rone / 
+      #endif
+          @iexp ii @(jj) 1 +
+          @iwhile ii < @(U)
+             @iexp kk @(ii) + @(jj) @(U) *
+          @iexp jj @(jj) 1 +
+      @endiwhile
+   }
+   else
+   {
+   }
+}
+#else
+static INLINE void ATL_ntrcopyL(const int IsConj,
+                                const int n, TYPE *A, const int lda,
+                                TYPE *W, const int ldw, TYPE *diag)
+{
+   register int i, j;
+   TYPE *a = A, *w = W;
+   #ifdef TCPLX
+      void Mjoin(PATL,cplxinvert)(ATL_CINT, TYPE*, ATL_CINT, TYPE*, ATL_CINT);
+   #endif
+   for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
+   {
+      if(diag)
+      {
+         #ifdef TCPLX /* invert diag later */
+            diag[j SHIFT] = w[j SHIFT] = a[j SHIFT];
+            diag[(j SHIFT)+1] = w[(j SHIFT)+1] = IsConj ?
+                                -a[(j SHIFT)+1] : a[(j SHIFT)+1];
+         #else
+            diag[j] = ATL_rone / a[j];
+            w[j] = a[j];
+         #endif
+      }
+      for (i=j+1; i<n; i++)
+      {
+         w[i SHIFT] = a[i SHIFT];
+         #ifdef TCPLX
+            w[(i SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+         #endif
+      }
+   }
+   #ifdef TCPLX
+      if (diag)
+      {
+         Mjoin(PATL,cplxinvert)(n, diag, 1, diag, 1);
+      }
+   #endif
+}
+#endif
+@ROUT ATL_ntrcopyU ATL_trsmKR ATL_trsmKL
+static INLINE void ATL_ntrcopyU(const int IsConj,
+                               const int n, TYPE *A, const int lda,
+                               TYPE *W, const int ldw, TYPE *diag)
+{
+   register int i, j;
+   TYPE *a = A, *w = W;
+   #ifdef TCPLX
+      void Mjoin(PATL,cplxinvert)(ATL_CINT, TYPE*, ATL_CINT, TYPE*, ATL_CINT);
+   #endif
+   for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
+   {
+      for (i=0; i<j; i++)
+      {
+         w[i SHIFT] = a[i SHIFT];
+         #ifdef TCPLX
+            w[(i SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+         #endif
+      }
+      if(diag)
+      {
+         #ifdef TCPLX /* invert diag later */
+            diag[j SHIFT] = w[j SHIFT] = a[j SHIFT];
+            diag[(j SHIFT)+1] = w[(j SHIFT)+1] = IsConj ?
+                                -a[(j SHIFT)+1] : a[(j SHIFT)+1];
+         #else
+            w[j] = a[j];
+            diag[j] = ATL_rone / a[j];
+         #endif
+      }
+   }
+   #ifdef TCPLX
+      if (diag)
+      {
+         Mjoin(PATL,cplxinvert)(n, diag, 1, diag, 1);
+      }
+   #endif
+}
 @ROUT trsmKR
-@skip nu must be defined.
+@ifdef ! nu
+   @abort nu must be defined!
+@endifdef
 #include "atlas_misc.h"
 #define RINLINE @(INLINE_VAL)
 
