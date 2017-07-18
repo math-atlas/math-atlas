@@ -14,6 +14,7 @@
    ATLAS/tune/blas/gemv/MVTCASES ATLAS/tune/blas/gemv/MVNCASES
    ATLAS/tune/blas/level1 ATLAS/tune/blas/level3
    ATLAS/tune/blas/gemm ATLAS/tune/blas/gemv ATLAS/tune/blas/ger
+   ATLAS/tune/blas/trsm
    ATLAS/tune/blas ATLAS/tune/sysinfo ATLAS/tune/lapack ATLAS/tune/threads
 @skip   ATLAS/src/pthreads/blas/level3
 @skip   ATLAS/src/pthreads/blas/level1 ATLAS/src/pthreads/blas/level2
@@ -38,10 +39,10 @@
    ATLAS/src/blas/f77reference
    ATLAS/src/blas/reference
 @skip   ATLAS/src/blas/pklevel3 
-   ATLAS/src/blas/level1 ATLAS/src/blas/level2 ATLAS/src/blas/level3
+   ATLAS/src/blas/level1 ATLAS/src/blas/level2 ATLAS/src/blas/level3 
 @skip   ATLAS/src/blas/gemm 
    ATLAS/src/blas/gemv ATLAS/src/blas/ger
-   ATLAS/src/blas/ammm
+   ATLAS/src/blas/ulevel3 ATLAS/src/blas/ammm
 @skip   ATLAS/src/blas/kbmm 
    ATLAS/src/auxil/kernel  
    ATLAS/src/lapack/amm
@@ -825,7 +826,7 @@ basfn = $(basdRCW)/atlas-pck.base
 @endmultidef
 @ROUT ATLAS/src/blas/level3/kernel
 basfn = $(basdRCW)/atlas-l3kern.base
-trsmKbas = $(basdSTU)/atlas-trsmK.base
+@skip trsmKbas = $(basdSTU)/atlas-trsmK.base
 @multidef rt
    ATL_sycopyL.c ATL_sycopyU.c ATL_symmL.c ATL_symmR.c 
    ATL_syr2k_putL.c ATL_syr2k_putU.c ATL_syr2k_N.c ATL_syr2k_T.c
@@ -856,11 +857,11 @@ trsmKbas = $(basdSTU)/atlas-trsmK.base
    @ROUT ATLAS/src/blas/level2 `ATL_L2AIsOverlapped.c`
    @ROUT ATLAS/src/blas/level2 `ATL_syr2.c ATL_her2.c ATL_syr.c ATL_her.c`
    @ROUT ATLAS/src/blas/level2 `ATL_trmv.c ATL_trsv.c ATL_symv.c ATL_hemv.c`
-   @skip @ROUT ATLAS/src/blas/level3/kernel `ATL_trsmKL_amm.c ATL_trsmK_L2blk.c`
+   @ROUT ATLAS/src/blas/level3/kernel `ATL_trsmKL_amm.c ATL_trsmK_L2blk.c`
    @ROUT ATLAS/src/blas/level3/kernel `ATL_trsmK_L2blk.c`
    @ROUT ATLAS/src/blas/level3/kernel `ATL_trsmKL_rk4.c ATL_trsmKR_rk4.c`
    @ROUT ATLAS/src/blas/level3/kernel `ATL_ctrsmKL_rk2.c ATL_ctrsmKR_rk2.c`
-   @ROUT ATLAS/src/blas/level3/kernel `ATL_trsmKL_amm.c ATL_trsmKR_amm.c`
+@skip   @ROUT ATLAS/src/blas/level3/kernel `ATL_trsmKL_amm.c ATL_trsmKR_amm.c`
 @ROUT @push
 @ROUT ATLAS/src/threads 
    @skip multidef tbv SetUnsetBit UnsetSetBit
@@ -898,15 +899,15 @@ Make.ext : $(topd)/make.base
 @ROUT ATLAS/src/blas/level3/kernel 
 @skip @multidef rk ATL_trsmK_LLNU_a1
 @skip @multidef rk ATL_trsmKL_amm 
-@multidef rk ATL_trsmK_L2blk
+@multidef rk ATL_trsmKL_amm ATL_trsmK_L2blk
 @whiledef rk ATL_trsmKL_rk4 ATL_trsmKR_rk4 ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 @(rk).c : $(basdRCW)/atlas-trsm.base
 	$(extC) -b $(basdRCW)/atlas-trsm.base -o $@ rout=$*
 @endwhile
-@whiledef rk ATL_trsmKL_amm ATL_trsmKR_amm
-@(rk).c : $(basdSTU)/atlas-trsmK.base
-	$(extC) -b $(basdSTU)/atlas-trsmK.base -o $@ rout=$*
-@endwhile
+@skip @whiledef rk ATL_trsmKL_amm ATL_trsmKR_amm
+@skip @(rk).c : $(basdSTU)/atlas-trsmK.base
+@skip 	$(extC) -b $(basdSTU)/atlas-trsmK.base -o $@ rout=$*
+@skip @endwhile
 @ROUT ATLAS/src/threads
 @whiledef ac1
 @(ac1) : $(basdRCW)/atlas-atomic.base
@@ -1623,6 +1624,29 @@ basfn = $(basdRCW)/atlas-lvl2.base
    mvnksearch mvtksearch mvnhgen mvthgen 
    mvtktest mvktime mvnktest mvttest mvntest
 @endmultidef
+@ROUT ATLAS/tune/blas/trsm ATLAS/src/blas/ulevel3
+basfn = $(basdRCW)/trsm-micro.base
+@ROUT ATLAS/tune/blas/trsm `@multidef rt trsmsrch`
+@ROUT ATLAS/src/blas/ulevel3 `@multidef rt ATL_trsmKR_amm ATL_trsmKL_amm`
+@declare "files = " y y
+   @whiledef rt
+   @(rt).c
+      @define rt2 @@(rt)@
+   @endwhile
+@enddeclare
+
+default: all
+force_build:
+all : $(files)
+kill :
+	rm -f $(files)
+@whiledef rt2
+@(rt2).c : $(basfn)
+	$(extC) -b $(basfn) -o $@ rout=$*
+@endwhile
+
+Make.ext : $(topd)/make.base
+	$(extM) -b $(topd)/make.base -o Make.ext rout=@(@rout)
 @ROUT ATLAS/tune/blas/gemm
 basfn = $(basdRCW)/atlas.base
 @multidef rt 
@@ -1724,8 +1748,8 @@ atlas-mmkg.base : $(basd)/atlas-mmkg.base
 	cp $(basd)/atlas-mmkg.base .
 atlas-mmg.base : $(basd)/atlas-mmg.base
 	cp $(basd)/atlas-mmg.base .
-atlas-smg.base : $(basdSTU)/atlas-smg.base
-	cp $(basdSTU)/atlas-smg.base .
+atlas-smg.base : $(basdRCW)/trsm-micro.base
+	cp $(basdRCW)/trsm-micro.base atlas-smg.base
 @whiledef rt emit_vKB vnbmmsearch mm_old2new
 @(rt).c : $(basdRCW)/gemmVNB.base $(incf)
 	$(extC) -b $(basdRCW)/gemmVNB.base -o $@ rout=$*
@@ -2831,7 +2855,8 @@ Make.ext : $(topd)/make.base
    Make.lpamm Make.tlpamm
    Make.ammsrc
    Make.mmsrc Make.tstsrc Make.l1src Make.l2src Make.mvsrc Make.r1src 
-   Make.bin Make.sysinfo Make.mmtune Make.l1tune Make.l3tune Make.latune
+   Make.bin Make.sysinfo Make.smtune Make.mmtune Make.l1tune Make.l3tune 
+   Make.latune
    Make.l3kern Make.mvtune Make.r1tune Make.cblas Make.cblastst Make.f77blastst 
    Make.lpsrc Make.Clp Make.Flp Make.Clptst Make.Flptst Make.aux Make.l2kern 
    Make.pkl3 Make.gpmm Make.sprk
@@ -2853,8 +2878,8 @@ all : $(files)
 @multidef rt
    Make.ammsrc Make.tprim
    Make.mmsrc Make.kbmm Make.tstsrc Make.l1src Make.l2src Make.mvsrc 
-   Make.r1src Make.bin Make.sysinfo Make.mmtune Make.l1tune Make.l3tune 
-   Make.latune
+   Make.r1src Make.bin Make.sysinfo Make.smtune Make.mmtune Make.l1tune 
+   Make.l3tune Make.latune
    Make.l3kern Make.mvtune Make.r1tune Make.cblas Make.cblastst Make.f77blastst
    Make.lpamm Make.tlpamm
    Make.lpsrc Make.Clp Make.Clptst Make.Flptst Make.l2kern Make.lib
