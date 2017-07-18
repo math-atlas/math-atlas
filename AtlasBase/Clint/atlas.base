@@ -36143,8 +36143,9 @@ double GetKmmMflop
    #ifdef TIME_AMM_SM
       void *wp;
       TYPE *diag, *L, *R, *w;
-      void* Mjoin(GetWorkspace,SD)(const int, TYPE**, TYPE**, TYPE**, TYPE**);
-      wp = Mjoin(GetWorkspace,SD)(kb, &diag, &L, &R, &w);
+      void* Mjoin(PATL,Mjoin(trsmKGetWorkspace,SD))
+         (const int, TYPE**, TYPE**, TYPE**, TYPE**);
+      wp = Mjoin(PATL,Mjoin(trsmKGetWorkspace,SD))(kb, &diag, &L, &R, &w);
    #endif
    setsz = mb*kb + kb*nb;
    if (!NOMOVE && FLSIZE)
@@ -36984,22 +36985,18 @@ int main(int nargs, char **args)
       #else
          #define SD_Right 0
       #endif
-      #ifdef TCPLX
-         #error "Complex TRSM kernel timing not yet supported!"
-      #else
-         #if SD_Right == 1
-	    #define my_trsmk Mjoin(PATL,trsmK_ammRLN)
-	       void my_trsmk(const enum ATLAS_DIAG Diag,
-		ATL_CINT N, ATL_CINT R, const SCALAR alpha,
-		const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
-		TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
-         #else
-	    #define my_trsmk Mjoin(PATL,trsmK_ammLLN)
+      #if SD_Right == 1
+         #define my_trsmk Mjoin(PATL,trsmK_ammRLN)
             void my_trsmk(const enum ATLAS_DIAG Diag,
-		ATL_CINT N, ATL_CINT R, const SCALAR alpha,
-		const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
-		TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
-         #endif
+             ATL_CINT N, ATL_CINT R, const SCALAR alpha,
+             const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+             TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+      #else
+         #define my_trsmk Mjoin(PATL,trsmK_ammLLN)
+         void my_trsmk(const enum ATLAS_DIAG Diag,
+             ATL_CINT N, ATL_CINT R, const SCALAR alpha,
+             const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
+             TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
       #endif
    #else
       #ifdef TCPLX
@@ -37213,7 +37210,18 @@ static double getMflops(double m, double n, double k)
 #endif
 {
    #ifdef TIME_TRMVK
-     return(1e-6*m*m*n);
+      #if SD_Right == 1
+         double muls = n*m*(m+1.0) / 2.0;
+         double adds = n*m*(m-1.0) / 2.0;
+      #else
+         double muls = m*n*(n+1.0) / 2.0;
+         double adds = m*n*(n-1.0) / 2.0;
+      #endif
+      #ifdef TCPLX
+         return(1e-6*(6.0*muls + 2.0*adds));
+      #else
+         return(1e-6*(muls + adds));
+      #endif
    #elif defined(TIME_SYRKK)
       return(1e-6*n*(n+1)*k);
    #elif defined(TIME_COPY)
@@ -37256,6 +37264,11 @@ double GetKmmMflop
  * Returns MFLOP rate of matmul kernel KMM
  */
 {
+   #ifdef TCPLX
+      TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define one ATL_rone
+   #endif
    void *vp=NULL;
    TYPE *C, *A, *B, *a, *b, *c;
    TYPE *ep, *sp;  /* extra & set ptrs */
@@ -37289,8 +37302,9 @@ double GetKmmMflop
    #ifdef TIME_AMM_SM
       void *wp;
       TYPE *diag, *L, *R, *w;
-      void* Mjoin(GetWorkspace,SD)(const int, TYPE**, TYPE**, TYPE**, TYPE**);
-      wp = Mjoin(GetWorkspace,SD)(kb, &diag, &L, &R, &w);
+      void* Mjoin(PATL,Mjoin(trsmKGetWorkspace,SD))
+         (const int, TYPE**, TYPE**, TYPE**, TYPE**);
+      wp = Mjoin(PATL,Mjoin(trsmKGetWorkspace,SD))(kb, &diag, &L, &R, &w);
    #endif
    setsz = mb*kb + kb*nb;
    if (!NOMOVE && FLSIZE)
@@ -37476,7 +37490,7 @@ double GetKmmMflop
       }
       #ifdef TIME_TRMVK
          #ifdef TIME_AMM_SM
-            my_trsmk(AtlasNonUnit, mb, nb, ATL_rone, NULL, lda, c, ldc, 
+            my_trsmk(AtlasNonUnit, mb, nb, one, NULL, lda, c, ldc, 
                      diag, L, R, w);
          #else
             my_trsmk(mb, nb, 1.0, a, c, mb, B);
@@ -37561,7 +37575,7 @@ double GetKmmMflop
       #endif
    #else
       mf = reps*getMflops(mb, nb, kb) / t1;
-      #ifdef TCPLX
+      #if defined(TCPLX) && !defined(TIME_TRMVK)
          mf *= 4.0;
       #endif
    #endif
