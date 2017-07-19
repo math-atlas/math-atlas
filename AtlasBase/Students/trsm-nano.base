@@ -5,8 +5,23 @@
    It also contains the C copy nanokernel, that copies a Um x Un section 
    of C to same col-major, or to Un x Um C^T.
 @ENDSKIP
-@ROUT !
 @define INLINE_VAL @static INLINE@
+@ROUT cpC
+@ifdef ! ta
+   @abort ta must be defined as 'N' or 'T'!
+@endifdef
+@ifdef ! mu
+   @abort mu must be defined as positive number!
+@endifdef
+@ifdef ! nu
+   @abort nu must be defined as positive number!
+@endifdef
+#ifndef ATLAS_NTRSM_CPC@(ta)_@(mu)x@(nu)
+   #define ATLAS_NTRSM_CPC@(ta)_@(mu)x@(nu)
+
+#define ATL_MU @(mu)
+#define ATL_NU @(nu)
+
 @beginproc proc_mblk
    @addkeys TA=@(ta)
    @MUN R
@@ -111,17 +126,21 @@
    @MUN !
    @killkeys TA
 @endproc
-@ROUT ccp
 #include "atlas_misc.h"
 #define RINLINE @(INLINE_VAL)
 
+@define rs @_RR@
+#ifndef ATL_ntrsm_cpC
+   #define ATL_ntrsm_cpC Mjoin(PATL,ntrsm_cpC@(ta)_@(mu)x@(nu)_a1bX@(rs))
+#endif
 @multidef munroll U R U R
 @multidef nunroll U U R R
 @whiledef conf UU RU UR RR
    @addkeys MUN=@(munroll)
    @addkeys NUN=@(nunroll)
-   @whiledef ta T N
-RINLINE void cpFromBlkC@(ta)_@(mu)_@(nu)_a1_bX_@(conf)
+@skip   @whiledef ta T N
+@skip RINLINE void cpFromBlkC@(ta)_@(mu)_@(nu)_a1_bX_@(conf)
+RINLINE void Mjoin(PATL,ntrsm_cpC@(ta)_@(mu)x@(nu)_a1bX_@(conf))
 (
 #ifdef TCPLX
    ATL_CSZT M, ATL_CSZT N, const SCALAR alpha, const TYPE *b, const TYPE *ib, 
@@ -160,18 +179,22 @@ RINLINE void cpFromBlkC@(ta)_@(mu)_@(nu)_a1_bX_@(conf)
    @killkeys NUN
    @undef munroll
    @undef nunroll
-@endwhile
-@ROUT ATL_ntrcopyL ATL_trsmKR ATL_trsmKL
-@ifdef ! U
-   @abort U must be defined!
-@endifdef
+@skip @endwhile
+#endif  /* end multiple inclusion guard */
+@ROUT ATL_ntrsmR
+   @define sd @R@
+@ROUT ATL_ntrsmL
+   @define sd @L@
+@ROUT ATL_ntrcopyL ATL_ntrsmR ATL_ntrsmL
+#ifndef ATLAS_NTRSM@(sd)@(up)@(ta)
+   #define ATLAS_NTRSM@(sd)@(up)@(ta)
 /*
  * Nanocopy to copy @(U)x@(U) Lower diagonal block of a triangular
  * matrix to the format used by the ATL_utrsmL (trsm microrkernel).
  * W has row stride of @(U), and the inverted diagonals are copied
  * to diag.  N <= @(U) (will be < @(U) only for cleanup
  */
-#if 0
+@BEGINSKIP
 static INLINE void ATL_ntrcopyL
    (ATL_CINT N, const TYPE *A, ATL_CSZT lda, TYPE *W, TYPE *diag)
 {
@@ -185,7 +208,7 @@ static INLINE void ATL_ntrcopyL
    {
       @declare "      const TYPE " n n ";"
          *A0=A;
-         @iexp jj @1@
+         @iexp jj 1
          @iwhile @(jj) < @(U)
             @iexp @(ii) @(jj) -1 +
             *A@(jj) = A@(ii)+LDA
@@ -217,7 +240,7 @@ static INLINE void ATL_ntrcopyL
    {
    }
 }
-#else
+@ENDSKIP
 static INLINE void ATL_ntrcopyL(const int IsConj,
                                 const int n, TYPE *A, const int lda,
                                 TYPE *W, const int ldw, TYPE *diag)
@@ -255,8 +278,7 @@ static INLINE void ATL_ntrcopyL(const int IsConj,
       }
    #endif
 }
-#endif
-@ROUT ATL_ntrcopyU ATL_trsmKR ATL_trsmKL
+@ROUT ATL_ntrcopyU ATL_ntrsmR ATL_ntrsmL
 static INLINE void ATL_ntrcopyU(const int IsConj,
                                const int n, TYPE *A, const int lda,
                                TYPE *W, const int ldw, TYPE *diag)
@@ -294,7 +316,7 @@ static INLINE void ATL_ntrcopyU(const int IsConj,
       }
    #endif
 }
-@ROUT trsmKR
+@ROUT ATL_ntrsmR
 @ifdef ! nu
    @abort nu must be defined!
 @endifdef
@@ -307,7 +329,10 @@ static INLINE void ATL_ntrcopyU(const int IsConj,
 
 @whiledef conf UT UN LT LN
 @define lowup @@low@(up)@
-RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
+#ifndef ATL_ntrsm@(conf)
+   #define ATL_ntrsm@(conf) Mjoin(PATL,trsm@(conf)@(U))
+#endif
+RINLINE void Mjoin(PATL,trsm@(conf)@(U))
 (
  ATL_CINT m, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
 )
@@ -317,23 +342,23 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
 {
    @declare "   RTYPE " y n ";"
       @iexp i 0 0 +
-      @iwhile i < @(nu)
+      @iwhile i < @(U)
          @(up)@(i)
          @iexp i @(i) 1 +
       @endiwhile
    @enddeclare
    @declare "   ATL_CINT " y n ";"
       @iexp i 0 0 +
-      @iwhile i < @(nu)
+      @iwhile i < @(U)
          ldr@(i)=ldr*@(i)
          @iexp i @(i) 1 +
       @endiwhile
    @enddeclare
    @mif up = "L
       @iexp j 0 0 +
-      @iwhile j < @(nu)
+      @iwhile j < @(U)
          @iexp i 1 @(j) +
-         @iwhile i < @(nu)
+         @iwhile i < @(U)
    const RTYPE L@(i)_@(j) = L[ldl*@(j)+@(i)];
             @iexp i 1 @(i) +
          @endiwhile
@@ -342,7 +367,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    @endmif
    @mif up = "U
       @iexp j 0 0 +
-      @iwhile j < @(nu)
+      @iwhile j < @(U)
          @iexp i 0 0 +
          @iwhile i < @(j)
    const RTYPE U@(i)_@(j) = U[ldu*@(j)+@(i)];
@@ -356,7 +381,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    if (d)
    {
    @iexp i 0 0 +
-   @iwhile i < @(nu)
+   @iwhile i < @(U)
       @(up)@(i) = d[@(i)];
    @iexp i @(i) 1 +
    @endiwhile
@@ -364,7 +389,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    else
    {
    @iexp i 0 0 +
-   @iwhile i < @(nu)
+   @iwhile i < @(U)
       @(up)@(i) = ATL_rone;
    @iexp i @(i) 1 +
    @endiwhile
@@ -373,7 +398,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    {
       @declare "      RTYPE " y n ";"
          @iexp i 0 0 +
-         @iwhile i < @(nu)
+         @iwhile i < @(U)
             rB@(i)=rc[ldr@(i)]
             @iexp i @(i) 1 +
          @endiwhile
@@ -382,7 +407,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
       @CONF LT UN
       rB0 *= @(up)0;
          @iexp i 0 1 +
-         @iwhile i < @(nu)
+         @iwhile i < @(U)
       rB@(i) = (rB@(i) 
             @iexp k 0 0 +
             @iwhile k < @(i)
@@ -398,13 +423,13 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
             @iexp i @(i) 1 +
          @endiwhile
       @CONF LN UT
-         @iexp i @(nu) -1 +
+         @iexp i @(U) -1 +
       rB@(i) *= @(up)@(i);
-         @iexp i @(nu) -2 +
+         @iexp i @(U) -2 +
          @iwhile i > -1
       rB@(i) = (rB@(i) 
             @iexp k @(i) 1 +
-            @iwhile k < @(nu)
+            @iwhile k < @(U)
                @mif up = "L
                - L@(k)_@(i)*rB@(k)
                @endmif
@@ -419,7 +444,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
       @CONF !
       @killkeys CONF
       @iexp i 0 0 +
-      @iwhile i < @(nu)
+      @iwhile i < @(U)
       rc[ldr@(i)] = rB@(i);
          @iexp i @(i) 1 +
       @endiwhile
@@ -506,15 +531,23 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const TYPE alp, TYPE *r,
    register int i;
    TYPE *rc = r;
       @iexp i 0 0 +
-      @iwhile i < @(nu)
+      @iwhile i < @(U)
    for (i=0; i<m; i++)
       rc[i] *= alp;
    rc += ldr;
          @iexp i @(i) 1 +
       @endiwhile
 }
-@ROUT trsmKL
-@skip mu must be defined.
+@ROUT ATL_ntrsmL
+@ifdef ! U
+   @abort U must be defined as strictly positive number!
+@endifdef
+@ifdef ! up
+   @abort up must be defined as L or U!
+@endifdef
+@ifdef ! ta
+   @abort ta must be defined as N or T!
+@endifdef
 #include "atlas_misc.h"
 #define RINLINE @(INLINE_VAL)
 
@@ -522,9 +555,10 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const TYPE alp, TYPE *r,
 @multidef up   U  U  L  L
 @multidef ta   T  N  T  N
 
-@whiledef conf UT UN LT LN
+@skip @whiledef conf UT UN LT LN
+@define conf  @@(up)@(ta)@
 @define lowup @@low@(up)@
-RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
+RINLINE void Mjoin(PATL,trsm@(conf)@(U))
 (
  ATL_CINT n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
 )
@@ -534,7 +568,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
 {
    @declare "   RTYPE " y n ";"
       @iexp i 0 0 +
-      @iwhile i < @(mu)
+      @iwhile i < @(U)
          @(up)@(i)
          @iexp i @(i) 1 +
       @endiwhile
@@ -542,7 +576,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    @beginskip
    @declare "   const register int " y n ";"
       @iexp i 0 2 +
-      @iwhile i < @(mu)
+      @iwhile i < @(U)
          ld@(lowup)@(i)=ld@(lowup)*@(i)
          @iexp i @(i) 1 +
       @endiwhile
@@ -550,9 +584,9 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    @endskip
    @mif up = "L
       @iexp j 0 0 +
-      @iwhile j < @(mu)
+      @iwhile j < @(U)
          @iexp i 1 @(j) +
-         @iwhile i < @(mu)
+         @iwhile i < @(U)
    const RTYPE L@(i)_@(j) = L[ldl*@(j)+@(i)];
             @iexp i 1 @(i) +
          @endiwhile
@@ -561,7 +595,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    @endmif
    @mif up = "U
       @iexp j 0 0 +
-      @iwhile j < @(mu)
+      @iwhile j < @(U)
          @iexp i 0 0 +
          @iwhile i < @(j)
    const RTYPE U@(i)_@(j) = U[ldu*@(j)+@(i)];
@@ -575,7 +609,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    if (d)
    {
    @iexp i 0 0 +
-   @iwhile i < @(mu)
+   @iwhile i < @(U)
       @(up)@(i) = d[@(i)];
    @iexp i @(i) 1 +
    @endiwhile
@@ -583,7 +617,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    else
    {
    @iexp i 0 0 +
-   @iwhile i < @(mu)
+   @iwhile i < @(U)
       @(up)@(i) = ATL_rone;
    @iexp i @(i) 1 +
    @endiwhile
@@ -592,7 +626,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    {
       @declare "      RTYPE " y n ";"
          @iexp i 0 0 +
-         @iwhile i < @(mu)
+         @iwhile i < @(U)
             rB@(i)=rc[@(i)]
             @iexp i @(i) 1 +
          @endiwhile
@@ -601,7 +635,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
       @CONF LN UT
       rB0 *= @(up)0;
          @iexp i 0 1 +
-         @iwhile i < @(mu)
+         @iwhile i < @(U)
       rB@(i) = (rB@(i) 
             @iexp k 0 0 +
             @iwhile k < @(i)
@@ -617,13 +651,13 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
             @iexp i @(i) 1 +
          @endiwhile
       @CONF LT UN
-         @iexp i @(mu) -1 +
+         @iexp i @(U) -1 +
       rB@(i) *= @(up)@(i);
-         @iexp i @(mu) -2 +
+         @iexp i @(U) -2 +
          @iwhile i > -1
       rB@(i) = (rB@(i) 
             @iexp k @(i) 1 +
-            @iwhile k < @(mu)
+            @iwhile k < @(U)
                @mif up = "L
                - L@(k)_@(i)*rB@(k)
                @endmif
@@ -638,7 +672,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
       @CONF !
       @killkeys CONF
       @iexp i 0 0 +
-      @iwhile i < @(mu)
+      @iwhile i < @(U)
       rc[@(i)] = rB@(i);
          @iexp i @(i) 1 +
       @endiwhile
@@ -650,9 +684,9 @@ RINLINE void Mjoin(PATL,trsm@(conf)RR)
    ATL_CINT m, ATL_CINT n, const TYPE *d, const TYPE *@(up), 
    ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
 )
-   /* 
-    * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
-    */
+/* 
+ * Assume alpha=1 and d pointing to either NULL or vector to inverse diag.
+ */
 {
    register int i, j, k;
    TYPE *rc = r;
@@ -716,9 +750,9 @@ RINLINE void Mjoin(PATL,trsm@(conf)RR)
    }
 }
 
-@undef up
-@undef ta
-@endwhile
+@skip @undef up
+@skip @undef ta
+@skip @endwhile
 RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const TYPE alp, TYPE *r, 
                                ATL_CINT ldr)
 {
@@ -727,14 +761,14 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const TYPE alp, TYPE *r,
    for (j=0; j<n; j++, rc+=ldr)
    {
       @iexp i 0 0 +
-      @iwhile i < @(mu)
+      @iwhile i < @(U)
       rc[@(i)] *= alp;
          @iexp i @(i) 1 +
       @endiwhile
    }
 }
 
-@ROUT trsmKL trsmKR
+@ROUT ATL_ntrsmL ATL_ntrsmR
 RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const TYPE alp, 
                                  TYPE *r, ATL_CINT ldr)
 {
@@ -746,6 +780,7 @@ RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const TYPE alp,
          rc[i] *= alp;
    }
 }
+#endif /* end multiple inclusion guard */
 @ROUT ctrsmKR
 @skip nu must be defined.
 #include "atlas_misc.h"
@@ -757,7 +792,7 @@ RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const TYPE alp,
 
 @whiledef conf UT UN LT LN
 @define lowup @@low@(up)@
-RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
+RINLINE void Mjoin(PATL,trsm@(conf)@(U))
 (
  ATL_CINT m, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
 )
@@ -767,7 +802,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
 {
    @declare "   RTYPE " y n ";"
       @iexp i 0 0 +
-      @iwhile i < @(nu)
+      @iwhile i < @(U)
          @whiledef imag i r
             @(imag)@(up)@(i)
          @endwhile
@@ -776,16 +811,16 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    @enddeclare
    @declare "   ATL_CINT " y n ";"
       @iexp i 0 0 +
-      @iwhile i < @(nu)
+      @iwhile i < @(U)
          ldr@(i)=ldr*@(i)
          @iexp i @(i) 1 +
       @endiwhile
    @enddeclare
    @mif up = "L
       @iexp j 0 0 +
-      @iwhile j < @(nu)
+      @iwhile j < @(U)
          @iexp i 1 @(j) +
-         @iwhile i < @(nu)
+         @iwhile i < @(U)
             @multidef ioff 1 0
             @whiledef imag i r
    const RTYPE @(imag)L@(i)_@(j) = L[((ldl*@(j)+@(i)) SHIFT)+@(ioff)];
@@ -798,7 +833,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    @endmif
    @mif up = "U
       @iexp j 0 0 +
-      @iwhile j < @(nu)
+      @iwhile j < @(U)
          @iexp i 0 0 +
          @iwhile i < @(j)
             @multidef ioff 1 0
@@ -816,7 +851,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    if (d)
    {
    @iexp i 0 0 +
-   @iwhile i < @(nu)
+   @iwhile i < @(U)
       @multidef ioff 1 0
       @whiledef imag i r
       @(imag)@(up)@(i) = d[(@(i) SHIFT)+@(ioff)];
@@ -828,7 +863,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    else
    {
    @iexp i 0 0 +
-   @iwhile i < @(nu)
+   @iwhile i < @(U)
       @multidef ival ATL_rzero ATL_rone
       @whiledef imag i r
       @(imag)@(up)@(i) = @(ival);
@@ -841,7 +876,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
    {
       @declare "      RTYPE " y n ";"
          @iexp i 0 0 +
-         @iwhile i < @(nu)
+         @iwhile i < @(U)
             @multidef ioff 1 0
             @whiledef imag i r
                @(imag)B@(i)=rc[(ldr@(i) SHIFT)+@(ioff)]
@@ -856,7 +891,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
       rX = rB0*r@(up)0 - iB0*i@(up)0;
       iB0 = rB0*i@(up)0 + iB0*r@(up)0; rB0 = rX;
          @iexp i 0 1 +
-         @iwhile i < @(nu)
+         @iwhile i < @(U)
       rB@(i) = rB@(i) 
             @iexp k 0 0 +
             @iwhile k < @(i)
@@ -886,14 +921,14 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
             @iexp i @(i) 1 +
          @endiwhile
       @CONF LN UT
-         @iexp i @(nu) -1 +
+         @iexp i @(U) -1 +
       rX = rB@(i)*r@(up)@(i) - iB@(i)*i@(up)@(i);
       iB@(i) = rB@(i)*i@(up)@(i) + iB@(i)*r@(up)@(i); rB@(i) = rX;
-         @iexp i @(nu) -2 +
+         @iexp i @(U) -2 +
          @iwhile i > -1
       rB@(i) = rB@(i) 
             @iexp k @(i) 1 +
-            @iwhile k < @(nu)
+            @iwhile k < @(U)
                @mif up = "L
             - (rL@(k)_@(i)*rB@(k) - iL@(k)_@(i)*iB@(k))
                @endmif
@@ -905,7 +940,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
          ;
       iB@(i) = iB@(i) 
             @iexp k @(i) 1 +
-            @iwhile k < @(nu)
+            @iwhile k < @(U)
                @mif up = "L
             - (rL@(k)_@(i)*iB@(k) + iL@(k)_@(i)*rB@(k))
                @endmif
@@ -922,7 +957,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(nu))
       @CONF !
       @killkeys CONF
       @iexp i 0 0 +
-      @iwhile i < @(nu)
+      @iwhile i < @(U)
          @multidef ioff 1 0
          @whiledef imag i r
       rc[(ldr@(i) SHIFT)+@(ioff)] = @(imag)B@(i);
@@ -1064,7 +1099,7 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const SCALAR alp, TYPE *r,
    register int i;
    TYPE *rc = r;
       @iexp i 0 0 +
-      @iwhile i < @(nu)
+      @iwhile i < @(U)
    for (i=0; i<m; i++)
    {
       RTYPE rB, iB, rX;
@@ -1090,7 +1125,7 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const SCALAR alp, TYPE *r,
 
 @whiledef conf UT UN LT LN
 @define lowup @@low@(up)@
-RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
+RINLINE void Mjoin(PATL,trsm@(conf)@(U))
 (
  ATL_CINT n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
 )
@@ -1100,7 +1135,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
 {
    @declare "   RTYPE " y n ";"
       @iexp i 0 0 +
-      @iwhile i < @(mu)
+      @iwhile i < @(U)
          @whiledef imag i r
             @(imag)@(up)@(i)
          @endwhile
@@ -1109,9 +1144,9 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    @enddeclare
    @mif up = "L
       @iexp j 0 0 +
-      @iwhile j < @(mu)
+      @iwhile j < @(U)
          @iexp i 1 @(j) +
-         @iwhile i < @(mu)
+         @iwhile i < @(U)
             @multidef ioff 1 0
             @whiledef imag i r
    const RTYPE @(imag)L@(i)_@(j) = L[((ldl*@(j)+@(i)) SHIFT)+@(ioff)];
@@ -1124,7 +1159,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    @endmif
    @mif up = "U
       @iexp j 0 0 +
-      @iwhile j < @(mu)
+      @iwhile j < @(U)
          @iexp i 0 0 +
          @iwhile i < @(j)
             @multidef ioff 1 0
@@ -1142,7 +1177,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    if (d)
    {
    @iexp i 0 0 +
-   @iwhile i < @(mu)
+   @iwhile i < @(U)
       @multidef ioff 1 0
       @whiledef imag i r
       @(imag)@(up)@(i) = d[(@(i) SHIFT)+@(ioff)];
@@ -1154,7 +1189,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    else
    {
    @iexp i 0 0 +
-   @iwhile i < @(mu)
+   @iwhile i < @(U)
       @multidef ival ATL_rzero ATL_rone
       @whiledef imag i r
       @(imag)@(up)@(i) = @(ival);
@@ -1167,7 +1202,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
    {
       @declare "      RTYPE " y n ";"
          @iexp i 0 0 +
-         @iwhile i < @(mu)
+         @iwhile i < @(U)
             @multidef ioff 1 0
             @whiledef imag i r
                @(imag)B@(i)=rc[(@(i) SHIFT)+@(ioff)]
@@ -1182,7 +1217,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
       rX = rB0*r@(up)0 - iB0*i@(up)0;
       iB0 = rB0*i@(up)0 + iB0*r@(up)0; rB0 = rX;
          @iexp i 0 1 +
-         @iwhile i < @(mu)
+         @iwhile i < @(U)
       rB@(i) = rB@(i) 
             @iexp k 0 0 +
             @iwhile k < @(i)
@@ -1212,14 +1247,14 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
             @iexp i @(i) 1 +
          @endiwhile
       @CONF LT UN
-         @iexp i @(mu) -1 +
+         @iexp i @(U) -1 +
       rX = rB@(i)*r@(up)@(i) - iB@(i)*i@(up)@(i);
       iB@(i) = rB@(i)*i@(up)@(i) + iB@(i)*r@(up)@(i); rB@(i) = rX;
-         @iexp i @(mu) -2 +
+         @iexp i @(U) -2 +
          @iwhile i > -1
       rB@(i) = rB@(i) 
             @iexp k @(i) 1 +
-            @iwhile k < @(mu)
+            @iwhile k < @(U)
                @mif up = "L
             - (rL@(k)_@(i)*rB@(k) - iL@(k)_@(i)*iB@(k))
                @endmif
@@ -1231,7 +1266,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
          ;
       iB@(i) = iB@(i) 
             @iexp k @(i) 1 +
-            @iwhile k < @(mu)
+            @iwhile k < @(U)
                @mif up = "L
             - (rL@(k)_@(i)*iB@(k) + iL@(k)_@(i)*rB@(k))
                @endmif
@@ -1248,7 +1283,7 @@ RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
       @CONF !
       @killkeys CONF
       @iexp i 0 0 +
-      @iwhile i < @(mu)
+      @iwhile i < @(U)
          @multidef ioff 1 0
          @whiledef imag i r
       rc[(@(i) SHIFT)+@(ioff)] = @(imag)B@(i);
@@ -1393,7 +1428,7 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const SCALAR alp, TYPE *r,
    {
       RTYPE rB, iB, rX;
       @iexp i 0 0 +
-      @iwhile i < @(mu)
+      @iwhile i < @(U)
       rB = rc[(@(i) SHIFT)+0];
       iB = rc[(@(i) SHIFT)+1];
       rX = rB*alp[0] - iB*alp[1];
@@ -1450,7 +1485,7 @@ RINLINE void cpFromBlkCT_@(mu)_@(nu)_a1_bX_@(conf)
 @multidef up   U  U  L  L
 @whiledef conf UT UN LT LN
 @define lowup @@low@(up)@
-RINLINE void Mjoin(PATL,trsm@(conf)@(mu))
+RINLINE void Mjoin(PATL,trsm@(conf)@(U))
 (  
  int n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
 );

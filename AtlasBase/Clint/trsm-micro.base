@@ -3,29 +3,28 @@
    Written by Rakib Hasan, heavily modifed by R. Clint Whaley to work
    with new framework and to be separately compilable.
 @ENDSKIP
-@ROUT ! 
-/* This file implements TRSM kernels for left-cases using AMM kernels. */
+@ROUT ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT ATL_utrsmR_LT_UN ATL_utrsmR_LN_UT
 #include "atlas_misc.h"
 #include "atlas_amm.h"
-@ROUT ATL_utrsmL_LTUN
-   @define SD @L@
-@ROUT ATL_utrsmR_
-   @define SD @R@
+@ROUT ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT `@define SD @L@`
+@ROUT ATL_utrsmR_LT_UN ATL_utrsmR_LN_UT `@define SD @R@`
 @ROUT !
 /*
  * Nanokernels are generated into standard names, but with differing paths
  * based on unroll block size
  */
-#include "atlas_ntrsm@(SD).h" /* standard name, differing paths */
-#include Mstr(Mjoin(ATLAS_PRE,ntrsm@(SD).h))
-#include Mstr(Mjoin(ATLAS_PRE,ntrsm_cpC.h))
+#ifndef ATL_NONANO
+   #include Mstr(Mjoin(ATLAS_PRE,ntrsm@(SD).h))
+   #ifdef USE_TRANS
+      #include Mstr(Mjoin(ATLAS_PRE,ntrsm_cpCN.h))
+   #else
+      #include Mstr(Mjoin(ATLAS_PRE,ntrsm_cpCT.h))
+   #endif
+#endif
 @skip #include Mstr(Mjoin(ATLAS_PRE,trsmKL.h))
 @skip #include Mstr(Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(ATLAS_PRE,cpFromBlkC_),\
 @skip               ATL_MU),x),ATL_NU),_.h))
-
-
-/* best with fully rolled kernel and no prefetch ins. */
-
+@skip /* best with fully rolled kernel and no prefetch ins. */
 #ifndef ATL_MU
    #error "ATL_MU must be defined!"
 #endif
@@ -33,14 +32,12 @@
    #error "ATL_NU must be defined!"
 #endif
 #define ATL_MUNU (ATL_MU*ATL_NU)
-
-
-int Mjoin(PATL,GetuTRSM@(SD)MU)() { return(ATL_MU); }
-int Mjoin(PATL,GetuTRSM@(SD)NU)() { return(ATL_NU); }
+@skip int Mjoin(PATL,GetuTRSM@(SD)MU)() { return(ATL_MU); }
+@skip int Mjoin(PATL,GetuTRSM@(SD)NU)() { return(ATL_NU); }
 
 @ROUT ATL_utrsmL_LT_UN
 void Mjoin(PATL,utrsmL_LT_UN)
-   (ATL_ipinfo_t *ip, const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag, 
+   (ipinfo_t *ip, const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag, 
     ATL_CINT N, ATL_CINT R, const SCALAR alpha, const TYPE *A, ATL_CSZT lda, 
     TYPE *X, ATL_CSZT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
@@ -182,7 +179,7 @@ void Mjoin(PATL,utrsmL_LT_UN)
 }
 @ROUT ATL_utrsmL_LN_UT
 void Mjoin(PATL,utrsmL_LN_UT)
-   (ATL_ipinfo_t *ip, const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag, 
+   (ipinfo_t *ip, const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag, 
     ATL_CINT N, ATL_CINT R, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
     TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
@@ -435,7 +432,7 @@ void Mjoin(PATL,utrsmLLC)
 }
 @ROUT ATL_utrsmR_LT_UN
 void Mjoin(PATL,utrsmR_LT_UN)
-   (ATL_ipinfo_t *ip, const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag,
+   (ipinfo_t *ip, const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag,
     ATL_CINT R, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
     TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
@@ -573,7 +570,7 @@ void Mjoin(PATL,utrsmR_LT_UN)
 }
 @ROUT ATL_utrsmR_LN_UT
 void Mjoin(PATL,utrsmR_LN_UT)
-   (ATL_ipinfo_t *ip, const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag,
+   (ipinfo_t *ip, const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag,
     ATL_CINT R, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
     TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
@@ -867,6 +864,8 @@ ATL_mmnode_t *getAllCandKerns(char pre, int flag)
          KILL |= (mp->mu % mp->ku); /* mu a multiple of ku */
       if (KILL)
          mb = KillMMNodeFromQ(mb, mp);
+      else
+         mp->blask = ATL_KTRSM;
       mp = nxt;
    }
    assert(mb);  /* later create one in this case, for now assert */

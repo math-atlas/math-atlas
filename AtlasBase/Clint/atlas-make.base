@@ -1394,12 +1394,11 @@ print_@(flg) :
 @endwhile
 @skip print_CCFLAGS :
 @skip 	@(@)echo $(CCFLAG0)
-@ROUT Make.l1tune Make.l1tune0 Make.smtune Make.mmtune Make.l3tune
+@ROUT Make.l1tune Make.l1tune0 Make.mmtune Make.l3tune
 include Make.inc
 @ROUT Make.l1tune `mySRCdir = $(SRCdir)/tune/blas/level1`
 @ROUT Make.l3tune `mySRCdir = $(SRCdir)/tune/blas/level3`
 @ROUT Make.mmtune `mySRCdir = $(SRCdir)/tune/blas/gemm`
-@ROUT Make.smtune `mySRCdir = $(SRCdir)/tune/blas/trsm`
 
 @ROUT Make.mmtune `default : xmmsearch`
 $(SYSdir)/time.o:
@@ -3684,9 +3683,71 @@ $(pre)tfc.o : $(mySRCdir)/tfc.c $(INCSdir)/atlas_misc.h \
                  -DSM_FOUT=$(INCAdir)/$(pre)Xover.h
 
 @ROUT Make.smtune
+include Make.inc
+mySRCdir = $(SRCdir)/tune/blas/trsm
+extC = $(BINdir)/xextract -b $(basf) -langC
+ptmp=ATL_ptmp.c
+ctmp=ATL_smctmp
+
+default: help
+
+$(SYSdir)/time.o:
+	cd $(SYSdir) ; $(MAKE) time.o
+$(BINdir)/xextract :
+	cd $(BINdir) ; $(MAKE) xextract
+
+help :
+	@@echo "make gen_ntrsm_cpC ta=[T,N] mu=# nu=# rt=filename.h"
+	@@echo "make gen_ntrsm sd=[L,R] up=[L,U] ta=[N,T] U=# rt=filename.h"
+	@@echo "make genall_ntrsm sd=[L,R] up=[L,U] ta=[N,T] mu=# nu=# rt=fnam"
+	@@echo "make PREtrsmcase mmrout=FILE mu=X nu=X ku=X rb=X kb=X sd=[L,R] up=[U,L] ta=[T,N] tALL=[T,N]"
 @whiledef rt trsmsrch
 x@(rt) : $(mySRCdir)/@(rt).c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/@(rt).c -lm
+@endwhile
+gen_ntrsm_cpC : $(BINdir)/xextract $(mySRCdir)/trsm-nano.base
+	$(extC) -b $(mySRCdir)/trsm-nano.base -o $(rt) rout=cpC -def ta $(ta) \
+           -def mu $(mu) -def nu $(nu)
+gen_ntrsm : $(BINdir)/xextract $(mySRCdir)/trsm-nano.base
+	$(extC) -b $(mySRCdir)/trsm-nano.base -o $(rt) rout=ATL_ntrsm$(sd) \
+           -def ta $(ta) -def up $(up) -def U $(U)
+genall_ntrsm:
+	- rm -f $(ptmp) $(rt)
+	touch $(rt)
+	make gen_ntrsm_cpC rt=$(ptmp) ta=$(ta) mu=$(mu) nu=$(nu)
+	cat $(ptmp) >> $(rt)
+	if [ "X$(sd)" = "XL" ] ; then \
+	   make gen_ntrsm rt=$(ptmp) ta=$(ta) up=$(up) U=$(mu) ; \
+        else \
+	   make gen_ntrsm rt=$(ptmp) ta=$(ta) up=$(up) U=$(nu) ; \
+        fi
+	cat $(ptmp) >> $(rt)
+
+@multidef typ DCPLX SCPLX DREAL SREAL
+@multidef upr d s d s
+@whiledef pre z c d s
+   @addkeys ptyp=@(pre)
+   @define KCC @$(@up@(upr)KC)@
+   @define KCFLAGS @$(CDEFS) $(@up@(upr)KCFLAGS)@
+   @define MCC @$(@up@(upr)MC)@
+   @define MMFLAGS @$(CDEFS) $(@up@(upr)MCFLAGS)@
+@(pre)trsmcase :
+	rm -rf $(ctmp).c
+	make genall_ntrsm sd=$(sd) up=$(up) ta=$(up) mu=$(mu) nu=$(nu) \
+           rt=$(ctmp).c 
+	if [ "X$(tALL)" = "XT" ] ; then \
+           echo "#define USE_TRANS 1" >> $(ctmp).c ; \
+        fi
+	cat $(SRCdir)/src/blas/ulevel3/ATL_utrsm$(sd)_*$(up)$(ta)*.c >> \
+            $(ctmp).c
+	@(KCC) @(KCFLAGS) -DATL_NONANO=1 -D@(typ)=1 -o $(ctmp).o -c $(ctmp).c
+   @undef KCC
+   @undef KCFLAGS
+   @undef MCC
+   @undef MMFLAGS
+   @killkeys ptyp
+   @undef typ
+   @undef upr
 @endwhile
 @ROUT Make.gemmbased
 include Make.inc
