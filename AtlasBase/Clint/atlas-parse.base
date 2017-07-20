@@ -5808,8 +5808,6 @@ char *MMGetFkoGenString
 
    if (mp->blask >= ATL_KGECPFA && mp->blask <= ATL_KSKCP2C)
       return(MMGetCpGenString(pre, mp, 1, 1));
-   if (mp->blask = ATL_KTRSM)
-      return(NULL);
    if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
    {
       if (FLAG_IS_SET(mp->flag, MMF_KVEC))
@@ -5902,8 +5900,6 @@ char *MMGetGenString
 
    if (FLAG_IS_SET(mp->flag, MMF_FKO))
       return(MMGetFkoGenString(pre, mp));
-   if (mp->blask = ATL_KTRSM)
-      return(NULL);
    if (mp->blask >= ATL_KGECPFA && mp->blask <= ATL_KSKCP2C)
       return(MMGetCpGenString(pre, mp, 1, 1));
    if (FLAG_IS_SET(mp->flag, MMF_KUISKB))
@@ -6972,7 +6968,8 @@ double TimeMMKernel
    int MB, NB, KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+vl-1)/vl)*vl;
    const int FORCETIME = flag&1, SERIAL=flag&2; 
    const int PUTC=FLAG_IS_SET(mmp->flag, MMF_CPC);
-   const int RIGHT=(flag&4), TRANS=(flag&8);
+   const int RIGHT=(flag&4), TRANS=(flag&8), UPPER=(flag&16), TRANSA=(flag&32);
+   const int NMFLAG = (mmp->blask == ATL_KTRSM) ? (flag&(~3)) : 0;
    int KU=mmp->ku;
    int DOTIME=1;
    char *be, *gs0=mmp->genstr;
@@ -7053,7 +7050,13 @@ double TimeMMKernel
  * If the file is generated, call generator to create it
  */
    if (mmp->genstr)
-      assert(!MMDoGenString(verb, mmp->genstr));
+   {
+      if (MMDoGenString(verb, mmp->genstr))
+      {
+         fprintf(stderr, "\nUnable to generate with: '%s'!\n\n", mmp->genstr);
+         assert(0);
+      }
+   }
    else if (verb > 2)
       printf("NO genstr\n");
 /*
@@ -7072,9 +7075,10 @@ double TimeMMKernel
          ch = (FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? 'K' : 'M';
 
       sprintf(fnam, 
-      "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
+      "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_f%x_%d.ktim",
               pre, mmp->ID, MB, NB, KB, mmp->mu, mmp->nu, KU, 
-              mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
+              mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, 
+              NMFLAG, cflush);
       switch(mmp->blask)
       {
       case ATL_KSYRK:
@@ -7188,8 +7192,10 @@ double TimeMMKernel
       else
       {
          if (mmp->blask == ATL_KTRSM)
-            i = sprintf(ln, "make %ctrsmcase kb=%d nb=%d SD=%c ta=%c",
-                        pre, KB, NB, RIGHT?'R':'L', TRANS?'t':'n');
+            i = sprintf(ln, 
+                        "make %ctrsmcase kb=%d rb=%d sd=%c up=%c ta=%c tALL=%c",
+                        pre, KB, NB, RIGHT?'R':'L', UPPER?'U':'L', 
+                        TRANSA?'T':'N', TRANS?'T':'N');
          else
             i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
                         pre, nm, MB, NB, KB);
