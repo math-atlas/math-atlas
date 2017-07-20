@@ -35968,11 +35968,29 @@ gemm(...)
                      ATL_CINT R, const SCALAR alpha, const TYPE *A, 
                      ATL_CINT lda, TYPE *X, ATL_CINT ldx, TYPE *diag, 
                      TYPE *L, TYPE *RW, TYPE *w);
+      #ifdef TCPLX
+         void A2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         void B2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+      #else
+         void A2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         void B2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+      #endif
+      void AMM_b0(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                  TYPE*, const TYPE*, const TYPE*, const TYPE*);
+      void AMM_b1(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                  TYPE*, const TYPE*, const TYPE*, const TYPE*);
+      void AMM_bn(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                  TYPE*, const TYPE*, const TYPE*, const TYPE*);
       #if defined(SDN) && (SDN == 1)
          #define SD_Right 1
       #else
          #define SD_Right 0
       #endif
+      @BEGINSKIP
       #if SD_Right == 1
          #define my_trsmk Mjoin(PATL,trsmK_ammRLN)
             void my_trsmk(const enum ATLAS_DIAG Diag,
@@ -35986,6 +36004,7 @@ gemm(...)
              const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
              TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
       #endif
+      @ENDSKIP
    #else
       #ifdef TCPLX
          #error "Complex TRSM kernel timing not yet supported!"
@@ -37017,9 +37036,9 @@ int main(int nargs, char **args)
    #ifdef TIME_AMM_SM
       #include "atlas_amm.h"
       #ifdef SIDE_R_
-         #define ATL_usm_alloc Mjoin(ATL,utrsmR_alloc)
+         #define ATL_usm_alloc Mjoin(PATL,utrsmR_alloc)
       #else
-         #define ATL_usm_alloc Mjoin(ATL,utrsmL_alloc)
+         #define ATL_usm_alloc Mjoin(PATL,utrsmL_alloc)
       #endif
       #ifdef SIDE_R_
          #define SD_Right 1
@@ -37030,6 +37049,24 @@ int main(int nargs, char **args)
       void ATL_UTRSM(ipinfo_t*, const enum ATLAS_DIAG, ATL_CINT N, ATL_CINT R,
                      const SCALAR, const TYPE*, ATL_CSZT, TYPE*, ATL_CSZT,
                      TYPE*, TYPE*, TYPE*, TYPE*);
+      #ifdef TCPLX
+         void A2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         void B2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         void AMM_bn(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                     TYPE*, const TYPE*, const TYPE*, const TYPE*);
+      #else
+         void A2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         void B2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+      #endif
+      void AMM_b0(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                  TYPE*, const TYPE*, const TYPE*, const TYPE*);
+      void AMM_b1(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                  TYPE*, const TYPE*, const TYPE*, const TYPE*);
+      @BEGINSKIP
       #if SD_Right == 1
          #define my_trsmk Mjoin(PATL,trsmK_ammRLN)
             void my_trsmk(const enum ATLAS_DIAG Diag,
@@ -37043,6 +37080,7 @@ int main(int nargs, char **args)
              const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx,
              TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
       #endif
+      @ENDSKIP
    #else
       #ifdef TCPLX
          #error "Complex TRSM kernel timing not yet supported!"
@@ -37348,7 +37386,7 @@ double GetKmmMflop
       void *wp;
       TYPE *diag, *L, *R, *w;
       void* ATL_usm_alloc(ipinfo_t*, const int, TYPE**, TYPE**, TYPE**, TYPE**);
-      wp = ATL_usm_alloc(kb, &diag, &L, &R, &w);
+      wp = ATL_usm_alloc(&IPINFO, kb, &diag, &L, &R, &w);
    #endif
    setsz = mb*kb + kb*nb;
    if (!NOMOVE && FLSIZE)
@@ -37394,12 +37432,13 @@ double GetKmmMflop
    #else
       {
          #if SD_Right == 1
-            int Mjoin(PATL, GetTRSMkRNU)();
-            const int TU = Mjoin(PATL,GetTRSMkRNU)();
+/*            int Mjoin(PATL, GetTRSMkRNU)(); 
+            const int TU = Mjoin(PATL,GetTRSMkRNU)(); */
+            const int TU = IPINFO.nu;
             const int TUTU = TU*TU;
          #else
-            int Mjoin(PATL, GetTRSMkLMU)();
-            const int TU = Mjoin(PATL,GetTRSMkLMU)();
+/*            int Mjoin(PATL, GetTRSMkLMU)(); */
+            const int TU = IPINFO.mu;  /* Mjoin(PATL,GetTRSMkLMU)(); */
             const int TUTU = TU*TU;
          #endif
          TYPE *dd;
@@ -37998,6 +38037,12 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
              kp->pids[j] = j;
       #endif
    }
+   #if defined(TIME_TRMVK) && defined(TIME_AMM_SM)
+      IPINFO.mu = kp->mu;
+      IPINFO.nu = kp->nu;
+      IPINFO.mb = kp->mb;
+      IPINFO.nb = kp->nb;
+   #endif
    #ifdef TIME_COPY  /* Reduce M/N to nmblks, nnblks, handle P */
    {
       const size_t gap = kp->lda - kp->nmblks;
@@ -38066,9 +38111,12 @@ int main(int nargs, char **args)
    #if defined(TIME_TRMVK) && defined(TIME_AMM_SM)
       IPINFO.amm_b0 = AMM_b0;
       IPINFO.amm_b1 = AMM_b1;
-      IPINFO.amm_bn = AMM_bn;
+      #ifdef TCPLX
+         IPINFO.amm_bn = AMM_bn;
+      #endif
       IPINFO.b2blk = B2BLK;
       IPINFO.a2blk = A2BLK;
+   #endif
    #ifdef TIME_COPY
    {
       TYPE *A;

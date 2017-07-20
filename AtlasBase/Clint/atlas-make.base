@@ -3693,13 +3693,21 @@ extC = $(BINdir)/xextract -b $(basf) -langC
 ptmp=ATL_ptmp.c
 ctmp=ATL_smctmp
 kmaj=0
+vlen=1
+mvA=1
+mvB=1
+mvC=0
+outF=
 
 default: help
 
+force_build:
 $(SYSdir)/time.o:
 	cd $(SYSdir) ; $(MAKE) time.o
 $(BINdir)/xextract :
 	cd $(BINdir) ; $(MAKE) xextract
+$(AUXdir)/ATL_xerbla.o : $(SRCdir)/src/auxil/ATL_xerbla.c
+	cd $(AUXdir) ; make ATL_xerbla.o
 
 help :
 	@@echo "make gen_ntrsm_cpC ta=[T,N] mu=# nu=# rt=filename.h"
@@ -3745,7 +3753,7 @@ genall_ntrsm:
    @define KCFLAGS @$(CDEFS) $(@up@(upr)KCFLAGS)@
    @define MCC @$(@up@(upr)MC)@
    @define MMFLAGS @$(CDEFS) $(@up@(upr)MCFLAGS)@
-@(pre)trsmcase :
+@(pre)trsmcase : force_build $(AUXdir)/ATL_xerbla.o $(SYSdir)/time.o
 	- rm -rf $(ctmp).c cpAtmp.c cpBtmp.c
 	@(MCC) @(MMFLAGS) -DBETAN1=1 -DATL_USERMM=AMM_bn \
                -DMB=$(mb) -DNB=$(nb) -DKB=$(kb) \
@@ -3790,6 +3798,7 @@ genall_ntrsm:
            fi ; \
 	   cat $(SRCdir)/src/blas/ulevel3/ATL_utrsm$(sd)_*$(up)$(ta)*.c >> \
                $(ctmp).c ; \
+           cat $(SRCdir)/src/blas/ulevel3/ATL_utrsm$(sd)_alloc.c >>$(ctmp).c ; \
 	   @(KCC) @(KCFLAGS) -DATL_NONANO=1 -D@(typ)=1 -o $(ctmp).o \
               -DUSE_TRANS=1 -DSIDE_$(sd)_=1 -DTRANSA_$(ta)_=1 -c $(ctmp).c ; \
 	   @(KCC) @(KCFLAGS) -o @(pre)usmtime.o -c \
@@ -3797,6 +3806,12 @@ genall_ntrsm:
               -DATL_UTRSM=ATL_@(pre)utrsm$(sd)_$(up)$(ta)$(nu)x$(mu) \
               -D@(typ)=1 -DSIDE_$(sd)_=1 -DUPLO_$(up)_=1 -DTRANSA_$(ta)_=1 \
               -DTIME_AMM_SM=1 -DTIME_TRMVK=1 ; \
+	$(CLINKER) $(CLINKFLAGS) -o x@(pre)usmtime_pt @(pre)usmtime.o \
+          $(ctmp).o @(pre)AMM_b0.o @(pre)AMM_b1.o @(pre)AMM_bn.o \
+          cpBtmp.o cpAtmp.o $(AUXdir)/ATL_xerbla.o $(SYSdir)/time.o $(LIBS) ; \
+          $(ATLRUN) $(MMTdir)/../trsm x@(pre)usmtime_pt -p $(NPROC) $(TIDLIST) \
+             -m $(kb) -n $(rb) -k $(kb) $(FMFS) -um $(nu) -un $(mu) \
+             -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) ; \
         else \
 	   make genall_ntrsm sd=$(sd) up=$(up) ta=$(ta) mu=$(mu) nu=$(nu) \
               rt=$(ctmp).c ; \
@@ -3810,9 +3825,9 @@ genall_ntrsm:
               -D@(typ)=1 -DSIDE_$(sd)_=1 -DUPLO_$(up)_=1 -DTRANSA_$(ta)_=1 \
               -DTIME_AMM_SM=1 -DTIME_TRMVK=1 ; \
         fi
-	$(CLINKER) $(CLINKFLAGS) -o x@(pre)usmtime_pt @(pre)usmtime.o \
-           @(pre)AMM_b0.o @(pre)AMM_b1.o @(pre)AMM_bn.o \
-           cpBtmp.o cpAtmp.o $(SYSdir)/time.o $(LIBS)
+	echo "$(ATLRUN) $(MMTdir)/../trsm x@(pre)usmtime_pt -p $(NPROC) $(TIDLIST) \
+                     -m $(kb) -n $(rb) -k $(kb) $(FMFS) -um $(nu) -un $(mu) \
+                                  -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF)"
    @undef KCC
    @undef KCFLAGS
    @undef MCC
