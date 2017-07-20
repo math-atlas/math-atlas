@@ -35964,6 +35964,10 @@ gemm(...)
 
 #ifdef TIME_TRMVK
    #ifdef TIME_AMM_SM
+      void ATL_UTRSM(ipinfo_t *ip, const enum ATLAS_DIAG Diag, ATL_CINT N, 
+                     ATL_CINT R, const SCALAR alpha, const TYPE *A, 
+                     ATL_CINT lda, TYPE *X, ATL_CINT ldx, TYPE *diag, 
+                     TYPE *L, TYPE *RW, TYPE *w);
       #if defined(SDN) && (SDN == 1)
          #define SD_Right 1
       #else
@@ -36174,9 +36178,9 @@ double GetKmmMflop
    #ifdef TIME_AMM_SM
       void *wp;
       TYPE *diag, *L, *R, *w;
-      void* Mjoin(PATL,Mjoin(trsmKGetWorkspace,SD))
-         (const int, TYPE**, TYPE**, TYPE**, TYPE**);
-      wp = Mjoin(PATL,Mjoin(trsmKGetWorkspace,SD))(kb, &diag, &L, &R, &w);
+      void* ATL_usm_alloc
+         (ipinfo_t *ip, const int, TYPE**, TYPE**, TYPE**, TYPE**);
+      wp = ATL_usm_alloc(&IPINFO, kb, &diag, &L, &R, &w);
    #endif
    setsz = mb*kb + kb*nb;
    if (!NOMOVE && FLSIZE)
@@ -37013,6 +37017,11 @@ int main(int nargs, char **args)
    #ifdef TIME_AMM_SM
       #include "atlas_amm.h"
       #ifdef SIDE_R_
+         #define ATL_usm_alloc Mjoin(ATL,utrsmR_alloc)
+      #else
+         #define ATL_usm_alloc Mjoin(ATL,utrsmL_alloc)
+      #endif
+      #ifdef SIDE_R_
          #define SD_Right 1
       #else
          #define SD_Right 0
@@ -37338,9 +37347,8 @@ double GetKmmMflop
    #ifdef TIME_AMM_SM
       void *wp;
       TYPE *diag, *L, *R, *w;
-      void* Mjoin(PATL,Mjoin(trsmKGetWorkspace,SD))
-         (const int, TYPE**, TYPE**, TYPE**, TYPE**);
-      wp = Mjoin(PATL,Mjoin(trsmKGetWorkspace,SD))(kb, &diag, &L, &R, &w);
+      void* ATL_usm_alloc(ipinfo_t*, const int, TYPE**, TYPE**, TYPE**, TYPE**);
+      wp = ATL_usm_alloc(kb, &diag, &L, &R, &w);
    #endif
    setsz = mb*kb + kb*nb;
    if (!NOMOVE && FLSIZE)
@@ -37526,8 +37534,8 @@ double GetKmmMflop
       }
       #ifdef TIME_TRMVK
          #ifdef TIME_AMM_SM
-            my_trsmk(AtlasNonUnit, mb, nb, one, NULL, lda, c, ldc, 
-                     diag, L, R, w);
+            ATL_UTRSM(&IPINFO, AtlasNonUnit, mb, nb, one, NULL, lda, c, ldc,
+                      diag, L, R, w);
          #else
             my_trsmk(mb, nb, 1.0, a, c, mb, B);
          #endif
@@ -38059,19 +38067,8 @@ int main(int nargs, char **args)
       IPINFO.amm_b0 = AMM_b0;
       IPINFO.amm_b1 = AMM_b1;
       IPINFO.amm_bn = AMM_bn;
-      #ifdef SIDE_R_
-      #else
-         #ifdef USE_TRANS
-            IPINFO.b2blk = B2BLK;  // NoTrans copy, U=mu, an
-            #ifdef TRANSA_T_ 
-                IPINFO.b2blk = A2BLK; // Trans, U=nu, a1
-            #else
-            #endif
-         #else
-            IPINFO.b2blk = B2BLK;  // NoTrans copy, U=nu, bn
-         #endif
-      #endif
-   #endif
+      IPINFO.b2blk = B2BLK;
+      IPINFO.a2blk = A2BLK;
    #ifdef TIME_COPY
    {
       TYPE *A;
