@@ -53,7 +53,6 @@ void* Mjoin(PATL,utrsmL_alloc)
 #include "atlas_amm.h"
 @ROUT ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT `@define SD @L@`
 @ROUT ATL_utrsmR_LT_UN ATL_utrsmR_LN_UT `@define SD @R@`
-@ROUT !
 /*
  * Nanokernels are generated into standard names, but with differing paths
  * based on unroll block size
@@ -812,7 +811,9 @@ void Mjoin(PATL,utrsmRLC)
 #include "atlas_genparse.h"
 #include "atlas_mmtesttime.h"
 
-#define TSM_RIGHT 0
+#define TSM_RIGHT  0
+#define TSM_UPPER  1
+#define TSM_TRANSA 2
 void PrintUsage(char *name, int ierr, char *flag)
 {
    if (ierr > 0)
@@ -829,11 +830,11 @@ void PrintUsage(char *name, int ierr, char *flag)
 ATL_mmnode_t *getAllCandKerns(char pre, int flag)
 {
    ATL_mmnode_t *mb, *mp;
-   mb = ReadMMFileWithPath(pre, "res", "opmek.sum");
-   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "opnek.sum"));
-   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "opgen.sum"));
-   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "ipgen.sum"));
-   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "ipmen.sum"));
+   mb = ReadMMFileWithPath(pre, "../gemm/res", "opmek.sum");
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "../gemm/res", "opnek.sum"));
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "../gemm/res", "opgen.sum"));
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "../gemm/res", "ipgen.sum"));
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "../gemm/res", "ipmen.sum"));
    mp = AddUniqueMMKernsToList(NULL, mb);
    KillAllMMNodes(mb);
    mb = mp;
@@ -849,7 +850,10 @@ ATL_mmnode_t *getAllCandKerns(char pre, int flag)
       if (KILL)
          mb = KillMMNodeFromQ(mb, mp);
       else
+      {
          mp->blask = ATL_KTRSM;
+         mp->flag = (mp->flag&(~MMF_MVSET))|MMF_MVDEF;
+      }
       mp = nxt;
    }
    assert(mb);  /* later create one in this case, for now assert */
@@ -879,13 +883,24 @@ char GetFlags(int nargs, char **args, int *FLG)
         else
            flg &= ~(1<<TSM_RIGHT);
         break;
-      @BEGINSKIP
-      case 'F':
+      case 'U':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-         FULLSRCH = atoi(args[i]);
-         break;
-      @ENDSKIP
+        wch = args[i][0];
+        if (wch == 'U' || wch == 'u')
+           flg |= 1<<TSM_UPPER;
+        else
+           flg &= ~(1<<TSM_UPPER);
+        break;
+      case 'A':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        wch = args[i][0];
+        if (wch == 'T' || wch == 't')
+           flg |= 1<<TSM_TRANSA;
+        else
+           flg &= ~(1<<TSM_TRANSA);
+        break;
       case 'p':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -1040,7 +1055,9 @@ void findBestTRSM(char pre, int flag, ATL_mmnode_t *kb)
    ATL_mmnode_t *bp, *mp;
    int R=1, maxB=1, BN, BNN;
    double mf;
-   char *fnout=(flag&(1<<TSM_RIGHT)) ? "trsmR.sum" : "trsmL.sum";
+   char fnout[16];
+   sprintf(fnout, "trsm%c_%c%c.sum", (flag&(1<<TSM_RIGHT))?'R':'L',
+           (flag&(1<<TSM_UPPER))?'U':'L',(flag&(1<<TSM_TRANSA))?'T':'N');
 /*
  * Get NB that we will tune TRSM for
  */
