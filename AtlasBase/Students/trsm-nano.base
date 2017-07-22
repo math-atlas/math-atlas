@@ -206,9 +206,9 @@ RINLINE void Mjoin(PATL,ntrsm_cpC@(ta)_@(mu)x@(nu)_a1bX_@(conf))
    @ifdef ! U
       @abort U must be defined to a strictly positive number!
    @endifdef
-@ROUT ATL_ntrcopyL ATL_ntrsmR ATL_ntrsmL
+@ROUT ATL_ntrcopyL ATL_ntrsmR ATL_ntrsmL ATL_cntrsmR ATL_cntrsmL
 #ifndef ATLAS_NTRSM@(sd)@(up)@(ta)
-   #define ATLAS_NTRSM@(sd)@(up)@(ta)
+   #define ATLAS_NTRSM@(sd)@(up)@(ta) 1
 /*
  * Nanocopy to copy @(U)x@(U) Lower diagonal block of a triangular
  * matrix to the format used by the ATL_utrsmL (trsm microrkernel).
@@ -240,6 +240,7 @@ static INLINE void ATL_ntrcopyL
       @iwhile jj < @(U)
       if (diag)
       #ifdef TCPLX
+         TYPE *d=diag+@(jj), *s=A(jj)+@(ii);
          #ifdef Conj_
             @iexp k0 2 @(jj) + @(jj) @(U) * *
             @iexp k1 @(jj) @(jj) +
@@ -268,17 +269,19 @@ static INLINE void ATL_ntrcopyL(const int IsConj,
 {
    register int i, j;
    TYPE *a = A, *w = W;
-   #ifdef TCPLX
-      void Mjoin(PATL,cplxinvert)(ATL_CINT, TYPE*, ATL_CINT, TYPE*, ATL_CINT);
-   #endif
    for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
    {
       if(diag)
       {
          #ifdef TCPLX /* invert diag later */
-            diag[j SHIFT] = w[j SHIFT] = a[j SHIFT];
-            diag[(j SHIFT)+1] = w[(j SHIFT)+1] = IsConj ?
-                                -a[(j SHIFT)+1] : a[(j SHIFT)+1];
+            TYPE *d=diag+j+j, *s=a+j+j;
+            #ifdef Conj_
+               *d = *s;
+               d[1] = -s[1];
+               CXINV(d, d);
+            #else
+               CXINV(d, s);
+            #endif
          #else
             diag[j] = ATL_rone / a[j];
             w[j] = a[j];
@@ -292,23 +295,14 @@ static INLINE void ATL_ntrcopyL(const int IsConj,
          #endif
       }
    }
-   #ifdef TCPLX
-      if (diag)
-      {
-         Mjoin(PATL,cplxinvert)(n, diag, 1, diag, 1);
-      }
-   #endif
 }
-@ROUT ATL_ntrcopyU ATL_ntrsmR ATL_ntrsmL
+@ROUT ATL_ntrcopyU ATL_ntrsmR ATL_ntrsmL ATL_cntrsmR ATL_cntrsmL
 static INLINE void ATL_ntrcopyU(const int IsConj,
                                const int n, TYPE *A, const int lda,
                                TYPE *W, const int ldw, TYPE *diag)
 {
    register int i, j;
    TYPE *a = A, *w = W;
-   #ifdef TCPLX
-      void Mjoin(PATL,cplxinvert)(ATL_CINT, TYPE*, ATL_CINT, TYPE*, ATL_CINT);
-   #endif
    for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
    {
       for (i=0; i<j; i++)
@@ -321,22 +315,23 @@ static INLINE void ATL_ntrcopyU(const int IsConj,
       if(diag)
       {
          #ifdef TCPLX /* invert diag later */
-            diag[j SHIFT] = w[j SHIFT] = a[j SHIFT];
-            diag[(j SHIFT)+1] = w[(j SHIFT)+1] = IsConj ?
-                                -a[(j SHIFT)+1] : a[(j SHIFT)+1];
+            TYPE *d=diag+j+j, *s=a+j+j;
+            #ifdef Conj_
+               *d = *s;
+               d[1] = -s[1];
+               CXINV(d, d);
+            #else
+               CXINV(d, s);
+            #endif
          #else
             w[j] = a[j];
             diag[j] = ATL_rone / a[j];
          #endif
       }
    }
-   #ifdef TCPLX
-      if (diag)
-      {
-         Mjoin(PATL,cplxinvert)(n, diag, 1, diag, 1);
-      }
-   #endif
 }
+@ROUT ATL_ntrsmR ATL_ntrsmL ATL_cntrsmR ATL_cntrsmL
+#define RTYPE register TYPE
 @ROUT ATL_ntrsmR
 @ifdef ! U
    @abort U must be defined as strictly positive!
@@ -344,7 +339,6 @@ static INLINE void ATL_ntrcopyU(const int IsConj,
 #include "atlas_misc.h"
 #define RINLINE @(INLINE_VAL)
 
-#define RTYPE register TYPE
 @SKIP @multidef up   U  U  L  L
 @SKIP @multidef ta   T  N  T  N
 
@@ -550,8 +544,11 @@ RINLINE void Mjoin(PATL,ntrsm@(conf)_RR)
 @SKIP @undef up
 @SKIP @undef ta
 @SKIP @endwhile
-RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const TYPE alp, TYPE *r, 
-                               ATL_CINT ldr)
+#ifndef ATL_nscal
+   #define ATL_nscal Mjoin(PATL,nscal@(U))
+#endif
+RINLINE void Mjoin(PATL,nscal@(U))
+   (ATL_CINT m, const TYPE alp, TYPE *r, ATL_CINT ldr)
 {
    register int i;
    TYPE *rc = r;
@@ -785,8 +782,11 @@ RINLINE void Mjoin(PATL,ntrsm@(conf)_RR)
 @skip @undef up
 @skip @undef ta
 @skip @endwhile
-RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const TYPE alp, TYPE *r, 
-                               ATL_CINT ldr)
+#ifndef ATL_nscal 
+   #define ATL_nscal Mjoin(PATL,nscal@(U))
+#endif
+RINLINE void Mjoin(PATL,nscal@(U))
+   (ATL_CINT n, const TYPE alp, TYPE *r, ATL_CINT ldr)
 {
    register int j;
    TYPE *rc = r;
@@ -801,8 +801,10 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const TYPE alp, TYPE *r,
 }
 
 @ROUT ATL_ntrsmL ATL_ntrsmR
-RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const TYPE alp, 
-                                 TYPE *r, ATL_CINT ldr)
+#ifndef ATL_nscal_RR 
+   #define ATL_nscal_RR Mjoin(PATL,nscal_RR)
+RINLINE void ATL_nscal_RR
+   (ATL_CINT m, ATL_CINT n, const TYPE alp, TYPE *r, ATL_CINT ldr)
 {
    register int i, j;
    TYPE *rc = r;
@@ -812,6 +814,8 @@ RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const TYPE alp,
          rc[i] *= alp;
    }
 }
+#endif
+
 #endif /* end multiple inclusion guard */
 @ROUT ATL_cntrsmR
 @skip nu must be defined.
@@ -824,7 +828,10 @@ RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const TYPE alp,
 
 @SKIP @whiledef conf UT UN LT LN
 @define lowup @@low@(up)@
-RINLINE void Mjoin(PATL,trsm@(conf)@(U))
+#ifndef ATL_ntrsm@(conf)
+   #define ATL_ntrsm@(conf) Mjoin(PATL,ntrsm@(conf)@(U))
+#endif
+RINLINE void Mjoin(PATL,ntrsm@(conf)@(U))
 (
  ATL_CINT m, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
 )
@@ -1128,8 +1135,11 @@ RINLINE void Mjoin(PATL,ntrsm@(conf)_RR)
 @SKIP @undef up
 @SKIP @undef ta
 @SKIP @endwhile
-RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const SCALAR alp, TYPE *r, 
-                              ATL_CINT ldr)
+#ifndef ATL_nscal 
+   #define ATL_nscal Mjoin(PATL,nscal@(U))
+#endif
+RINLINE void Mjoin(PATL,nscal@(U))
+   (ATL_CINT m, const SCALAR alp, TYPE *r, ATL_CINT ldr)
 {
    register int i;
    TYPE *rc = r;
@@ -1149,7 +1159,7 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const SCALAR alp, TYPE *r,
          @iexp i @(i) 1 +
       @endiwhile
 }
-@ROUT ATL_cntrsmR
+@ROUT ATL_cntrsmL
 @skip mu must be defined.
 #include "atlas_misc.h"
 #define RINLINE @(INLINE_VAL)
@@ -1161,7 +1171,10 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT m, const SCALAR alp, TYPE *r,
 @SKIP @whiledef conf UT UN LT LN
 @define conf @@(up)@(ta)@
 @define lowup @@low@(up)@
-RINLINE void Mjoin(PATL,trsm@(conf)@(U))
+#ifndef ATL_ntrsm@(conf)
+   #define ATL_ntrsm@(conf) Mjoin(PATL,ntrsm@(conf)@(U))
+#endif
+RINLINE void Mjoin(PATL,ntrsm@(conf)@(U))
 (
  ATL_CINT n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
 )
@@ -1458,8 +1471,11 @@ RINLINE void Mjoin(PATL,ntrsm@(conf)_RR)
 @SKIP @undef up
 @SKIP @undef ta
 @SKIP @endwhile
-RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const SCALAR alp, TYPE *r, 
-                              ATL_CINT ldr)
+#ifndef ATL_nscal 
+   #define ATL_nscal Mjoin(PATL,nscal@(U))
+#endif
+RINLINE void Mjoin(PATL,nscal@(U))
+   (ATL_CINT n, const SCALAR alp, TYPE *r, ATL_CINT ldr)
 {
    register int j;
    TYPE *rc = r;
@@ -1480,8 +1496,10 @@ RINLINE void Mjoin(PATL,scalK)(ATL_CINT n, const SCALAR alp, TYPE *r,
 }
 
 @ROUT ATL_cntrsmL ATL_cntrsmR
-RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const SCALAR alp, 
-                                 TYPE *r, ATL_CINT ldr)
+#ifndef ATL_nscal_RR
+   #define ATL_nscal_RR Mjoin(PATL,nscal_RR)
+RINLINE void ATL_nscal_RR
+   (ATL_CINT m, ATL_CINT n, const SCALAR alp, TYPE *r, ATL_CINT ldr)
 {
    register int i, j;
    TYPE *rc = r;
@@ -1499,6 +1517,9 @@ RINLINE void Mjoin(PATL,scalKRR)(ATL_CINT m, ATL_CINT n, const SCALAR alp,
       }
    }
 }
+#endif
+
+#endif /* end multiple inclusion guard */
 @ROUT trsmh
 #ifndef ATLAS_TRSMKH
    #define ATLAS_TRSMKH
@@ -1524,10 +1545,12 @@ RINLINE void cpFromBlkCT_@(mu)_@(nu)_a1_bX_@(conf)
 @multidef up   U  U  L  L
 @whiledef conf UT UN LT LN
 @define lowup @@low@(up)@
-RINLINE void Mjoin(PATL,trsm@(conf)@(U))
-(  
- int n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), TYPE *r, ATL_CINT ldr
-);
+#ifndef ATL_ntrsm@(conf)
+   #define ATL_ntrsm@(conf) Mjoin(PATL,ntrsm@(conf)@(U))
+#endif
+RINLINE void Mjoin(PATL,ntrsm@(conf)@(U))
+   (int n, const TYPE *d, const TYPE *@(up), ATL_CINT ld@(lowup), 
+    TYPE *r, ATL_CINT ldr);
 @undef up
 @endwhile
 
