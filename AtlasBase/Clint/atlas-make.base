@@ -2775,11 +2775,6 @@ xvmmf_gccsub : $(mySRCdir)/vmmf_gccsub.c
 @multidef typ DCPLX SCPLX DREAL SREAL
 @whiledef pre z c d s
    @addkeys ptyp=@(pre)
-@BEGINSKIP
-@(pre)cases.dsc: xuserindex $(mySRCdir)/CASES/@(pre)cases.0 $(mySRCdir)/CASES/@(pre)cases.SSE \
-                 $(mySRCdir)/CASES/@(pre)cases.3DN $(mySRCdir)/CASES/@(pre)cases.flg 
-	./xuserindex -p @(pre)
-@ENDSKIP
 @(pre)mflops.frc : xgmmsearch
 	./xgmmsearch -p @(pre) -f 16
 res/@(pre)nreg : xgmmsearch @(pre)mflops.frc
@@ -2791,19 +2786,6 @@ res/@(pre)nreg : xgmmsearch @(pre)mflops.frc
 @(pre)tfc :
 	$(MAKE) x@(pre)tfc pre=@(pre) typ=@(typ)
 
-@beginskip
-@multidef rt ipmnPERF.sum ipmPERF.sum ipnPERF.sum geAMMRES.sum geAMMKCLEAN.sum
-@whiledef rt sqAMMRES.sum rkAMMRES.sum sqAMMKCLEAN.sum
-res/@(pre)@(rt) : xammsearch
-	./xammsearch -p @(pre)
-@endwhile
-@endskip
-@BEGINSKIP
-@whiledef rt gAMSYRK.sum
-res/@(pre)@(rt) : res/@(pre)sqAMMRES.sum xgmmsearch 
-	./xgmmsearch -p @(pre)
-@endwhile
-@ENDSKIP
 @whiledef rt gAMMRES.sum gkvAMMUR.sum gmvAMMUR.sum
 res/@(pre)@(rt) : xgmmsearch
 	./xgmmsearch -p @(pre)
@@ -2834,6 +2816,8 @@ res/@(pre)@(rt) : xgmmsearch
 @(pre)views=-V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipgen res/@(pre)ipgen.sum \
     -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipmen res/@(pre)ipmen.sum \
     -V Ad=F Aa=1 S=C,M,U K=0 syrk res/@(pre)SYRKFNL.sum \
+    -V Cd=I Ca=1,N,X Cb=0,1 Ad=F Aa=1,N,X K=0 trsml res/@(pre)trsmL_LN.sum \
+    -V Cd=I Ca=1,N,X Cb=0,1 Ad=F Aa=1,N,X K=0 trsmr res/@(pre)trsmR_LN.sum \
     -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X K=0 opmek res/@(pre)opmek.sum \
     -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X K=0 opnek res/@(pre)opnek.sum \
     -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X K=0 opgen res/@(pre)opFNL.sum 
@@ -2919,10 +2903,23 @@ res/@(pre)K1.sum : xaddKClean res/@(pre)ipgen.sum res/@(cpr)ipgen.sum \
            -i res/@(pre)ipmen.sum -i res/@(cpr)ipmen.sum -o res/@(pre)K1.sum \
            -i res/@(pre)opmek.sum -i res/@(cpr)opmek.sum \
            -i res/@(pre)opnek.sum -i res/@(cpr)opnek.sum
+@whiledef sd R L
+   @whiledef up U L
+      @whiledef ta N T
+res/@(pre)trsm@(sd)_@(up)@(ta).sum : xtrsmsrch
+	./xtrsmsrch -p @(pre) -S @(sd) -U @(up) -A @(ta)
+      @endwhile
+   @endwhile
+@endwhile
    @ptyp s d
-res/@(pre)FNLK1.sum : xammk1srch res/@(pre)K1.sum res/@(pre)opFNL.sum res/@(cpr)opFNL.sum
-	./xammk1srch -i res/@(pre)K1.sum -i res/@(pre)opFNL.sum \
-            -i res/@(cpr)opFNL.sum -o res/@(pre)FNLK1.sum
+res/@(pre)FNLK1.sum : xammk1srch res/@(pre)K1.sum res/@(pre)opFNL.sum res/@(cpr)opFNL.sum \
+   res/@(pre)trsmL_LN.sum res/@(pre)trsmR_LN.sum \
+   res/@(cpr)trsmL_LN.sum res/@(cpr)trsmR_LN.sum
+	./xammk1srch -o res/@(pre)FNLK1.sum -i res/@(pre)K1.sum \
+            -i res/@(pre)opFNL.sum -i res/@(cpr)opFNL.sum \
+            -i res/@(pre)trsmL_LN.sum -i res/@(pre)trsmR_LN.sum \
+            -i res/@(cpr)trsmL_LN.sum -i res/@(cpr)trsmR_LN.sum 
+
 res/@(cpr)gAMSYRK.sum : xgmmsearch
 	./xgmmsearch -p @(cpr)
 res/@(pre)gAMSYRK.sum : xgmmsearch
@@ -2930,8 +2927,7 @@ res/@(pre)gAMSYRK.sum : xgmmsearch
 res/@(pre)AMSYRKFNL.sum : res/@(pre)gAMSYRK.sum res/@(cpr)gAMSYRK.sum
 	- rm -f res/@(pre)AMSYRKFNL.sum
 	cat res/[@(pre),@(cpr)]gAMSYRK.sum > res/@(pre)AMSYRKFNL.sum
-@(pre)install_amm: res/@(upr)FNLK1.sum res/@(pre)AMSYRKFNL.sum \
-   xammkgen xbfisrch
+@(pre)install_amm: res/@(upr)FNLK1.sum res/@(pre)AMSYRKFNL.sum xammkgen xbfisrch
 	- cd $(AMMdir)/KERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
 	./xammkgen -p @(pre) -b res/@(pre)AMSYRKFNL.sum -o $(AMMdir)/KERNEL 
 	mv $(AMMdir)/KERNEL/*.h $(INCAdir)/.
@@ -3210,6 +3206,7 @@ $(L3Bdir)/kernel/@(trsm) :
            -m $(mb) -n $(nb) -k $(kb) -um $(mu) -un $(nu) -uk $(ku) $(FMFS) \
            -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) $(MTXD)
 
+@BEGINSKIP
 trsmKPRE=trsmK
 @ptyp d s
 @(pre)$(trsmKPRE)$(SD)cpIntoBlkA_$(mu).c : $(basf)
@@ -3275,6 +3272,7 @@ trsmKPRE=trsmK
             -o $@ -c $(mmrout)
    @undef rbn
 @endwhile
+@ENDSKIP
 @ptyp z c
    @define rtpr @c@
 @ptyp d s
