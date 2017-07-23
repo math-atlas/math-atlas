@@ -2509,11 +2509,11 @@ cpyhelp :
 	@@echo "make gen_cA[T,N]2blk rt= kmaj= UR= alpha= rout=FUNCNM"
 
 trsmhelp :
-	@@echo "make gen_ntrsm_cpC ta=[T,N] mu=# nu=# rt=filename.h"
+	@@echo "make gen_ntrsm_cpC tALL=[T,N] mu=# nu=# rt=filename.h"
 	@@echo "make gen_ntrsm sd=[L,R] up=[L,U] ta=[N,T] U=# rt=filename.h"
 	@@echo "make gen_cntrsm sd=[L,R] up=[L,U] ta=[N,T] U=# rt=filename.h"
-	@@echo "make genall_ntrsm sd=[L,R] up=[L,U] ta=[N,T] mu=# nu=# rt=fnam"
-	@@echo "make genall_cntrsm sd=[L,R] up=[L,U] ta=[N,T] mu=# nu=# rt=fnam"
+	@@echo "make genall_ntrsm sd=[L,R] up=[L,U] ta=[N,T] tALL=[N,T] mu=# nu=# rt=fnam"
+	@@echo "make genall_cntrsm sd=[L,R] up=[L,U] ta=[N,T] tALL=[N,T] mu=# nu=# rt=fnam"
 	@@echo "make PREtrsmcase mmrout=FILE mu=X nu=X ku=X rb=X kb=X sd=[L,R] up=[U,L] ta=[T,N] tALL=[T,N] kmaj=#"
 
 DoSzBlk :
@@ -2716,8 +2716,8 @@ gen_amm_scalar : $(BINdir)/xextract force_build
                 -def kmaj "${kmaj}" rout=ATL_mm${kmaj}_${mu}x${nu}_1 
 
 gen_ntrsm_cpC : $(BINdir)/xextract $(mySRCdir)/trsm-nano.base
-	$(extC) -b $(mySRCdir)/trsm-nano.base -o $(rt) rout=cpC -def ta $(ta) \
-           -def mu $(mu) -def nu $(nu)
+	$(extC) -b $(mySRCdir)/trsm-nano.base -o $(rt) rout=cpC \
+           -def ta $(tALL) -def mu $(mu) -def nu $(nu)
 @define cx @@
 @whiledef cx c
 gen_@(cx)ntrsm : $(BINdir)/xextract $(mySRCdir)/trsm-nano.base
@@ -2726,7 +2726,7 @@ gen_@(cx)ntrsm : $(BINdir)/xextract $(mySRCdir)/trsm-nano.base
 genall_@(cx)ntrsm:
 	- rm -f $(ptmp) $(rt)
 	touch $(rt)
-	$(MAKE) gen_ntrsm_cpC rt=$(ptmp) ta=$(ta) mu=$(mu) nu=$(nu)
+	$(MAKE) gen_ntrsm_cpC rt=$(ptmp) tALL=$(tALL) mu=$(mu) nu=$(nu)
 	cat $(ptmp) >> $(rt)
 	if [ "X$(ta)" = "XT" ] ; then \
            echo "#define Trans_ 1" >> $(rt) ; \
@@ -3300,13 +3300,13 @@ trsmKPRE=trsmK
                     rt=cpAtmp.c ; \
               fi ; \
            else \
-              make gen_@(rtpr)AT2blk UR=$(mu) kmaj=$(kmaj) alpha=1 \
+              make gen_@(rtpr)AT2blk UR=$(nu) kmaj=$(kmaj) alpha=1 \
                  rt=cpBtmp.c ; \
 	      if [ "X$(ta)" = "XT" ] ; then \
-                 make gen_@(rtpr)AN2blk UR=$(nu) kmaj=$(kmaj) alpha=-1 \
+                 make gen_@(rtpr)AT2blk UR=$(mu) kmaj=$(kmaj) alpha=-1 \
                     rt=cpAtmp.c ; \
               else \
-                 make gen_@(rtpr)AT2blk UR=$(nu) kmaj=$(kmaj) alpha=-1 \
+                 make gen_@(rtpr)AN2blk UR=$(mu) kmaj=$(kmaj) alpha=-1 \
                     rt=cpAtmp.c ; \
               fi ; \
            fi ; \
@@ -3315,7 +3315,7 @@ trsmKPRE=trsmK
 	   @(KCC) @(KCFLAGS) -D@(typ)=1 -c cpAtmp.c \
               -DATL_USERCPMM=A2BLK ; \
 	   make genall_@(rtpr)ntrsm sd=$(sd) up=$(up) ta=$(ta) mu=$(nu) nu=$(mu) \
-              rt=$(ctmp).c ; \
+              tALL=$(tALL) rt=$(ctmp).c ; \
            echo "#define USE_TRANS 1" >> $(ctmp).c ; \
 	   if [ "X$(up)" = "XU" ] ; then \
               echo "#define Upper_ 1" >> $(ctmp).c ; \
@@ -3333,9 +3333,15 @@ trsmKPRE=trsmK
 	$(CLINKER) $(CLINKFLAGS) -o x@(pre)usmtime_pt @(pre)usmtime.o \
           $(ctmp).o @(pre)AMM_b0.o @(pre)AMM_b1.o @(pre)AMM_bn.o \
           cpBtmp.o cpAtmp.o $(AUXdir)/ATL_xerbla.o $(SYSdir)/time.o $(LIBS) ; \
-          $(ATLRUN) $(MMTdir) x@(pre)usmtime_pt -p $(NPROC) $(TIDLIST) \
-             -m $(kb) -n $(rb) -k $(kb) $(FMFS) -um $(nu) -un $(mu) \
-             -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) ; \
+	   if [ "X$(sd)" = "XL" ] ; then \
+             $(ATLRUN) $(MMTdir) x@(pre)usmtime_pt -p $(NPROC) $(TIDLIST) \
+                -m $(kb) -n $(rb) -k $(kb) $(FMFS) -um $(nu) -un $(mu) \
+                -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) ; \
+           else \
+             $(ATLRUN) $(MMTdir) x@(pre)usmtime_pt -p $(NPROC) $(TIDLIST) \
+                -m $(rb) -n $(kb) -k $(kb) $(FMFS) -um $(nu) -un $(mu) \
+                -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) ; \
+	   fi ; \
         else \
 	   if [ "X$(sd)" = "XL" ] ; then \
               make gen_@(rtpr)AN2blk UR=$(nu) kmaj=$(kmaj) alpha=1 \
@@ -3348,13 +3354,13 @@ trsmKPRE=trsmK
                     rt=cpAtmp.c ; \
               fi ; \
            else \
-              make gen_@(rtpr)AT2blk UR=$(nu) kmaj=$(kmaj) alpha=1 \
+              make gen_@(rtpr)AT2blk UR=$(mu) kmaj=$(kmaj) alpha=1 \
                  rt=cpBtmp.c ; \
 	      if [ "X$(ta)" = "XT" ] ; then \
-                 make gen_@(rtpr)AN2blk UR=$(mu) kmaj=$(kmaj) alpha=-1 \
+                 make gen_@(rtpr)AT2blk UR=$(nu) kmaj=$(kmaj) alpha=-1 \
                     rt=cpAtmp.c ; \
               else \
-                 make gen_@(rtpr)AT2blk UR=$(mu) kmaj=$(kmaj) alpha=-1 \
+                 make gen_@(rtpr)AN2blk UR=$(nu) kmaj=$(kmaj) alpha=-1 \
                     rt=cpAtmp.c ; \
               fi ; \
            fi ; \
@@ -3363,7 +3369,7 @@ trsmKPRE=trsmK
 	   @(KCC) @(KCFLAGS) -D@(typ)=1 -c cpAtmp.c \
               -DATL_USERCPMM=A2BLK ; \
 	   $(MAKE) genall_@(rtpr)ntrsm sd=$(sd) up=$(up) ta=$(ta) mu=$(mu) nu=$(nu) \
-              rt=$(ctmp).c ; \
+              tALL=$(tALL) rt=$(ctmp).c ; \
 	   if [ "X$(up)" = "XU" ] ; then \
               echo "#define Upper_ 1" >> $(ctmp).c ; \
            fi ; \
@@ -3380,9 +3386,15 @@ trsmKPRE=trsmK
 	$(CLINKER) $(CLINKFLAGS) -o x@(pre)usmtime_pt @(pre)usmtime.o \
           $(ctmp).o @(pre)AMM_b0.o @(pre)AMM_b1.o @(pre)AMM_bn.o \
           cpBtmp.o cpAtmp.o $(AUXdir)/ATL_xerbla.o $(SYSdir)/time.o $(LIBS) ; \
-          $(ATLRUN) $(MMTdir) x@(pre)usmtime_pt -p $(NPROC) $(TIDLIST) \
-             -m $(kb) -n $(rb) -k $(kb) $(FMFS) -um $(mu) -un $(nu) \
-             -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) ; \
+	   if [ "X$(sd)" = "XL" ] ; then \
+             $(ATLRUN) $(MMTdir) x@(pre)usmtime_pt -p $(NPROC) $(TIDLIST) \
+                -m $(kb) -n $(rb) -k $(kb) $(FMFS) -um $(mu) -un $(nu) \
+                -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) ; \
+           else \
+             $(ATLRUN) $(MMTdir) x@(pre)usmtime_pt -p $(NPROC) $(TIDLIST) \
+                -m $(rb) -n $(kb) -k $(kb) $(FMFS) -um $(mu) -un $(nu) \
+                -V $(vlen) -Ma $(mvA) -Mb $(mvB) -Mc $(mvC) $(outF) ; \
+	   fi ; \
         fi
 @ptyp d s
 bn = _b${betan}
