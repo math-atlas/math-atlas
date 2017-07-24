@@ -36455,6 +36455,69 @@ int minSquareNB(char pre, size_t CS, ATL_mmnode_t *mmb)
    return(D);
 }
 
+void do_ipdek(int verb, char pre, int NEK)
+{
+   ATL_mmnode_t *mp, *mb=NULL;
+   int tflag = 0;
+   unsigned int i, U, N;
+   const char ch=NEK?'N':'M';
+   char *fn=NEK?"ipnek.sum":"ipmek.sum";
+
+   mb = TimeMMFileWithPath(pre, "res", fn, 0, verb, 0, 0, 0, -1);
+   if (mb)
+   {
+      KillAllMMNodes(mb);
+      return;
+   }
+   mp = ReadMMFileWithPath(pre, "res", "ipgen.sum");
+   assert(mp);
+   while (mp->next)
+      mp = KillMMNode(mp);
+   mp->flag = (mp->flag&(~MMF_MVSET)) | ((1<<MMF_MVA)|(1<<MMF_MVB));
+   if (NEK)
+      tflag |= 1<<31;
+   mp->mflop[0] = 0;
+   assert(mp);
+   printf("FINDING BEST CASE FOR %c=K INNER PRODUCT:\n", ch);
+   MMExpandNK(verb, pre, tflag, 1, mp);
+   printf("BEST %c=K: ID=%u, B=(%u,%u,%u), mf=.2f\n\n", ch, mp->ID, 
+          mp->mbB, mp->nbB, mp->kbB);
+   U = mp->ku;
+   if (NEK)
+   {
+      U = ATL_iLCM(U, mp->nu);
+      N = mp->nbB;
+   }
+   else
+   {
+      U = ATL_iLCM(U, mp->mu);
+      N = mp->mbB;
+   }
+   U = (U == 1 || U == 2) ? 4 : U;
+   for (i=U; i < N; i += U)
+   {
+      ATL_mmnode_t *p;
+      unsigned int b;
+      printf("   FINDING BEST CASE FOR %c=K=%u:\n", ch, i);
+      p = CloneMMNode(mp);
+      if (NEK)
+         p->nbB = p->kbB = i;
+      else
+         p->mbB = p->kbB = i;
+      MMExpandMorN(verb, pre, tflag, 1, p, !NEK, 512);
+      printf("   BEST CASE FOR %c=K=%u: B=(%u,%u,%u), mf=%.2f\n", ch, i, 
+             p->mbB, p->nbB, p->kbB, p->mflop[0]);
+      p->next = mb;
+      mb = p;
+   }
+   mp->next = mb;
+   mb = mp;
+   mb = ReverseMMQ(mb);
+   MMPruneMflopTol(mb, 0, 1.0);
+   WriteMMFileWithPath(pre, "res", fn, mb);
+   KillAllMMNodes(mb);
+}
+
 void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
 /*
  * This search simply finds best performing kernel, produces ip.sum
@@ -36680,6 +36743,8 @@ int main(int nargs, char **args)
 
    findBestIP(pre, verb, mmb, NULL);
    srch_men(pre, verb);
+   do_ipdek(verb, pre, 0);
+   do_ipdek(verb, pre, 1);
 
    return(0);
 }
