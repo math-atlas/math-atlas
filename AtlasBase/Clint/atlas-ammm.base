@@ -38955,6 +38955,7 @@ void GetUnrolls(ATL_mmnode_t *mb, int *NMU, int **MUS, int *NNU, int **NUS)
    memcpy(*NUS, nus, nnu*sizeof(int));
    free(mus);
 }
+
 void GenTrsmALLT(char pre, char *outd, char sd, ATL_mmnode_t *mb)
 {
    char *of;
@@ -38985,6 +38986,71 @@ void GenTrsmALLT(char pre, char *outd, char sd, ATL_mmnode_t *mb)
    fclose(fp);
    free(of);
 }
+void GenNanoTrsm(char pre, char *outd, char sd, ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp;
+   int *mus, *nus;
+   char *fn;
+   int i, L;
+   int nmu, nnu;
+@skip   GetUnrolls(mb, &nmu, &mus, &nnu, &nus)
+
+   L = strlen(outd) + 128;
+   fn = malloc(L);
+   i = sprintf(fn, "rm -rf %s/%cNTRSM", outd, pre);
+   Sys2File(fn, NULL);
+   assert(i < L);
+   i = sprintf(fn, "mkdir %s/%cNTRSM", outd, pre);
+   assert(!Sys2File(fn, NULL));
+   for (mp=mb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *p;
+      int mu=mp->mu, nu=mp->nu, U;
+      char ta = (mp->TA == AtlasTrans && mp->TB == AtlasTrans) ? 'T' : 'N';
+      if (mp->TA == AtlasTrans && mp->TB == AtlasTrans)
+      {
+         int k=mu;
+         mu = nu;
+         nu = k;
+      }
+      for (p=mb; p != mp; p = p->next)
+      {
+         int mu0=p->mu, nu0=p->nu;
+         if (p->TA == AtlasTrans && p->TB == AtlasTrans)
+         {
+            int k=mu0;
+            mu0 = nu0;
+            nu0 = k;
+         }
+         if (mu0 == mu && nu0 == nu)
+            break;
+         if (p == mp) /* first mention of the mu,nu pair */
+         {
+            i = sprintf(fn, "mkdir %s/%cNTRSM/ncpC%ux%u", outd, pre, mu, nu);
+            assert(i<L);
+            assert(!Sys2File(fn, NULL));
+         }
+/*
+ *       This could be redundant, but OK as it will just overwrite!
+ */
+         i = sprintf(fn, "make gen_ntrsm_cpC mu=%u nu=%u ta=%c "
+                     "rt=%s/ncpC%ux%u/atlas_ntrsm_cpC%c.h",
+                     mu, nu, ta, outd, mu, nu, pre, ta);
+         assert(i<L);
+         assert(!Sys2File(fn, NULL));
+         #if 0  /* HERE HERE */
+         U = (sd == 'R') ? nu : mu;
+         i = sprintf(fn, "make gen_%sntrsm sd=%c ta=%c up=%c U=%u "
+                     "rt=%s/atlas_ntrsm%c.h",
+                     (pre == 'z' || pre == 'c') ? "c":"", sd, 'N', 'U', U,
+                     outd, sd);
+         #endif
+      }
+      i = sprintf(fn, "mkdir %s/%cNTRSM/ntrsm%u", outd, pre);
+      assert(!Sys2File(fn, NULL));
+   }
+}
+
 void GenAllTrsm(char pre, char *outd)
 {
    int s;
@@ -39000,7 +39066,6 @@ void GenAllTrsm(char pre, char *outd)
       fn[4] = sd;
       mb = ReadMMFileWithPath(pre, "res", fn);
       GenTrsmALLT(pre, outd, sd, mb);
-      nkern = GetUnrolls(mb, &mus, &nus);
    }
 }
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
