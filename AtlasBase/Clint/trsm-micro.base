@@ -1,4 +1,181 @@
+@ROUT ATL_trsm
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def contrib "Antoine Petitet"
+#include "atlas_misc.h"
+#include "atlas_level3.h"
+/*
+ * RETURNS: recursion depth (starting from 0)
+ */
+static unsigned int trsm_recLL
+(
+   const int             bv,    /* 0:Upper, 1:TransA, 2: Conj, 3:NonUnit */
+   ATL_CSZT               N,    /* size of triangle, will recur on this dim */
+   ATL_CSZT               NRHS, /* don't recur on RHS */
+   const SCALAR           alpha,
+   const TYPE             *T,
+   ATL_CSZT               ldt,
+   ATL_CSZT               rincT, /* rowinc: 1/2 for NoTrans, else ldt2 */
+   ATL_CSZT               cincT, /* colinc: ldt2 for NoTrans, else 1/2 */
+   TYPE                   *Z,
+   ATL_CSZT               ldz
+)
+{
+   unsigned int iret=0;
+   if (Mjoin(PATL,trsmL_IP)(bv, N, NRHS, alpha, T, ldt, Z, ldz))
+   {
+      #ifdef TCPLX
+         enum ATLAS_TRANS TA;
+         const TYPE none[2] = {ATL_rnone, ATL_rzero};
+         const TYPE one[2]  = {ATL_rone,  ATL_rzero};
+      #else
+         #define none ATL_rnone
+         #define one ATL_rone
+         const enum ATLAS_TRANS TA = (bv&2) ? AtlasTrans : AtlasNoTrans;
+      #endif
+
+      #ifdef TCPLX
+         if (bv&2)
+            TA = (bv&4) ? AtlasConjTrans : AtlasTrans;
+         else
+            TA = (bv&4) ? AtlasConj : AtlasNoTrans;
+      #endif
+      ATL_CSZT NL = (N>>1), NR = N - NL;
+      TYPE *C = Z + (NL SHIFT);
+      const TYPE *A = T + NL*rincT;
+      iret = 2 + trsm_recLL(bv, NL, NRHS, alpha, T, ldt, rincT, cincT, Z, ldz);
+      Mjoin(PATL,gemm)(TA, AtlasNoTrans, NR, NRHS, NL, none, A, ldt, Z, ldz, 
+                       alpha, C, ldz);
+      A += NL*cincT;
+      iret += trsm_recLL(bv, NR, NRHS, one, A, ldt, rincT, cincT, C, ldz);
+      return(iret);
+   }
+   return(iret);
+}
+void Mjoin(PATL,trsm)
+(
+   const enum ATLAS_SIDE  SD,
+   const enum ATLAS_UPLO  UL,
+   const enum ATLAS_TRANS TA,
+   const enum ATLAS_DIAG  DI,
+   ATL_CSZT               M,
+   ATL_CSZT               N,
+   const SCALAR           alpha,
+   const TYPE             *A,
+   ATL_CSZT               lda,
+   TYPE                   *B,
+   ATL_CSZT               ldb
+)
+/*
+ * Purpose
+ * =======
+ * ATL_trsm solves one of the matrix equations
+ *    op( A ) * X = alpha * B,   or  X * op( A ) = alpha * B,
+ *
+ * where alpha is a scalar, X and B are m by n matrices, A is a unit, or
+ * non-unit, upper or lower triangular matrix and op( A ) is one of
+ *    op( A ) = A   or   op( A ) = A'   or   op( A ) = conjg( A' ).
+ *
+ * The matrix X is overwritten on B.
+ */
+{
+   unsigned int d;
+   if (!M || !N)  /* if either array is of size 0 */
+      return;     /* return as there is nothing to do */
+   if (SCALAR_IS_ZERO(alpha))                   /* alpha == 0 means */
+   {                           
+      Mjoin(PATL,gescal)(M, N, alpha, B, ldb);  /* only need to scale B */
+      return;
+   }
+/*
+ * LEFT: op(A) * X = alpha * B, A is MxM, X is MxN, B is MxN
+ */
+   if (SD == AtlasLeft && UL == AtlasLower) 
+   {
+      ATL_SZT incR, incC;
+      ATL_UINT bv;  /* 0:Upper, 1:TransA, 2: Conj, 3:NonUnit */
+      bv = (UL == AtlasUpper) ? 1 : 0;
+      #ifdef TCPLX
+         if (TA == AtlasConjTrans)
+            bv |= (4|2);
+         else
+            bv |= TA == (AtlasTrans) ? 2 : 0;
+      #else
+         bv |= (TA == AtlasTrans) ? 2:0;
+      #endif
+      bv |= (DI == AtlasNonUnit) ? 8 : 0;
+      if (bv & 2)
+      {
+         incR = lda SHIFT;
+         incC = 1 SHIFT;
+      }
+      else
+      {
+         incR = 1 SHIFT;
+         incC = lda SHIFT;
+      }
+      d = trsm_recLL(bv, M, N, alpha, A, lda, incR, incC, B, ldb);
+      printf("Solved with %u recusive calls.\n", d);
+   }
+/*
+ * RIGHT: X * op( A ) = alpha * B, A is NxN, X is NxM, B, is NxM
+ */
+   else
+   {
+      Mjoin(PATL,trsm_APR)(SD, UL, TA, DI, M, N, alpha, A, lda, B, ldb);
+   }
+}
+@ROUT ATL_trsmL_IP
+#include "atlas_misc.h"
+#include "atlas_level3.h"
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
+int Mjoin(PATL,trsmL_IP)
+(
+   ATL_UINT bv,  /* 0:Upper, 1:TransA, 2: Conj, 3:NonUnit */
+   ATL_CSZT               M,
+   ATL_CSZT               N,
+   const SCALAR           alpha,
+   const TYPE             *A,
+   ATL_CSZT               lda,
+   TYPE                   *B,
+   ATL_CSZT               ldb
+)
+{
+   @BEGINSKIP
+   ATL_UINT NB, RB;
+   if (M > ATL_VWtrsml_LAST_MB)
+      return(2);
+   for (idx=ATL_VWtrsml_LAST_IDX-1; i; i--)
+      if (ATL_GetVWtrsmlMB(idx) >= M)
+         break;
+/*
+ * Need to get allTRANS encoded in view, or recorded somehow!
+ */
+   ATL_GetVWtrsmlInfo(idx, spf, MB, NB, k, imm, icpA, icpB, k, k, k, k);
+   @ENDSKIP
+   #if 0
+   void *vp;
+   TYPE *diag, *T, *R, *w;
+   ipinfo_t ip;
+   vp = Mjoin(PATL,utrsmL_alloc)(&ip, N, &diag, &T, &R, &w);
+   if (!vp)
+      return(1);
+   #else
+      if (M > 1)
+         return(1);
+      if (bv&8)
+      #ifdef TCPLX
+      {
+         double inv[2];
+         CXINV(inv, A);
+         Mjoin(PATL,scal)(N, inv, B, ldb);
+      }
+      #else
+         Mjoin(PATL,scal)(N, ATL_rone / *A, B, ldb);
+      #endif
+   #endif
+   return(0);
+}
 @ROUT ATL_utrsmR_alloc
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Rakib Hasan" -def contrib "R. Clint Whaley"
 void* Mjoin(PATL,utrsmR_alloc)
    (ipinfo_t *ip, int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w)
 {
@@ -9,18 +186,21 @@ void* Mjoin(PATL,utrsmR_alloc)
    void *vp;
    vp = malloc( ATL_MulBySize( N + (NUNU*mb*(mb+1)/2) + mb*MUNU + 2*MUNU )
                            + 4*ATL_Cachelen);
-   ATL_assert(vp);
-   *Diag = ATL_AlignPtr(vp);
-   *L = (*Diag) + (N SHIFT);
-   *L = ATL_AlignPtr(*L);
-   *R = (*L) + ((NUNU*mb*(mb+1)/2) SHIFT);
-   *R = ATL_AlignPtr(*R);
-   *w = (*R) + ((mb*MUNU) SHIFT);
-   *w = ATL_AlignPtr(*w);
+   if (vp)
+   {
+      *Diag = ATL_AlignPtr(vp);
+      *L = (*Diag) + (N SHIFT);
+      *L = ATL_AlignPtr(*L);
+      *R = (*L) + ((NUNU*mb*(mb+1)/2) SHIFT);
+      *R = ATL_AlignPtr(*R);
+      *w = (*R) + ((mb*MUNU) SHIFT);
+      *w = ATL_AlignPtr(*w);
+   }
    return(vp);
 }
    @endextract
 @ROUT ATL_utrsmL_alloc
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Rakib Hasan" -def contrib "R. Clint Whaley"
 #include "atlas_amm.h"
 void* Mjoin(PATL,utrsmL_alloc)
    (ipinfo_t*ip, int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w)
@@ -32,14 +212,16 @@ void* Mjoin(PATL,utrsmL_alloc)
    void *vp;
    vp = malloc( ATL_MulBySize( N + (MUMU*mb*(mb+1)/2) + mb*MUNU + 2*MUNU )
                            + 4*ATL_Cachelen);
-   ATL_assert(vp);
-   *Diag = ATL_AlignPtr(vp);
-   *L = (*Diag) + (N SHIFT);
-   *L = ATL_AlignPtr(*L);
-   *R = (*L) + ((MUMU*mb*(mb+1)/2) SHIFT);
-   *R = ATL_AlignPtr(*R);
-   *w = (*R) + ((mb*MUNU) SHIFT);
-   *w = ATL_AlignPtr(*w);
+   if (vp)
+   {
+      *Diag = ATL_AlignPtr(vp);
+      *L = (*Diag) + (N SHIFT);
+      *L = ATL_AlignPtr(*L);
+      *R = (*L) + ((MUMU*mb*(mb+1)/2) SHIFT);
+      *R = ATL_AlignPtr(*R);
+      *w = (*R) + ((mb*MUNU) SHIFT);
+      *w = ATL_AlignPtr(*w);
+   }
    return(vp);
 }
    @endextract
@@ -49,6 +231,7 @@ void* Mjoin(PATL,utrsmL_alloc)
    with new framework and to be separately compilable.
 @ENDSKIP
 @ROUT ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT ATL_utrsmR_LT_UN ATL_utrsmR_LN_UT
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Rakib Hasan" -def contrib "R. Clint Whaley"
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 @ROUT ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT `@define SD @L@`
