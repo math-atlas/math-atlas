@@ -38919,45 +38919,89 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
    fclose(fp);
 }
 
-void GenTrsmAllT(char pre, char *outd)
+void GetUnrolls(ATL_mmnode_t *mb, int *NMU, int **MUS, int *NNU, int **NUS)
 {
-   char fn[32], *of;
-   char sds[2] = {'L', 'R'};
-   int n, s, L;
-   strcpy(fn, "trsmS_LN.sum");
+   ATL_mmnode_t *mp;
+   int *mus, *nus, nmu=0, nnu=0;
+   int N;
+
+   N = ATL_CountNumberOfMMNodes(mb);
+   mus = malloc(2*N*sizeof(int));
+   assert(mus);
+   nus = mus + N;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      int i, U;
+      U = mp->mu;
+      for (i=0; i < nmu; i++)
+         if (mus[i] == U)
+            break;
+      if (i == nmu)
+         mus[nmu++] = U;
+      U = mp->nu;
+      for (i=0; i < nnu; i++)
+         if (nus[i] == U)
+            break;
+      if (i == nnu)
+         nus[nnu++] = U;
+   }
+   *NMU = nmu;
+   *NNU = nnu;
+   *MUS = malloc(nmu*sizeof(int));
+   assert(*MUS);
+   memcpy(*MUS, mus, nmu*sizeof(int));
+   *NUS = malloc(nnu*sizeof(int));
+   assert(*NUS);
+   memcpy(*NUS, nus, nnu*sizeof(int));
+   free(mus);
+}
+void GenTrsmALLT(char pre, char *outd, char sd, ATL_mmnode_t *mb)
+{
+   char *of;
+   FILE *fp;
+   ATL_mmnode_t *mp;
+   unsigned long long flg=0;
+   int k, L, n;
    L = strlen(outd) + 24;
    of = malloc(L);
    assert(of);
+
+   for (n=0, mp=mb; mp; n++, mp=mp->next)
+   {
+      if (mp->TA == AtlasTrans && mp->TB == AtlasTrans)
+         flg |= (1L<<n);
+   }
+   assert((sizeof(long)<<3) >= n);
+   k = sprintf(of, "%s/atlas_%ctrsm%cLN_ALLT.h", outd, pre, sd);
+   assert(k<L);
+   fp = fopen(of, "w");
+   assert(fp);
+   fprintf(fp, "#ifndef ATLAS_%cTRSM%cLN_ALLT_H\n", 
+           toupper(pre), toupper(sd));
+   fprintf(fp, "   #define ATLAS_%cTRSM%cLN_ALLT_H 1\n", 
+           toupper(pre), toupper(sd));
+   fprintf(fp, "   #define ATL_trsm_allT(i_) ((0x%lxL>>(i_))&1)\n", flg);
+   fprintf(fp, "#endif /* end multiple inclusion guard */\n");
+   fclose(fp);
+   free(of);
+}
+void GenAllTrsm(char pre, char *outd)
+{
+   int s;
+   char sds[2] = {'L', 'R'};
+   char fn[32];
+
+   strcpy(fn, "trsmS_LN.sum");
    for (s=0; s < 2; s++)
    {
-      FILE *fp;
-      ATL_mmnode_t *mb, *mp;
-      unsigned long long flg=0;
-      int k;
       char sd=sds[s];
+      ATL_mmnode_t *mb;
 
       fn[4] = sd;
       mb = ReadMMFileWithPath(pre, "res", fn);
-      assert(mb);
-      for (n=0, mp=mb; mp; n++, mp=mp->next)
-      {
-         if (mp->TA == AtlasTrans && mp->TB == AtlasTrans)
-            flg |= (1L<<n);
-      }
-      assert((sizeof(long)<<3) >= n);
-      k = sprintf(of, "%s/atlas_%ctrsm%cLN_ALLT.h", outd, pre, sd);
-      assert(k<L);
-      fp = fopen(of, "w");
-      assert(fp);
-      fprintf(fp, "#ifndef ATLAS_%cTRSM%cLN_ALLT_H\n", 
-              toupper(pre), toupper(sd));
-      fprintf(fp, "   #define ATLAS_%cTRSM%cLN_ALLT_H 1\n", 
-              toupper(pre), toupper(sd));
-      fprintf(fp, "   #define ATL_trsm_allT(i_) ((%lxL>>(i_))&1)\n", flg);
-      fprintf(fp, "#endif /* end multiple inclusion guard */\n");
-      fclose(fp);
+      GenTrsmALLT(pre, outd, sd, mb);
+      nkern = GetUnrolls(mb, &mus, &nus);
    }
-   free(of);
 }
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
                  ATL_cpnode_t *cb)
@@ -39012,7 +39056,7 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
    for (ib=0; ib < 3; ib++)
       PrintMMProtos(fpout, pre, "KERN", mb, iaut, bes[ib]);
    CloseGenHeader(fpout);
-   GenTrsmAllT(pre, outd);
+   GenAllTrsm(pre, outd);
    GenKerns(pre, outd, mb, bkb, cb);
    GenMake(pre, outd, mb, bkb, cb);
    GenKernArr(pre, outd, mb);
