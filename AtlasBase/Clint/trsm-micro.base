@@ -237,26 +237,6 @@ void* Mjoin(PATL,utrsmL_alloc)
 #include "atlas_amm.h"
 @ROUT ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT `@define SD @L@`
 @ROUT ATL_utrsmR_LT_UN ATL_utrsmR_LN_UT `@define SD @R@`
-/*
- * Nanokernels are generated into standard names, but with differing paths
- * based on unroll block size
- */
-#ifndef ATL_NONANO
-   #ifdef USE_TRANS
-      #include "atlas_ntrsm_cpCT.h"
-@skip      #include Mstr(Mjoin(ATLAS_PRE,ntrsm_cpCT.h))
-   #else
-@skip      #include Mstr(Mjoin(ATLAS_PRE,ntrsm_cpCN.h))
-      #include "atlas_ntrsm_cpCN.h"
-   #endif
-   #include Mstr(Mjoin(ATLAS_PRE,ntrsm@(SD).h))
-#endif
-@skip #include Mstr(Mjoin(ATLAS_PRE,trsmKL.h))
-@skip #include Mstr(Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(ATLAS_PRE,cpFromBlkC_),\
-@skip               ATL_MU),x),ATL_NU),_.h))
-@skip /* best with fully rolled kernel and no prefetch ins. */
-@skip int Mjoin(PATL,GetuTRSM@(SD)MU)() { return(ATL_MU); }
-@skip int Mjoin(PATL,GetuTRSM@(SD)NU)() { return(ATL_NU); }
 #ifdef Conj_
    #define IsConj 1
 #else
@@ -769,6 +749,7 @@ void Mjoin(PATL,utrsmLLC)
     ATL_CINT R, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
     TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
+   ATL_CSZT ainc = ip->incAm;
    cm2am_t l2a = ip->a2blk, r2a = ip->b2blk;
    ammkern_t amm_b0 = ip->amm_b0, amm_b1 = ip->amm_b1;
    #ifdef TCPLX
@@ -932,62 +913,6 @@ void Mjoin(PATL,utrsmRLC)
 }
 #endif
 
-@ROUT ATL_utrsmR_rh
-#ifdef NO_AMM_NAME
-   void Mjoin(PATL,trsm)
-      (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,   
-       const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag,
-       ATL_CINT N, ATL_CINT R, const SCALAR alpha,        
-       const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx)
-#else
-   int Mjoin(PATL,utrsmKR)
-      (const enum ATLAS_UPLO Uplo,   
-       const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag,
-       ATL_CINT N, ATL_CINT R, const SCALAR alpha,        
-       const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx)
-#endif
-{
-   const int UPPER = (Uplo == AtlasUpper);
-   void *vp;
-   TYPE *diag, *L, *RW, *w;
-   vp = GetWorkspaceR(R, &diag, &L, &RW, &w);
-   #ifndef NO_AMM_NAME
-      if (!vp) return(-1);
-   #endif
-   if (!UPPER)                   
-   {                                                                
-      if (TA == AtlasNoTrans)                                   
-         Mjoin(PATL,utrsmRLN)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-      else if (TA == AtlasTrans)
-         Mjoin(PATL,utrsmRLT)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-      #ifdef TCPLX
-         else /* (TA == AtlasConjTrans) */
-            Mjoin(PATL,utrsmRLC)(Diag, N, R, alpha, A, lda, X, ldx,
-                  diag, L, RW, w);
-      #endif
-   }
-   else
-   {
-      if (TA == AtlasNoTrans)
-         Mjoin(PATL,utrsmRUN)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-      else if (TA == AtlasTrans)
-         Mjoin(PATL,utrsmRUT)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-   #ifdef TCPLX
-      else /* (TA == AtlasConjTrans) */
-         Mjoin(PATL,utrsmRUC)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-   #endif
-   }
-   free(vp);
-   #ifndef NO_AMM_NAME
-      return(0);
-   #endif
-}
-@ROUT trsmsrch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
 #define ATL_WANT ILCM 1
 #include "atlas_iopt.h"
@@ -1383,6 +1308,387 @@ int main(int nargs, char **args)
    mb = getAllCandKerns(pre, flag);
    PrintMMNodes(stdout, mb);
    findBestTRSM(pre, flag, mb);
+   return(0);
+}
+@ROUT trsmgen
+/*
+ * Actually generates TRSM micro & nano kernels and their Makefile, and
+ * moves this to BLDdir/src/blas/ukernel/<pre>UTRSM
+ * Actual performance data is handled by views.
+ */
+#include "atlas_mmgen.h"
+#include "atlas_type.h"
+void GenTrsmALLT(char pre, FILE *fp, ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp;
+   unsigned long long flg=0;
+   int k, L, n;
+
+   for (n=0, mp=mb; mp; n++, mp=mp->next)
+   {
+      if (mp->TA == AtlasTrans && mp->TB == AtlasTrans)
+         flg |= (1L<<n);
+   }
+   assert(sizeof(long long) >= ATL_PSIZE);
+   assert((ATL_PSIZE<<3) >= n);
+   fprintf(fp, "   #define ATL_trsm_allT(i_) ((0x%lxL>>(i_))&1)\n", flg);
+}
+
+char *GetTrsmDecor(char pre, char sd, char up, char ta, ATL_mmnode_t *mp)
+{
+   static char fn[64];
+   char ALLT = (mp->TA == AtlasTrans && mp->TB == AtlasTrans) ? 'T':'N';
+   if (ALLT == 'T')
+      sprintf(fn, "%c_%c%c%ux%u%c", sd, up, ta, mp->nu, mp->mu, ALLT);
+   else
+      sprintf(fn, "%c_%c%c%ux%u%c", sd, up, ta, mp->mu, mp->nu, ALLT);
+   return(fn);
+}
+
+void genTrsmHead(char pre, char *outd, char sd, char up, char ta,
+                 ATL_mmnode_t *mb, ATL_mmnode_t *ub)
+{
+   char *of;
+   FILE *fp;
+   ATL_mmnode_t *mp;
+   int k, L, n, muoff, nuoff, nxtoff;
+   L = strlen(outd) + 24;
+   of = malloc(L);
+   assert(of);
+
+   k = sprintf(of, "%s/atlas_%cutrsm%c_%c%c.h", outd, pre, sd, up, ta);
+   assert(k<L);
+   fp = fopen(of, "w");
+   assert(fp);
+   fprintf(fp, "#ifndef ATLAS_%cTRSM%c_%c%c_H\n", 
+           toupper(pre), toupper(sd), toupper(up), toupper(ta));
+   fprintf(fp, "   #define ATLAS_%cTRSM%c_%c%c_H 1\n", 
+           toupper(pre), toupper(sd), toupper(up), toupper(ta));
+   GenTrsmALLT(pre, fp, mb);
+   #if 0
+   fprintf(fp, "#ifndef ATL_NOLOOKUP\n"
+   fprintf(fp, "void *findUtrsm(ATL_UINT idx, ATL_UINT mu, ATL_UINT nu)\n");
+   fprintf(fp, "{\n");
+   fprintf(fp, "   ATL_UINT ALLT\n")
+   fprintf(fp, "   void *vp=NULL;\n");
+   fprintf(fp, "\n");
+   fprintf(fp, "   ALLT = ATL_trsm_allT(idx);\n");
+   fprintf(fp, "   switch(mu)\n   {\n");
+   ub = CloneMMQueue(ub);
+   muoff = GetOffset(&ub->mu, ub);
+   nuoff = GetOffset(&ub->nu, ub);
+   nxtoff = GetOffset(&mb->next, mb);
+   ub = SortListByIVal_G2L(ub, nxtoff, muoff);
+   while(ub)
+   {
+      char *nm;
+      int mu=ub->mu, nu=ub->nu;
+      int n;
+      ATL_mmnode_t mub, *mp, *last;
+
+      fprintf(fp, "   case %u\n", mu);
+/*
+ *    Remove all identical mu kernels from queue
+ */
+      last = mub = ub;
+      for (n=0,mp=mub->next; mp && mp->mu == mu; mp = mp->next, n++)
+         last = mp;
+      ub = mp;
+      last->next = NULL;
+      ub = mp;
+      nm = GetTrsmDecor(pre, sd, up, ta, mub);
+      if (n == 1)
+         fprintf(fp, "      vp = ATL_%cutrsm%s;\n", pre, nm);
+      else if (n == 2)
+      {
+         fprintf(fp, "      vp = (nu == %u) ? ", nu);
+         fprintf(fp, "ATL_%cutrsm%s : ", pre, nm);
+         mub = KillMMNode(mub);
+         nm = GetTrsmDecor(pre, sd, up, ta, mub);
+         fprintf(fp, "ATL_%cutrsm%s;\n", pre, nm);
+      }
+      else
+      {
+         while(mub)
+         {
+            fprintf(fp, "      switch(nu)\n      {\n");
+            mub = KillMMNode(mub);
+            if (mub)
+               nm = GetTrsmDecor(pre, sd, up, ta, mub);
+            fprintf(fp, "      } /* end switch on nu */\n");
+         }
+      }
+      fprintf(fp, "      break;\n");
+   }
+   fprintf(fp, "   } /* end switch on mu */\n");
+   fprintf(fp, "}\n");
+   fprintf(fp, "#endif\n");
+   #endif
+
+   fprintf(fp, "\n#endif /* end multiple inclusion guard */\n");
+   fclose(fp);
+   free(of);
+}
+
+ATL_mmnode_t *getUniqueTrsmCases(char pre, ATL_mmnode_t *ub, ATL_mmnode_t *mb)
+/*
+ * Adds all cases of unique cases in mb to ub; mb nodes are cloned, so
+ * mb is unchanged.  ub is already assumed unique on entry, so it is only
+ * added to.
+ * RETURNS: possibly changed ub
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *p;
+      int mu=mp->mu, nu=mp->nu;
+      char ALLT=(mp->TA == AtlasTrans && mp->TB == AtlasTrans) ? 'T' : 'N';
+      assert(mp->TA == mp->TB);
+      for (p=ub; p; p = p->next)
+      {
+         int mu0=p->mu, nu0=p->nu;
+         char ALLT0=(p->TA == AtlasTrans && p->TB == AtlasTrans) ? 'T' : 'N';
+         if (mu0 == mu && nu0 == nu && ALLT0 == ALLT) /* already seen this */
+            break;                                    /* case so stop */
+      }
+      if (p == NULL)  /* this case not already in unique queueu */
+      {
+         p = CloneMMNode(mp);
+         p->next = ub;
+         ub = p;
+      }
+   }
+   return(ub);
+}
+
+ATL_mmnode_t *GenMicroTrsm(char pre, char *outd, char sd, char up, char ta,
+                           ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp, *ub;
+   int *mus, *nus;
+   char *fn;
+   int i, L;
+   int nmu, nnu;
+   char *ln;
+
+   L = strlen(outd) + 256;
+   ln = malloc(L);
+   assert(ln);
+   ub = getUniqueTrsmCases(pre, NULL, mb);
+   for (mp=ub; mp; mp = mp->next)
+   {
+      int mu=mp->mu, nu=mp->nu;
+      char ALLT=(mp->TA == AtlasTrans && mp->TB == AtlasTrans) ? 'T' : 'N';
+      assert(mu > 0 && nu > 0 && mu < 1000 && nu < 1000);
+      i = sprintf(ln, "make gen_utrsm tALL=%c mu=%u nu=%u sd=%c up=%c ta=%c"
+                  " cx=\"%s\" cnj=N rt=\"%s/ATL_utrsm%c_%c%c%ux%u%c.c\"", 
+                  ALLT, mu, nu, sd, up, ta, (pre == 'c' || pre == 'z')?"c":"",
+                  outd, sd, up, ta, mu, nu, ALLT);
+      assert(i < L);
+      assert(!Sys2File(ln, NULL));
+   }
+   free(ln);
+   return(ub);
+}
+
+void GenMakeTrsm(char pre, char *outd, char up, char *sds, char *tas, 
+                 ATL_mmnode_t **MBs)
+{
+   int k, i;
+   FILE *fp;
+   char *fn, *typ, *comp;
+
+   k = strlen(outd) + 10;
+   fn = malloc(k);
+   assert(fn);
+   i = sprintf(fn, "%s/Makefile", outd);
+   fp = fopen(fn, "w");
+   assert(fp);
+   free(fn);
+   fprintf(fp, "include ../Make.inc\n\n");
+
+   fprintf(fp, "lib : %clib.grd\n", pre);
+   fprintf(fp, "all : %clib.grd\n", pre);
+   fprintf(fp, "clean : %cclean\n\n", pre);
+
+   fprintf(fp, "obj = ");
+   if (pre == 'c' || pre == 's')
+      comp = "$(SKC)";
+   else
+      comp = "$(DKC)";
+   if (pre == 'z')
+      typ = "DCPLX";
+   else if (pre == 'c')
+      typ = "SCPLX";
+   else if (pre == 's')
+      typ = "SREAL";
+   else
+      typ = "DREAL";
+   for (k=0; k < 2; k++)
+   {
+      int s;
+      for (i=s=0; s < 2; s++)
+      {
+         char sd=sds[s];
+         int it;
+
+         for (it=0; it < 2; it++)
+         {
+            ATL_mmnode_t *mp;
+            char ta = tas[it];
+            const int NCNJ = (ta == 'T' && (pre == 'c' || pre == 'z')) ? 2:1;
+
+            for (mp=MBs[i++]; mp; mp=mp->next)
+            {
+               int c;
+               for (c=0; c < NCNJ; c++)
+               {
+                  char *nm;
+                  nm = GetTrsmDecor(pre, sd, up, ta, mp);
+                  if (c)
+                     nm[3] = 'H';
+                  if (!k)
+                     fprintf(fp, "\\\n      ATL_%cutrsm%s.o ", pre, nm);
+                  else
+                  {
+                     fprintf(fp, "ATL_%cutrsm%s.o : ", pre, nm);
+                     if (c)
+                        nm[3] = 'T';
+                     fprintf(fp, "ATL_utrsm%s.c $(deps)\n", nm);
+                     if (c)
+                        fprintf(fp, 
+                "\t%s $(%cKCFLAGS) -c -o $@ -D%s=1 -DConj_=1 ATL_utrsm%s.c\n",
+                           comp, pre, typ, nm);
+                     else
+                        fprintf(fp, 
+                           "\t%s $(%cKCFLAGS) -c -o $@ -D%s=1 ATL_utrsm%s.c\n", 
+                                comp, pre, typ, nm);
+                  }
+               }
+            }
+         }
+      }
+      if (!k)
+      {
+         fprintf(fp, "\n\n%clib : %clib.grd\n", pre, pre);
+         fprintf(fp, "%clib.grd : $(obj)\n", pre);
+         fprintf(fp, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)\n");
+         fprintf(fp, "\t$(RANLIB) $(ATLASlib)\n\ttouch %clib.grd\n\n", pre);
+      }
+   }
+   fclose(fp);
+}
+
+void GenAllTrsm(char pre, char *outd)
+{
+   int L, i, s;
+   char sds[2] = {'L', 'R'};
+   char tas[2] = {'N', 'T'};
+   char up='L';
+   char *od;
+   char fn[16];
+   ATL_mmnode_t *MBs[4];
+/*
+ * Delete and the re-create <pre>UTRSM subdir
+ */
+   L = strlen(outd) + 8 + 7;
+   od = malloc(L);
+   assert(od);
+   i = sprintf(od, "rm -rf %s/%cUTRSM", outd, pre);
+   assert(i < L);
+   Sys2File(od, NULL);
+   od[0]='m'; od[1]='k'; od[2]='d'; od[3]='i'; od[4]='r'; od[5]=' ';
+   assert(!Sys2File(od, NULL));
+   strcpy(fn, "trsmS_LN.sum");
+
+   for (i=s=0; s < 2; s++)
+   {
+      char sd=sds[s];
+      int it;
+
+      for (it=0; it < 2; it++)
+      {
+         char ta = tas[it];
+         ATL_mmnode_t *mb;
+         fn[4] = sd;
+         fn[7] = ta;
+         mb = ReadMMFileWithPath(pre, "res", fn);
+         MBs[i] = GenMicroTrsm(pre, od+7, sd, up, ta, mb);
+         genTrsmHead(pre, od+7, sd, 'L', ta, mb, MBs[i]);
+         KillAllMMNodes(mb);
+         i++;
+      }
+   }
+   GenMakeTrsm(pre, od+7, up, sds, tas, MBs);
+   for (i=0; i < 4; i++)
+      KillAllMMNodes(MBs[i]);
+   free(od);
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   fprintf(stderr,
+"This will create the <pre>UTRSM subdir in <outdir>, and populate it with\n"
+"all utrsm kernels and their Makefile.\n");
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr,"USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -o <path>: what directory to output all files to?\n");
+   fprintf(stderr, "   -p [s,d]: set type/precision prefix (d) \n"
+           "      s/d will generate for complex (c/z) as well\n");
+
+   exit(ierr ? ierr : -1);
+}
+
+char *GetFlags(int nargs, char **args, char *PRE)
+{
+   FILE *fpin=stdin;
+   ATL_mmnode_t *mb=NULL, *bkb=NULL, *mp;
+   char *outd=NULL;
+   int i;
+   char pre='d';
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'o':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         outd = DupString(args[i]);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!outd)
+      outd = DupString("tmp");
+
+   *PRE = pre;
+   return(outd);
+}
+
+int main(int nargs, char **args)
+{
+   char *outd;
+   char pre;
+   outd = GetFlags(nargs, args, &pre);
+   GenAllTrsm(pre, outd);
+   free(outd);
    return(0);
 }
 @ROUT !
