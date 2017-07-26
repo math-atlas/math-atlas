@@ -2472,6 +2472,7 @@ minsz=576
 CPM=C
 CNJ=
 SD=L
+cx=
 @BEGINSKIP
 RunMMDef : xmmsearch
 	./xmmsearch -p $(pre) -r $(nreg)
@@ -2737,6 +2738,37 @@ gen_amm_scalar : $(BINdir)/xextract force_build
 gen_ntrsm_cpC : $(BINdir)/xextract $(mySRCdir)/trsm-nano.base
 	$(extC) -b $(mySRCdir)/trsm-nano.base -o $(rt) rout=cpC \
            -def ta $(tALL) -def mu $(mu) -def nu $(nu)
+gen_ntrsmUU : $(BINdir)/xextract $(mySRCdir)/trsm-nano.base
+	rm -f $(ptmp) $(rt) ; touch $(rt)
+	if [ "X$(up)" = "XU" ] ; then \
+           echo "#define Upper_ 1" >> $(rt) ; \
+        fi
+	if [ "X$(cnj)" = "XC" ] ; then \
+           echo "#define Conj_ 1" >> $(rt) ; \
+        fi
+	if [ "X$(tALL)" = "XT" ] ; then \
+           echo "#define USE_TRANS 1" >> $(rt) ; \
+        fi  
+	make gen_ntrsm_cpC rt=$(ptmp) tALL=$(tALL) mu=$(mu) nu=$(nu) 
+	cat $(ptmp) >> $(rt) 
+	if [ "X$(sd)" = "XL" ] ; then \
+	   $(extC) -b $(mySRCdir)/trsm-nano.base \
+              rout=ATL_$(cx)ntrsm$(sd) -def sd $(sd) -def ta $(ta) \
+              -def up $(up) -def U $(mu) >> $(rt) ; \
+        else \
+	   $(extC) -b $(mySRCdir)/trsm-nano.base \
+              rout=ATL_$(cx)ntrsm$(sd) -def sd $(sd) -def ta $(ta) \
+              -def up $(up) -def U $(nu) >> $(rt) ; \
+        fi 
+gen_utrsm:
+	if [ "X$(tALL)" = "XT" ] ; then \
+           make gen_ntrsmUU rt=$(rt) tALL=T mu=$(nu) nu=$(mu) \
+                sd=$(sd) ta=$(ta) up=$(up) cnj=$(cnj) ; \
+        else \
+           make gen_ntrsmUU rt=$(rt) tALL=N mu=$(mu) nu=$(nu) \
+                sd=$(sd) ta=$(ta) up=$(up) cnj=$(cnj) ; \
+        fi
+	cat $(SRCdir)/src/blas/ulevel3/ATL_utrsm$(sd)_*$(up)$(ta)*.c >> $(rt)
 @define cx @@
 @whiledef cx c
 gen_@(cx)ntrsm : $(BINdir)/xextract $(mySRCdir)/trsm-nano.base
