@@ -1331,7 +1331,7 @@ void GenTrsmALLT(char pre, FILE *fp, ATL_mmnode_t *mb)
    }
    assert(sizeof(long long) >= ATL_PSIZE);
    assert((ATL_PSIZE<<3) >= n);
-   fprintf(fp, "   #define ATL_trsm_allT(i_) ((0x%lxL>>(i_))&1)\n", flg);
+   fprintf(fp, "#define ATL_trsm_allT(i_) ((0x%lxL>>(i_))&1)\n", flg);
 }
 
 char *GetTrsmDecor(char pre, char sd, char up, char ta, ATL_mmnode_t *mp)
@@ -1362,14 +1362,26 @@ void genTrsmHead(char pre, char *outd, char sd, char up, char ta,
    assert(fp);
    fprintf(fp, "#ifndef ATLAS_%cTRSM%c_%c%c_H\n", 
            toupper(pre), toupper(sd), toupper(up), toupper(ta));
-   fprintf(fp, "   #define ATLAS_%cTRSM%c_%c%c_H 1\n", 
+   fprintf(fp, "   #define ATLAS_%cTRSM%c_%c%c_H 1\n\n", 
            toupper(pre), toupper(sd), toupper(up), toupper(ta));
+
+   fprintf(fp, "#include \"atlas_amm.h\"\n");
    GenTrsmALLT(pre, fp, mb);
-   #if 0
-   fprintf(fp, "#ifndef ATL_NOLOOKUP\n"
+   fprintf(fp, "/*\n * TRSM microkernel prototypes\n */\n");
+   for (mp=ub; mp; mp = mp->next)
+   {
+      char *nm;
+      nm = GetTrsmDecor(pre, sd, up, ta, mp);
+      fprintf(fp, "void ATL_%cutrsm%s\n", pre, nm);
+      fprintf(fp, "   (ipinfo_t *ip, const enum ATLAS_DIAG Diag,\n"
+              "    ATL_CINT N, ATL_CINT R, const SCALAR alpha, const TYPE *A,"
+              " ATL_CINT lda,\n    TYPE *X, ATL_CINT ldx, TYPE *diag, "
+              "TYPE *L, TYPE *RW, TYPE *w);\n");
+   }
+   fprintf(fp, "\n#ifndef ATL_NOLOOKUP\n");
    fprintf(fp, "void *findUtrsm(ATL_UINT idx, ATL_UINT mu, ATL_UINT nu)\n");
    fprintf(fp, "{\n");
-   fprintf(fp, "   ATL_UINT ALLT\n")
+   fprintf(fp, "   ATL_UINT ALLT\n");
    fprintf(fp, "   void *vp=NULL;\n");
    fprintf(fp, "\n");
    fprintf(fp, "   ALLT = ATL_trsm_allT(idx);\n");
@@ -1378,15 +1390,15 @@ void genTrsmHead(char pre, char *outd, char sd, char up, char ta,
    muoff = GetOffset(&ub->mu, ub);
    nuoff = GetOffset(&ub->nu, ub);
    nxtoff = GetOffset(&mb->next, mb);
-   ub = SortListByIVal_G2L(ub, nxtoff, muoff);
+   ub = SortListByIval_G2L(ub, nxtoff, muoff);
    while(ub)
    {
       char *nm;
       int mu=ub->mu, nu=ub->nu;
       int n;
-      ATL_mmnode_t mub, *mp, *last;
+      ATL_mmnode_t *mub, *mp, *last;
 
-      fprintf(fp, "   case %u\n", mu);
+      fprintf(fp, "   case %u:\n", mu);
 /*
  *    Remove all identical mu kernels from queue
  */
@@ -1395,35 +1407,72 @@ void genTrsmHead(char pre, char *outd, char sd, char up, char ta,
          last = mp;
       ub = mp;
       last->next = NULL;
-      ub = mp;
-      nm = GetTrsmDecor(pre, sd, up, ta, mub);
-      if (n == 1)
-         fprintf(fp, "      vp = ATL_%cutrsm%s;\n", pre, nm);
-      else if (n == 2)
+/*
+ *    Find if there's another utrsm with same mu & nu, then one must be
+ *    using transpose case while other does not
+ */
+      mp = FindNodeWithIval(mub->next, nxtoff, nuoff, mub->nu);
+      if (mp)
       {
-         fprintf(fp, "      vp = (nu == %u) ? ", nu);
-         fprintf(fp, "ATL_%cutrsm%s : ", pre, nm);
+         mub = RemoveNodeFromList(mub, mp, nxtoff);
+         n--;
+      }
+      nm = GetTrsmDecor(pre, sd, up, ta, mub);
+      if (n == 1)  /* is there only 1 kernel with this mu? */
+      {
+         if (mp)
+         {
+            int ALLT = (mub->TA == AtlasTrans && mub->TB == AtlasTrans);
+            fprintf(fp, "         vp = (%s) ? ATL_%cutrsm%s :",
+                    ALLT ? "ALLT":"!ALLT", pre, nm);
+            nm = GetTrsmDecor(pre, sd, up, ta, mp);
+            fprintf(fp, " ATL_%cutrsm%s;\n", pre, nm);
+            KillMMNode(mp);
+         }
+         else
+            fprintf(fp, "         vp = ATL_%cutrsm%s;\n", pre, nm);
          mub = KillMMNode(mub);
-         nm = GetTrsmDecor(pre, sd, up, ta, mub);
-         fprintf(fp, "ATL_%cutrsm%s;\n", pre, nm);
       }
       else
       {
          while(mub)
          {
-            fprintf(fp, "      switch(nu)\n      {\n");
+            n = CountListEntries(mub, nxtoff);
+            if (n > 1)
+            {
+               fprintf(fp, "      switch(nu)\n      {\n");
+               fprintf(fp, "      case %u:\n", mub->nu);
+            }
+            if (mp)
+            {
+               int ALLT = (mub->TA == AtlasTrans && mub->TB == AtlasTrans);
+               fprintf(fp, "         vp = (%s) ? ATL_%cutrsm%s :",
+                       ALLT ? "ALLT":"!ALLT", pre, nm);
+               nm = GetTrsmDecor(pre, sd, up, ta, mp);
+               fprintf(fp, " ATL_%cutrsm%s;\n", pre, nm);
+               KillMMNode(mp);
+            }
+            else
+               fprintf(fp, "         vp = ATL_%cutrsm%s;\n", pre, nm);
+            if (n > 1)
+               fprintf(fp,    "         break;\n");
             mub = KillMMNode(mub);
             if (mub)
+            {
                nm = GetTrsmDecor(pre, sd, up, ta, mub);
-            fprintf(fp, "      } /* end switch on nu */\n");
+               mp = FindNodeWithIval(mub->next, nxtoff, nuoff, mub->nu);
+               if (mp)
+                  mub = RemoveNodeFromList(mub, mp, nxtoff);
+            }
+            if (n > 1)
+               fprintf(fp, "      } /* end switch on nu */\n");
          }
       }
       fprintf(fp, "      break;\n");
    }
    fprintf(fp, "   } /* end switch on mu */\n");
-   fprintf(fp, "}\n");
-   fprintf(fp, "#endif\n");
-   #endif
+   fprintf(fp, "} /* end findUtrsm */\n");
+   fprintf(fp, "#endif /* end no-lookup guard */\n");
 
    fprintf(fp, "\n#endif /* end multiple inclusion guard */\n");
    fclose(fp);
