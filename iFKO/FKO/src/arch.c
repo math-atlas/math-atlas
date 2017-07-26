@@ -129,8 +129,12 @@ int RevealArchMemUses(void)
             j = ireg2type(-ip->inst[1]);
             ir = GetReg(j);
             while(ir == -ip->inst[1] || ir == -ip->inst[2])
+            {
                ir = GetReg(j);
+            }
          }
+         else continue;
+         
          /*if (ip->inst[3] >= 0)*/
          switch(inst)
          {

@@ -1337,10 +1337,19 @@ struct assmln *lil2ass(BBLOCK *bbase)
 
       #endif
          break;
+/*
+ *    NOTE: this inst helps us to convert 32 bit to 64 bit in XMM/YMM register
+ */
+#if 0
+      case VCVTSI2: /* convert 2 pack 32 bit to 64 bit (sign extend) in xmm */
+         /* implement it using : PMOVSXDQ, VPMOVSXDQ */
+         assert(0);
+         break;
       case CVTIS:
          ap->next = PrintAssln("movl\t%s,%s\n", archiregs[-IREGBEG-op2],
                                archsregs[-IREGBEG-op1]);
          break;
+#endif
    #endif
 /*
  * These are x86-only instructions to handle SSE-to-icc conversions
@@ -2088,10 +2097,27 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                         archdregs[-DREGBEG-op2],
 	                                archdregs[-DREGBEG-op1]);
                else
+               {
+/*
+ *                FIXME: assert (op3 >= VDREGBEG && op3 < VDREGBEG)  
+ */
+               #if 1
+                  op3 = -op3;
+                  assert (op3 >= VDREGBEG && op3 < VDREGEND);  
+                  op3 = -op3;
+               #else
+                  { 
+                     op3 = -op3;
+                     if (op3 >= DREGBEG && op3 < DREGEND)
+                        op3 = op3 - DREGBEG + VDREGBEG;
+                     op3= -op3;
+                  }
+               #endif
                   ap->next = PrintAssln("\tvandpd\t%s,%s,%s\n",
                                         archvdregs[-VDREGBEG-op3],
                                         archdregs[-DREGBEG-op2],
 	                                archdregs[-DREGBEG-op1]);
+               }
             #else
                assert(op1==op2);
                if (op3 >= 0)
@@ -5060,7 +5086,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tvmovmskps\t%s,%s\n",
                                    archvfregs[-VFREGBEG-op2],
                                    archiregs[-IREGBEG-op1]);    
-         # else
+         #else
             ap->next = PrintAssln("\tmovmskps\t%s,%s\n",
                                    archvfregs[-VFREGBEG-op2],
                                    archiregs[-IREGBEG-op1]);
@@ -5094,6 +5120,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
  */
 /* NOTE: affectively VSMOV and VIMOV are same as they mov the whole vector
  * I use VMOV for that
+ * FIXME: should not support short int in X8632... all integer regs are 32bit
+ * in X8632 in FKO
  */        
       /*case VSMOV: case VIMOV:*/
    case VMOV:
@@ -5111,6 +5139,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
+#ifdef X86_64
    case VSMOVS: /* 32 bit int */
 /*
  *       Allow vector-to-fp regs for reg asg opt
@@ -5130,25 +5159,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
             op1 = -op1;
             op2 = -op2;
             #ifdef AVX
-               #ifdef X86_64
-                  ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
+               ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
                                         archsregs[-IREGBEG-op2],
                                         archxmmregs[-VIREGBEG-op1]);
-               #else
-                  ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
-                                        archiregs[-IREGBEG-op2],
-                                        archxmmregs[-VIREGBEG-op1]);
-               #endif
             #else
-               #ifdef X86_64
-                  ap->next = PrintAssln("\tmovd\t%s, %s\n", 
-                                        archsregs[-IREGBEG-op2],
-                                        archviregs[-VIREGBEG-op1]);
-               #else
-                  ap->next = PrintAssln("\tmovd\t%s, %s\n", 
+               ap->next = PrintAssln("\tmovd\t%s, %s\n", 
                                      archiregs[-IREGBEG-op2],
                                      archviregs[-VIREGBEG-op1]);
-               #endif
             #endif
          }
 /*
@@ -5184,72 +5201,11 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #endif
          #endif
          }
-#if 0
-         assert (op1 < 0 && op2 < 0);
-         op1 = -op1;
-         op2 = -op2;
-         if ( (op1 >= IREGBEG && op1 < IREGEND) 
-               && (op2 >= VIREGBEG && op2 < VIREGEND) ) /* vireg to ireg */
-         {
-            op1 = -op1;
-            op2 = -op2;
-         #ifdef AVX
-            #if X86_64
-            assert((-op1) <= (IREGBEG+NSR));
-            ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
-                                  archxmmregs[-VIREGBEG-op2],
-                                  archsregs[-IREGBEG-op1]);
-            #else
-            ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
-                                  archxmmregs[-VIREGBEG-op2],
-                                  archiregs[-IREGBEG-op1]);
-            #endif
-         #else
-            #ifdef X86_64
-            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
-                                  archviregs[-VIREGBEG-op2],
-                                  archsregs[-IREGBEG-op1]);
-            #else
-            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
-                                  archviregs[-VIREGBEG-op2],
-                                  archiregs[-IREGBEG-op1]);
-            #endif
-         #endif
-         }
-         else if ( (op1 >= VIREGBEG && op1 < VIREGEND) 
-               && (op2 >= IREGBEG && op2 < IREGEND) ) /* ireg to vireg, why? */
-         {
-            op1 = -op1;
-            op2 = -op2;
-         #ifdef AVX
-            #ifdef X86_64
-            ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
-                                  archsregs[-IREGBEG-op2],
-                                  archxmmregs[-VIREGBEG-op1]);
-            #else
-            ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
-                                  archiregs[-IREGBEG-op2],
-                                  archxmmregs[-VIREGBEG-op1]);
-            #endif
-         #else
-            #ifdef X86_64
-            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
-                                  archsregs[-IREGBEG-op2],
-                                  archviregs[-VIREGBEG-op1]);
-            #else
-            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
-                                  archiregs[-IREGBEG-op2],
-                                  archviregs[-VIREGBEG-op1]);
-            #endif
-         #endif
-         }
-         else 
-            fko_error(__LINE__, "Undefined operands for VMOVS inst!!\n");
-
-#endif         
          break;
+#endif
    case VIMOVS:
 /*
+ *       NOTE: X8664 ---> 64 bit int, but X8632 ---> 32 bit int
  *       Allow scalar to vector register move 
  *       two variation of these inst
  * 1. VIMOVS vr0, sr, vr1  // vr0[0] = vr2[0], vr0[vlen-1: 1] = vr1[vlen-1: 1]
@@ -5269,8 +5225,20 @@ struct assmln *lil2ass(BBLOCK *bbase)
          
             op1 = -op1;
             op2 = -op2;
+         #ifdef X86_64
             #ifdef AVX
                ap->next = PrintAssln("\tvmovq\t%s, %s\n", 
+                                     archiregs[-IREGBEG-op2],
+                                     archxmmregs[-VIREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tmovq\t%s, %s\n", 
+                                     archiregs[-IREGBEG-op2],
+                                     archviregs[-VIREGBEG-op1]);
+            #endif
+         #endif
+         #ifdef X86_32
+            #ifdef AVX
+               ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
                                      archiregs[-IREGBEG-op2],
                                      archxmmregs[-VIREGBEG-op1]);
             #else
@@ -5278,6 +5246,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archiregs[-IREGBEG-op2],
                                      archviregs[-VIREGBEG-op1]);
             #endif
+         #endif
          }
 /*
  *       vr-to-sr: VFMOVS sr, vr0, 0
@@ -5289,6 +5258,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          
             op1 = -op1;
             op2 = -op2;
+         #ifdef X86_64
             #ifdef AVX
                ap->next = PrintAssln("\tvmovq\t%s, %s\n", 
                                      archxmmregs[-VIREGBEG-op2],
@@ -5298,44 +5268,19 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archviregs[-VIREGBEG-op2],
                                      archiregs[-IREGBEG-op1]);
             #endif
-         }
-#if 0         
-         assert (op1 < 0 && op2 < 0);
-         op1 = -op1;
-         op2 = -op2;
-         if ( (op1 >= IREGBEG && op1 < IREGEND) 
-               && (op2 >= VIREGBEG && op2 < VIREGEND) ) /* vireg to ireg */
-         {
-            op1 = -op1;
-            op2 = -op2;
-         #ifdef AVX
-            ap->next = PrintAssln("\tvmovq\t%s, %s\n", 
-                                  archxmmregs[-VIREGBEG-op2],
-                                  archiregs[-IREGBEG-op1]);
-         #else
-            ap->next = PrintAssln("\tmovq\t%s, %s\n", 
-                                  archviregs[-VIREGBEG-op2],
-                                  archiregs[-IREGBEG-op1]);
+         #endif
+         #ifdef X86_32
+            #ifdef AVX
+               ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
+                                     archxmmregs[-VIREGBEG-op2],
+                                     archiregs[-IREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tmovd\t%s, %s\n", 
+                                     archviregs[-VIREGBEG-op2],
+                                     archiregs[-IREGBEG-op1]);
+            #endif
          #endif
          }
-         else if ( (op1 >= VIREGBEG && op1 < VIREGEND) 
-               && (op2 >= IREGBEG && op2 < IREGEND) ) /* ireg to vireg */
-         {
-            op1 = -op1;
-            op2 = -op2;
-         #ifdef AVX
-            ap->next = PrintAssln("\tvmovq\t%s, %s\n", 
-                                  archiregs[-IREGBEG-op2],
-                                  archxmmregs[-VIREGBEG-op1]);
-         #else
-            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
-                                  archiregs[-IREGBEG-op2],
-                                  archviregs[-VIREGBEG-op1]);
-         #endif
-         }
-         else 
-            fko_error(__LINE__, "Undefined operands for VMOVS inst!!\n");
-#endif
          break;
 /*
  * VSLD and VILD affectively same for avx2. so, we use one instruction
@@ -5363,6 +5308,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
+#ifdef X86_64
    case VSLDS:
          assert(op1 < 0 && op2 >= 0);
          #ifdef AVX
@@ -5373,8 +5319,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
+#endif
    case VILDS:
          assert(op1 < 0 && op2 >= 0);
+      #ifdef X86_64 
          #ifdef AVX
             ap->next = PrintAssln("\tvmovq\t%s, %s\n", GetDeref(op2),
                                   archxmmregs[-VIREGBEG-op1]); 
@@ -5382,6 +5330,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tmovq\t%s, %s\n", GetDeref(op2),
                                   archviregs[-VIREGBEG-op1]);
          #endif
+      #else /* X86_32*/
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovd\t%s, %s\n", GetDeref(op2),
+                                  archxmmregs[-VIREGBEG-op1]); 
+         #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n", GetDeref(op2),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+      #endif
          break;
    /*case VSST: case VIST:*/
    case VST:
@@ -5404,6 +5361,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                   archviregs[-VIREGBEG-op2], GetDeref(op1) );
          #endif
          break;
+#ifdef X86_64
    case VSSTS:
          assert(op2 < 0 && op1 >= 0);
          #ifdef AVX
@@ -5414,8 +5372,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
                   archviregs[-VIREGBEG-op2], GetDeref(op1) );
          #endif
          break;
+#endif
    case VISTS:
          assert(op2 < 0 && op1 >= 0);
+      #ifdef X86_64
          #ifdef AVX
             ap->next = PrintAssln("\tvmovq\t%s, %s\n",
                   archxmmregs[-VIREGBEG-op2], GetDeref(op1)); 
@@ -5423,6 +5383,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tmovq\t%s, %s\n",
                   archviregs[-VIREGBEG-op2], GetDeref(op1) );
          #endif
+      #else /* X86_32 */
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovd\t%s, %s\n",
+                  archxmmregs[-VIREGBEG-op2], GetDeref(op1)); 
+         #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n",
+                  archviregs[-VIREGBEG-op2], GetDeref(op1) );
+         #endif
+      #endif
          break;
    case VSZERO : case VIZERO:
 /*
@@ -5449,6 +5418,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif   
          break;
+#ifdef X86_64
    case VSADD:
 /*
  *       Note: need to use AVX2 for this functionality to operate on 256 bit 
@@ -5466,6 +5436,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
+#endif
    case VIADD:
 /*
  *       Note: need to use AVX2 for this functionality to operate on 256 bit 
@@ -5473,16 +5444,29 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #if defined(AVX) && !defined(AVX2)
             fko_error(__LINE__, "vadd is not supported in AVX, AVX2 needed!!\n"); 
          #elif defined (AVX2)
-            ap->next = PrintAssln("\tvpaddq\t%s,%s,%s\n", 
-                                  GetDregOrDeref(op3),
-                                  archviregs[-VIREGBEG-op2], 
-                                  archviregs[-VIREGBEG-op1]); 
+            #ifdef X86_64
+               ap->next = PrintAssln("\tvpaddq\t%s,%s,%s\n", 
+                                     GetDregOrDeref(op3), /* dreg??? */
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]); 
+            #else
+               ap->next = PrintAssln("\tvpaddd\t%s,%s,%s\n", 
+                                     GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]); 
+            #endif
          #else
             assert(op1 == op2);
-            ap->next = PrintAssln("\tpaddq\t%s, %s\n", GetDregOrDeref(op3),
-                                  archviregs[-VIREGBEG-op1]);
+            #ifdef X8_64
+               ap->next = PrintAssln("\tpaddq\t%s, %s\n", GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tpaddd\t%s, %s\n", GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op1]);
+            #endif
          #endif
          break;
+#ifdef X86_64
    case VSSUB:
 /*
  *       Note: need to use AVX2 for this functionality to operate on 256 bit 
@@ -5500,6 +5484,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
+#endif
    case VISUB:
 /*
  *       Note: need to use AVX2 for this functionality to operate on 256 bit 
@@ -5507,16 +5492,29 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #if defined(AVX) && !defined(AVX2)
             fko_error(__LINE__, "vsub is not supported in AVX, AVX2 needed!!\n"); 
          #elif defined (AVX2)
-            ap->next = PrintAssln("\tvpsubq\t%s,%s,%s\n", 
-                                  GetDregOrDeref(op3),
-                                  archviregs[-VIREGBEG-op2], 
-                                  archviregs[-VIREGBEG-op1]); 
+            #ifdef X86_64
+               ap->next = PrintAssln("\tvpsubq\t%s,%s,%s\n", 
+                                     GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]); 
+            #else
+               ap->next = PrintAssln("\tvpsubd\t%s,%s,%s\n", 
+                                     GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]); 
+            #endif
          #else
             assert(op1 == op2);
-            ap->next = PrintAssln("\tpsubq\t%s, %s\n", GetDregOrDeref(op3),
+            #ifdef X86_64
+               ap->next = PrintAssln("\tpsubq\t%s, %s\n", GetDregOrDeref(op3),
                                   archviregs[-VIREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tpsubd\t%s, %s\n", GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op1]);
+            #endif
          #endif
          break;
+#ifdef X86_64
    case VSMAX: /* signed max */
 /*
  *       condidering max on packed signed integers 
@@ -5534,9 +5532,24 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
+#endif
    case VIMAX: /*???? AVX2 doesn't have max inst for 64bit?????? */
-         assert(0);
+         #ifdef X86_64
+            fko_error(__LINE__, "Even AVX2 does not support max for 64 bit");
+         #else /* X86_32 */
+            #if defined (AVX2)
+               ap->next = PrintAssln("\tvpmaxsd\t%s,%s,%s\n", 
+                                     GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]); 
+            #else
+               assert(op1 == op2);
+               ap->next = PrintAssln("\tpmaxsd\t%s, %s\n", GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op1]);
+            #endif
+         #endif
          break;
+#ifdef X86_64
    case VSMIN:
 /*
  *       condidering max on packed signed integers 
@@ -5554,9 +5567,24 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
+#endif
    case VIMIN: /*???? AVX2 doesn't have max inst for 64bit?????? */
-         assert(0);
+         #ifdef X86_64
+            fko_error(__LINE__, "Even AVX2 does not support max for 64 bit");
+         #else /* X86_32 */
+            #if defined (AVX2)
+               ap->next = PrintAssln("\tvpminsd\t%s,%s,%s\n", 
+                                     GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]); 
+            #else
+               assert(op1 == op2);
+               ap->next = PrintAssln("\tpminsd\t%s, %s\n", GetDregOrDeref(op3),
+                                     archviregs[-VIREGBEG-op1]);
+            #endif
+         #endif
          break;
+#ifdef X86_64
    case VSSHUF:
 /*
  *       Need to implement following options:
@@ -5647,9 +5675,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
             fko_error(__LINE__, "Not implemented VISHUF for SSE yet");
          #endif
          break;
-      
+#endif
       case VISHUF:
          cp = imap2cmap(SToff[op3-1].i);
+      #ifdef X86_64   
          #if defined(AVX) && !defined(AVX2)
             fko_error(__LINE__, "AVX2 is needed !!!\n"); 
 /*
@@ -5714,6 +5743,95 @@ struct assmln *lil2ass(BBLOCK *bbase)
                fko_error(__LINE__, "No such shuffle inst, imap=%d,%d,%d,%d!\n",
                          cp[0], cp[1], cp[2], cp[3]);
          #endif
+      #else /* X86_32 */
+/*
+ *       Need to implement following options:
+ *       
+ *          AVX: 0, 7654FEDC, 765432BA/7654BABA, 76CD3289/7654BA99, B3A29180, 
+ *          SSE: 0, 3276, 5555, 5140
+ *          FIXME
+ */
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, 
+                      "vishuf is not implemented in AVX. AVX2 needed!\n"); 
+         
+         #elif defined(AVX2)   
+            if (!SToff[op3-1].i)
+            {
+               assert(op1==op2);
+               ap->next = PrintAssln("\tvperm2i128\t$%d,%s,%s,%s\n", 0,
+                                     archviregs[-VIREGBEG-op1], 
+                                     archviregs[-VIREGBEG-op1], 
+                                     archviregs[-VIREGBEG-op1]);
+               ap=ap->next;
+                  ap->next = PrintAssln("\tvpshufd\t$%d,%s,%s\n", 0,
+                                        archviregs[-VIREGBEG-op1], 
+                                        archviregs[-VIREGBEG-op1]);
+            }
+/*
+ *          0x7654 FEDC
+ *          0x7654 BABA
+ *          0x7654 BA99
+ */
+            else if(cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4)    
+            {
+               if (cp[3] == 15 && cp[2] == 14 && cp[1] == 13 && cp[0] == 12)
+               {
+                  ap->next = PrintAssln("\tvperm2i128\t$0x31,%s,%s,%s\n",
+                                        archviregs[-VIREGBEG-op1], /* src2*/ 
+                                        archviregs[-VIREGBEG-op2], 
+                                        archviregs[-VIREGBEG-op1]);
+               }
+               else if (cp[3] == 11 && cp[2] == 10 && cp[1] == 11 && cp[0] == 10)
+               {
+                  ap->next = PrintAssln("\tpshufd\t$%d,%s,%s\n", 0xEE,
+                                        archxmmregs[-VIREGBEG-op2], 
+                                        archxmmregs[-VIREGBEG-op1]);
+               }
+               else if (cp[3] == 11 && cp[2] == 10 && cp[1] == 9 && cp[0] == 9)
+               {
+                  ap->next = PrintAssln("\tpshufd\t$%d,%s,%s\n", 0xE5,
+                                        archxmmregs[-VIREGBEG-op2], 
+                                        archxmmregs[-VIREGBEG-op1]);
+               }
+               else
+                fko_error(__LINE__, "Not implemented this VISHUF yet");
+            }
+/*
+ *          0xBA98 3210
+ *          0xD5C4 9180
+ */
+            else if(cp[7] == 11 && cp[6] == 10 && cp[5] == 9 && cp[4] == 8)    
+            {
+               if (cp[3] == 3 && cp[2] == 2 && cp[1] == 1 && cp[0] == 0)
+               {
+                  ap->next = PrintAssln("\tvperm2i128\t$0x20,%s,%s,%s\n",
+                                        archviregs[-VIREGBEG-op2], /*src2==dest*/ 
+                                        archviregs[-VIREGBEG-op1], 
+                                        archviregs[-VIREGBEG-op1]);
+               }
+            }
+            else if(cp[7] == 13 && cp[6] == 5 && cp[5] == 12 && cp[4] == 4)    
+            {
+               if (cp[3] == 9 && cp[2] == 1 && cp[1] == 8 && cp[0] == 0)
+               {
+                  ap->next = PrintAssln("\tvpunpckldq\t%s,%s,%s\n",
+                                        archviregs[-VIREGBEG-op2], /* src2*/ 
+                                        archviregs[-VIREGBEG-op1], 
+                                        archviregs[-VIREGBEG-op1]);
+               }
+            }
+            else
+            fko_error(__LINE__, "Not implemented this vishuf yet!\n"); 
+
+         #else
+/*
+ *       SSE: 0, 3276, 5555, 5140
+ *       NOTE: not implemented for SSE... need to explore later
+ */
+            fko_error(__LINE__, "Not implemented VISHUF for SSE yet");
+         #endif
+      #endif
          break;
 /*
  *    special instruction to set conditional codes in X86
@@ -5838,10 +5956,17 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
 
       case VICMPWGT:
+         #ifdef X86_64
             ap->next = PrintAssln("\tvpcmpgtq\t%s,%s,%s\n", 
 	                          archviregs[-VIREGBEG-op3],
                                   archviregs[-VIREGBEG-op2],
 	                          archviregs[-VIREGBEG-op1]); 
+         #else /* X86_32*/
+            ap->next = PrintAssln("\tvpcmpgtd\t%s,%s,%s\n", 
+	                          archviregs[-VIREGBEG-op3],
+                                  archviregs[-VIREGBEG-op2],
+	                          archviregs[-VIREGBEG-op1]); 
+         #endif
          break;
 #endif         
 

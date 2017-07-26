@@ -3322,6 +3322,15 @@ int DoEnforceLoadStore(BLIST *scope)
                else if (inst == FNEGD)
                   ip->inst[3] = op = SToff[DTnzerod-1].sa[2];
                }
+            #else
+/*
+ *             FIXME: disable this for hybrid ABS/NEG for now. Need to handle 
+ *             with special case, since they are hybrid now, dest reg 
+ *             is not same with src regs!
+ */
+               if (inst == VFSABS || inst == VDSABS || inst == VFSNEG || 
+                     inst == VDSNEG )
+                  continue;
             #endif
             if (!op)
             {
