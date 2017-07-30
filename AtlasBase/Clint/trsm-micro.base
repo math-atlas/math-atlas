@@ -52,7 +52,7 @@
 #endif
 #undef ATL_DECL_
 int ATL_sminfo
-   (sminfo_t *ip, const enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT R, 
+   (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
     const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb)
 {
    int iv=ATL_VIEW_BEST_IDX, imm, icpA, icpB, icpC, k;
@@ -78,17 +78,11 @@ int ATL_sminfo
       if (N > nb && iv < ATL_VIEW_BEST_IDX)
          iv++;
    }
-   ip->bv = BV;
    ALLT = ATL_trsm_allT(iv);
-   ip->bv |= ALLT<<4;
-   #ifdef TCPLX
-      if (TA == AtlasConjTrans)
-         ip->bv |= 8;
-   #endif
+   ip->bv = (ALLT<<5) | bv;
    ATL_GetViewInfo(iv, spf, k, ip->rb, ip->kb, imm, icpA, icpB, k,k,k,k);
    icpA += icpA;
    icpB += icpB;
-   ip->incA = INCA SHIFT;
    #ifdef TCPLX
       ATL_AMM_info(imm, &ip->amm_b0, &ip->amm_b1, &ip->amm_bn, ip->mmflg,
                    ip->mu, ip->nu, ip->ku, k, k, k, k);
@@ -114,22 +108,48 @@ int ATL_sminfo
    #else /* Left */
       *cp = (ALLT) ? ATL_CpyFromANg_a1[icpA]:ATL_CpyFromANg_a1[icpB];
       cp = (ATL_cparr_t *)&(ip->a2blk);
-      #ifdef Trans_
-         ip->incA = 1 SHIFT;
-         #ifdef TCPLX
-            if (TA == AtlasConjTrans)
-              *cp  = (ALLT)?ATL_CpyFromANg_aN[icpB]:ATL_CpyFromANg_aN[icpA];
-            else
-         #endif
-         *cp = (ALLT) ? ATL_CpyFromANg_aN[icpB]:ATL_CpyFromANg_aN[icpA];
-      #else
-         ip->incA = lda SHIFT;
-         #ifdef TCPLX
-            if (TA == AtlasConjTrans)
-              *cp  = (ALLT)?ATL_CpyFromATg_aN[icpB]:ATL_CpyFromATg_aN[icpA];
-            else
-         #endif
-         *cp = (ALLT) ? ATL_CpyFromATg_aN[icpB]:ATL_CpyFromATg_aN[icpA];
+      #ifdef Trans_  /* LT or UN case */
+         if (bv&2) /* UN case */
+         {
+            ip->incA = lda SHIFT;
+            #ifdef TCPLX
+               if ((bv&8))  /* UC case! */
+                  *cp  = (ALLT)?ATL_CpyFromAHg_aN[icpB]:ATL_CpyFromAHg_aN[icpA];
+               else
+            #endif
+            *cp = (ALLT) ? ATL_CpyFromATg_aN[icpB]:ATL_CpyFromATg_aN[icpA];
+         }
+         else      /* LT case */
+         {
+            ip->incA = 1 SHIFT;
+            #ifdef TCPLX
+               if ((bv&12)==12) /* LH case! */
+                  *cp  = (ALLT)?ATL_CpyFromACg_aN[icpB]:ATL_CpyFromACg_aN[icpA];
+               else
+            #endif
+            *cp = (ALLT) ? ATL_CpyFromANg_aN[icpB]:ATL_CpyFromANg_aN[icpA];
+         }
+      #else /* LN or UT case, these cases use incA backwards (negative) */
+         if (bv&2)  /* UT case */
+         {
+            ip->incA = 1 SHIFT;  
+            #ifdef TCPLX
+               if (bv&8) /* UH case! */
+                  *cp  = (ALLT)?ATL_CpyFromACg_aN[icpB]:ATL_CpyFromACg_aN[icpA];
+               else
+            #endif
+            *cp = (ALLT) ? ATL_CpyFromANg_aN[icpB]:ATL_CpyFromANg_aN[icpA];
+         }
+         else /* LN case */
+         {
+            ip->incA = lda SHIFT;
+            #ifdef TCPLX
+               if (bv&8) /* LC case! */
+                  *cp  = (ALLT)?ATL_CpyFromAHg_aN[icpB]:ATL_CpyFromAHg_aN[icpA];
+               else
+            #endif
+            *cp = (ALLT) ? ATL_CpyFromATg_aN[icpB]:ATL_CpyFromATg_aN[icpA];
+         }
       #endif
    #endif
    return(iv);
@@ -251,7 +271,7 @@ void Mjoin(PATL,trsm)
          incC = lda SHIFT;
       }
       d = trsm_recL_LN_UT(bv, M, N, alpha, A, lda, incR, incC, B, ldb);
-      printf("Solved with %u recusive calls.\n", d);
+      printf("Solved with %u recursive calls.\n", d);
    }
 /*
  * RIGHT: X * op( A ) = alpha * B, A is NxN, X is NxM, B, is NxM
@@ -277,7 +297,7 @@ int Mjoin(PATL,trsmL_IP)
    ATL_CSZT               ldb
 )
 {
-#if 1
+#if 0
 #ifdef DEBUG
 printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&1)?'U':'L', 
        (bv&2)?'T':'N', (bv&8)?'N':'U', alpha);
@@ -301,7 +321,7 @@ printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&1)?'U':'L',
    #endif
    else if (!SCALAR_IS_ONE(alpha))
       Mjoin(PATL,scal)(N, alpha, B, ldb);
-#elif 1
+#elif 0
    enum ATLAS_TRANS TA;
    #ifdef TCPLX
       if ((bv&12)==12)
@@ -317,7 +337,7 @@ printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&2)?'U':'L',
       (bv&16)?AtlasNonUnit:AtlasUnit, M, N, alpha, A, lda, B, ldb);
       
 #else
-   ATL_UINT k;
+   ATL_UINT LN;
    void *vp;
    TYPE *diag, *T, *R, *w;
    #ifdef TCPLX
@@ -330,18 +350,18 @@ printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&2)?'U':'L',
       TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
    sminfo_t si;
    int Mjoin(PATL,sminfoL_LN)
-      (sminfo_t *ip, const enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT R, 
+      (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
        const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb);
    int Mjoin(PATL,sminfoL_LT)
-      (sminfo_t *ip, const enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT R, 
+      (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
        const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb);
 
-   ATL_UINT bv,  /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
-   k = bv & 6;
-   if (!k || k == 6) /* Lower,NoTrans & Upper,Trans use LN case */
-      Mjoin(PATL,sminfoL_LN)(&si, TRANSA, M, N, alpha, lda, ldb);
+   LN = bv & 6;
+   LN = (!LN) |(LN == 6);
+   if (LN) /* Lower,NoTrans & Upper,Trans use LN case */
+      Mjoin(PATL,sminfoL_LN)(&si, bv, M, N, alpha, lda, ldb);
    else              /* Upper,NoTrans & Lower,Trans use LT case */
-      Mjoin(PATL,sminfoL_LT)(&si, TRANSA, M, N, alpha, lda, ldb);
+      Mjoin(PATL,sminfoL_LT)(&si, bv, M, N, alpha, lda, ldb);
    if (M > si.kb)
       return(2);
 #ifdef DEBUG
