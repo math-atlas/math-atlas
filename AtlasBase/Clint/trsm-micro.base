@@ -66,7 +66,7 @@ int ATL_sminfo
  * Really need to see if its better to do gemm+trsm in this case, but for
  * now just assume not
  */
-   if (N <= ATL_VIEW_BEST_KB) /* inner product case */
+   if (N > ATL_VIEW_BEST_KB) /* inner product case */
    {
       int nb;
       for (; iv; iv--)
@@ -75,7 +75,7 @@ int ATL_sminfo
          if (N >= nb)
             break;
       }
-      if (N > nb && iv > ATL_VIEW_BEST_IDX)
+      if (N > nb && iv < ATL_VIEW_BEST_IDX)
          iv++;
    }
    ip->bv = BV;
@@ -141,7 +141,7 @@ int ATL_sminfo
 /*
  * RETURNS: recursion depth (starting from 0)
  */
-static unsigned int trsm_recLL
+static unsigned int trsm_recL_LN_UT
 (
    const int             bv,    /* 0:Upper, 1:TransA, 2: Conj, 3:NonUnit */
    ATL_CSZT               N,    /* size of triangle, will recur on this dim */
@@ -167,6 +167,9 @@ static unsigned int trsm_recLL
          #define one ATL_rone
          const enum ATLAS_TRANS TA = (bv&2) ? AtlasTrans : AtlasNoTrans;
       #endif
+      ATL_CSZT NL = (N>>1), NR = N - NL;
+      TYPE *C = Z + (NL SHIFT);
+      const TYPE *A = T + NL*rincT;
 
       #ifdef TCPLX
          if (bv&2)
@@ -174,14 +177,12 @@ static unsigned int trsm_recLL
          else
             TA = (bv&4) ? AtlasConj : AtlasNoTrans;
       #endif
-      ATL_CSZT NL = (N>>1), NR = N - NL;
-      TYPE *C = Z + (NL SHIFT);
-      const TYPE *A = T + NL*rincT;
-      iret = 2 + trsm_recLL(bv, NL, NRHS, alpha, T, ldt, rincT, cincT, Z, ldz);
+      iret = 2 + trsm_recL_LN_UT(bv, NL, NRHS, alpha, T, ldt, rincT, cincT, 
+                                 Z, ldz);
       Mjoin(PATL,gemm)(TA, AtlasNoTrans, NR, NRHS, NL, none, A, ldt, Z, ldz, 
                        alpha, C, ldz);
       A += NL*cincT;
-      iret += trsm_recLL(bv, NR, NRHS, one, A, ldt, rincT, cincT, C, ldz);
+      iret += trsm_recL_LN_UT(bv, NR, NRHS, one, A, ldt, rincT, cincT, C, ldz);
       return(iret);
    }
    return(iret);
@@ -224,7 +225,8 @@ void Mjoin(PATL,trsm)
 /*
  * LEFT: op(A) * X = alpha * B, A is MxM, X is MxN, B is MxN
  */
-   if (SD == AtlasLeft && UL == AtlasLower) 
+   if ((SD == AtlasLeft && UL == AtlasLower && TA == AtlasNoTrans) ||
+       (SD == AtlasLeft && UL == AtlasUpper && TA == AtlasTrans))
    {
       ATL_SZT incR, incC;
       ATL_UINT bv;  /* 0:Upper, 1:TransA, 2: Conj, 3:NonUnit */
@@ -238,7 +240,7 @@ void Mjoin(PATL,trsm)
          bv |= (TA == AtlasTrans) ? 2:0;
       #endif
       bv |= (DI == AtlasNonUnit) ? 8 : 0;
-      if (bv & 2)
+      if (bv & 1)
       {
          incR = lda SHIFT;
          incC = 1 SHIFT;
@@ -248,7 +250,7 @@ void Mjoin(PATL,trsm)
          incR = 1 SHIFT;
          incC = lda SHIFT;
       }
-      d = trsm_recLL(bv, M, N, alpha, A, lda, incR, incC, B, ldb);
+      d = trsm_recL_LN_UT(bv, M, N, alpha, A, lda, incR, incC, B, ldb);
       printf("Solved with %u recusive calls.\n", d);
    }
 /*
@@ -275,24 +277,51 @@ int Mjoin(PATL,trsmL_IP)
    ATL_CSZT               ldb
 )
 {
-#if 0
+#if 1
+#ifdef DEBUG
+printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&1)?'U':'L', 
+       (bv&2)?'T':'N', (bv&8)?'N':'U', alpha);
+#endif
    if (M > 1)
       return(1);
    if (bv&8)   /* if non-unit, work to do, else nothing to do at M=1! */
    #ifdef TCPLX
    {
       TYPE inv[2];
-      CXINV(inv, A);
+      if (SCALAR_IS_ONE(alpha))
+      {
+         CXINV(inv, A);
+      }
+      else
+         Mjoin(PATL,cplxdivide)(1, A, alpha, 1, inv, 1);
       Mjoin(PATL,scal)(N, inv, B, ldb);
    }
    #else
-      Mjoin(PATL,scal)(N, ATL_rone / *A, B, ldb);
+      Mjoin(PATL,scal)(N, alpha / *A, B, ldb);
    #endif
+   else if (!SCALAR_IS_ONE(alpha))
+      Mjoin(PATL,scal)(N, alpha, B, ldb);
+#elif 1
+   enum ATLAS_TRANS TA;
+   #ifdef TCPLX
+      if ((bv&6)==6)
+         TA == AtlasConjTrans;
+      else
+   #endif
+   TA = (bv&2) ? AtlasTrans:AtlasNoTrans;
+#ifdef DEBUG
+printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&1)?'U':'L', 
+       TA==AtlasTrans?'T':'N', (bv&8)?'N':'U', alpha);
+#endif
+   Mjoin(PATL,trsm_APR)(AtlasLeft, (bv&1)?AtlasUpper:AtlasLower, TA,
+      (bv&8)?AtlasNonUnit:AtlasUnit, M, N, alpha, A, lda, B, ldb);
+      
 #else
    ATL_UINT NB, RB;
+   void *vp;
    TYPE *diag, *T, *R, *w;
    #ifdef TCPLX
-      enum ATLAS_TRANS TRANSA= ((bv&12)==12) ? AtlasConjTrans :  AtlasTrans;
+      enum ATLAS_TRANS TRANSA= ((bv&6)==6) ? AtlasConjTrans :  AtlasTrans;
    #else
       #define TRANSA AtlasTrans
    #endif
@@ -311,7 +340,11 @@ int Mjoin(PATL,trsmL_IP)
       Mjoin(PATL,sminfoL_LT)(&si, TRANSA, M, N, alpha, lda, ldb);
    else
       Mjoin(PATL,sminfoL_LN)(&si, TRANSA, M, N, alpha, lda, ldb);
-   void *vp;
+   if (M > si.kb)
+      return(2);
+#ifdef DEBUG
+   fprintf(stderr, "M=%u, kb=%u\n", M, si.kb);
+#endif
    vp = Mjoin(PATL,utrsmL_alloc)(&si, M, &diag, &T, &R, &w);
    if (!vp)
       return(1);
