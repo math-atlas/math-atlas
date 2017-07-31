@@ -19,14 +19,14 @@
    #else
       #ifdef Trans_
          #include Mstr(Mjoin(ATLAS_PRE,utrsmR_LT.h))
+         #include Mstr(Mjoin(ATLAS_PRE,trsmRT_view.h))
          #define ATL_sminfo Mjoin(PATL,sminfoR_LT)
-         #include Mstr(Mjoin(ATLAS_PRE,trsmRN.h))
          #define INCA lda
          #define BV (1|4)
       #else
          #include Mstr(Mjoin(ATLAS_PRE,utrsmR_LN.h))
+         #include Mstr(Mjoin(ATLAS_PRE,trsmRN_view.h))
          #define ATL_sminfo Mjoin(PATL,sminfoR_LN)
-         #include Mstr(Mjoin(ATLAS_PRE,trsmRN.h))
          #define INCA 1
          #define BV 1
       #endif
@@ -37,8 +37,8 @@
    #else
       #ifdef Trans_
          #include Mstr(Mjoin(ATLAS_PRE,utrsmL_LT.h))
-         #define ATL_sminfo Mjoin(PATL,sminfoL_LT)
          #include Mstr(Mjoin(ATLAS_PRE,trsmLT_view.h))
+         #define ATL_sminfo Mjoin(PATL,sminfoL_LT)
          #define INCA 1
          #define BV 4
       #else
@@ -158,10 +158,78 @@ int ATL_sminfo
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def contrib "Antoine Petitet"
 #include "atlas_misc.h"
 #include "atlas_level3.h"
+static unsigned int trsm_recR
 /*
  * RETURNS: recursion depth (starting from 0)
  */
+(
+   const int             bv,    /* 0:Right,1:Upper,2:TransA,3:Conj, 4:NonUnit */
+   ATL_CSZT               N,    /* size of triangle, will recur on this dim */
+   ATL_CSZT               NRHS, /* don't recur on RHS */
+   const SCALAR           alpha,
+   const TYPE             *T,
+   ATL_CSZT               ldt,
+   ATL_CSZT               rincT, /* rowinc: 1/2 for NoTrans, else ldt2 */
+   ATL_CSZT               cincT, /* colinc: ldt2 for NoTrans, else 1/2 */
+   TYPE                   *Z,
+   ATL_CSZT               ldz
+)
+{
+   unsigned int iret=0;
+   if (Mjoin(PATL,trsmR_IP)(bv, N, NRHS, alpha, T, ldt, Z, ldz))
+   {
+      #ifdef TCPLX
+         enum ATLAS_TRANS TA;
+         const TYPE none[2] = {ATL_rnone, ATL_rzero};
+         const TYPE one[2]  = {ATL_rone,  ATL_rzero};
+      #else
+         #define none ATL_rnone
+         #define one ATL_rone
+         const enum ATLAS_TRANS TA = (bv&4) ? AtlasTrans : AtlasNoTrans;
+      #endif
+      ATL_CSZT NL = (N>>1), NR = N - NL;
+      const TYPE *T0, *T1;
+      TYPE *C, *Z0;
+      const TYPE *B;
+      ATL_UINT LNUT;        /* is this LN or UT case? */
+
+      #ifdef TCPLX
+         if (bv&4)
+            TA = (bv&8) ? AtlasConjTrans : AtlasTrans;
+         else
+            TA = (bv&8) ? AtlasConj : AtlasNoTrans;
+      #endif
+      LNUT = (bv&6);             /* get Upper(2) and Trans(4) bits */
+      LNUT = (!LNUT)|(LNUT==6);  /* is this LN or UT case? */
+      if (LNUT)                  /* LN or UT case */
+      {
+         T0 = T;
+         B = T + NL*rincT;
+         Z0 = Z;
+         C = Z + (NL SHIFT);
+         T1 = B + NL*cincT;
+      }
+      else                       /* LT or UN case */
+      {
+         T0 = T + NR*((ldt+1)SHIFT);
+         T1 = T;
+         B = T + NR*rincT;
+         C = Z;
+         Z0 = Z + (NR SHIFT);
+      }
+      iret = 2 + trsm_recR(bv, NL, NRHS, alpha, T0, ldt, rincT, cincT, Z0,ldz);
+      Mjoin(PATL,gemm)(AtlasNoTrans, TA, NR, NRHS, NL, none, Z0, ldz, B, ldt,
+                       alpha, C, ldz);
+      iret += trsm_recR(bv, NR, NRHS, one, T1, ldt, rincT, cincT, C, ldz);
+      return(iret);
+   }
+   return(iret);
+}
+
 static unsigned int trsm_recL
+/*
+ * RETURNS: recursion depth (starting from 0)
+ */
 (
    const int             bv,    /* 0:Right,1:Upper,2:TransA,3:Conj, 4:NonUnit */
    ATL_CSZT               N,    /* size of triangle, will recur on this dim */
@@ -218,8 +286,12 @@ static unsigned int trsm_recL
          Z0 = Z + (NR SHIFT);
       }
       iret = 2 + trsm_recL(bv, NL, NRHS, alpha, T0, ldt, rincT, cincT, Z0,ldz);
-      Mjoin(PATL,gemm)(TA, AtlasNoTrans, NR, NRHS, NL, none, A, ldt, Z0, ldz, 
-                       alpha, C, ldz);
+      if (bv&1)  /* Right case */
+         Mjoin(PATL,gemm)(AtlasNoTrans, TA, NR, NRHS, NL, none, Z0, ldz, A, ldt,
+                          alpha, C, ldz);
+      else       /* Left case */
+         Mjoin(PATL,gemm)(TA, AtlasNoTrans, NR, NRHS, NL, none, A, ldt, Z0, ldz,
+                          alpha, C, ldz);
       iret += trsm_recL(bv, NR, NRHS, one, T1, ldt, rincT, cincT, C, ldz);
       return(iret);
    }
@@ -252,7 +324,10 @@ void Mjoin(PATL,trsm)
  * The matrix X is overwritten on B.
  */
 {
-   unsigned int d;
+   ATL_SZT incR, incC;
+   ATL_UINT r, bv = (SD == AtlasRight) ? 1 : 0;
+            /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
+
    if (!M || !N)  /* if either array is of size 0 */
       return;     /* return as there is nothing to do */
    if (SCALAR_IS_ZERO(alpha))                   /* alpha == 0 means */
@@ -260,55 +335,60 @@ void Mjoin(PATL,trsm)
       Mjoin(PATL,gescal)(M, N, alpha, B, ldb);  /* only need to scale B */
       return;
    }
+   if (UL == AtlasUpper)
+   {
+      bv |= 2;
+      incR = lda SHIFT;
+      incC = 1 SHIFT;
+   }
+   else
+   {
+      incR = 1 SHIFT;
+      incC = lda SHIFT;
+   }
+   #ifdef TCPLX
+      if (TA == AtlasConjTrans)
+         bv |= (8|4);
+      else
+         bv |= TA == (AtlasTrans) ? 4 : 0;
+   #else
+      bv |= (TA == AtlasTrans) ? 4:0;
+   #endif
+   bv |= (DI == AtlasNonUnit) ? 16 : 0;
 /*
  * LEFT: op(A) * X = alpha * B, A is MxM, X is MxN, B is MxN
  */
 //   if ((SD == AtlasLeft && UL == AtlasLower && TA == AtlasNoTrans) ||
 //       (SD == AtlasLeft && UL == AtlasUpper && TA == AtlasTrans))
    if (SD == AtlasLeft)
-   {
-      ATL_SZT incR, incC;
-      ATL_UINT bv;  /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
-      bv = (UL == AtlasUpper) ? 2 : 0;
-      #ifdef TCPLX
-         if (TA == AtlasConjTrans)
-            bv |= (8|4);
-         else
-            bv |= TA == (AtlasTrans) ? 4 : 0;
-      #else
-         bv |= (TA == AtlasTrans) ? 4:0;
-      #endif
-      bv |= (DI == AtlasNonUnit) ? 16 : 0;
-      if (bv & 2)
-      {
-         incR = lda SHIFT;
-         incC = 1 SHIFT;
-      }
-      else
-      {
-         incR = 1 SHIFT;
-         incC = lda SHIFT;
-      }
-      d = trsm_recL(bv, M, N, alpha, A, lda, incR, incC, B, ldb);
-      printf("Solved with %u recursive calls.\n", d);
-   }
-/*
- * RIGHT: X * op( A ) = alpha * B, A is NxN, X is NxM, B, is NxM
- */
+      r = trsm_recL(bv, M, N, alpha, A, lda, incR, incC, B, ldb);
    else
-   {
-      Mjoin(PATL,trsm_APR)(SD, UL, TA, DI, M, N, alpha, A, lda, B, ldb);
-   }
+      r = trsm_recR(bv, N, M, alpha, A, lda, incR, incC, B, ldb);
+   printf("Solved with %u recursive calls.\n", r);
+@skip   Mjoin(PATL,trsm_APR)(SD, UL, TA, DI, M, N, alpha, A, lda, B, ldb);
 }
-@ROUT ATL_trsmL_IP
+@ROUT ATL_trsm_IP
 #include "atlas_misc.h"
 #include "atlas_lvl3.h"
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
-int Mjoin(PATL,trsmL_IP)
+#ifdef Right_
+   #define ATL_trsm_IP Mjoin(PATL,trsmR_IP)
+    #define ATL_sminfoN Mjoin(PATL,sminfoR_LN)
+    #define ATL_sminfoT Mjoin(PATL,sminfoR_LT)
+    #define ATL_utrsm_alloc Mjoin(PATL,utrsmR_alloc)
+    #define INCR 1
+#else
+    #define ATL_trsm_IP Mjoin(PATL,trsmL_IP)
+    #define ATL_sminfoN Mjoin(PATL,sminfoL_LN)
+    #define ATL_sminfoT Mjoin(PATL,sminfoL_LT)
+    #define ATL_utrsm_alloc Mjoin(PATL,utrsmL_alloc)
+    #define INCR ldb
+#endif
+int ATL_trsm_IP
 (
    ATL_UINT bv,  /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
-   ATL_CSZT               M,
-   ATL_CSZT               N,
+   ATL_CSZT               NT,
+   ATL_CSZT               NR,
    const SCALAR           alpha,
    const TYPE             *A,
    ATL_CSZT               lda,
@@ -317,12 +397,15 @@ int Mjoin(PATL,trsmL_IP)
 )
 {
    int RECUR;
+   #ifdef Right_
+      RECUR = 1;
+   #else
    RECUR = bv & ~(8|16);  /* Unit,Conj does not affect recursion decision */
 // Left cases that should work: LN,UT */
-   RECUR = (!RECUR) | (RECUR == 6);
+   RECUR = (!RECUR);
    RECUR = !RECUR;
-   RECUR = 0;
-   if (M == 1)
+   #endif
+   if (NT == 1)
    {
       #ifdef DEBUG
       printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&1)?'U':'L', 
@@ -336,16 +419,14 @@ int Mjoin(PATL,trsmL_IP)
          {  CXINV(inv, A); }
          else
             Mjoin(PATL,cplxdivide)(1, A, (TYPE*)alpha, 1, inv, 1);
-         Mjoin(PATL,scal)(N, inv, B, ldb);
+         Mjoin(PATL,scal)(NR, inv, B, INCR);
       }
       #else
-         Mjoin(PATL,scal)(N, alpha / *A, B, ldb);
+         Mjoin(PATL,scal)(NR, alpha / *A, B, INCR);
       #endif
       else if (!SCALAR_IS_ONE(alpha))  /* unit may still need to scale! */
-         Mjoin(PATL,scal)(N, alpha, B, ldb);
+         Mjoin(PATL,scal)(NR, alpha, B, INCR);
    }
-//   if ((SD == AtlasLeft && UL == AtlasLower && TA == AtlasNoTrans) ||
-//       (SD == AtlasLeft && UL == AtlasUpper && TA == AtlasTrans))
    else if (RECUR)  /* if told to */
       return(1);    /* do pure recursion */
 #if 1     /* default case uses utrsm */
@@ -363,30 +444,34 @@ int Mjoin(PATL,trsmL_IP)
          const SCALAR alpha, const TYPE *A, ATL_CINT lda,TYPE *X, ATL_CINT ldx,
          TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
       sminfo_t si;
-      int Mjoin(PATL,sminfoL_LN)
+      int ATL_sminfoN
          (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
           const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb);
-      int Mjoin(PATL,sminfoL_LT)
+      int ATL_sminfoT
          (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
           const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb);
    
       LN = bv & 6;
       LN = (!LN) |(LN == 6);
       if (LN) /* Lower,NoTrans & Upper,Trans use LN case */
-         Mjoin(PATL,sminfoL_LN)(&si, bv, M, N, alpha, lda, ldb);
+         ATL_sminfoN(&si, bv, NT, NR, alpha, lda, ldb);
       else              /* Upper,NoTrans & Lower,Trans use LT case */
-         Mjoin(PATL,sminfoL_LT)(&si, bv, M, N, alpha, lda, ldb);
-      if (M > si.kb)
+         ATL_sminfoT(&si, bv, NT, NR, alpha, lda, ldb);
+      if (NT > si.kb)
          return(2);
       #ifdef DEBUG
          fprintf(stderr, "M=%u, kb=%u\n", M, si.kb);
       #endif
-      vp = Mjoin(PATL,utrsmL_alloc)(&si, M, &diag, &T, &R, &w);
+      vp = ATL_utrsm_alloc(&si, NT, &diag, &T, &R, &w);
       if (!vp)
          return(1);
       utrsm = si.utrsm;
-      utrsm(&si, (bv&16)?AtlasNonUnit:AtlasUnit, M, N, alpha, A, lda, B, ldb, 
-            diag, T, R, w);
+      if (bv & 1)
+         utrsm(&si, (bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, A, lda, 
+               B, ldb, diag, T, R, w);
+      else
+         utrsm(&si, (bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, A, lda, 
+               B, ldb, diag, T, R, w);
       free(vp);
    }
 #else
