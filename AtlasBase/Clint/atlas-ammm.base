@@ -622,8 +622,11 @@ void Mjoin(PATL,ipmenInfo)
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
 double Mjoin(PATL,ipsyrkInfo) /* returns predicted time */
-   (ipinfo_t*, enum ATLAS_TRANS,size_t,size_t,size_t,size_t, 
+   (ipinfo_t*, int, enum ATLAS_TRANS,size_t,size_t,size_t,size_t, 
     const SCALAR alpha, const SCALAR beta);
+int Mjoin(PATL,opsyrkInfo)
+   (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
+    ATL_CSZT lda, ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta);
 @whiledef vw ipgen ipmen
 void Mjoin(PATL,@(vw)InfoPop)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
@@ -32070,11 +32073,17 @@ int main(int nargs, char **args)
    #define syrk_K  Mjoin(PATL,herk_KLoop)
    #define syrk_amm  Mjoin(PATL,herk_amm)
    #define syrk_OP  Mjoin(PATL,herk_OP)
+   #define syrk_IP  Mjoin(PATL,herk_IP)
+   #define syrk_rec Mjoin(PATL,herk)
+   #define herk_FLG 1
 #else
    #define syrkBlk Mjoin(PATL,syrkBlk)
    #define syrk_K  Mjoin(PATL,syrk_KLoop)
    #define syrk_amm  Mjoin(PATL,syrk_amm)
    #define syrk_OP  Mjoin(PATL,syrk_OP)
+   #define syrk_IP  Mjoin(PATL,syrk_IP)
+   #define syrk_rec Mjoin(PATL,syrk)
+   #define herk_FLG 0
 #endif
 void syrkBlk
 (
@@ -32218,8 +32227,6 @@ void syrkBlk
             Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wS, wS, wC, wS, wS, wC);
       #endif
    }
-   if (C)
-      C = IdxC_ip(ip, C, d, d);
    if (blk2c)
    {
       const size_t ldc=ip->ldc;
@@ -32230,6 +32237,7 @@ void syrkBlk
       #endif
       if (ip->alpA != ip->alpB)
          alp = (ip->alpA != ip->alpC) ? ip->alpA : ip->alpB;
+      @beginskip
       if (flag&1)  /* Upper matrix */
       {
          #ifdef TCPLX
@@ -32240,7 +32248,10 @@ void syrkBlk
          #endif
       }
       else if (C)
+      @endskip
+      if (C)
       {
+         C = IdxC_ip(ip, C, d, d);
          #ifdef TCPLX
             blk2c(nb, nb, alp, rC, wC, beta, C, ldc);
             #ifdef Conj_  /* must zero complex part of diagonal! */
@@ -32251,6 +32262,7 @@ void syrkBlk
          #endif
       }
    }
+   #if 0
    if ((flag&1) && C && wU)  /* need to reflect from Lower to Upper */
    {
       size_t ldc2=(ip->ldc)SHIFT;
@@ -32273,6 +32285,7 @@ void syrkBlk
             #endif
       #endif
    }
+   #endif
 }
 
 /*
@@ -32353,22 +32366,22 @@ int syrk_amm
 (
    const enum ATLAS_UPLO  Uplo,
    const enum ATLAS_TRANS TA,
-   ATL_CSZT  N,
-   ATL_CSZT K,
+   ATL_iptr_t  N,
+   ATL_iptr_t K,
    #ifdef Conj_
    const TYPE ralpha,
    #else
    const SCALAR alpha,
    #endif
    const TYPE *A,
-   ATL_CSZT lda,
+   ATL_iptr_t lda,
    #ifdef Conj_
    const TYPE rbeta,
    #else
    const SCALAR beta,
    #endif
    TYPE *C,
-   ATL_CSZT ldc
+   ATL_iptr_t ldc
 )
 {
    size_t sz, szA, szB, szC, szS, nnblks, extra;
@@ -32386,85 +32399,158 @@ int syrk_amm
    cm2am_t sy2blk;
    ablk2cmat_t blk2sy, blk2c;
 
+   if (N == 0)     /* no output */
+      return(0);   /* so return with no-op */
+@BEGINSKIP
 /*
- * Inner-product version calls nothing by SYRK kernels, and is called in
- * LAPACK's default left-looking Cholesky.
+ * Does the operation not involve A at all?
  */
-   #if 1
-   if (N <= ATL_VWsyrk_MAX_NB)
+   #ifdef Conj_
+      if (ralpha == ATL_rzero || !K)
+      {
+         if (rbeta != ATL_rone)
+            Mjoin(PATL,hescal)(Uplo, N, N, rbeta, C, ldc);
+         return(0);
+      }
+   #else
+      if (SCALAR_IS_ZERO(alpha) || !K)
+      {
+         if (!SCALAR_IS_ONE(beta))
+            Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+         return(0);
+      }
+   #endif
+   if (N == 1) /* really a dot product */
    {
-      Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+      const ATL_iptr_t incA = (TA == AtlasNoTrans) ? lda : 1;
+      #ifdef TCPLX
+         TYPE dot[2];
+      #endif
       #ifdef Conj_
-         Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+         TYPE d0;
+         ATL_zdotc_sub(K, A, incA, A, incA, dot);
+         C[1] = ATL_rzero;
+         d0 = *dot * ralpha;
+         if (rbeta == ATL_rzero)
+            C[0] = d0;
+         else 
+            C[0] = C[0] * rbeta + d0;
+      #elif defined(TCPLX)
+         const TYPE ra=(*alpha), ia=alpha[1], rb=(*beta), ib=beta[1];
+         TYPE rd, id, rt;
+         ATL_zdotu_sub(K, A, incA, A, incA, dot);
+         rt = rd = dot[0];
+         id = dot[1];
+         rd = rd*ra - id*ia;
+         id = rt*ia + id*ra;
+         if (ib == ATL_rzero) /* beta is a real number only */
+         {
+            if (rb == ATL_rzero) /* beta is 0 */
+            {
+               C[0] = rd;
+               C[1] = id;
+            }
+            else
+            {
+               C[0] = C[0] * rb + rd;
+               C[1] = C[1] * rb + id;
+            }
+         }
+         else
+         {
+            const register rc=(*C), ic=C[1];
+            C[0] = rc*rb - ic*ib + rd;
+            C[1] = rc*ib + ic*rb + id;
+         }
+      #else /* real */
+         TYPE dot, c;
+         c = SCALAR_IS_ZERO(beta) ? ATL_rzero : *C * beta;
+         dot = Mjoin(PATL,dot)(K, A, incA, A, incA);
+         if (!SCALAR_IS_ONE(alpha))
+            dot *= alpha;
+         *C = c + dot;
+      #endif
+   }
+@skip   else if (K < 3) /* really a rank-1 or rank-2 update */
+   else if (K == 1) /* really rank-1 update, for now just use two-pass */
+   {                /* thru C for BETA!=1, optimize later with axpby */
+      const ATL_iptr_t incA = (TA == AtlasNoTrans) ? 1 : lda;
+      #ifdef Conj_
+         if (rbeta != ATL_rone)
+            Mjoin(PATL,hescal)(Uplo, N, N, rbeta, C, ldc);
+         Mjoin(PATL,her)(Uplo, N, ralpha, A, incA, C, ldc);
       #else
-         Mjoin(PATL,syrk_IP)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+         if (!SCALAR_IS_ONE(beta))
+            Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+         Mjoin(PATL,syr)(Uplo, N, alpha, A, incA, C, ldc);
+      #endif
+   }
+@ENDSKIP
+   if (K < 3 || SCALAR_IS_ZERO(alpha))      /* degenerate case handled by*/
+   {                                        /* syrk_IP */
+      #ifdef Conj_
+         syrk_IP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         syrk_IP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       #endif
       return(0);
    }
-   #else
-      timG = Mjoin(PATL,ipsyrkInfo)(&ip, TA, N, K, lda, ldc, alpha, beta);
-   if (N <= ATL_VWsyrk_MAX_NB)
-   {
-      double timS;
-      float *tpf;
-      int i, IS;
-      unsigned int nb, nbL=0;
+
 /*
- *    Find smallest NB syrk kernel that can fully contain N
+ * Inner-product version calls nothing by SYRK kernels, and is called in
+ * LAPACK's default left-looking Cholesky.  _IP handles L1/L2BLAS cases too.
  */
-      #if ATL_VWsyrk_BEST_IDX != ATL_VWsyrk_LAST_IDX
-         IS=(N <= ATL_VWsyrk_BEST_NB)?ATL_VWsyrk_BEST_IDX:ATL_VWsyrk_LAST_IDX;
+   timG = Mjoin(PATL,ipsyrkInfo)(&ip,herk_FLG, TA, N, K, lda, ldc, alpha, beta);
+   nb = (ip.nfnblks) ? ip.nb : ip.pnb;
+   #if 1
+   if (timG < 0.0)
+   {
+      #ifdef Conj_
+         syrk_IP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
       #else
-         IS = ATL_VWsyrk_BEST_IDX;
+         syrk_IP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       #endif
-      for (i=IS; i; i--)
-      {
-         nb = ATL_GetVWsyrkNB(i);
-         if (N < nb)
-         {
-            if (i != IS && nbL-N > N-nb)
-               i++;
-            break;
-         }
-         else if (N == nb)
-            break;
-         nbL = nb;
-      }
-      nb = ((N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
-      tpf = (float*)(ATL_VIEW_syrk+ATL_VWsyrk_IDXMUL(i));
-      timS = *tpf * nb * nb * K;
-      if (timS <= timG)
-      {
-         printf("timS=%e, timG=%e : use SYRK_IP D=(%u,%u)\n", timS, timG, N, K);
-         #ifdef Conj_
-            Mjoin(PATL,herk_IP)(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
-         #else
-            Mjoin(PATL,syrk_IP)(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
-         #endif
-         return(0);
-      }
-      else
-         printf("timS=%e, timG=%e: D=(%u,%u), B=(%u,%u)\n", timS, timG,
-                N, K, ip.mb, ip.nb);
+      return(0);
    }
    #endif
-/*
- * For now, if we don't use syrk_IP, report failure, since outer syrk sometimes
- * wrong.
- */
-   return(-1);
 /*
  * Outer product version will call outer-product-optimized amm, and since
  * N is too large to call syrk_IP, we expect amm perf to dominate this case.
  * Outer product SYRK is used in right-looking Cholesky.
  */
-   #if 0
+   #if 1
    if (K <= ATL_VWopgen_BEST_KB)
+   {
+      int ierr;
    #ifdef Conj_
-      return(syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc));
+      ierr = syrk_OP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
    #else
-      return(syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc));
+      ierr = syrk_OP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
    #endif
+      if (ierr)
+      {
+         if (ierr == 1)  /* if we failed to malloc */
+            return(1);   /* tell recursion to continue */
+         if (nb >= N)    /* if we can do it with syrk_IP or syrk_OP */
+         {               /* use syrk_IP if syrk_OP fails */
+            #ifdef Conj_
+               syrk_IP(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+            #else
+               syrk_IP(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+            #endif
+            return(0);
+         }
+      }
+   }
+   #endif
+   #if 1
+   #else
+      Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+   #endif
+   #if 0
+   printf("D=(%u,%u), B=(%u,%u,%u), b=(%u,%u,%u), nB=(%u,%u,%u)\n", 
+          (unsigned int)N,(unsigned int)K, ip.mb, ip.nb, ip.kb,
+          ip.pmb, ip.pnb, ip.kb0, ip.nfmblks, ip.nfnblks, ip.nfkblks);
    #endif
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
@@ -32487,9 +32573,12 @@ int syrk_amm
           * ATL_SYRKK_VLEN;
    extra = ip.exsz;
    extra = Mmax(extra, (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU);
+   @beginskip
    if (Uplo == AtlasUpper)
       extra = Mmax(extra, ip.szC);
-   szS = nbS * ip.kb;
+   @endskip
+   szS = ((ip.kb + ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+   szS *= nbS;
    sz = Mmax(ip.szC,szC);
    sz = ATL_MulBySize(sz + szS + szA+szB + extra) + 5*ATL_Cachelen;
    if (sz < ATL_MaxMalloc)
@@ -32505,13 +32594,15 @@ int syrk_amm
    wC = ATL_AlignPtr(wC);
    if (!szA)
       wA = NULL;
-   if (Uplo == AtlasLower)
-      wCs = wC;
+@skip   if (Uplo == AtlasLower)
+   wCs = wC;
+   @beginskip
    else
    {
       wCs = wC + (szC SHIFT);
       wCs = ATL_AlignPtr(wCs);
    }
+   @endskip
    #ifdef TCPLX
       rC = wC + ip.szC;
       rCs = wC + szC;
@@ -32565,11 +32656,49 @@ int syrk_amm
    }
    else
    {
+      if (SCALAR_IS_ONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                     Mjoin(PATL,SyrkIntoC_a1b1_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb1_L2UT);
+      }
+      else if (SCALAR_IS_NONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                     Mjoin(PATL,SyrkIntoC_a1bN_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbN_L2UT);
+      }
+      else if (SCALAR_IS_ZERO(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                     Mjoin(PATL,SyrkIntoC_a1b0_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb0_L2UT);
+      }
+      else
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                     Mjoin(PATL,SyrkIntoC_a1bX_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbX_L2UT);
+      }
+@beginskip
       if (SCALAR_IS_NONE(alpha))
          blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
       else
          blk2sy = SCALAR_IS_ONE(alpha) ?
                   Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
+@endskip
    }
    nnblks = ip.nfnblks + ip.npnblks;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
@@ -32658,13 +32787,83 @@ int syrk_amm
    free(vp);
    return(0);
 }
+
+void syrk_rec
+(
+   const enum ATLAS_UPLO  Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   #ifdef Conj_
+   const TYPE alpha,
+   #else
+   const SCALAR alpha,
+   #endif
+   const TYPE *A,
+   ATL_iptr_t lda,
+   #ifdef Conj_
+   const TYPE beta,
+   #else
+   const SCALAR beta,
+   #endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   #if defined(Conj_) || defined(TREAL)
+      #define ONE ATL_rone
+   #else
+      TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+/*
+ * If we cannot solve problem at this size, recursively cut dims until we can
+ */
+   if (syrk_amm(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc))
+   {
+      if (N > K)
+      {
+         ATL_iptr_t nL=N>>1, nR=N-nL;
+         const TYPE *Ar = A+((TA==AtlasNoTrans)?(nL SHIFT):lda*(nL SHIFT));
+         TYPE *Ct = C + (ldc+1)*(nL SHIFT);
+         const enum ATLAS_TRANS TB =
+         #ifdef Conj_
+               (TA == AtlasNoTrans) ? AtlasConjTrans:AtlasNoTrans;
+            const TYPE galp[2]={alpha,ATL_rzero}, gbet[2]={beta,ATL_rzero};
+         #else
+               (TA == AtlasNoTrans) ? AtlasTrans:AtlasNoTrans;
+            #define galp alpha
+            #define gbet beta
+         #endif
+         syrk_rec(Uplo, TA, nL, K, alpha, A, lda, beta, C, ldc);
+         syrk_rec(Uplo, TA, nR, K, alpha, Ar, lda, beta, Ct, ldc);
+         if (Uplo == AtlasUpper)
+            Mjoin(PATL,gemm)(TA, TB, nL, nR, K, galp, A, lda, Ar, lda, 
+                             gbet, Ct-(nL SHIFT), ldc);
+         else
+            Mjoin(PATL,gemm)(TA, TB, nR, nL, K, galp, Ar, lda, A, lda, 
+                             gbet, C+(nL SHIFT), ldc);
+         #ifndef Conj_
+            #undef galp
+            #undef gbet
+         #endif
+      }
+      else
+      {
+         ATL_iptr_t kL=K>>1, kR=K-kL, incA=((TA == AtlasNoTrans)?lda:1)SHIFT;
+         syrk_rec(Uplo, TA, N, kL, alpha, A, lda, beta, C, ldc);
+         syrk_rec(Uplo, TA, N, kR, alpha, A+incA*kL, lda, ONE, C, ldc);
+      }
+   }
+}
+#if defined(Conj_) || defined(TREAL)
+   #undef ONE
+#endif
 @ROUT ATL_syrk_OP
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_misc.h"
 #include "atlas_level1.h"
 #include "atlas_level2.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
-#include Mstr(Mjoin(ATLAS_PRE,amm_sum.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #ifdef Conj_
    #define syrkBlk Mjoin(PATL,herkBlk_OP)
@@ -32822,6 +33021,7 @@ void syrkBlk
       C += d*op->nb*((ldc+1)SHIFT);
       if (flag&1)  /* Upper matrix */
       {
+         @BEGINSKIP
          #ifdef TCPLX
             const TYPE zero[2] = {ATL_rzero, ATL_rzero};
             blk2c(nb, nb, alp, rC, wC, zero, wU, nb);
@@ -32852,6 +33052,15 @@ void syrkBlk
             #else
                Mjoin(PATL,axpby)(k+1, ATL_rone, wU, nb, beta, C, 1);
             #endif
+         #endif
+         @ENDSKIP
+         #ifdef TCPLX
+            blk2c(nb, nb, alp, rC, wC, beta, C, ldc);
+            #ifdef Conj_  /* must zero complex part of diagonal! */
+               Mjoin(PATLU,zero)(nb, C+1, (ldc+1)SHIFT);
+            #endif
+         #else
+            blk2c(nb, nb, alp, wC, beta, C, ldc);
          #endif
       }
       else
@@ -32905,7 +33114,16 @@ int syrk_OP
    ablk2cmat_t blk2sy, blk2c;
 
 @skip   Mjoin(PATL,GetSyrkOP)(&op, 1, TA, TB, N, K, lda, ldc, alpha, beta);
-   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+@skip   Mjoin(PATL,ipmenInfo)(&ip, idx, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
+   #ifdef Conj_
+      if (Mjoin(PATL,opsyrkInfo)(&op, 1, TA, N, K, lda, ldc, alpha, beta))
+   #else
+      if (Mjoin(PATL,opsyrkInfo)(&op, 0, TA, N, K, lda, ldc, alpha, beta))
+   #endif
+         return(2);
+   fprintf(stderr, "D=(%u,%u), B=(%u,%u,%u), pB=(%u,%u,%u)\n",
+           (unsigned int)N, (unsigned int)K, op.mb, op.nb, op.KB, 
+           op.pmb, op.pnb, op.kb);
    nnblks = op.nfnblks + op.npnblks;
    sy2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT) : Mjoin(PATL,a2blk_syrkN);
       
@@ -32915,10 +33133,10 @@ int syrk_OP
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b1);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_b1):Mjoin(PATL,SyrkIntoC_aX_b1);
+                     Mjoin(PATL,SyrkIntoC_a1b1):Mjoin(PATL,SyrkIntoC_aXb1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
@@ -32931,28 +33149,67 @@ int syrk_OP
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
+                     Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,SyrkIntoC_aN_bX);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,SyrkIntoC_a1_bX):Mjoin(PATL,SyrkIntoC_aX_bX);
+                     Mjoin(PATL,SyrkIntoC_a1bX):Mjoin(PATL,SyrkIntoC_aXbX);
       }
    }
-   else
+   else  /* C is Upper */
    {
+      szU = 0;
+      if (SCALAR_IS_ONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                        Mjoin(PATL,SyrkIntoC_a1b1_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aXb1_L2UT);
+      }
+      else if (SCALAR_IS_NONE(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                        Mjoin(PATL,SyrkIntoC_a1bN_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aXbN_L2UT);
+      }
+      else if (SCALAR_IS_ZERO(beta))
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                        Mjoin(PATL,SyrkIntoC_a1b0_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aXb0_L2UT);
+      }
+      else
+      {
+         if (SCALAR_IS_NONE(alpha))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX_L2UT);
+         else
+            blk2sy = SCALAR_IS_ONE(alpha) ?
+                        Mjoin(PATL,SyrkIntoC_a1bX_L2UT)
+                        :Mjoin(PATL,SyrkIntoC_aXbX_L2UT);
+      }
+@BEGINSKIP
       szU = N*N;
       if (SCALAR_IS_NONE(alpha))
-         blk2sy = Mjoin(PATL,SyrkIntoC_aN_b0);
+         blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
       else
          blk2sy = SCALAR_IS_ONE(alpha) ?
-                  Mjoin(PATL,SyrkIntoC_a1_b0):Mjoin(PATL,SyrkIntoC_aX_b0);
+                  Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
+@ENDSKIP
    }
    extra = (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
@@ -33284,6 +33541,246 @@ static INLINE void ATL_syr1
    #endif
 }
 
+#include "atlas_cache.h"
+#include "atlas_reflevel3.h"
+/*
+ * This routine assumes 1st col of A is x, 2nd y, and NoTrans case
+ */
+static void ATL_syr2_axpy
+(
+   const enum ATLAS_UPLO Uplo,
+   ATL_CSZT N,
+#ifdef Conj_
+   const TYPE ralpha,
+#else
+   const SCALAR alpha,
+#endif
+   const TYPE *x,
+   const TYPE *y,
+#ifdef Conj_
+   const TYPE rbeta,
+#else
+   const SCALAR beta,
+#endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   #ifdef Conj_
+      const TYPE beta[2] ={rbeta,  ATL_rzero};
+   #endif
+   if (Uplo == AtlasLower)
+   {
+      ATL_CSZT ldcp1 = (ldc+1)SHIFT;
+      ATL_SZT j;
+      for (j=0; j < N; j++, C += ldcp1)
+      {
+         ATL_CSZT n = N-j;
+         #ifdef Conj_
+            const TYPE alpx[2] = {ralpha*x[j+j], -ralpha*x[j+j+1]};
+            const TYPE alpy[2] = {ralpha*y[j+j], -ralpha*y[j+j+1]};
+         #elif defined(TCPLX)
+            const TYPE ralp=alpha[0], ialp=alpha[1];
+            TYPE alpx[2], alpy[2], rx=x[j+j], ix=x[j+j+1];
+            if (ialp == ATL_rzero)
+            {
+               alpx[0] = ralp*rx;
+               alpx[1] = ralp*ix;
+               rx=y[j+j], ix=y[j+j+1];
+               alpy[0] = ralp*rx;
+               alpy[1] = ralp*ix;
+            }
+            else
+            {
+               alpx[0] = ralp*rx - ialp*ix;
+               alpx[1] = ralp*ix + ialp*rx;
+               rx=y[j+j], ix=y[j+j+1];
+               alpy[0] = ralp*rx - ialp*ix;
+               alpy[1] = ralp*ix + ialp*rx;
+            }
+         #else
+            const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
+         #endif
+         Mjoin(PATL,axpby)(n, alpx, x+(j SHIFT), 1, beta, C, 1);
+         Mjoin(PATL,axpy)(n, alpy, y+(j SHIFT), 1, C, 1);
+         #ifdef Conj_
+            C[1] = ATL_rzero;
+         #endif
+      }
+   }
+   else /* Uplo == AtlasUpper */
+   {
+      ATL_CSZT ldc2 = ldc SHIFT;
+      ATL_SZT j;
+      for (j=0; j < N; j++, C += ldc2)
+      {
+         #ifdef Conj_
+            const TYPE alpx[2] = {ralpha*x[j+j], -ralpha*x[j+j+1]};
+            const TYPE alpy[2] = {ralpha*y[j+j], -ralpha*y[j+j+1]};
+         #elif defined(TCPLX)
+            const TYPE ralp=alpha[0], ialp=alpha[1];
+            TYPE alpx[2], alpy[2], rx=x[j+j], ix=x[j+j+1];
+            if (ialp == ATL_rzero)
+            {
+               alpx[0] = ralp*rx;
+               alpx[1] = ralp*ix;
+               rx=y[j+j], ix=y[j+j+1];
+               alpy[0] = ralp*rx;
+               alpy[1] = ralp*ix;
+            }
+            else
+            {
+               alpx[0] = ralp*rx - ialp*ix;
+               alpx[1] = ralp*ix + ialp*rx;
+               rx=y[j+j], ix=y[j+j+1];
+               alpy[0] = ralp*rx - ialp*ix;
+               alpy[1] = ralp*ix + ialp*rx;
+            }
+         #else
+            const TYPE alpx = alpha * x[j], alpy = alpha * y[j];
+         #endif
+         Mjoin(PATL,axpby)(j+1, alpx, x, 1, beta, C, 1);
+         Mjoin(PATL,axpy)(j+1, alpy, y, 1, C, 1);
+         #ifdef Conj_
+            C[j+j+1] = ATL_rzero;
+         #endif
+      }
+   }
+}
+
+#ifdef Conj_
+   #define ATL_ger2 Mjoin(PATL,ger2c)
+#elif defined(TCPLX)
+   #define ATL_ger2 Mjoin(PATL,ger2u)
+#else
+   #define ATL_ger2 Mjoin(PATL,ger2)
+#endif
+static void ATL_syr2
+(
+   const enum ATLAS_UPLO Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CSZT N,
+#ifdef Conj_
+   const TYPE ralpha,
+#else
+   const SCALAR alpha,
+#endif
+   const TYPE *A,
+   ATL_CSZT lda,
+#ifdef Conj_
+   const TYPE rbeta,
+#else
+   const SCALAR beta,
+#endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   void *vp=NULL;
+   TYPE *x, *y;
+   #ifdef TCPLX
+      ATL_CSZT lda2 = lda+lda, ldc2 = ldc+ldc;
+   #else
+      #define lda2 lda
+      #define ldc2 ldc
+   #endif
+   #ifdef Conj_
+      const TYPE alpha[2]={ralpha, ATL_rzero};
+      const TYPE beta[2] ={rbeta,  ATL_rzero};
+   #endif
+/*
+ * If A cols are strided, copy them to contiguous & aligned storage
+ */
+   if (TA != AtlasNoTrans)
+   {
+      vp = malloc(ATL_MulBySize(N+N) + ATL_Cachelen+ATL_Cachelen);
+      ATL_assert(vp);
+      x = ATL_AlignPtr(vp);
+      y = x + (N SHIFT);
+      y = ATL_AlignPtr(y);
+      #ifdef Conj_
+         Mjoin(PATL,copyConj)(N, A, lda, x, 1);
+         Mjoin(PATL,copyConj)(N, A+(1 SHIFT), lda, y, 1);
+      #else
+         Mjoin(PATL,copy)(N, A, lda, x, 1);
+         Mjoin(PATL,copy)(N, A+(1 SHIFT), lda, y, 1);
+      #endif
+   }
+   else
+   {
+      x = (TYPE *) A;
+      y = (TYPE *) (A + lda2);
+   }
+/*
+ * If BETA != 1, then we must pass through C twice, so use daxpy-based code
+ */
+   #ifdef Conj_
+   if (rbeta != ATL_rone)
+   #else
+   if (!SCALAR_IS_ONE(beta))
+   #endif
+   {
+      #ifdef Conj_
+         ATL_syr2_axpy(Uplo, N, ralpha, x, y, rbeta, C, ldc);
+      #else
+         ATL_syr2_axpy(Uplo, N, alpha, x, y, beta, C, ldc);
+      #endif
+   }
+   else /* beta=1 can use ger2 based code, make only 1 pass thru C */
+   {
+      #ifdef Conj_
+         const TYPE alpha[2] = {ralpha, ATL_rzero};
+      #endif
+      #if L1C_ELTS >= 16384
+         unsigned int Np = (N > 128) ? 120 : N;
+      #elif L1C_ELTS >= 8192
+         unsigned int Np = (N > 90) ? 80 : N;
+      #elif L1C_ELTS >= 4096
+         unsigned int Np = (N > 64) ? 60 : N;
+      #elif L1C_ELTS >= 2048
+         unsigned int Np = (N > 48) ? 40 : N;
+      #else
+         unsigned int Np = (N > 40) ? 24 : N;
+      #endif
+      if (Uplo == AtlasLower)
+      {
+         ATL_CSZT incC=((ldc+1)SHIFT)*Np, incX=(Np SHIFT);
+         ATL_SZT j;
+         for (j=0; j < N; j += Np, C += incC, x += incX, y += incX)
+         {
+            const unsigned nb = Mmin(N-j, Np), nb2=nb SHIFT;
+            #ifdef Conj_
+               ATL_syr2_axpy(Uplo, nb, ralpha, x, y, rbeta, C, ldc);
+            #else
+               ATL_syr2_axpy(Uplo, nb, alpha, x, y, beta, C, ldc);
+            #endif
+            ATL_ger2(N-j-nb, nb, alpha, x+nb2, 1, x, 1, alpha, y+nb2, 1, y, 1, 
+                     C+nb2, ldc);
+         }
+      }
+      else
+      {
+         const TYPE *x0 = x, *y0 = y;
+         ATL_CSZT incC=((ldc)SHIFT)*Np, incX=(Np SHIFT);
+         ATL_SZT j;
+         for (j=0; j < N; j += Np, C += incC, x += incX, y += incX)
+         {
+            const unsigned nb = Mmin(N-j, Np), nb2=nb SHIFT;
+            if (j)
+               ATL_ger2(j, nb, alpha, x0, 1, x, 1, alpha, y0, 1, y, 1,
+                        C, ldc);
+            #ifdef Conj_
+               ATL_syr2_axpy(Uplo, nb, ralpha, x, y, rbeta, C+(j SHIFT), ldc);
+            #else
+               ATL_syr2_axpy(Uplo, nb, alpha, x, y, beta, C+(j SHIFT), ldc);
+            #endif
+         }
+      }
+   }
+   if (vp)
+      free(vp);
+}
+
 @ROUT ATL_syrk_IP N2Idx
 static INLINE int N2Idx(const unsigned int N)
 /*
@@ -33369,7 +33866,7 @@ void Mjoin(PATL,syrk_IP)
    #endif
    size_t szA, szC, szE, incAk, nkb, k;
    ATL_CUINT nnu = (N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU, NN=nnu*ATL_SYRKK_NU;
-   ATL_UINT kb, kb0, KB0, idx;
+   ATL_UINT kb, kbS, kb0, KB0, idx;
 /*
  * Handle degenerate cases
  */
@@ -33399,6 +33896,15 @@ void Mjoin(PATL,syrk_IP)
          ATL_syr1(Uplo, TA, N, ralpha, A, lda, rbeta, C, ldc);
       #else
          ATL_syr1(Uplo, TA, N, alpha, A, lda, beta, C, ldc);
+      #endif
+      return;
+   }
+   if (K == 2)  /* Level-2/1 BLAS */
+   {
+      #ifdef Conj_
+         ATL_syr2(Uplo, TA, N, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         ATL_syr2(Uplo, TA, N, alpha, A, lda, beta, C, ldc);
       #endif
       return;
    }
@@ -33455,8 +33961,9 @@ void Mjoin(PATL,syrk_IP)
  * workspace to put the Lower part, before reflecting it to Upper.
  * Need max of this extra space, or preload distance.
  */
-   szE = (Uplo == AtlasLower) ? 0 : N*N;
-   szE = Mmax(szE, ATL_SYRKK_NU*ATL_SYRKK_NU*2);
+@skip   szE = (Uplo == AtlasLower) ? 0 : N*N;
+@skip   szE = Mmax(szE, ATL_SYRKK_NU*ATL_SYRKK_NU*2);
+   szE = (ATL_SYRKK_NU*ATL_SYRKK_NU)<<1;
    if (K > kb)
    {
       nkb = K / kb;
@@ -33467,12 +33974,13 @@ void Mjoin(PATL,syrk_IP)
          nkb--;
       }
       KB0 = ((kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+      kbS = ((kb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    }
    else
    {
       nkb = 0;
       kb0 = K;
-      kb = KB0 = ((kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
+      kbS = kb = KB0 = ((kb0+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    }
    if (IS_COLMAJ(TA))
    {
@@ -33484,10 +33992,10 @@ void Mjoin(PATL,syrk_IP)
       incAk = kb SHIFT;
       a2blk = Mjoin(PATL,a2blk_syrkN);
    }
-   szA = nnu*ATL_SYRKK_NU;
-   k = (Uplo == AtlasUpper) ? Mmax(kb,N) : kb;
-   szA *= k;
-   szA = nnu*ATL_SYRKK_NU * kb;
+@skip   szA = nnu*ATL_SYRKK_NU;
+@skip   k = (Uplo == AtlasUpper) ? Mmax(kb,N) : kb;
+@skip   szA *= k;
+   szA = nnu*ATL_SYRKK_NU * kbS;
    vp = malloc(ATL_MulBySize(szA + szC + szE) 
                + 2*ATL_Cachelen);
    ATL_assert(vp);
@@ -33650,9 +34158,9 @@ void Mjoin(PATL,syrk_IP)
          blk2c(N, N, alpha, pC, beta, C, ldc);
       #endif
    }
-   else /* Upper must use workspace */
+   else /* Upper */
    {
-#if 0   
+      @BEGINSKIP
       if (SCALAR_IS_NONE(alpha))
          blk2c = Mjoin(PATL,SyrkIntoC_aNb0);
       else
@@ -33681,62 +34189,51 @@ void Mjoin(PATL,syrk_IP)
          for (k=0; k < N; k++, c += (1 SHIFT), C += (ldc SHIFT))
             Mjoin(PATL,axpby)(k+1, one, c, N, beta, C, 1);
       #endif
-#else
-@ skip ********* Majedul: added to call the new L2UT 
+      @ENDSKIP
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,Mjoin(SyrkIntoC_aNb1,_L2UT));
+            blk2c = Mjoin(PATL,SyrkIntoC_aNb1_L2UT);
          else
             blk2c = SCALAR_IS_ONE(alpha) ?
-                    Mjoin(PATL,Mjoin(SyrkIntoC_a1b1,_L2UT))
-                    : Mjoin(PATL,Mjoin(SyrkIntoC_aXb1,_L2UT));
+                     Mjoin(PATL,SyrkIntoC_a1b1_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb1_L2UT);
       }
       else if (SCALAR_IS_NONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,Mjoin(SyrkIntoC_aNbN,_L2UT));
+            blk2c = Mjoin(PATL,SyrkIntoC_aNbN_L2UT);
          else
             blk2c = SCALAR_IS_ONE(alpha) ?
-                    Mjoin(PATL,Mjoin(SyrkIntoC_a1bN,_L2UT))
-                    : Mjoin(PATL,Mjoin(SyrkIntoC_aXbN,_L2UT));
+                     Mjoin(PATL,SyrkIntoC_a1bN_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbN_L2UT);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,Mjoin(SyrkIntoC_aNb0,_L2UT));
+            blk2c = Mjoin(PATL,SyrkIntoC_aNb0_L2UT);
          else
             blk2c = SCALAR_IS_ONE(alpha) ?
-                    Mjoin(PATL,Mjoin(SyrkIntoC_a1b0,_L2UT))
-                    : Mjoin(PATL,Mjoin(SyrkIntoC_aXb0, _L2UT));
+                     Mjoin(PATL,SyrkIntoC_a1b0_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb0_L2UT);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2c = Mjoin(PATL,Mjoin(SyrkIntoC_aNbX, _L2UT));
+            blk2c = Mjoin(PATL,SyrkIntoC_aNbX_L2UT);
          else
             blk2c = SCALAR_IS_ONE(alpha) ?
-                    Mjoin(PATL,Mjoin(SyrkIntoC_a1bX, _L2UT))
-                    : Mjoin(PATL,Mjoin(SyrkIntoC_aXbX, _L2UT));
+                     Mjoin(PATL,SyrkIntoC_a1bX_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbX_L2UT);
       }
       #ifdef TCPLX
          blk2c(N, N, alpha, rC, iC, beta, C, ldc);
          #ifdef Conj_  /* must zero complex part of diagonal! */
-      @SKIP ***** not working when beta != 0... need to update the copy routine
-         {
-            size_t ldc2 = ldc + ldc;
-            size_t sz = 2;
-            for (k=0; k < N; k++, C += ldc2, sz += 2)
-            {
-               Mjoin(ATL_d,scal)(k+1,ATL_rnone, C+1, 2);
-               C[sz-1] = ATL_rzero;
-            }
-         }
+            Mjoin(PATLU,zero)(N, C+1, (ldc+1)SHIFT);
          #endif
       #else
          blk2c(N, N, alpha, pC, beta, C, ldc);
       #endif
-#endif
    }
 #endif
    free(vp);
@@ -35142,7 +35639,15 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
    }
    assert(cb);
    for (cp=cb; cp; cp = cp->next)
-      cp->ivar = FLAG_IS_SET(cp->flag, MMF_KCLN) ? -1 : 0;
+   {
+      if (cp->blask == ATL_KTRSM)  /* TRSM kernels */
+      {
+         cp->blask = ATL_KGEMM;    /* are the just GEMM kerns */
+         cp->ivar = 0;             /* w/o K cleanup */
+      }
+      else
+         cp->ivar = FLAG_IS_SET(cp->flag, MMF_KCLN) ? -1 : 0;
+   }
    if (!fout)
    {
       fout = malloc(18);
@@ -37636,6 +38141,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    char rcs[4] = {'c', 'r', 'c', 'r'};
    char cjs[4] = {' ', ' ', 'C', 'C'};
    char *sfx[2] = {"", "_L2UT"};
+   char *hfx[2] = {"", "_L2UH"};
 
 
    if (!mb)
@@ -37702,6 +38208,12 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
          int is;
          for (is=0; is < 2; is++)
          {
+            fprintf(fp, "#ifdef Conj_\n");
+            fprintf(fp, "#define ATL_%cSyrkIntoC_a%cb%c%s "
+                    "ATL_%cHerkIntoC_a%cb%c%s\n", 
+                     pre, bes[ial], bes[ibe], sfx[is],
+                     pre, bes[ial], bes[ibe], hfx[is]);
+            fprintf(fp, "#endif\n");
             fprintf(fp, "void ATL_%cSyrkIntoC_a%cb%c%s\n", pre, bes[ial],
                     bes[ibe], sfx[is]);
             if (pre == 's' || pre == 'd')
@@ -38226,7 +38738,21 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
          fprintf(fp, " \\\n       %s_b%c.o", mp->auth, bes[ib]);
    }
    for (cp=cb; cp; cp = cp->next)
+   {
+      char *sp;
       fprintf(fp, " \\\n       %s.o", cp->rout);
+      sp = strstr(cp->rout, "SyrkIntoC");
+      if (sp)
+      {
+         char pre = sp[-1];
+         if (pre == 'z' || pre == 'c')
+         {
+            sp[0] = '\0'; 
+            fprintf(fp, " \\\n       %sHerk%s.o", cp->rout, sp+4);
+            sp[0] = 'S';
+         }
+      }
+   }
    fprintf(fp, "\n");
 /*
  * library make targets
@@ -38299,6 +38825,27 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
       fprintf(fp, "\t$(KC) $(CDEFS2) -D%s=1 -DATL_USERCPMM=%s $(KCFLAGS) \\\n",
               ts, cp->rout);
       fprintf(fp, "        -c %s.c\n", cp->rout);
+      if (!(cp->flag & (1<<CPF_REAL)))
+      {
+         char *sp;
+         sp = strstr(cp->rout, "SyrkIntoC");
+         if (sp);
+         {
+            sp[0]='\0';
+            fprintf(fp, "%sHerk%s.o : %sSyrk%s.c\n", cp->rout, sp+4, 
+                    cp->rout, sp+4);
+            if (pre == 'd')
+               ts = "-DDCPLX=1 -DConj_=1";
+            else
+               ts = "-DSCPLX=1 -DConj_=1";
+            fprintf(fp, 
+            "\t$(KC) $(CDEFS2) %s -DATL_USERCPMM=%sHerk%s \\\n",
+                    ts, cp->rout, sp+4);
+            fprintf(fp, "        $(KCFLAGS) -o $@ -c %sSyrk%s.c\n", 
+                    cp->rout, sp+4);
+            sp[0]='S';
+         }
+      }
    }
    KillAllMMNodes(MB);
    fclose(fp);
@@ -38393,23 +38940,33 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
 @ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@`
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
 #include "atlas_amm.h"
 @ROUT ATL_ipinfo ATL_ipmeninfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #define  ATL_DECL_ 1
 #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
 #undef ATL_DECL_
-@ROUT ATL_opinfo 
+@ROUT ATL_opsyrkInfo
+#define ATL_WANT_ILCM
+#include "atlas_iopt.h"
+@ROUT ATL_opinfo
 #ifdef TREAL
    #define  ATL_DECL_ 1
 #endif
+@ROUT ATL_opinfo ATL_opsyrkInfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
+@ROUT ATL_opinfo
 #ifndef TREAL
    #define  ATL_DECL_ 1
 #endif
+@ROUT ATL_opinfo ATL_opsyrkInfo
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_opsyrkInfo
+@whiledef be 0 1 N X
+#include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
+@endwhile
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
 @whiledef al 1 N X
    @whiledef ta N T
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
@@ -38419,14 +38976,16 @@ int main(int nargs, char **args)
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
    @endwhile
 #endif
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
    @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a@(al)b@(be).h))
    @endwhile
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
 
 @endwhile
 @ROUT ATL_opinfo
 
-void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
+void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    (opinfo_t *out, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta)
@@ -38682,6 +39241,169 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
             *cp = (TB == AtlasNoTrans) ? 
                   ATL_CpyFromANg_aX[icpB]:ATL_CpyFromATg_aX[icpB];
       #endif
+   }
+   cp = (ATL_cparr_t *) &out->blk2C;
+   if (SCALAR_IS_NONE(beta))
+      *cp = ATL_CpyIntoCNg_a1bN[icpC];
+   else if (SCALAR_IS_ONE(beta))
+      *cp = ATL_CpyIntoCNg_a1b1[icpC];
+   else
+      *cp = (SCALAR_IS_ZERO(beta)) ? 
+            ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
+}
+@ROUT ATL_opsyrkInfo
+
+int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
+   (opinfo_t *out, int flag, enum ATLAS_TRANS TA,
+    ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldc,
+    const SCALAR alpha, const SCALAR beta)
+/*
+ * RETURNS: 0 if opsyrk can do this, problem, non-zero if it can't.
+ *          If non-zero is returned, out may not be fully populated.
+ */
+{
+   ammkern_t amm1, amm0, ammN;
+   ATL_cparr_t *cp = (ATL_cparr_t *)&out->a2blk;
+   double spmfMM, spmfCP;
+   const int CONJ=flag&1;
+   size_t nfmblks, npmblks, nfnblks, npnblks;
+   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, vlen, flgK;
+   unsigned int sz, nmu, nnu, pnmu, pnnu, mb, pmb, nb, pnb, MB, NB, kb;
+   const unsigned int iv=K-3;
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      ATL_iptr_t iptmp;
+      #define CONE ATL_rone
+   #endif
+
+   if (iv < ATL_VWopgen_NCASES)
+      return(1);
+   ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
+   ATL_assert(imm < ATL_AMM_NCASES);
+   icpA += icpA;
+   icpB += icpB;
+   icpC += icpC;
+   #ifdef TCPLX
+      ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bn, flgK, 
+                   mu, nu, ku, vlen, k, k, k);
+   #else
+      ATL_AMM_info(imm, &out->amm_b0, &iptmp, &iptmp, flgK, 
+                   mu, nu, ku, vlen, k, k, k);
+   #endif
+
+   if (MB != NB)   /* need to make square */
+   {
+      int U;
+      U = ATL_iLCM(mu, nu);
+      if (N < U)
+        return(2);
+      NB = (MB+NB)>>1;
+      NB = Mmin(NB, N);
+      if (NB <= N)
+         NB = U;
+      else if (NB >= 3*U)
+         NB = (NB/U)*U;
+      else
+         NB = ((NB+U-1)/U)*U;
+   }
+   if (N > NB)
+   {
+      nb = NB;
+      nfnblks = N / NB;
+      nmu = NB / mu;
+      nnu = NB / nu;
+      out->mF = out->nF = pnb = N - nfnblks*NB;
+      pnmu = (pnb+mu-1)/mu;
+      pnnu = (pnb+nu-1)/nu;
+      pnb = pnnu * nu;
+      npnblks = (pnb) ? 1 : 0;
+   }
+   else
+   {
+      npnblks = 1;
+      pnnu = nnu = (N+nu-1)/nu;
+      pnmu = nmu = (N+mu-1)/mu;
+      pnb = nb = nnu * nu;
+      nfnblks = 0;
+      out->mF = out->nF = N;
+   }
+
+   kb = ((K+ku-1)/ku)*ku;
+
+   out->nfmblks = out->nfnblks = nfnblks;
+   out->npmblks = out->npnblks = npnblks;
+   out->mb = out->nb = nb;
+   out->pmb = out->pnb = pnb;
+   out->mu = mu;
+   out->nu = nu;
+   out->ku = ku;
+   out->vlen = vlen;
+   out->ldb = out->lda = lda;
+   out->ldc = ldc;
+
+   out->nmu = nmu;
+   out->nnu = nnu;
+   out->nmuF = out->pnmu = pnmu;
+   out->nnuF = out->pnnu = pnnu;
+
+   sz = ((mu*nu+vlen-1)/vlen)*vlen;
+   sz *= (nnu) ? nmu*nnu : pnmu*pnnu;
+   out->szC = sz;
+   out->exsz = (mu*nu)<<1;
+   out->idx = iv;
+   out->kb = K;
+   out->KB = kb;
+   out->pszB = out->pszA = pnb*kb;
+   out->szB = out->szA = kb * nb;
+   out->alpA = out->alpB = CONE;
+   out->beta = beta;
+   out->alpB = alpha;
+   #ifdef TCPLX
+      out->ONE = CONE;
+   if (TA == AtlasNoTrans || TA == AtlasConj)
+   #else
+   if (TA == AtlasNoTrans)
+   #endif
+   {  /* A noTrans, B Trans */
+      *cp = ATL_CpyFromATg_a1[icpA];
+      cp = (ATL_cparr_t *)&out->b2blk;
+      #ifdef TCPLX
+         if (SCALAR_IS_NONE(alpha))
+            *cp = (CONJ) ? ATL_CpyFromAHg_aN[icpB] : ATL_CpyFromATg_aN[icpB];
+         else if (SCALAR_IS_ONE(alpha))
+            *cp = (CONJ) ? ATL_CpyFromAHg_a1[icpB] : ATL_CpyFromATg_a1[icpB];
+         else
+            *cp = (CONJ) ? ATL_CpyFromAHg_aX[icpB] : ATL_CpyFromATg_aX[icpB];
+      #else
+         if (SCALAR_IS_NONE(alpha))
+            *cp = ATL_CpyFromATg_aN[icpB];
+         else
+            *cp = (SCALAR_IS_ONE(alpha))? ATL_CpyFromATg_a1[icpB]
+                                         :ATL_CpyFromATg_aX[icpB];
+      #endif
+      out->incAm  = nb SHIFT;
+      out->pincAm = pnb SHIFT;
+      out->incBn  = nb SHIFT;
+      out->pincBn = pnb SHIFT;
+   }
+   else  /* A (Conj)transpose, B no trans */
+   {
+      #ifdef TCPLX
+         *cp = CONJ ? ATL_CpyFromACg_a1[icpA]:ATL_CpyFromANg_a1[icpA];
+      #else
+         *cp = ATL_CpyFromANg_a1[icpA];
+      #endif
+      cp = (ATL_cparr_t *)&out->b2blk;
+      if (SCALAR_IS_NONE(alpha))
+         *cp = ATL_CpyFromANg_aN[icpB];
+      else
+         *cp = (SCALAR_IS_ONE(alpha)) ?  ATL_CpyFromANg_a1[icpB]
+                                       : ATL_CpyFromANg_aX[icpB];
+      out->incAm = lda*(nb SHIFT);
+      out->pincAm = lda*(pnb SHIFT);
+      out->incBn = lda*(nb SHIFT);
+      out->pincBn = lda*(pnb SHIFT);
    }
    cp = (ATL_cparr_t *) &out->blk2C;
    if (SCALAR_IS_NONE(beta))
@@ -39125,10 +39847,16 @@ void Mjoin(PATL,@(vwf)Info)
 #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipmen_view.h))
 #include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
-
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
+#ifdef TCPLX
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_a1.h))
+#endif
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_a1.h))
+/* #define DEBUG 1 */
 double Mjoin(PATL,ipsyrkInfo)
 (
    ipinfo_t *ip,        /* output */
+   int flag,            /* 0:HERK */
    enum ATLAS_TRANS TA,
    size_t N,
    size_t K,
@@ -39140,16 +39868,24 @@ double Mjoin(PATL,ipsyrkInfo)
 {
    size_t nfnblks;
    unsigned int npnblks, mb, nb, pnb, pmb, mu, nu;
-   unsigned int i, idB=ATL_VWipmen_BEST_IDX, nbB=0;
+   unsigned int idB=ATL_VWipmen_BEST_IDX, nbB=0;
+   int i;
    double timB=N*N*K;
+   #ifdef TCPLX
+      const int CONJ = flag&1;
+      enum ATLAS_TRANS TB;
+   #else
+      const enum ATLAS_TRANS TB = (TA==AtlasNoTrans) ? AtlasTrans:AtlasNoTrans;
+   #endif
+   @BEGINSKIP
    const enum ATLAS_TRANS TB = (TA == AtlasNoTrans) ? 
       #ifdef Conj_
           AtlasConjTrans : AtlasNoTrans;
       #else
           AtlasTrans : AtlasNoTrans;
       #endif
-
-   for (i=0; i <= ATL_VWipmen_BEST_IDX; i++)
+   @ENDSKIP
+   for (i=ATL_VWipmen_BEST_IDX; i >= 0; i--)
    {
       double tim;
       float *tpf, *stpf;
@@ -39157,8 +39893,8 @@ double Mjoin(PATL,ipsyrkInfo)
       unsigned int nb, pnb;
 
       nb = ATL_GetVWipmenNB(i);
-      if (nb+nb > N)
-         break;
+      if (i && nb+nb > N)
+         continue;
       nfdiag = N / nb;
       pnb = N - nb*nfdiag;
       ngblk = ((nfdiag-1)*nfdiag)>>1;
@@ -39179,19 +39915,23 @@ double Mjoin(PATL,ipsyrkInfo)
          ATL_AMM_GetMNU(imm, mu, nu);
          nf = (pnb*1.0)*pnb * K;
          tg = (pnb >= 3*Mmax(mu,nu)) ? .85 : .5;
-         ts = (pnb > 3*ATL_SYRKK_NU) ? .85 : .5;
+         ts = (pnb >= 3*ATL_SYRKK_NU) ? .85 : .5;
          tg *= *tpf * (nf+nf);
          ts *= *stpf * nf;
          tim += tg + ts;
       }
-      if (tim < timB)
+      #ifdef DEBUG
+         printf("%u: D=(%u,%u), NB=%u(%u) tim=%e\n", i, N, K, nb, pnb, tim);
+      #endif
+      if (tim > timB)  /* don't keep looking if we are getting slower */
+         break;        /* assume get smaller to reduce SYRK cost */
+@skip      if (tim < timB)
       {
          idB = i;
          nbB = nb;
          nfnblks = nfdiag;
          timB = tim;
       }
-      printf("%u: D=(%u,%u), NB=%u(%u) tim=%e\n", i, N, K, nb, pnb, tim);
    }
    i = ATL_GetVWipmenAMMI(idB);
    ATL_AMM_GetMNU(i, mu, nu);
@@ -39216,9 +39956,100 @@ double Mjoin(PATL,ipsyrkInfo)
       else
          npnblks = pnb = pmb = 0;
    }
-   printf("F%u: D=(%u,%u), NB=%u(%u)\n", idB, N, K, nbB, pnb);
+   #ifdef DEBUG
+      printf("F%u: D=(%u,%u), NB=%u(%u)\n", idB, N, K, nbB, pnb);
+   #endif
+   #ifdef TCPLX
+      if (CONJ)
+         TB = (TA == AtlasNoTrans) ? AtlasConjTrans : AtlasNoTrans;
+      else
+         TB = (TA == AtlasNoTrans) ? AtlasTrans : AtlasNoTrans;
+   #endif
    Mjoin(PATL,@(vwf)InfoPop)(ip, idB, TA, TB, N, N, K, lda, lda, ldc, alpha,
                              beta, nfnblks, npnblks, mb, pmb, nfnblks,
                              npnblks, nb, pnb);
+/*
+ * Consider if it would be better to use inner-product version that uses
+ * only syrk instead of both syrk+gemm.  Need to include copy cost in time
+ * estimate, since syrk+gemm requires up to 3 A/B copies, while syrk 1.
+ */
+   if (N <= ATL_VWsyrk_MAX_NB)
+   {
+      double timS;
+      unsigned int nbS;
+      float *tpf;
+      for (i=ATL_VWsyrk_NCASES-1; i; i--)
+      {
+         nbS = ATL_GetVWipmenNB(i);
+         if (nbS <= N)
+            break;
+      }
+      if (nbS != N) /* see if this or bigger NB closer to N */
+      {
+         unsigned int nbL;
+         nbL = ATL_GetVWipmenNB(i+1);
+         i = (nbL-nb > nb-nbS) ? i+1 : i;
+         nbS = ((N+ATL_SYRKK_NU-1)/ATL_SYRKK_NU)*ATL_SYRKK_NU;
+      }
+      tpf = (float*)(ATL_VIEW_syrk+ATL_VWsyrk_IDXMUL(i));
+      timS = (*tpf*nbS)*nbS*K;
+      #ifdef DEBUG
+         printf("tim[G,S]=%e, %e\n", timB, timS);
+      #endif
+      if (timS <= timB)  /* if syrk wins w/o including copy cost */
+         return(-timS);  /* save expense of computing copy cost */
+      else               /* see if syrk wins incl copy A/B estimate */
+      {
+         const ATL_cparr_t *cpA;  
+         @SKIP *cpB;
+         ATL_cpflt_t *cpT;
+         double ne, timCP;
+
+         cpA = (TA == AtlasNoTrans) ? ATL_CpyFromANg_a1 : ATL_CpyFromATg_a1;
+         @BEGINSKIP
+         if (TA == AtlasNoTrans)
+         {
+            cpA = ATL_CpyFromANg_a1;
+            #ifdef TCPLX
+               cpB = (CONJ) ? ATL_CpyFromAHg_a1:ATL_CpyFromATg_a1;
+            #else
+               cpB = ATL_CpyFromATg_a1;
+            #endif
+         }
+         else
+         {
+            #ifdef TCPLX
+               cpA = (CONJ) ? ATL_CpyFromAHg_a1:ATL_CpyFromATg_a1;
+            #else
+               cpA = ATL_CpyFromATg_a1;
+            #endif
+            cpB = ATL_CpyFromANg_a1;
+         }
+         @ENDSKIP
+         cpT = (ATL_cpflt_t*)(cpA+ATL_VWsyrk_MIN_A2BLK+ATL_VWsyrk_MIN_A2BLK+1);
+         timCP = *cpT * nbS*K;
+         #ifdef DEBUG
+            printf("timS=%e+%e\n", timS, timCP);
+         #endif
+         timS += timCP;
+         nbS = ((N+nu-1)/nu)*nu;
+         ne = nbS;
+         ne *= K;
+         ATL_GetVWipmenA2BLK(i);
+         cpT = (ATL_cpflt_t*)(cpA+i+i+1);
+         timCP = *cpT * ne * 1.1;
+         @BEGINSKIP
+         ATL_GetVWipmenB2BLK(i);
+         cpT = (ATL_cpflt_t*)(cpB+i+i+1);
+         timCP += *cpT * ne;
+         @ENDSKIP
+         #ifdef DEBUG
+            printf("timB=%e+%e\n", timB, timCP);
+         #endif
+         timB += timCP;
+         if (timS <= timB) 
+            return(-timS);
+      }
+   }
    return(timB);
 }

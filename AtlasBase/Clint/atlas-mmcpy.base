@@ -2842,7 +2842,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 "      A/Cd=[I,F]: copy Into or From col-major (I,F means both directions).\n"
 "      A/Ca/b give the list of needed alpha/beta for that matrix copy.\n"
 "      K : change how K-cleanup is done, default 1:\n"
-"          0: Kerns self-clean, so no padding if kbB%ku == 0, else ku-pad\n"
+"          0: Kerns self-clean, so no padding if MOD(kbB,ku)==0, else ku-pad\n"
 "          1: Kernels use other kernels for K-cleanup.\n"
 "      S=A,C,M,U: don't store [A,C] copyI, matmulI, or unrollings, resp.\n"
 "      Suppressed copies will still be added to master list, just not in view\n"
@@ -3256,9 +3256,10 @@ void DoMaster(char pre, FILE *fp, ATL_cpnode_t *cb)
    sp = "\n";
    for (i=0,cp=cb; cp; cp = cp->next, i++)
    {
-      ATL_cpflt_t mf = 1.0 / cp->mflop[0], *mfp;
+      ATL_cpflt_t mf, *mfp;
       ATL_iptr_t imf=0;
 
+      mf = 1.0 / (cp->mflop[0]*cp->mb*cp->nb);
       mfp = (ATL_cpflt_t*) &imf;
       *mfp = mf;
       fprintf(fp, "%s   (ATL_cparr_t)%s, ", sp, cp->rout);
@@ -3352,6 +3353,19 @@ unsigned int MMIdxCount(ATL_mmnode_t *mb, ATL_mmnode_t *want)
    return(0);
 }
 
+double FlopCount(ATL_mmnode_t *mp)
+{
+   double cnt;
+   switch(mp->blask)
+   {
+   case 1:
+      cnt = ((1.0*mp->mbB)*mp->nbB)*mp->kbB;
+      break;
+   default:
+      cnt = ((2.0*mp->mbB)*mp->nbB)*mp->kbB;
+   }
+   return(cnt);
+}
 void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
                  ATL_mmnode_t *ML)
 {
@@ -3714,7 +3728,7 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
          }
       }
       timepflop = (float*) &k;
-      *timepflop = 1.0 / mp->mflop[0];
+      *timepflop = 1.0 / (mp->mflop[0]*FlopCount(mp));
       if (MB)
       {
          ammI = MMIdxCount(MB, mp);
@@ -3789,7 +3803,7 @@ void GenViewFile(char pre, char *path, ATL_view_t *vp, ATL_mmnode_t *mb,
    fprintf(fpout, "\n};\n");
    fprintf(fpout, "#endif /* end else of ifndef ATL_DECL_ */\n\n");
 
-   for (i=1,nbit=d=0; d < 4; d++)
+   for (i=1,nbit=d=0; d < 10; d++)
    {
       const unsigned int nvbits = nbits[d];
 

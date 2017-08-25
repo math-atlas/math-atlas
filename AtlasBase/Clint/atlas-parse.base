@@ -6748,9 +6748,13 @@ double TimeMMKernel3F
    if (mmp->ID == 0 && (KB != mmp->kbB || KU != mmp->ku || !mmp->genstr))
    {
       int kb0=mmp->kbB, ku0=mmp->ku;
+      int blask = mmp->blask;
       mmp->kbB = KB;
       mmp->ku = KU;
+      if (blask == ATL_KTRSM)
+         mmp->blask = ATL_KGEMM;
       mmp->genstr = MMGetGenString(pre, mmp);
+      mmp->blask = blask;
       mmp->kbB = kb0;
       mmp->ku = ku0;
    }
@@ -6953,6 +6957,8 @@ double TimeMMKernel
  * flag - take actions the following actions if specified bit position is set:
  *    0 : ignore any prior output file on output
  *    1 : time in serial rather than parallel
+ *    2 : time Right case rather than Left
+ *    3 : do C^T = B^T * A^T, rather than C=A*B
  */
 {
    char fnam[128], ln[4096];  /* security from 1991 */
@@ -6962,6 +6968,8 @@ double TimeMMKernel
    int MB, NB, KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+vl-1)/vl)*vl;
    const int FORCETIME = flag&1, SERIAL=flag&2; 
    const int PUTC=FLAG_IS_SET(mmp->flag, MMF_CPC);
+   const int RIGHT=(flag&4), TRANS=(flag&8), UPPER=(flag&16), TRANSA=(flag&32);
+   const int NMFLAG = (mmp->blask == ATL_KTRSM) ? (flag&(~3)) : 0;
    int KU=mmp->ku;
    int DOTIME=1;
    char *be, *gs0=mmp->genstr;
@@ -6975,16 +6983,40 @@ double TimeMMKernel
  * and then compute the percent of useless flops. mfmul can just be multiplied
  * by the return value to compute the useful flop rate.
  */
-   MB = ((mb+mu-1)/mu)*mu;
-   NB = ((nb+nu-1)/nu)*nu;
-   KB = ((kb+ku-1)/ku)*ku;
-   if (FLAG_IS_SET(mmp->flag,MMF_KVEC) && vl > ku)
-      KB = ((kb+vl-1)/vl)*vl;
-   mfmul = kb;
-   mfmul = mfmul / KB;  /* ratio of useful to useless flops in K loop */
-   mfmul *= ((double)mb)*nb / (((double)MB)*NB);
-   if (mmp->blask >= ATL_KGECPFA && mmp->blask <= ATL_KSKCP2C)
-      mfmul = 1.0;  /* don't use mfmul for copy routines */
+   if (mmp->blask == ATL_KTRSM)
+   {
+      int uk, un;
+      assert(mb == nb);
+      const int TR = (RIGHT) ? !TRANS : TRANS;
+      if (!TR)
+      {
+         uk = mu;
+         un = nu;
+      }
+      else
+      {
+         uk = nu;
+         un = mu;
+      }
+      MB = 0;
+      KB = ((kb+uk-1)/uk)*uk;
+      NB = ((nb+un-1)/un)*un;
+      mfmul = ((double)kb)*kb*nb;
+      mfmul /= ((double)KB)*KB*NB;
+   }
+   else
+   {
+      MB = ((mb+mu-1)/mu)*mu;
+      NB = ((nb+nu-1)/nu)*nu;
+      KB = ((kb+ku-1)/ku)*ku;
+      if (FLAG_IS_SET(mmp->flag,MMF_KVEC) && vl > ku)
+         KB = ((kb+vl-1)/vl)*vl;
+      mfmul = kb;
+      mfmul = mfmul / KB;  /* ratio of useful to useless flops in K loop */
+      mfmul *= ((double)mb)*nb / (((double)MB)*NB);
+      if (mmp->blask >= ATL_KGECPFA && mmp->blask <= ATL_KSKCP2C)
+         mfmul = 1.0;  /* don't use mfmul for copy routines */
+   }
 /*
  * If it's a emit_mm generated file with a missing or bad genstring, make it
  */
@@ -7004,9 +7036,13 @@ double TimeMMKernel
        (KB != mmp->kbB || KU != mmp->ku || !mmp->genstr))
    {
       int kb0=mmp->kbB, ku0=mmp->ku;
+      int blask = mmp->blask;
       mmp->kbB = KB;
       mmp->ku = KU;
+      if (blask == ATL_KTRSM)
+         mmp->blask = ATL_KGEMM;
       mmp->genstr = MMGetGenString(pre, mmp);
+      mmp->blask = blask;
       mmp->kbB = kb0;
       mmp->ku = ku0;
    }
@@ -7014,7 +7050,13 @@ double TimeMMKernel
  * If the file is generated, call generator to create it
  */
    if (mmp->genstr)
-      assert(!MMDoGenString(verb, mmp->genstr));
+   {
+      if (MMDoGenString(verb, mmp->genstr))
+      {
+         fprintf(stderr, "\nUnable to generate with: '%s'!\n\n", mmp->genstr);
+         assert(0);
+      }
+   }
    else if (verb > 2)
       printf("NO genstr\n");
 /*
@@ -7033,9 +7075,10 @@ double TimeMMKernel
          ch = (FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? 'K' : 'M';
 
       sprintf(fnam, 
-      "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_%d.ktim",
+      "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_v%c%db%d_pf%xx%d_f%x_%d.ktim",
               pre, mmp->ID, MB, NB, KB, mmp->mu, mmp->nu, KU, 
-              mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, cflush);
+              mmp->flag, ch, mmp->vlen, beta, mmp->pref, mmp->pfLS, 
+              NMFLAG, cflush);
       switch(mmp->blask)
       {
       case ATL_KSYRK:
@@ -7053,8 +7096,8 @@ double TimeMMKernel
       case ATL_KTRSM:
          fnam[5] = 't';
          fnam[6] = 's';
-         fnam[7] = 'm';
-         fnam[8] = 'm';
+         fnam[7] = (RIGHT)?'R' : 'L';
+         fnam[8] = (TRANS)?'T' : 'N';
          break;
       case ATL_KTRMM:
          fnam[5] = 't';
@@ -7090,6 +7133,7 @@ double TimeMMKernel
       }
       if (PUTC)  /* need a diff name if we incl cost of copy */
       {
+         assert(mmp->blask != ATL_KTRSM);
          if (fnam[5] != 'c' || fnam[6] != 'p')
          {
             fnam[7]='c';
@@ -7147,8 +7191,14 @@ double TimeMMKernel
       }
       else
       {
-         i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
-                     pre, nm, MB, NB, KB);
+         if (mmp->blask == ATL_KTRSM)
+            i = sprintf(ln, 
+                        "make %ctrsmcase kb=%d rb=%d sd=%c up=%c ta=%c tALL=%c",
+                        pre, KB, NB, RIGHT?'R':'L', UPPER?'U':'L', 
+                        TRANSA?'T':'N', TRANS?'T':'N');
+         else
+            i = sprintf(ln, "make x%c%stime_pt mb=%d nb=%d kb=%d",
+                        pre, nm, MB, NB, KB);
          if (mmp->genstr)
             i += sprintf(ln+i, " mmrout=%s", mmp->rout);
          else
@@ -7783,15 +7833,17 @@ double MMExpand@(nm)
    const unsigned int mu=mp->mu, nu=mp->nu;
    unsigned int MU, NU, KU, ku;
 @mif nm = "MN_K
-   const unsigned int maxKB = Mmax(240,maxB+maxB);
+   unsigned int maxKB = Mmax(240,maxB+maxB);
 @endmif
 @mif nm = "MNK
-   const unsigned int maxKB = maxB;
+   unsigned int maxKB = maxB;
 @endmif
    int mbB, nbB, kbB, mb, nb, kb, maxDB, maxD;
    int FASTER=0, nfut;
    double mfB, penB=B1PEN;
 
+   if (mp->ID && mp->kbmax && mp->kbmax < maxKB)
+      maxKB = mp->kbmax;
    NU = ATL_iLCM(mu, nu);
    ku = mp->ku;      
    if (!FLAG_IS_SET(mp->flag, MMF_KUISKB) || !mp->ID) /* gen can adapt KB */
@@ -9139,7 +9191,7 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp, ATL_mmnode_t *ML)
       cp->kvec = (mp->vlen > 1) ? mp->vlen : 0;
    if (mp->blask == ATL_KSYRK && (flag&(1<<CPF_CBLK)))
       cp->flag |= (1<<CPF_SYRK);
-   @whiledef rt SYMM TRMM TRSM
+   @whiledef rt SYMM TRMM
    else if (mp->blask == ATL_K@(rt))
       cp->flag |= (1<<CPF_@(rt));
    @endwhile
