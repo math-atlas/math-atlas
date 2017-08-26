@@ -2616,16 +2616,22 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
    {
       if (!INUSETU2D)
          CalcUseSet(bl->blk); 
+   #if 0
       for (ipp=bl->blk->inst1; ipp; ipp = ipp->next)
          if (ipp->set)
             BitVecComb(lp->sets, lp->sets, ipp->set, '|');
+   #else
+      for (ipp=bl->blk->inst1; ipp; ipp = ipp->next)
+      {
+         if (IS_STORE(ipp->inst[0]) && NonLocalDeref(ipp->inst[1]))
+            SetVecBit(lp->sets, STpts2[ipp->inst[1]-1]+TNREG-1, 1);
+      }
+   #endif
    }
 /*
  * Get an ILIST for each array
  */
    n = lp->pfarrs[0];
-#if 1
-   /*m = n;*/
    m=0;
    for (i=1; i<=n; i++)
    {
@@ -2640,9 +2646,6 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
       else m++;
    }
    ils = calloc(sizeof(ILIST*), m);
-#else
-   ils = calloc(sizeof(ILIST*), n);
-#endif
    assert(ils);
 /*
  * get ptr info from loop 
@@ -2656,20 +2659,25 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
       ptr = lp->pfarrs[i];
 #if 1
       flag = STflag[ptr-1];
+/*
+ *    FIXED: sets??? need to use sts!!
+ */
       inst = BitVecCheck(lp->sets, lp->pfarrs[i]-1+TNREG) ? PREFW : PREFR;
       lvl = lp->pfflag[i] & 0x7;
 /*
  *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
- *    FIXME: incase of implicit unrolling, we can consider the const which is 
- *    used to update the pointer! if we consider that.. we need not 
- *    consider the unroll and vectorization... do we?????
+ *    NOTE: incase of implicit unrolling, we can consider the const which is 
+ *    used to update the pointer! what happens when we have strided memory 
+ *    access! prefetch unnecessary data! need analysis to figure it out !!!!  
+ *    FIXME: sometimes more prefetch insts hurt the performance...
+ *    need to review the logic!!!!
  */
-#if 0      
+   #if 0      
       npf = unroll > 1 ? unroll : 1;
       npf *= type2len(FLAG2TYPE(flag));
       if (!IS_VEC(flag) && IS_VEC(lp->vflag))
          npf *= Type2Vlen(lp->vflag);
-#else
+   #else
 /*
  *    using pointer update....
  *    pointer updates should reflect both the unrolling and vectorization
@@ -2678,7 +2686,7 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
       assert(pb);
       npf = SToff[pb->upst-1].i; 
       npf *= type2len(FLAG2TYPE(flag));
-#endif
+   #endif
       npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
       sta = STarrlookup(ptr);   
 /*
@@ -2777,13 +2785,18 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
  * each array in ascending order
  */
 #if 1
+   /*fprintf(stderr, "p = %d, npf=%d\n", p, npf);*/
    for (j=0; j < npf; j++)
    {
       /*for (i=m-1; i >= 0; i--)*/
       for (i=p-2; i >= 0; i--)
       {
-         ilbase = NewIlist(ils[i]->inst, ilbase);
-         ils[i] = KillIlist(ils[i]);
+         if (ils[i])
+         {
+            if (ils[i]->inst)
+               ilbase = NewIlist(ils[i]->inst, ilbase);
+            ils[i] = KillIlist(ils[i]);
+         }
       }
    }
    free(ils);
@@ -7174,7 +7187,7 @@ int RedundantScalarComputation(LOOPQ *lp)
    if (ecmvars) free(ecmvars);
    if (inewvars) free(inewvars);
    if (enewvars) free(enewvars);
-0   KillBlockList(ifblks);
+   KillBlockList(ifblks);
    KillBlockList(elseblks);
    KillBlockList(splitblks);
    KillBlockList(mergeblks);
@@ -7372,6 +7385,12 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
 
    for (N=sp[0], i=1; i <= N; i++)
    {
+      if (IS_PTR(STflag[sp[i]-1]))
+      {
+         fko_warn(__LINE__, "RC failed due to ptr update!");
+         err = 1;
+      }
+
       if (IS_FLOAT(STflag[sp[i]-1]))
       {
          cmov1 = FCMOV1;
@@ -7380,6 +7399,13 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          st = FST;
          type = T_FLOAT;
          codemask = mask;
+         if (!IS_FLOAT(STflag[mask-1]))
+         {
+            /*fko_error(__LINE__, "RC failed due to mixed types!");*/
+            fko_warn(__LINE__, "RC failed due to mixed types!");
+            err = 1;
+         }
+
       }
       else if (IS_DOUBLE(STflag[sp[i]-1]))
       {
@@ -7389,6 +7415,12 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          st = FSTD;
          type = T_DOUBLE;
          codemask = mask;
+         if (!IS_DOUBLE(STflag[mask-1]))
+         {
+            /*fko_error(__LINE__, "RC failed due to mixed types!");*/
+            fko_warn(__LINE__, "RC failed due to mixed types!");
+            err = 1;
+         }
       }
       else if (IS_INT(STflag[sp[i]-1]))/* for int */
       {

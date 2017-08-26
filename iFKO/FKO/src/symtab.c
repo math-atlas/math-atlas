@@ -342,6 +342,10 @@ short STlconstlookup(long ic)
          return(i+1);
    }
    val.l = ic;
+/*
+ * NOTE: it will only be needed in X8664 and in original FKO, T_SHORT is used
+ * to represent the long const. see line:333 in l2a.c 
+ */
    return(STnew(NULL, CONST_BIT | T_SHORT, val));
 }
 

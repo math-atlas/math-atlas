@@ -8744,24 +8744,32 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
    FIXME: it will work only when 'imax = i'. If imax =i+1, we need to initialize
    Vimax_1 = [i+1-8, i+1-7,...] etc. we need to initialize based on the 
    initialization of imax.
- *
  */
    int vlen, sinit;
    short flag;
    short ireg, r1, r2 ;
    enum inst vst, vgr2vr, vshuf;
    /*enum inst vld;*/
-
+/*
+ * FIXME: new implementation only works for X8664. expland this.    
+ */
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
       /*vld = VLD;*/
       vst = VST;
-      vshuf = VSSHUF;
+      #ifdef X86_64
+         vshuf = VSSHUF;
+      #else /* x86_32 */
+         vshuf = VISHUF;
+      #endif
       vgr2vr = VGR2VR32;
       vlen = 8;
    }
    else if (IS_DOUBLE(lp->vflag) || IS_VDOUBLE(lp->vflag))
    {
+      #ifdef X86_32
+         fko_error(__LINE__, "Shadow VRC only supported on X8664 for double");
+      #endif
       /*vld = VLD;*/
       vst = VST;
       vshuf = VISHUF;
@@ -8827,7 +8835,7 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
 /*
  *    populate the 1st XMM register
  */
-      //fprintf(stderr, "const adjustment = %d\n", SToff[lp->vvinit[index]-1].i);
+      /*fprintf(stderr, "const adjustment = %d\n", SToff[lp->vvinit[index]-1].i);*/
       sinit = vlen - SToff[lp->vvinit[index]-1].i;
       InsNewInst(bp0, NULL, iph, SUB, -ireg, -ireg, STiconstlookup(sinit));
       InsNewInst(bp0, NULL, iph, vgr2vr, -r1, -ireg, STiconstlookup(0));
@@ -8858,13 +8866,22 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
  *    combine the two XMM into YMM
  */
       if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+      #ifdef X86_64
          InsNewInst(bp0, NULL, iph, VSSHUF, -r1, -r2, 
                     STiconstlookup(0xBA983210));
+      #else /* X86_32*/
+         InsNewInst(bp0, NULL, iph, VISHUF, -r1, -r2, 
+                    STiconstlookup(0xBA983210));
+      #endif
       else
+      #ifdef X86_64
          InsNewInst(bp0, NULL, iph, VISHUF, -r1, -r2, 
                     STiconstlookup(0x5410));
+      #else
+         fko_error(__LINE__, "not supported in X86_32 for double yet");
+      #endif
 #else
-      assert(0); // will implement later
+      assert(0); /* will implement for other unit later */
 #endif
       InsNewInst(bp0, NULL, iph, VST, SToff[lp->vvscal[index]-1].sa[2], -r1, 0);
    }
@@ -8912,16 +8929,27 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
       vild = VLD;
       /*vilds = VSLDS;*/
       vist = VST;
-      vists = VSSTS;
-      vishuf = VSSHUF;
+      #ifdef X86_64
+         vists = VSSTS;
+         vishuf = VSSHUF;
+         vimin = VSMIN;
+         vimax = VSMAX;
+         vicmov2 = VSCMOV2;
+      #else
+         vists = VISTS;
+         vishuf = VISHUF;
+         vimin = VIMIN;
+         vimax = VIMAX;
+      #endif
       vgr2vr = VGR2VR32;
-      vimin = VSMIN;
-      vimax = VSMAX;
       /*vicmov1 = VSCMOV1;*/
-      vicmov2 = VSCMOV2;
+      vicmov2 = VICMOV2;
    }
    else
    {
+      #ifdef X86_32
+         fko_error(__LINE__, "not supported on X86_32 for double");
+      #endif
       vsld = VDLDS;
       /*vsst = VDSTS;*/
       vld = VDLD;
@@ -9074,8 +9102,16 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
 /*
  *    HERE HERE, should we change the constatnt for 64 bit int???
  */
-      iptp = InsNewInst(bp0, iptp, NULL, MOV, -ireg, 
-                        STiconstlookup(0x7FFFFFFF), 0);
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+         iptp = InsNewInst(bp0, iptp, NULL, MOV, -ireg, 
+                           STiconstlookup(0x7FFFFFFF), 0);
+      else
+      #ifdef X86_64
+         iptp = InsNewInst(bp0, iptp, NULL, MOV, -ireg, 
+                           STlconstlookup(0x7FFFFFFFFFFFFFFF), 0);
+      #else
+         fko_error(__LINE__, "not implemented yet");
+      #endif
 
       iptp = InsNewInst(bp0, iptp, NULL, vgr2vr, -vireg2, -ireg, 
                         STiconstlookup(0));
@@ -9125,10 +9161,12 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
                  -vireg2, -vireg1, STiconstlookup(0x7654BA99)); // 0x 76CD 3289
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
                  -vireg1,-vireg1,-vireg2);
+         #ifdef X86_64
 /*
- *    FIXED: all integer vars/regs are 64 bit in FKO. But we treated the 
- *    vector integer 8x32 bit. So, before storing, we need to upgarde the single
- *    element into 64 bit
+ *       FIXED: all integer vars/regs are 64 bit in FKO. But we treated the 
+ *       vector integer 8x32 bit. So, before storing, we need to upgarde the 
+ *       single element into 64 bit
+ *       FIXME: USE VCTSI2 LIL inst 
  */
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSMOVS,
                  -ireg,-vireg1,0);
@@ -9138,6 +9176,10 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
                  SToff[lp->vscal[index]-1].sa[2], -ireg, 0);
       /*iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSTS,
               SToff[lp->vscal[index]-1].sa[2], -vireg1, 0);*/
+         #else
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VISTS,
+              SToff[lp->vscal[index]-1].sa[2], -vireg1, 0);
+         #endif
       }
       else /* double */
       {
@@ -9546,8 +9588,13 @@ int RcVecTransform(LOOPQ *lp)
    {
       sinst = sfinsts;
       vinst = vfinsts;
-      viinsts = vs_insts;
-      vcmov1 = VSCMOV1;
+      #ifdef X86_64
+         viinsts = vs_insts;
+         vcmov1 = VSCMOV1;
+      #else
+         viinsts = vi_insts;
+         vcmov1 = VICMOV1;
+      #endif
       /*vcmov2 = VSCMOV2;*/
 #if defined (X86) && defined(AVX)
       vlen = 8;
@@ -10726,12 +10773,15 @@ void UpdateVecLoop(LOOPQ *lp)
       }
       else if ( IS_VFLOAT(STflag[sp[i]-1]))
       {
-         vflag = T_VDOUBLE;
+         vflag = T_VFLOAT;
          sp[n++] = sp[i];
       }
    }
    if (IS_VDOUBLE(vflag) && IS_VFLOAT(vflag))
-      fko_error(__LINE__, "Mixed vector type in intrinsic\n");
+   {
+      fko_error(__LINE__, "Mixed vector type in optloop " 
+                "not supported for now\n");
+   }
    lp->vflag = vflag;
 
    s = malloc(sizeof(short)*(n+1));
@@ -18419,7 +18469,7 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
    upackq = ExtendPack(upackq, inpack);
    if (CheckDupPackError(inpack, NPACK))
    {
-      fko_error(__LINE__, 
+      fko_warn(__LINE__, 
             "*******Rename scalars, duplicated packs are not supported yet");
       if (hasredcode)
       {

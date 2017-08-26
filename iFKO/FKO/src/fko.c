@@ -2377,7 +2377,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, int iscope0, int global, int **nspill)
       optchng[noptrec] = nchanges - nc0;
       optrec[noptrec++] = global ? k+MaxOpt : k;
 
-   #if 0
+   #if 0 
 /*
  *    to print the log of all optimizations who make changes
  */
@@ -4158,6 +4158,11 @@ int main(int nargs, char **args)
       }
       else
          assert(!LoopNestVec(NULL, &bvlpl));
+/*
+ *    update loop with vector data if SLP applied
+ */
+      if (!optloop->vflag)
+         UpdateVecLoop(optloop);
    }
    else if ( (FKO_FLAG & IFF_VECTORIZE) && (VECT_FLAG & VECT_SLP) )
    {
@@ -4183,6 +4188,11 @@ int main(int nargs, char **args)
       else
          assert(!LoopNestVec(NULL, &bvlpl));
       /*CheckUseSet();*/
+/*
+ *    update loop with vector data if SLP applied
+ */
+      if (!optloop->vflag)
+         UpdateVecLoop(optloop);
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {
