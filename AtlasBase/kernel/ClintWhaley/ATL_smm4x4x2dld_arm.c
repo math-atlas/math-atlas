@@ -241,14 +241,22 @@ ATL_asmdecor(ATL_USERMM):
             fmacs rC00, rA0, rB0
             fldmias PTR, {rB3, rb3}
             fmacs rC10, rA1, rB0
-            pld [pA0, #32]
+            #ifdef ATL_GAS_ARM_PLD
+               pld [pA0, #32]
+            #endif
             fmacs rC20, rA2, rB0
-            pld [pA1, #32]
+            #ifdef ATL_GAS_ARM_PLD
+               pld [pA1, #32]
+            #endif
             fmacs rC30, rA3, rB0
-            pld [pA2, #32]
+            #ifdef ATL_GAS_ARM_PLD
+               pld [pA2, #32]
+            #endif
 
             fmacs rC01, rA0, rB1
-            pld [pA3, #32]
+            #ifdef ATL_GAS_ARM_PLD
+               pld [pA3, #32]
+            #endif
             fmacs rC11, rA1, rB1
             fmacs rC21, rA2, rB1
             subs K, K, #2  	        /* K -= 2, set cond codes */
