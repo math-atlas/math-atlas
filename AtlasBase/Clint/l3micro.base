@@ -1,0 +1,127 @@
+@ROUT ATL_syr2k_OP
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_level3.h"
+/*
+ * Outer-product version of SYR2K, that assumes we don't want to allocate
+ * NxN workspace because passing C through memory twice is a big component
+ * of cost (since K is dominated by N and/or problem so small lower-order
+ * term of C write is noticible).
+ */
+#ifdef Conj_
+   #define ICONJ_ 1
+#else
+   #define ICONJ_ 0
+#endif
+void ATL_syr2k_1b
+{
+   unsigned int flg, /* 0:Upper?, 1:TRANS? */
+   ATL_CSZT N,       /* C is NxN */
+   ATL_CSZT K,       /* dim common to A & B, K <= ATL_VWopgen_LAST_KB */
+   const SCALAR alp,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR bet,
+   const TYPE *C,
+   ATL_CSZT ldc
+}
+int ATL_syr2k_OP
+(
+   unsigned int flg, /* 0:Upper?, 1:TRANS? */
+   ATL_CSZT N,       /* C is NxN */
+   ATL_CSZT K,       /* dim common to A & B, K <= ATL_VWopgen_LAST_KB */
+   const SCALAR alp,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR bet,
+   const TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   opinfo_t op;
+   size_t szA, szC, sz, nnu, nmu;
+   unsigned int mb, nb, kb, nr;
+   void *vp=NULL;
+   TYPE *wA, *wB, *rC, *iC, *w1;
+   if (Mjoin(PATL,opsyrkInfo)(&op, ICONJ_, TA, N, K, lda, ldc, alpha, beta))
+      return(2); /* signal K is too large for outer product */
+   if (op.nb >= N)
+   {
+      return(0);
+   }
+   nb = op.nfnblks ? op.nb : op.pnb;
+   kb = op.KB;
+   nnblks = op.npnblks + op.nfnblks;
+   szA =  op.npnblks*op.pnb + op.nfnblks*nb;  /* N storage */
+   szA *= kb;
+   szC = nb*nb;
+   sz = (szA+szC)<<1;
+   sz = ATL_MulBySize(sz) + 4*ATL_Cachelen;
+   if (sz <= ATL_MaxMalloc)
+      vp = malloc(sz);
+   if (!vp)
+      return(1);
+   wA = ATL_AlignPtr(vp);
+   wB = wA + (szA SHIFT);
+   wB = ATL_AlignPtr(wB);
+   iC = wB + (szA SHIFT);
+   iC = ATL_AlignPtr(iC);
+   #ifdef TCPLX
+      rC = iC + szC;
+   #else
+      rC = iC;
+   #endif
+   w1 = rC + szC;
+   w1 = ATL_AlignPtr(w1);
+/*
+ * Do all diagonal blocks, copy A & B at the same time
+ */
+   szA = op.nfnblks ? op.szA : op.pszA;
+   nnblks = op.nfnblks;
+   szA = op.szA;
+   pA = wA;
+   pB = wB;
+   nr = op.nr;
+   for (j=0; j < nnblks; j++)  /* loop over full diagonal blocks */
+   {
+      TYPE *pAn, *pBn;
+      if (j != nnblks-1)
+      {
+         pAn = pA + szA;
+         pBn = pB + szA;
+      }
+      else
+      {
+         pAn = (nr) ? pA+szA : wA;
+         pBn = (nr) ? pB+szA : wB;
+      }
+      pA = pAn;
+      pB = pBn;
+/*
+ *    Do diagonal block, but don't write to C since only upper or lower portion
+ *    can be written to.
+ */
+      Mjoin(PATL,opblk)(op, j, j, A, B, NULL, pA, pAn, pB, pBn, rC, iC);
+   }
+
+/*
+ * Loop over column panels of C
+ */
+   szA = op.nfnblks ? op.szA : op.pszA;
+   for (j=0; j < nnblks; j++)
+   {
+      TYPE *pA = wA, pAn = (j != nnblks) ? wA + szA : pA;
+/*
+ *    Start by doing diagonal block
+ */
+      A = NULL;
+      B = NULL;
+   }
+
+   free(vp);
+   return(0);
+}
