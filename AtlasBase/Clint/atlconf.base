@@ -12987,3 +12987,177 @@ int main(int nargs, char **args)
    char *asrcd, *adstd, *mach;
    np = GetFlags(nargs, args, &asrcd, &adstd, &mach, &flag);
 }
+@ROUT fpuStress_avx16.S
+#define nrep  %rdi
+#define dp    %rsi
+#ifdef XMM_
+   #define zero %xmm0
+   #define acc0 %xmm1
+   #define acc1 %xmm2
+   #define acc2 %xmm3
+   #define acc3 %xmm4
+   #define acc4 %xmm5
+   #define acc5 %xmm6
+   #define acc6 %xmm7
+   #define acc7 %xmm8
+   #define acc8 %xmm9
+   #define acc9 %xmm10
+   #define accA %xmm11
+   #define accB %xmm12
+   #define accC %xmm13
+   #define accD %xmm14
+   #define accE %xmm15
+#else
+   #define zero %ymm0
+   #define acc0 %ymm1
+   #define acc1 %ymm2
+   #define acc2 %ymm3
+   #define acc3 %ymm4
+   #define acc4 %ymm5
+   #define acc5 %ymm6
+   #define acc6 %ymm7
+   #define acc7 %ymm8
+   #define acc8 %ymm9
+   #define acc9 %ymm10
+   #define accA %ymm11
+   #define accB %ymm12
+   #define accC %ymm13
+   #define accD %ymm14
+   #define accE %ymm15
+#endif
+/* 
+ *                               rdi        rsi
+ * void fpuStress(unsigned long nrep, double *d);
+ */
+.text
+.globl fpuStress
+fpuStress:
+   vxorpd zero, zero, zero
+   @whiledef nn 0 1 2 3 4 5 6 7 8 9 A B C D E
+   vmovapd zero, acc@(nn);
+   @endwhile
+   cmp $0, %rdi
+   je RET_LOOP_FLOPS
+   .local LOOP
+   LOOP:
+      @whiledef nn 0 1 2 3 4 5 6 7 8 9 A B C D E
+      vfmadd231pd zero, zero, acc@(nn)
+      @endwhile
+      dec nrep
+   jnz LOOP
+.local RET_LOOP_FLOPS
+RET_LOOP_FLOPS:
+   fld1             /* ST={1.0} */
+   fadd %st,%st     /* ST={2.0} */
+   fld1             /* ST={1.0,2.0} */
+   fadd  %st(1),%st /* ST={3.0,2.0} */
+   fadd %st(1), %st /* ST={5.0,2.0} */
+   fmul %st(1), %st /* ST={10.0,2.0} */
+   fmul %st, %st(1) /* ST={10.0,20.0} */
+   faddp            /* ST={30.0} */
+   fadd %st,%st     /* ST={60.0} VLEN=2 */
+   #ifndef XMM_
+      fadd %st,%st  /* ST={120.0} VLEN=4 */
+   #endif
+   fstpL (dp)       /* dp[0] = # flops in loop */
+   ret
+@ROUT probe_fpu
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+#define INTV 0.2
+/*
+ * This routine written in assembly to allow useless computations to be used
+ * in order to acheive FPU peak.
+ * if nrep is 0, then the function returns the number of flops done in a single
+ * loop iteration.  If nrep > 0, it performs that many loop iterations and
+ * returns with junk as return value.
+ * The array d is input/output of length at least 5000, and can be used
+ * to make compiler-oriented routine unsure if flops are useless.
+ */
+void fpuStress(unsigned long nrep, double *d);
+void printUsage(char *name, int iarg, char *flag)
+{
+   if (iarg)
+      fprintf(stderr, "Error around argument %d (%s)!\n", iarg, flag);
+   fprintf(stderr, "USAGE: %s [flags]\n", name);
+   fprintf(stderr, "   -m <mflop> : set the number of MFLOP to time");
+   fprintf(stderr, "   -t <sec> : set floor on timing interval");
+   fprintf(stderr, "   -o <outfile> : default=stdout\n");
+   exit(iarg ? iarg : -1);
+}
+
+FILE *getFlags(int nargs, char **args, double *mflop, double *time)
+{
+   FILE *fpout=stdout;
+   int i;
+
+   *mflop = *time = 0.0;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') 
+         printUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'm':
+         if (++i >= nargs)
+            printUsage(args[0], i, "Out of args");
+         *mflop = atof(args[i]);
+         *time = 0.0;
+         break;
+      case 't':
+         if (++i >= nargs)
+            printUsage(args[0], i, "Out of args");
+         *time = atof(args[i]);
+         *mflop = 0.0;
+         break;
+      case 'o':
+         if (++i >= nargs)
+            printUsage(args[0], i, "Out of args");
+         if (fpout != stdout)
+            fclose(fpout);
+         fpout = fopen(args[i], "w");
+         assert(fpout);
+         break;
+      default:
+         printUsage(args[0], i, args[i]);
+      }
+   }
+   return(fpout);
+}
+/*
+ * This program is linked to various assembly language backends to attempt
+ * to exercise the FPU at its peak rate.  Once the correct backend is linked
+ * in, we can use this peak performance to auto-discover what thread IDs
+ * share an FPU, and thus which IDs should be used
+ */
+int main(int nargs, char **args)
+{
+   double *d;
+   double time, mf;
+   FILE *fpout;
+   double ATL_walltime(void);
+
+   d = malloc(sizeof(double)*100);
+   assert(d);
+   fpout = getFlags(nargs, args, &mf, &time);
+   if (mf > 0.0)
+   {
+      unsigned long nrep;
+      double t0, t1, fpi;
+      fpuStress(0, d);
+      fpi = d[0];
+      nrep = (mf*1e6)/fpi;
+
+      t0 = ATL_walltime();
+      fpuStress(nrep, d);
+      t1 = ATL_walltime();
+      t1 -= t0;
+      fprintf(fpout, "PEAK MFLOP=%.2f (%e sec)\n", nrep*fpi*1e-6 / t1, t1);
+   }
+   else
+     assert(0);
+   free(d);
+   return(0);
+}
