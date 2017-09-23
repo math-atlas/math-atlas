@@ -1,0 +1,96 @@
+@ifdef ! nacc
+   @abort nacc (# of accumulators) must be defined!
+@endifdef
+#include "atlas_asm.h"
+@ROUT AVX SSE
+   @ifdef ! nmul
+      @iexp nmul 1
+   @endifdef
+   @iif @iexp @(nmul) 1 ! @(nmul) @(nacc) ! &
+      @abort nmul must be 1 or set to number of accumulators (@(nacc))
+   @endiif
+@ROUT SSE
+#define vmovapd movapd
+#ifndef XMM_
+   #define XMM_
+#endif
+@ROUT AVXFMA
+   @iexp nmul 0
+@ROUT AVXFMA AVX SSE
+
+#define nrep %rdi
+#define dp   %rsi
+@multidef rn   ymm                zmm     xmm
+@whiledef ifs #else #elif@^defined(ZMM_) #ifdef@^XMM_
+@(ifs)
+   @iexp ac 0
+   @iwhile ac < nacc
+   #define acc@(ac) %@(rn)@(ac)
+      @iexp ac @(ac) 1 +
+   @endiwhile
+   #define zero %@(rn)@(ac)
+   @iexp ml 0
+   @iwhile ml < nmul
+      @iexp ac @(ac) 1 +
+   #define m@(ml)   %@(rn)@(ac)
+      @iexp ml @(ml) 1 +
+   @endiwhile
+   @undef rn
+@endwhile
+#endif
+/* 
+ * rax                                    rdi        rsi
+ * unsigned long fpuStress(unsigned long nrep, double *d);
+ */
+.text
+.local LOOP
+.local RET_LOOP_FLOPS
+.global ATL_asmdecor(fpuStress)
+ATL_asmdecor(fpuStress):
+   cmp $0, nrep
+   je RET_LOOP_FLOPS
+   @ROUT SSE `   xorpd zero, zero `
+   @ROUT AVX AVXFMA `   vxorpd zero, zero, zero`
+@iexp ac 0
+@iwhile ac < nacc
+   vmovapd zero, acc@(ac)
+   @iexp ac @(ac) 1 +
+@endiwhile
+@iexp ml 0
+@iwhile ml < nmul
+   vmovapd zero, m@(ml)
+   @iexp ml @(ml) 1 +
+@endiwhile
+   LOOP:
+   @iexp ac 0
+   @iexp ml 0
+   @iwhile ac < nacc
+@ROUT AVXFMA
+      vadd231pd zero, zero, acc@(ac)
+@ROUT AVX
+      vaddpd m@(ml), m@(ml), acc@(ac)
+      vmulpd zero, zero, m@(ml)
+@ROUT SSE
+      addpd m@(ml), acc@(ac)
+      mulpd zero, m@(ml)
+@ROUT AVX SSE
+      @iexp ml @(ml) 1 +
+      @iif ml = nmul
+         @iexp ml 0
+      @endiif
+@ROUT AVXFMA AVX SSE
+      @iexp ac @(ac) 1 +
+   @endiwhile
+      dec nrep
+   jnz LOOP
+
+   ret
+RET_LOOP_FLOPS:
+   mov $@(nacc)*2*2, %rax  /* (#acc)*(mul+add=2)*(VLEN=2) */
+   #ifndef XMM_
+      add %rax, %rax  /* VLEN=4 at least */
+      #ifdef YMM_
+         add %rax, %rax  /* VLEN=8 at least */
+      #endif
+   #endif
+   ret
