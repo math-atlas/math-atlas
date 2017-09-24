@@ -2,26 +2,34 @@
    @abort nacc (# of accumulators) must be defined!
 @endifdef
 #include "atlas_asm.h"
-@ROUT AVX SSE
+#ifdef SREAL
+   @whiledef in vmovap movap xorp vxor vadd231p vaddp vmulp addp mulp
+   #define @(in)d @(in)s
+   @endwhile
+#endif
+@ISA AVX SSE
    @ifdef ! nmul
       @iexp nmul 1
    @endifdef
    @iif @iexp @(nmul) 1 ! @(nmul) @(nacc) ! &
       @abort nmul must be 1 or set to number of accumulators (@(nacc))
    @endiif
-@ROUT SSE
+@ISA SSE
 #define vmovapd movapd
-#ifndef XMM_
-   #define XMM_
+#ifndef VL16
+   #define VL16
 #endif
-@ROUT AVXFMA
+@ISA AVXFMA
    @iexp nmul 0
-@ROUT AVXFMA AVX SSE
+@ISA AVXFMA AVX SSE
+#if !defined(VL16) && !defined(VL32) && !defined(VL64)
+   #error "Must set vector length in bytes by defining one of VL[16,32,64]!"
+#endif
 
 #define nrep %rdi
 #define dp   %rsi
-@multidef rn   ymm                zmm     xmm
-@whiledef ifs #else #elif@^defined(ZMM_) #ifdef@^XMM_
+@multidef rn   ymm                 zmm     xmm
+@whiledef ifs #else #elif@^defined(VL64) #ifdef@^VL16
 @(ifs)
    @iexp ac 0
    @iwhile ac < nacc
@@ -49,8 +57,8 @@
 ATL_asmdecor(fpuStress):
    cmp $0, nrep
    je RET_LOOP_FLOPS
-   @ROUT SSE `   xorpd zero, zero `
-   @ROUT AVX AVXFMA `   vxorpd zero, zero, zero`
+   @ISA SSE `   xorpd zero, zero `
+   @ISA AVX AVXFMA `   vxorpd zero, zero, zero`
 @iexp ac 0
 @iwhile ac < nacc
    vmovapd zero, acc@(ac)
@@ -65,20 +73,20 @@ ATL_asmdecor(fpuStress):
    @iexp ac 0
    @iexp ml 0
    @iwhile ac < nacc
-@ROUT AVXFMA
-      vadd231pd zero, zero, acc@(ac)
-@ROUT AVX
+@ISA AVXFMA
+      vfmadd231pd zero, zero, acc@(ac)
+@ISA AVX
       vaddpd m@(ml), m@(ml), acc@(ac)
       vmulpd zero, zero, m@(ml)
-@ROUT SSE
+@ISA SSE
       addpd m@(ml), acc@(ac)
       mulpd zero, m@(ml)
-@ROUT AVX SSE
+@ISA AVX SSE
       @iexp ml @(ml) 1 +
       @iif ml = nmul
          @iexp ml 0
       @endiif
-@ROUT AVXFMA AVX SSE
+@ISA AVXFMA AVX SSE
       @iexp ac @(ac) 1 +
    @endiwhile
       dec nrep
@@ -87,7 +95,7 @@ ATL_asmdecor(fpuStress):
    ret
 RET_LOOP_FLOPS:
    mov $@(nacc)*2*2, %rax  /* (#acc)*(mul+add=2)*(VLEN=2) */
-   #ifndef XMM_
+   #ifndef VL16
       add %rax, %rax  /* VLEN=4 at least */
       #ifdef YMM_
          add %rax, %rax  /* VLEN=8 at least */
