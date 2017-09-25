@@ -42257,6 +42257,7 @@ int main(int nargs, char **args)
 #include <assert.h>
 
 #define INTV 0.2
+#define DEFMF 200.0
 /*
  * This routine written in assembly to allow useless computations to be used
  * in order to acheive FPU peak.
@@ -42294,6 +42295,8 @@ FILE *getFlags(int nargs, char **args, double *mflop, double *time)
          if (++i >= nargs)
             printUsage(args[0], i, "Out of args");
          *mflop = atof(args[i]);
+         if (*mflop <= 0.0)  /* <=0 says use default MFLOP */
+            *mflop = DEFMF;
          *time = 0.0;
          break;
       case 't':
@@ -42362,20 +42365,24 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT probeFPU
-#define AVXFMA 0
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#define SSE    0
 #define AVX    1
-#define SSE    2
+#define AVXFMA 2
 
 #define LNLEN 128
-double getMflop(char pre, int isa, int vlenb, int nacc, int nmul)
+double getMflop(char pre, int isa, int vlenb, int nacc, int nmul, double mf)
 {
-   double mf;
-   char isas[3] = {"AVXFMA", "AVX", "SSE"};
+   char *isas[3] = {"SSE", "AVX", "AVXFMA"};
    char ln[LNLEN];
    int i;
    FILE *fpin;
-   i = sprintf(ln,"make fpucase isa=%s nacc=%d nmul=%d vlen=%d typ=\"%s\"", 
-               isas[isa], nacc, nmul, vlenb, pre=='s'?"-DSREAL=1":"");
+   i = sprintf(ln, "make fpucase isa=%s nacc=%d nmul=%d vlen=%d mf=%f "
+               "typ=\"%s\" > /dev/null 2>&1", 
+               isas[isa], nacc, nmul, vlenb, mf > 0.0?mf:0.0, 
+               pre=='s'?"-DSREAL=1":"");
    assert(i < LNLEN);
    if (system(ln))
       return(-1.0);
@@ -42388,15 +42395,106 @@ double getMflop(char pre, int isa, int vlenb, int nacc, int nmul)
    return(mf);
 }
 
-int findISA(void)
+int findISA(int *VLENB)
 {
-   #ifdef ATL_AVXMAC
+   #ifdef ATL_AVXMAC00
+      *VLENB = 32;
       return(AVXFMA);
    #elif defined(ATL_AVX)
+      *VLENB = 32;
       return(AVX);
-   #else if defined(ATL_SSE1)
+   #elif defined(ATL_SSE1)
+      *VLENB = 16;
+      return(SSE);
    #endif
+   *VLENB = 0;
    return(-1);
+}
+
+int findNREG(char pre, int isa, int vlenb)
+{
+   const int nmul = (isa == AVXFMA) ? 0:1, nextra = nmul+1;;
+   int nreg=128;
+   printf("PROBING FOR NUMBER OF REGISTERS:\n");
+   printf("   TRYING NREG=%d: ", nreg);
+   while (getMflop(pre, isa, vlenb, nreg-nextra, 1, 0.0) <= 0.0)
+   {
+      nreg >>= 1;
+      printf("NO.\n   TRYING NREG=%d: ", nreg);
+      assert(nreg > 0);
+   }
+   printf("YES!\nNUMBER OF REGISTERS DETECTED AS: %d\n\n", nreg);
+   return(nreg);
+}
+
+int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL)
+{
+   int NOFMA=(isa == AVXFMA) ? 0:1;
+   int nmulB, naccB, nacc, nmul;
+   double mfB=0.0, mf;
+
+   printf("PROBING FOR EFFECTIVE FMA LATENCY:\n");
+/*
+ * If no FMA, then try maximum NMUL setting that will fit in nreg:
+ *    nmul+nacc+1 <= nreg, nmul=nacc = (nreg-1)/2;
+ */
+   if (NOFMA)
+   {
+      nacc = (nreg-2)>>1;
+      nacc = (nacc < 1) ? 1:nacc;
+      mfB = getMflop(pre, isa, vlenb, nacc, nacc, 0.0);
+      naccB = nmulB = nacc;
+      assert(mfB > 0.0);
+      printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nacc, mfB);
+   }
+   else
+      *NMUL = nmul = 0;
+   nacc = nreg-2;
+   mf = getMflop(pre, isa, vlenb, nacc, NOFMA, 0.0);
+   assert(mf > 0.0);
+   printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nmul, mf);
+   if (mf > mfB)
+   {
+      mfB = mf;
+      naccB = nacc;
+      nmulB = NOFMA;
+   }
+   nacc = naccB;
+   do
+   {
+      int nacc0=nacc;
+      nacc = (nacc > 16) ? (nacc>>1):nacc-1;
+      nmul = NOFMA;
+      mf = getMflop(pre, isa, vlenb, nacc, 1, 0.0);
+      printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nmul, mf);
+      if (NOFMA && nacc + nacc + 1 <= nreg)
+      {
+         double mfM;
+         mfM = getMflop(pre, isa, vlenb, nacc, nacc, 0.0);
+         printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nacc, mfM);
+         if (mfM > mf)
+         {
+            nmul = nacc;
+            mf = mfM;
+         }
+      }
+      if (mf*1.03 <= mfB)  /* definite drop-off in performance */
+      {
+         naccB = nacc0;
+         break;
+      }
+      else
+      {
+         mfB = (mf > mfB) ? mf : mfB;
+         naccB = nacc;
+         nmulB = nmul;
+      }
+
+   }
+   while (naccB > 1);
+   printf("EFFECTIVE FMA LATENCY DETECTED AS: %d, NMUL=%d\n\n", naccB, nmulB);
+   *NMUL = nmulB;
+   return(naccB);
 }
 /*
  * This probe finds the minimal vector operation necessary to get peak
@@ -42404,5 +42502,12 @@ int findISA(void)
  */
 int main(int nargs, char **args)
 {
+   int isa, nreg, vlenb, nlat, nmul;
+   char pre='d';
+   isa = findISA(&vlenb);
+   nreg = findNREG(pre, isa, vlenb);
+   nlat = findLAT(pre, isa, vlenb, nreg, &nmul);
+   assert(nreg >= 0);
+   return(0);
 }
 @ROUT !
