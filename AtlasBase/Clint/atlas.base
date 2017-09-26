@@ -42371,11 +42371,11 @@ int main(int nargs, char **args)
 #define SSE    0
 #define AVX    1
 #define AVXFMA 2
+char *isas[3] = {"SSE", "AVX", "AVXFMA"};
 
 #define LNLEN 128
 double getMflop(char pre, int isa, int vlenb, int nacc, int nmul, double mf)
 {
-   char *isas[3] = {"SSE", "AVX", "AVXFMA"};
    char ln[LNLEN];
    int i;
    FILE *fpin;
@@ -42427,11 +42427,21 @@ int findNREG(char pre, int isa, int vlenb)
    return(nreg);
 }
 
-int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL)
+int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL, double *PEAK)
+/*
+ * Finds: peak mflop and effective latency of FMA of selected isa & vlenb.
+ * If this ISA has no FMA (separate mul & add) also finds how many regs must
+ * be dedicated to multiply registers.  If machine supports register renaming
+ * in hardware (modern x86), nmul almost always 1, but w/o it will usually
+ * the stages in the fmul pipe.  This code will detect FMA latency as max of
+ * add and mul latency, usually, so not optimal solution for separate mul&add,
+ * but these are not common in modern architecture anyway.
+ * RETURNS: 0 if selected code will not compile, else detected FMA latency.
+ */
 {
    int NOFMA=(isa == AVXFMA) ? 0:1;
    int nmulB, naccB, nacc, nmul;
-   double mfB=0.0, mf;
+   double mfB=0.0, mf, mfF=(*PEAK);
 
    printf("PROBING FOR EFFECTIVE FMA LATENCY:\n");
 /*
@@ -42442,16 +42452,14 @@ int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL)
    {
       nacc = (nreg-2)>>1;
       nacc = (nacc < 1) ? 1:nacc;
-      mfB = getMflop(pre, isa, vlenb, nacc, nacc, 0.0);
+      mfB = getMflop(pre, isa, vlenb, nacc, nacc, mfF);
       naccB = nmulB = nacc;
-      assert(mfB > 0.0);
       printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nacc, mfB);
    }
    else
       *NMUL = nmul = 0;
    nacc = nreg-2;
-   mf = getMflop(pre, isa, vlenb, nacc, NOFMA, 0.0);
-   assert(mf > 0.0);
+   mf = getMflop(pre, isa, vlenb, nacc, NOFMA, mfF);
    printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nmul, mf);
    if (mf > mfB)
    {
@@ -42459,18 +42467,24 @@ int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL)
       naccB = nacc;
       nmulB = NOFMA;
    }
+   if (mfB <= 0.0)
+   {
+      *PEAK = 0.0;
+      *NMUL = 0;
+      return(0);
+   }
    nacc = naccB;
    do
    {
       int nacc0=nacc;
       nacc = (nacc > 16) ? (nacc>>1):nacc-1;
       nmul = NOFMA;
-      mf = getMflop(pre, isa, vlenb, nacc, 1, 0.0);
+      mf = getMflop(pre, isa, vlenb, nacc, 1, mfF);
       printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nmul, mf);
       if (NOFMA && nacc + nacc + 1 <= nreg)
       {
          double mfM;
-         mfM = getMflop(pre, isa, vlenb, nacc, nacc, 0.0);
+         mfM = getMflop(pre, isa, vlenb, nacc, nacc, mfF);
          printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nacc, mfM);
          if (mfM > mf)
          {
@@ -42493,8 +42507,75 @@ int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL)
    }
    while (naccB > 1);
    printf("EFFECTIVE FMA LATENCY DETECTED AS: %d, NMUL=%d\n\n", naccB, nmulB);
+   *PEAK = mfB;
    *NMUL = nmulB;
    return(naccB);
+}
+void findAllPeaks(char pre, int isa, int nreg, int nmul, double peak)
+{
+   double mfF;
+   int i, vlens[3] = {64, 32, 16};
+   char fn[12];
+   FILE *fp;
+
+   mfF = .05*peak;
+   sprintf(fn, "res/%cSIMD.idx", pre);
+   fp = fopen(fn, "w");
+   assert(fp);
+   for (i=isa; i >= 0; i--)
+   {
+      int v;
+      for (v=0; v < 3; v++)
+      {
+         int lat, vl=vlens[v], nmul;
+         double mfpk;
+         lat = findLAT(pre, i, vl, nreg, &nmul, &mfpk);
+         fprintf(fp, "'%s' %d %.2f %d %d\n",  isas[i], vl, mfpk, lat, nmul);
+         printf("******************************\n");
+         printf("'%s' %d %.2f %d %d\n",  isas[i], vl, mfpk, lat, nmul);
+         printf("******************************\n\n");
+      }
+   }
+   fclose(fp);
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -p <pre> [d] : Date type prefix, one of [s,d]\n");
+   exit(ierr ? ierr : -1);
+}
+
+char getFlags(int nargs, char **args)
+{
+   char pre='d';
+   int i;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pre = args[i][0];
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (pre == 'S' || pre == 's' || pre == 'C' || pre == 'c')
+       pre = 's';
+   else
+      pre = 'd';
+   return(pre);
 }
 /*
  * This probe finds the minimal vector operation necessary to get peak
@@ -42502,12 +42583,55 @@ int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL)
  */
 int main(int nargs, char **args)
 {
+   double peak=0.0;
+   FILE *fp;
    int isa, nreg, vlenb, nlat, nmul;
    char pre='d';
+   char fn[32];
+
+   pre = getFlags(nargs, args);
+
    isa = findISA(&vlenb);
    nreg = findNREG(pre, isa, vlenb);
-   nlat = findLAT(pre, isa, vlenb, nreg, &nmul);
    assert(nreg >= 0);
+   nlat = findLAT(pre, isa, vlenb, nreg, &nmul, &peak);
+   assert(nlat > 0 && nlat < nreg && peak > 0.0);
+/*
+ * For backwards compatibility, write <pre>MULADD file
+ */
+   sprintf(fn, "res/%cMULADD", pre);
+   fp = fopen(fn, "w");
+   assert(fp);
+   fprintf(fp, "%d\n%d\n%.2f\n%d\n", isa == AVXFMA, nlat, peak, nreg);
+   fprintf(fp, "#'<simd>' <mflop> <nreg> <vlen bytes> <FMA latency> <nmul>\n");
+   fclose(fp);
+/*
+ * Confirm peak performance of best case using a forced mflop high enough
+ * we think timing is repeatable.
+ * getMflop call ensures last generated fpu.S is an optimal one.
+ */
+   peak = getMflop(pre, isa, vlenb, nlat, nmul, .1*peak);
+/*
+ * Store results in res/<pre>SIMD
+ */
+   fn[5] = 'S'; fn[6] = 'I'; fn[7] = 'M'; fn[8] = 'D'; fn[9] = '\0';
+   fp = fopen(fn, "w");
+   assert(fp);
+   fprintf(fp, "'%s' %.2f %u %u %u %u\n", isas[isa], peak, nreg, vlenb, 
+           nlat, nmul);
+   fclose(fp);
+/*
+ * Ask for peak code to take .05 seconds in <pre>mflop.frc
+ */
+   sprintf(fn, "../blas/gemm/%cmflops.frc", pre);
+   fp = fopen(fn, "w");
+   assert(fp);
+   fprintf(fp, "%le", .05*peak);
+   fclose(fp);
+
+   #if 0
+      findAllPeaks(pre, isa, nreg, nmul, peak);
+   #endif
    return(0);
 }
 @ROUT !
