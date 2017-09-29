@@ -2198,11 +2198,7 @@ enum OSTYPE ProbeOS(int verb, char *targ)
    res = atlsys_1L(targ, cmnd, verb, 0);
    if (res)
    {
-/* 
- *    Accept GNU (HURD) as Linux, since they seem to use same stuff;
- *    This is patch from Sylvestre Ledru; I have no direct experience wt HURD
- */
-      if(strstr(res, "Linux") || strstr(res, "GNU")) OS = OSLinux;
+      if(strstr(res, "Linux")) OS = OSLinux;
       else if(strstr(res, "FreeBSD")) OS = OSFreeBSD;
       else if (strstr(res, "Darwin")) OS = OSOSX;
       else if(strstr(res, "SunOS")) 
@@ -2239,6 +2235,11 @@ enum OSTYPE ProbeOS(int verb, char *targ)
          else ierr = 1;
       }
       else if (strstr(res, "HP-UX")) OS = OSHPUX;
+/* 
+ *    Accept GNU (HURD) as Linux, since they seem to use same stuff;
+ *    This is patch from Sylvestre Ledru; I have no direct experience wt HURD
+ */
+      else if(strstr(res, "GNU")) OS = OSLinux;
       else ierr = 1;
       free(res);
    }
@@ -4301,10 +4302,29 @@ void PrintResults
    if (fpout != stderr && fpout != stdout)
       fclose(fpout);
 }
+#if 0 && defined(ATL_SSE1)
+unsigned long fpuStress(unsigned long nrep, double *d);
+int *removeSharedFPU
+(
+   int verb,            /* verbosity */
+   char *targ,          /* target machine */
+   enum OSTYPE OS,      /* detected OS */
+   int OMP,             /* use OpenMP? */
+   int iaff,            /* which entry in AFFS to search with */
+   int *IDs             /* all working IDs, ID[0] is number */
+)
+{
+   unsigned long fpi, nrep;
+   fpi = fpuStress(0, NULL);
+   nrep = mf / (1e-6*fpi);
+}
+#endif
+   PrintResults(outfile, iaff, iaff2, IDs);
 
 int main(int nargs, char **args)
 {
    int verb, iaff, iaff2, maxT, OMP, *IDs=NULL, i, max;
+   int UAFF=0;
    enum OSTYPE OS;
    char *targ, *outfile;
 
@@ -4315,6 +4335,7 @@ int main(int nargs, char **args)
    if (IDs)
    {
       int *ids;
+      UAFF = 1;
       if (!iaff)
       {
          fprintf(stderr, 
@@ -4348,6 +4369,15 @@ int main(int nargs, char **args)
          printf("]\n");
       }
    }
+/*
+ * If the user has not specified the IDs, we should refine them to make
+ * sure that IDs aren't sharing an FPU.  Right now I've only gotten x86
+ * support for this, but should extend for other archs soon.
+ */
+   #if 0 && defined(ATL_SSE1)
+   if (!UAFF)  /* user didn't specify what IDs to use */
+      IDs = removeSharedFPU(IDs);
+   #endif
    PrintResults(outfile, iaff, iaff2, IDs);
    free(IDs);
    return(0);
@@ -5442,7 +5472,8 @@ char *GetPtrbitsFlag(enum OSTYPE OS, enum MACHTYPE arch, int ptrbits,
    if (MachIsIA64(arch))
       return(sp);
    if (MachIsMIPS(arch))
-      return((ptrbits == 64) ? "-mabi=64" : "-mabi=n32");
+      return(sp);  /* patch by Sebastien Villemot for modern Linux */
+/*      return((ptrbits == 64) ? "-mabi=64" : "-mabi=n32"); */
    if (MachIsS390(arch))
       return((ptrbits == 64) ? "-m64" : "-m31");
    if (!CompIsGcc(comp))
@@ -9622,7 +9653,7 @@ char *GetArch(enum MACHTYPE mach, int ISAX, int SIflag, int ptrbits)
    int i, k;
 
    i = strlen(machnam[mach]);
-   #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
+   #if defined(__powerpc64__) && (__BYTE_ORDER__  ==  __ORDER_LITTLE_ENDIAN__)
       i += 2; /* LE */
    #endif
    i += 2;   /* 64/32 */
@@ -9633,7 +9664,7 @@ char *GetArch(enum MACHTYPE mach, int ISAX, int SIflag, int ptrbits)
    ap = malloc(i+1);
    assert(ap);
    k = sprintf(ap, "%s", machnam[mach]);
-   #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
+   #if defined(__powerpc64__) && (__BYTE_ORDER__  ==  __ORDER_LITTLE_ENDIAN__)
       k += sprintf(ap+k, "%dLE", ptrbits);
    #else
       k += sprintf(ap+k, "%d", ptrbits);
@@ -12985,3 +13016,77 @@ int main(int nargs, char **args)
    char *asrcd, *adstd, *mach;
    np = GetFlags(nargs, args, &asrcd, &adstd, &mach, &flag);
 }
+@ROUT fpuStress_avx16.S
+#define nrep  %rdi
+#define dp    %rsi
+#ifdef XMM_
+   #define zero %xmm0
+   #define acc0 %xmm1
+   #define acc1 %xmm2
+   #define acc2 %xmm3
+   #define acc3 %xmm4
+   #define acc4 %xmm5
+   #define acc5 %xmm6
+   #define acc6 %xmm7
+   #define acc7 %xmm8
+   #define acc8 %xmm9
+   #define acc9 %xmm10
+   #define accA %xmm11
+   #define accB %xmm12
+   #define accC %xmm13
+   #define accD %xmm14
+   #define accE %xmm15
+#else
+   #define zero %ymm0
+   #define acc0 %ymm1
+   #define acc1 %ymm2
+   #define acc2 %ymm3
+   #define acc3 %ymm4
+   #define acc4 %ymm5
+   #define acc5 %ymm6
+   #define acc6 %ymm7
+   #define acc7 %ymm8
+   #define acc8 %ymm9
+   #define acc9 %ymm10
+   #define accA %ymm11
+   #define accB %ymm12
+   #define accC %ymm13
+   #define accD %ymm14
+   #define accE %ymm15
+#endif
+/* 
+ *                               rdi        rsi
+ * void fpuStress(unsigned long nrep, double *d);
+ */
+.text
+.globl fpuStress
+fpuStress:
+   vxorpd zero, zero, zero
+   @whiledef nn 0 1 2 3 4 5 6 7 8 9 A B C D E
+   vmovapd zero, acc@(nn);
+   @endwhile
+   cmp $0, %rdi
+   je RET_LOOP_FLOPS
+   .local LOOP
+   LOOP:
+      @whiledef nn 0 1 2 3 4 5 6 7 8 9 A B C D E
+      vfmadd231pd zero, zero, acc@(nn)
+      @endwhile
+      dec nrep
+   jnz LOOP
+.local RET_LOOP_FLOPS
+RET_LOOP_FLOPS:
+   fld1             /* ST={1.0} */
+   fadd %st,%st     /* ST={2.0} */
+   fld1             /* ST={1.0,2.0} */
+   fadd  %st(1),%st /* ST={3.0,2.0} */
+   fadd %st(1), %st /* ST={5.0,2.0} */
+   fmul %st(1), %st /* ST={10.0,2.0} */
+   fmul %st, %st(1) /* ST={10.0,20.0} */
+   faddp            /* ST={30.0} */
+   fadd %st,%st     /* ST={60.0} VLEN=2 */
+   #ifndef XMM_
+      fadd %st,%st  /* ST={120.0} VLEN=4 */
+   #endif
+   fstpL (dp)       /* dp[0] = # flops in loop */
+   ret

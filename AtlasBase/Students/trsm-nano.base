@@ -24,15 +24,25 @@
 #define ATL_MU @(mu)
 #define ATL_NU @(nu)
 
-#define ATL_utrsmL_LN Mjoin(PATL,utrsmL_LN@(mu)x@(nu))
-#define ATL_utrsmL_LT Mjoin(PATL,utrsmL_LT@(mu)x@(nu))
-#define ATL_utrsmL_UN Mjoin(PATL,utrsmL_UN@(mu)x@(nu))
-#define ATL_utrsmL_UT Mjoin(PATL,utrsmL_UT@(mu)x@(nu))
+#define ATL_utrsmL_LN Mjoin(PATL,utrsmL_LN@(mu)x@(nu)@(ta))
+#define ATL_utrsmL_UN Mjoin(PATL,utrsmL_UN@(mu)x@(nu)@(ta))
+#ifdef Conj_
+   #define ATL_utrsmL_LT Mjoin(PATL,utrsmL_LH@(mu)x@(nu)@(ta))
+   #define ATL_utrsmL_UT Mjoin(PATL,utrsmL_UH@(mu)x@(nu)@(ta))
+#else
+   #define ATL_utrsmL_LT Mjoin(PATL,utrsmL_LT@(mu)x@(nu)@(ta))
+   #define ATL_utrsmL_UT Mjoin(PATL,utrsmL_UT@(mu)x@(nu)@(ta))
+#endif
 
-#define ATL_utrsmR_LN Mjoin(PATL,utrsmR_LN@(mu)x@(nu))
-#define ATL_utrsmR_LT Mjoin(PATL,utrsmR_LT@(mu)x@(nu))
-#define ATL_utrsmR_UN Mjoin(PATL,utrsmR_UN@(mu)x@(nu))
-#define ATL_utrsmR_UT Mjoin(PATL,utrsmR_UT@(mu)x@(nu))
+#define ATL_utrsmR_LN Mjoin(PATL,utrsmR_LN@(mu)x@(nu)@(ta))
+#define ATL_utrsmR_UN Mjoin(PATL,utrsmR_UN@(mu)x@(nu)@(ta))
+#ifdef Conj_
+   #define ATL_utrsmR_LT Mjoin(PATL,utrsmR_LH@(mu)x@(nu)@(ta))
+   #define ATL_utrsmR_UT Mjoin(PATL,utrsmR_UH@(mu)x@(nu)@(ta))
+#else
+   #define ATL_utrsmR_LT Mjoin(PATL,utrsmR_LT@(mu)x@(nu)@(ta))
+   #define ATL_utrsmR_UT Mjoin(PATL,utrsmR_UT@(mu)x@(nu)@(ta))
+#endif
 
 @beginproc proc_mblk
    @addkeys TA=@(ta)
@@ -215,6 +225,7 @@ RINLINE void Mjoin(PATL,ntrsm_cpC@(ta)_@(mu)x@(nu)_a1bX_@(conf))
  * W has row stride of @(U), and the inverted diagonals are copied
  * to diag.  N <= @(U) (will be < @(U) only for cleanup
  */
+@ROUT ATL_ntrcopyL
 @BEGINSKIP
 static INLINE void ATL_ntrcopyL
    (ATL_CINT N, const TYPE *A, ATL_CSZT lda, TYPE *W, TYPE *diag)
@@ -296,7 +307,7 @@ static INLINE void ATL_ntrcopyL(const int IsConj,
       }
    }
 }
-@ROUT ATL_ntrcopyU ATL_ntrsmR ATL_ntrsmL ATL_cntrsmR ATL_cntrsmL
+@ROUT ATL_ntrcopyU
 static INLINE void ATL_ntrcopyU(const int IsConj,
                                const int n, TYPE *A, const int lda,
                                TYPE *W, const int ldw, TYPE *diag)
@@ -330,6 +341,122 @@ static INLINE void ATL_ntrcopyU(const int IsConj,
       }
    }
 }
+@ROUT ATL_ntrcopyLNUT ATL_ntrsmR ATL_ntrsmL ATL_cntrsmR ATL_cntrsmL
+@mif ta = "N
+static INLINE void ATL_ntrcopyLNUT(const int IsConj, const int IsTrans, 
+                                   const int n, TYPE *A, const int lda,
+                                   TYPE *W, const int ldw, TYPE *diag)
+{
+   register int i, j;
+   TYPE *a = A, *w = W;
+   if (IsTrans)
+   {
+      for (j=0; j<n; j++, a+=(lda SHIFT), w+=(1 SHIFT))
+      {
+         for (i=0; i<j; i++)
+         {
+            w[(i*ldw) SHIFT] = a[i SHIFT];
+            #ifdef TCPLX
+               w[((i*ldw) SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+            #endif
+         }
+         if(diag)
+         {
+            #ifdef TCPLX /* invert diag later */
+               TYPE *d=diag+j+j, *s=a+j+j;
+               *d = *s;
+               d[1] = IsConj ? -s[1] : s[1];
+               CXINV(d, d);
+            #else
+               diag[j] = ATL_rone / a[j];
+            #endif
+         }
+      }
+   }
+   else
+   {
+      for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
+      {
+         if(diag)
+         {
+            #ifdef TCPLX /* invert diag later */
+               TYPE *d=diag+j+j, *s=a+j+j;
+               *d = *s;
+               d[1] = IsConj ? -s[1] : s[1];
+               CXINV(d, d);
+            #else
+               diag[j] = ATL_rone / a[j];
+            #endif
+         }
+         for (i=j+1; i<n; i++)
+         {
+            w[i SHIFT] = a[i SHIFT];
+            #ifdef TCPLX
+               w[(i SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+            #endif
+         }
+      }
+   }
+}
+@endmif
+@ROUT ATL_ntrcopyLTUN ATL_ntrsmR ATL_ntrsmL ATL_cntrsmR ATL_cntrsmL
+@mif ta = "T
+static INLINE void ATL_ntrcopyLTUN(const int IsConj, const int IsTrans, 
+                                   const int n, TYPE *A, const int lda,
+                                   TYPE *W, const int ldw, TYPE *diag)
+{
+   register int i, j;
+   TYPE *a = A, *w = W;
+   if (!IsTrans)
+   {
+      for (j=0; j<n; j++, a+=(lda SHIFT), w+=(1 SHIFT))
+      {
+         for (i=0; i<j; i++)
+         {
+            w[(i*ldw) SHIFT] = a[i SHIFT];
+            #ifdef TCPLX
+               w[((i*ldw) SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+            #endif
+         }
+         if(diag)
+         {
+            #ifdef TCPLX /* invert diag later */
+               TYPE *d=diag+j+j, *s=a+j+j;
+               *d = *s;
+               d[1] = IsConj ? -s[1] : s[1];
+               CXINV(d, d);
+            #else
+               diag[j] = ATL_rone / a[j];
+            #endif
+         }
+      }
+   }
+   else
+   {
+      for (j=0; j<n; j++, a+=(lda SHIFT), w+=(ldw SHIFT))
+      {
+         if(diag)
+         {
+            #ifdef TCPLX /* invert diag later */
+               TYPE *d=diag+j+j, *s=a+j+j;
+               *d = *s;
+               d[1] = IsConj ? -s[1] : s[1];
+               CXINV(d, d);
+            #else
+               diag[j] = ATL_rone / a[j];
+            #endif
+         }
+         for (i=j+1; i<n; i++)
+         {
+            w[i SHIFT] = a[i SHIFT];
+            #ifdef TCPLX
+               w[(i SHIFT)+1] = IsConj ? -a[(i SHIFT)+1] : a[(i SHIFT)+1];
+            #endif
+         }
+      }
+   }
+}
+@endmif
 @ROUT ATL_ntrsmR ATL_ntrsmL ATL_cntrsmR ATL_cntrsmL
 #define RTYPE register TYPE
 @ROUT ATL_ntrsmR

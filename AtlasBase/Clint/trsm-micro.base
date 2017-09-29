@@ -1,6 +1,551 @@
+@ROUT ATL_sminfo
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
+@whiledef al N 1
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_a@(al).h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a@(al).h))
+#ifdef TCPLX
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_a@(al).h))
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_a@(al).h))
+#endif
+@endwhile
+
+#define ATL_DECL_ 1
+#ifdef Right_
+   #ifdef Upper_
+      #error "Upper not supported"
+   #else
+      #ifdef Trans_
+         #include Mstr(Mjoin(ATLAS_PRE,utrsmR_LT.h))
+         #include Mstr(Mjoin(ATLAS_PRE,trsmRT_view.h))
+         #define ATL_sminfo Mjoin(PATL,sminfoR_LT)
+         #define INCA lda
+         #define BV (1|4)
+      #else
+         #include Mstr(Mjoin(ATLAS_PRE,utrsmR_LN.h))
+         #include Mstr(Mjoin(ATLAS_PRE,trsmRN_view.h))
+         #define ATL_sminfo Mjoin(PATL,sminfoR_LN)
+         #define INCA 1
+         #define BV 1
+      #endif
+   #endif
+#else  /* Left */
+   #ifdef Upper_
+      #error "Upper not supported"
+   #else
+      #ifdef Trans_
+         #include Mstr(Mjoin(ATLAS_PRE,utrsmL_LT.h))
+         #include Mstr(Mjoin(ATLAS_PRE,trsmLT_view.h))
+         #define ATL_sminfo Mjoin(PATL,sminfoL_LT)
+         #define INCA 1
+         #define BV 4
+      #else
+         #include Mstr(Mjoin(ATLAS_PRE,utrsmL_LN.h))
+         #include Mstr(Mjoin(ATLAS_PRE,trsmLN_view.h))
+         #define ATL_sminfo Mjoin(PATL,sminfoL_LN)
+         #define INCA lda
+         #define BV 0
+      #endif
+   #endif
+#endif
+#undef ATL_DECL_
+int ATL_sminfo
+   (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
+    const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb)
+{
+   int iv=ATL_VIEW_BEST_IDX, imm, icpA, icpB, icpC, k;
+   int ALLT=0;
+   float spf;
+   #ifndef TCPLX
+      ATL_iptr_t iptmp;
+   #endif
+   ATL_cparr_t *cp = (ATL_cparr_t *)&(ip->b2blk);
+/*
+ * Really need to see if its better to do gemm+trsm in this case, but for
+ * now just assume not
+ */
+   if (N > ATL_VIEW_BEST_KB) /* inner product case */
+   {
+      int nb;
+      for (; iv; iv--)
+      {
+         nb = ATL_GetViewKB(iv);
+         if (N >= nb)
+            break;
+      }
+      if (N > nb && iv < ATL_VIEW_BEST_IDX)
+         iv++;
+   }
+   ALLT = ATL_trsm_allT(iv);
+   ip->bv = (ALLT<<5) | bv;
+   ATL_GetViewInfo(iv, spf, k, ip->rb, ip->kb, imm, icpA, icpB, k,k,k,k);
+   icpA += icpA;
+   icpB += icpB;
+   #ifdef TCPLX
+      ATL_AMM_info(imm, &ip->amm_b0, &ip->amm_b1, &ip->amm_bn, ip->mmflg,
+                   ip->mu, ip->nu, ip->ku, k, k, k, k);
+   #else
+      ATL_AMM_info(imm, &ip->amm_b0, &ip->amm_b1, &iptmp, ip->mmflg,
+                   ip->mu, ip->nu, ip->ku, k, k, k, k);
+   #endif
+   ip->utrsm = ATL_findutrsm(ALLT, ip->mu, ip->nu);
+   if (ALLT)
+   {
+      k = ip->mu;
+      ip->mu = ip->nu;
+      ip->nu = k;
+   }
+   #ifdef Right_  /* LT_UN or LN_UT case */
+      *cp = (ALLT) ? ATL_CpyFromATg_a1[icpB]:ATL_CpyFromATg_a1[icpA];
+   #else
+      *cp = (ALLT) ? ATL_CpyFromANg_a1[icpA]:ATL_CpyFromANg_a1[icpB];
+   #endif
+   cp = (ATL_cparr_t *)&(ip->a2blk);
+   #ifdef Trans_  /* LT or UN case */
+      if (bv&2) /* UN case */
+      {
+         #ifdef Right_
+            ip->incA = 1 SHIFT;
+         #else
+            ip->incA = lda SHIFT;
+         #endif
+         #ifdef TCPLX
+            if ((bv&8))  /* UC case! */
+               #ifdef Right_ 
+                  *cp  = (ALLT)?ATL_CpyFromAHg_aN[icpA]:ATL_CpyFromAHg_aN[icpB];
+               #else
+                  *cp  = (ALLT)?ATL_CpyFromACg_aN[icpB]:ATL_CpyFromACg_aN[icpA];
+               #endif
+            else
+         #endif
+         #ifdef Right_ 
+            *cp = (ALLT) ? ATL_CpyFromANg_aN[icpA]:ATL_CpyFromANg_aN[icpB];
+         #else
+            *cp = (ALLT) ? ATL_CpyFromATg_aN[icpB]:ATL_CpyFromATg_aN[icpA];
+         #endif
+      }
+      else      /* LT case */
+      {
+         #ifdef Right_
+            ip->incA = lda SHIFT;
+         #else
+            ip->incA = 1 SHIFT;
+         #endif
+         #ifdef TCPLX
+            if (bv&8) /* LH case! */
+               #ifdef Right_ 
+                  *cp  = (ALLT)?ATL_CpyFromAHg_aN[icpA]:ATL_CpyFromAHg_aN[icpB];
+               #else
+                  *cp  = (ALLT)?ATL_CpyFromACg_aN[icpB]:ATL_CpyFromACg_aN[icpA];
+               #endif
+            else
+         #endif
+         #ifdef Right_ 
+            *cp = (ALLT) ? ATL_CpyFromATg_aN[icpA]:ATL_CpyFromATg_aN[icpB];
+         #else
+            *cp = (ALLT) ? ATL_CpyFromANg_aN[icpB]:ATL_CpyFromANg_aN[icpA];
+         #endif
+      }
+   #else /* LN or UT case, these cases use incA backwards (negative) */
+      if (bv&2)  /* UT case */
+      {
+         #ifdef Right_
+            ip->incA = lda SHIFT;  
+         #else
+            ip->incA = 1 SHIFT;  
+         #endif
+         #ifdef TCPLX
+            if (bv&8) /* UH case! */
+               #ifdef Right_
+                  *cp  = (ALLT)?ATL_CpyFromAHg_aN[icpA]:ATL_CpyFromAHg_aN[icpB];
+               #else
+                  *cp  = (ALLT)?ATL_CpyFromACg_aN[icpB]:ATL_CpyFromACg_aN[icpA];
+               #endif
+            else
+         #endif
+         #ifdef Right_
+            *cp = (ALLT) ? ATL_CpyFromATg_aN[icpA]:ATL_CpyFromATg_aN[icpB];
+         #else
+            *cp = (ALLT) ? ATL_CpyFromANg_aN[icpB]:ATL_CpyFromANg_aN[icpA];
+         #endif
+      }
+      else /* LN case */
+      {
+         #ifdef Right_
+            ip->incA = 1 SHIFT;
+         #else
+            ip->incA = lda SHIFT;
+         #endif
+         #ifdef TCPLX
+            if (bv&8) /* LC case! */
+               #ifdef Right_
+                  *cp  = (ALLT)?ATL_CpyFromAHg_aN[icpA]:ATL_CpyFromAHg_aN[icpB];
+               #else
+                  *cp  = (ALLT)?ATL_CpyFromACg_aN[icpB]:ATL_CpyFromACg_aN[icpA];
+               #endif
+            else
+         #endif
+         #ifdef Right_
+            *cp = (ALLT) ? ATL_CpyFromANg_aN[icpA]:ATL_CpyFromANg_aN[icpB];
+         #else
+            *cp = (ALLT) ? ATL_CpyFromATg_aN[icpB]:ATL_CpyFromATg_aN[icpA];
+         #endif
+      }
+   #endif
+   return(iv);
+}
+@ROUT ATL_trsm
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def contrib "Antoine Petitet"
+#include "atlas_misc.h"
+#include "atlas_level3.h"
+static unsigned int trsm_recR
+/*
+ * RETURNS: recursion depth (starting from 0)
+ */
+(
+   const int             bv,    /* 0:Right,1:Upper,2:TransA,3:Conj, 4:NonUnit */
+   ATL_CSZT               N,    /* size of triangle, will recur on this dim */
+   ATL_CSZT               NRHS, /* don't recur on RHS */
+   const SCALAR           alpha,
+   const TYPE             *T,
+   ATL_CSZT               ldt,
+   ATL_CSZT               rincT, /* rowinc: 1/2 for NoTrans, else ldt2 */
+   ATL_CSZT               cincT, /* colinc: ldt2 for NoTrans, else 1/2 */
+   TYPE                   *Z,
+   ATL_CSZT               ldz
+)
+{
+   unsigned int iret=0;
+   if (Mjoin(PATL,trsmR_IP)(bv, N, NRHS, alpha, T, ldt, Z, ldz))
+   {
+      #ifdef TCPLX
+         enum ATLAS_TRANS TB;
+         const TYPE none[2] = {ATL_rnone, ATL_rzero};
+         const TYPE one[2]  = {ATL_rone,  ATL_rzero};
+      #else
+         #define none ATL_rnone
+         #define one ATL_rone
+         const enum ATLAS_TRANS TB = (bv&4) ? AtlasTrans : AtlasNoTrans;
+      #endif
+      ATL_CSZT NL = (N>>1), NR = N - NL;
+      const TYPE *T0, *T1;
+      TYPE *C, *Z0;
+      const TYPE *B;
+      ATL_UINT LNUT;        /* is this LN or UT case? */
+
+      #ifdef TCPLX
+         if (bv&4)
+            TB = (bv&8) ? AtlasConjTrans : AtlasTrans;
+         else
+            TB = (bv&8) ? AtlasConj : AtlasNoTrans;
+      #endif
+      LNUT = (bv&6);             /* get Upper(2) and Trans(4) bits */
+      LNUT = (!LNUT)|(LNUT==6);  /* is this LN or UT case? */
+      if (LNUT)                  /* LN or UT case */
+      {
+         T0 = T + NR*((ldt+1)SHIFT);
+         T1 = T;
+         B = T + NR*rincT;
+         Z0 = Z + NR*(ldz SHIFT);
+         C = Z;
+      }
+      else                       /* LT or UN case */
+      {
+         Z0 = Z;
+         T0 = T;
+         B = T + NL*rincT;
+         C = Z + NL*(ldz SHIFT);
+         T1 = B + NL*cincT;
+      }
+      iret = 2 + trsm_recR(bv, NL, NRHS, alpha, T0, ldt, rincT, cincT, Z0,ldz);
+      Mjoin(PATL,gemm)(AtlasNoTrans, TB, NRHS, NR, NL, none, Z0, ldz, B, ldt,
+                       alpha, C, ldz);
+      iret += trsm_recR(bv, NR, NRHS, one, T1, ldt, rincT, cincT, C, ldz);
+      return(iret);
+   }
+   return(iret);
+}
+
+static unsigned int trsm_recL
+/*
+ * RETURNS: recursion depth (starting from 0)
+ */
+(
+   const int             bv,    /* 0:Right,1:Upper,2:TransA,3:Conj, 4:NonUnit */
+   ATL_CSZT               N,    /* size of triangle, will recur on this dim */
+   ATL_CSZT               NRHS, /* don't recur on RHS */
+   const SCALAR           alpha,
+   const TYPE             *T,
+   ATL_CSZT               ldt,
+   ATL_CSZT               rincT, /* rowinc: 1/2 for NoTrans, else ldt2 */
+   ATL_CSZT               cincT, /* colinc: ldt2 for NoTrans, else 1/2 */
+   TYPE                   *Z,
+   ATL_CSZT               ldz
+)
+{
+   unsigned int iret=0;
+   if (Mjoin(PATL,trsmL_IP)(bv, N, NRHS, alpha, T, ldt, Z, ldz))
+   {
+      #ifdef TCPLX
+         enum ATLAS_TRANS TA;
+         const TYPE none[2] = {ATL_rnone, ATL_rzero};
+         const TYPE one[2]  = {ATL_rone,  ATL_rzero};
+      #else
+         #define none ATL_rnone
+         #define one ATL_rone
+         const enum ATLAS_TRANS TA = (bv&4) ? AtlasTrans : AtlasNoTrans;
+      #endif
+      ATL_CSZT NL = (N>>1), NR = N - NL;
+      const TYPE *T0, *T1;
+      TYPE *C, *Z0;
+      const TYPE *A, *B;
+      ATL_UINT LNUT;        /* is this LN or UT case? */
+
+      #ifdef TCPLX
+         if (bv&4)
+            TA = (bv&8) ? AtlasConjTrans : AtlasTrans;
+         else
+            TA = (bv&8) ? AtlasConj : AtlasNoTrans;
+      #endif
+      LNUT = (bv&6);             /* get Upper(2) and Trans(4) bits */
+      LNUT = (!LNUT)|(LNUT==6);  /* is this LN or UT case? */
+      if (LNUT)                  /* LN or UT case */
+      {
+         T0 = T;
+         A = T + NL*rincT;
+         Z0 = Z;
+         C = Z + (NL SHIFT);
+         T1 = A + NL*cincT;
+      }
+      else                       /* LT or UN case */
+      {
+         T0 = T + NR*((ldt+1)SHIFT);
+         T1 = T;
+         A = T + NR*rincT;
+         C = Z;
+         Z0 = Z + (NR SHIFT);
+      }
+      iret = 2 + trsm_recL(bv, NL, NRHS, alpha, T0, ldt, rincT, cincT, Z0,ldz);
+      if (bv&1)  /* Right case */
+         Mjoin(PATL,gemm)(AtlasNoTrans, TA, NR, NRHS, NL, none, Z0, ldz, A, ldt,
+                          alpha, C, ldz);
+      else       /* Left case */
+         Mjoin(PATL,gemm)(TA, AtlasNoTrans, NR, NRHS, NL, none, A, ldt, Z0, ldz,
+                          alpha, C, ldz);
+      iret += trsm_recL(bv, NR, NRHS, one, T1, ldt, rincT, cincT, C, ldz);
+      return(iret);
+   }
+   return(iret);
+}
+void Mjoin(PATL,trsm)
+(
+   const enum ATLAS_SIDE  SD,
+   const enum ATLAS_UPLO  UL,
+   const enum ATLAS_TRANS TA,
+   const enum ATLAS_DIAG  DI,
+   ATL_CSZT               M,
+   ATL_CSZT               N,
+   const SCALAR           alpha,
+   const TYPE             *A,
+   ATL_CSZT               lda,
+   TYPE                   *B,
+   ATL_CSZT               ldb
+)
+/*
+ * Purpose
+ * =======
+ * ATL_trsm solves one of the matrix equations
+ *    op( A ) * X = alpha * B,   or  X * op( A ) = alpha * B,
+ *
+ * where alpha is a scalar, X and B are m by n matrices, A is a unit, or
+ * non-unit, upper or lower triangular matrix and op( A ) is one of
+ *    op( A ) = A   or   op( A ) = A'   or   op( A ) = conjg( A' ).
+ *
+ * The matrix X is overwritten on B.
+ */
+{
+   ATL_SZT incR, incC;
+   ATL_UINT r, bv = (SD == AtlasRight) ? 1 : 0;
+            /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
+
+   if (!M || !N)  /* if either array is of size 0 */
+      return;     /* return as there is nothing to do */
+   if (SCALAR_IS_ZERO(alpha))                   /* alpha == 0 means */
+   {                           
+      Mjoin(PATL,gescal)(M, N, alpha, B, ldb);  /* only need to scale B */
+      return;
+   }
+   if (UL == AtlasUpper)
+   {
+      bv |= 2;
+      incR = lda SHIFT;
+      incC = 1 SHIFT;
+   }
+   else
+   {
+      incR = 1 SHIFT;
+      incC = lda SHIFT;
+   }
+   #ifdef TCPLX
+      if (TA == AtlasConjTrans)
+         bv |= (8|4);
+      else
+         bv |= TA == (AtlasTrans) ? 4 : 0;
+   #else
+      bv |= (TA == AtlasNoTrans) ? 0:4;
+   #endif
+   bv |= (DI == AtlasNonUnit) ? 16 : 0;
+/*
+ * LEFT: op(A) * X = alpha * B, A is MxM, X is MxN, B is MxN
+ */
+//   if ((SD == AtlasLeft && UL == AtlasLower && TA == AtlasNoTrans) ||
+//       (SD == AtlasLeft && UL == AtlasUpper && TA == AtlasTrans))
+   if (SD == AtlasLeft)
+      r = trsm_recL(bv, M, N, alpha, A, lda, incR, incC, B, ldb);
+   else
+      r = trsm_recR(bv, N, M, alpha, A, lda, incR, incC, B, ldb);
+   printf("Solved with %u recursive calls.\n", r);
+@skip   Mjoin(PATL,trsm_APR)(SD, UL, TA, DI, M, N, alpha, A, lda, B, ldb);
+}
+@ROUT ATL_trsm_IP
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
+#ifdef Right_
+   #define ATL_trsm_IP Mjoin(PATL,trsmR_IP)
+    #define ATL_sminfoN Mjoin(PATL,sminfoR_LN)
+    #define ATL_sminfoT Mjoin(PATL,sminfoR_LT)
+    #define ATL_utrsm_alloc Mjoin(PATL,utrsmR_alloc)
+    #define INCR 1
+#else
+    #define ATL_trsm_IP Mjoin(PATL,trsmL_IP)
+    #define ATL_sminfoN Mjoin(PATL,sminfoL_LN)
+    #define ATL_sminfoT Mjoin(PATL,sminfoL_LT)
+    #define ATL_utrsm_alloc Mjoin(PATL,utrsmL_alloc)
+    #define INCR ldb
+#endif
+int ATL_trsm_IP
+(
+   ATL_UINT bv,  /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
+   ATL_CSZT               NT,
+   ATL_CSZT               NR,
+   const SCALAR           alpha,
+   const TYPE             *A,
+   ATL_CSZT               lda,
+   TYPE                   *B,
+   ATL_CSZT               ldb
+)
+{
+   int RECUR;
+   #ifdef Right_
+      RECUR = 0;
+   #else
+   RECUR = bv & ~(8|16);  /* Unit,Conj does not affect recursion decision */
+// Left cases that should work: LN,UT */
+   RECUR = (!RECUR);
+   RECUR = !RECUR;
+   #endif
+   RECUR=0;
+   if (NT == 1)
+   {
+      #ifdef DEBUG
+      printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&1)?'U':'L', 
+             (bv&2)?'T':'N', (bv&8)?'N':'U', alpha);
+      #endif
+      if (bv&16)   /* if non-unit, work to do, else nothing to do at M=1! */
+      #ifdef TCPLX
+      {
+         TYPE inv[2], tmp;
+         *inv = *A;
+         tmp = A[1];
+         inv[1] = (bv&8) ? -tmp : tmp;
+         if (SCALAR_IS_ONE(alpha))
+         {  CXINV(inv, inv); }
+         else
+            Mjoin(PATL,cplxdivide)(1, inv, (TYPE*)alpha, 1, inv, 1);
+         Mjoin(PATL,scal)(NR, inv, B, INCR);
+      }
+      #else
+         Mjoin(PATL,scal)(NR, alpha / *A, B, INCR);
+      #endif
+      else if (!SCALAR_IS_ONE(alpha))  /* unit may still need to scale! */
+         Mjoin(PATL,scal)(NR, alpha, B, INCR);
+   }
+   else if (RECUR)  /* if told to */
+      return(1);    /* do pure recursion */
+#if 1     /* default case uses utrsm */
+   else
+   {
+      ATL_UINT LN;
+      void *vp;
+      TYPE *diag, *T, *R, *w;
+      #ifdef TCPLX
+         enum ATLAS_TRANS TRANSA= ((bv&12)==12) ? AtlasConjTrans :  AtlasTrans;
+      #else
+         #define TRANSA AtlasTrans
+      #endif
+      void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R, 
+         const SCALAR alpha, const TYPE *A, ATL_CINT lda,TYPE *X, ATL_CINT ldx,
+         TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+      sminfo_t si;
+      int ATL_sminfoN
+         (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
+          const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb);
+      int ATL_sminfoT
+         (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
+          const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb);
+   
+      LN = bv & 6;
+      LN = (!LN) |(LN == 6);
+      if (LN) /* Lower,NoTrans & Upper,Trans use LN case */
+         ATL_sminfoN(&si, bv, NT, NR, alpha, lda, ldb);
+      else              /* Upper,NoTrans & Lower,Trans use LT case */
+         ATL_sminfoT(&si, bv, NT, NR, alpha, lda, ldb);
+      if (NT > si.kb)
+         return(2);
+      #ifdef DEBUG
+         fprintf(stderr, "M=%u, kb=%u\n", M, si.kb);
+      #endif
+      vp = ATL_utrsm_alloc(&si, NT, &diag, &T, &R, &w);
+      if (!vp)
+         return(1);
+      utrsm = si.utrsm;
+      if (bv & 1)
+         utrsm(&si, (bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, A, lda, 
+               B, ldb, diag, T, R, w);
+      else
+         utrsm(&si, (bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, A, lda, 
+               B, ldb, diag, T, R, w);
+      free(vp);
+   }
+#else
+   else
+   {
+      enum ATLAS_TRANS TA;
+      #ifdef TCPLX
+         if ((bv&12)==12)
+            TA == AtlasConjTrans;
+         else
+      #endif
+      TA = (bv&4) ? AtlasTrans:AtlasNoTrans;
+      #ifdef DEBUG
+      printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&2)?'U':'L', 
+             TA==AtlasTrans?'T':'N', (bv&16)?'N':'U', alpha);
+      #endif
+      Mjoin(PATL,trsm_APR)(AtlasLeft, (bv&2)?AtlasUpper:AtlasLower, TA,
+         (bv&16)?AtlasNonUnit:AtlasUnit, M, N, alpha, A, lda, B, ldb);
+   }
+#endif      
+   return(0);
+}
 @ROUT ATL_utrsmR_alloc
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Rakib Hasan" -def contrib "R. Clint Whaley"
+#include "atlas_misc.h"
+#include "atlas_amm.h"
 void* Mjoin(PATL,utrsmR_alloc)
-   (ipinfo_t *ip, int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w)
+   (sminfo_t *ip, int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w)
 {
    const int MU=ip->mu, NU=ip->nu;
    int mb = (N + NU - 1) / NU;
@@ -9,21 +554,25 @@ void* Mjoin(PATL,utrsmR_alloc)
    void *vp;
    vp = malloc( ATL_MulBySize( N + (NUNU*mb*(mb+1)/2) + mb*MUNU + 2*MUNU )
                            + 4*ATL_Cachelen);
-   ATL_assert(vp);
-   *Diag = ATL_AlignPtr(vp);
-   *L = (*Diag) + (N SHIFT);
-   *L = ATL_AlignPtr(*L);
-   *R = (*L) + ((NUNU*mb*(mb+1)/2) SHIFT);
-   *R = ATL_AlignPtr(*R);
-   *w = (*R) + ((mb*MUNU) SHIFT);
-   *w = ATL_AlignPtr(*w);
+   if (vp)
+   {
+      *Diag = ATL_AlignPtr(vp);
+      *L = (*Diag) + (N SHIFT);
+      *L = ATL_AlignPtr(*L);
+      *R = (*L) + ((NUNU*mb*(mb+1)/2) SHIFT);
+      *R = ATL_AlignPtr(*R);
+      *w = (*R) + ((mb*MUNU) SHIFT);
+      *w = ATL_AlignPtr(*w);
+   }
    return(vp);
 }
    @endextract
 @ROUT ATL_utrsmL_alloc
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Rakib Hasan" -def contrib "R. Clint Whaley"
+#include "atlas_misc.h"
 #include "atlas_amm.h"
 void* Mjoin(PATL,utrsmL_alloc)
-   (ipinfo_t*ip, int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w)
+   (sminfo_t*ip, int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w)
 {
    const int MU = ip->mu, NU=ip->nu;
    int mb = (N + MU - 1) / MU;
@@ -32,14 +581,16 @@ void* Mjoin(PATL,utrsmL_alloc)
    void *vp;
    vp = malloc( ATL_MulBySize( N + (MUMU*mb*(mb+1)/2) + mb*MUNU + 2*MUNU )
                            + 4*ATL_Cachelen);
-   ATL_assert(vp);
-   *Diag = ATL_AlignPtr(vp);
-   *L = (*Diag) + (N SHIFT);
-   *L = ATL_AlignPtr(*L);
-   *R = (*L) + ((MUMU*mb*(mb+1)/2) SHIFT);
-   *R = ATL_AlignPtr(*R);
-   *w = (*R) + ((mb*MUNU) SHIFT);
-   *w = ATL_AlignPtr(*w);
+   if (vp)
+   {
+      *Diag = ATL_AlignPtr(vp);
+      *L = (*Diag) + (N SHIFT);
+      *L = ATL_AlignPtr(*L);
+      *R = (*L) + ((MUMU*mb*(mb+1)/2) SHIFT);
+      *R = ATL_AlignPtr(*R);
+      *w = (*R) + ((mb*MUNU) SHIFT);
+      *w = ATL_AlignPtr(*w);
+   }
    return(vp);
 }
    @endextract
@@ -49,52 +600,41 @@ void* Mjoin(PATL,utrsmL_alloc)
    with new framework and to be separately compilable.
 @ENDSKIP
 @ROUT ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT ATL_utrsmR_LT_UN ATL_utrsmR_LN_UT
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017 -def cwauth "Rakib Hasan" -def contrib "R. Clint Whaley"
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 @ROUT ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT `@define SD @L@`
 @ROUT ATL_utrsmR_LT_UN ATL_utrsmR_LN_UT `@define SD @R@`
-/*
- * Nanokernels are generated into standard names, but with differing paths
- * based on unroll block size
- */
-#ifndef ATL_NONANO
-   #include Mstr(Mjoin(ATLAS_PRE,ntrsm@(SD).h))
-   #ifdef USE_TRANS
-      #include Mstr(Mjoin(ATLAS_PRE,ntrsm_cpCT.h))
-   #else
-      #include Mstr(Mjoin(ATLAS_PRE,ntrsm_cpCN.h))
-   #endif
-#endif
-@skip #include Mstr(Mjoin(ATLAS_PRE,trsmKL.h))
-@skip #include Mstr(Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(ATLAS_PRE,cpFromBlkC_),\
-@skip               ATL_MU),x),ATL_NU),_.h))
-@skip /* best with fully rolled kernel and no prefetch ins. */
-@skip int Mjoin(PATL,GetuTRSM@(SD)MU)() { return(ATL_MU); }
-@skip int Mjoin(PATL,GetuTRSM@(SD)NU)() { return(ATL_NU); }
-#ifdef Conj_
-   #define IsConj 1
-#else
-   #define IsConj 0
-#endif
+@skip #ifdef Conj_
+@skip    #define IsConj 1
+@skip #else
+@skip    #define IsConj 0
+@skip #endif
 
 @ROUT ATL_utrsmL_LT_UN
+#define ATL_ntrcopy ATL_ntrcopyLTUN
+#define ATL_ntrsm ATL_ntrsmLT
+#define ATL_ntrsm_RR ATL_ntrsmLT_RR
 #ifdef Upper_
-   #define ATL_ntrcopy ATL_ntrcopyL
-   #define ATL_ntrsm ATL_ntrsmUN
-   #define ATL_ntrsm_RR ATL_ntrsmUN_RR
+@skip   #define ATL_ntrcopy ATL_ntrcopyU
+@skip   #define ATL_ntrsm ATL_ntrsmUN
+@skip   #define ATL_ntrsm_RR ATL_ntrsmUN_RR
    void ATL_utrsmL_UN
 #else
-   #define ATL_ntrcopy ATL_ntrcopyU
-   #define ATL_ntrsm ATL_ntrsmLT
-   #define ATL_ntrsm_RR ATL_ntrsmLT_RR
+@skip   #define ATL_ntrcopy ATL_ntrcopyL
+@skip   #define ATL_ntrsm ATL_ntrsmLT
+@skip   #define ATL_ntrsm_RR ATL_ntrsmLT_RR
    void ATL_utrsmL_LT
 #endif
-   (ipinfo_t *ip, const enum ATLAS_DIAG Diag, 
+   (sminfo_t *ip, const enum ATLAS_DIAG Diag, 
     ATL_CINT N, ATL_CINT R, const SCALAR alpha, const TYPE *A, ATL_CSZT lda, 
     TYPE *X, ATL_CSZT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
    cm2am_t r2a = ip->b2blk;
    cm2am_t l2a = ip->a2blk;
+   ATL_CSZT ainc = ip->incA;
+   const int IsTrans = (ainc == (1 SHIFT));
+   const int IsConj = (ip->bv & 8) != 0;
    ammkern_t amm_b0 = ip->amm_b0, amm_b1 = ip->amm_b1;
    #ifdef TCPLX
       ammkern_t amm_bn = ip->amm_bn;
@@ -109,11 +649,13 @@ void* Mjoin(PATL,utrsmL_alloc)
    const int MUMU = MU*MU, MUNU = MU*NU;
    const int UnitAlpha = SCALAR_IS_ONE(alpha);
    const int NeedCopyA = (A != NULL);
+   @BEGINSKIP
    #ifdef Trans_
       #define ainc 1
    #else
       #define ainc lda
    #endif
+   @ENDSKIP
 @skip   const int ainc = (TA != AtlasNoTrans) ? 1 : lda;
 @skip   const int IsConj = (TA == AtlasConjTrans);
    TYPE *l, *x=X;
@@ -137,7 +679,8 @@ void* Mjoin(PATL,utrsmL_alloc)
       if (Diag == AtlasUnit) d = NULL;
       else d = diag;
       if (DoCopy)
-         ATL_ntrcopy(IsConj, mu, Ac, lda, L, MU, d);
+@skip         ATL_ntrcopy(IsConj, mu, Ac, lda, L, MU, d);
+         ATL_ntrcopy(IsConj, IsTrans, mu, Ac, lda, L, MU, d);
       if (mu == MU)
       {
          if (!UnitAlpha) { ATL_nscal(nu, alpha, xc, ldx); }
@@ -164,7 +707,7 @@ void* Mjoin(PATL,utrsmL_alloc)
             iL = l;
             r2a(MU, nu, ONE, xc+(mu SHIFT), ldx, rR, iR);
             if (DoCopy) /* do the copy as needed for in-cache comp. */
-               l2a(N-i, mu, NONE, Ac+(mu SHIFT)*ainc, lda, rL, iL);
+               l2a(N-i, mu, NONE, Ac+mu*ainc, lda, rL, iL);
             #ifndef USE_TRANS
                amm_b0(1, 1, N-i, iL, iR, w, rL, iR, w+MUNU);
                amm_b0(1, 1, N-i, rL, iR, w+MUNU, rL, rR, w);
@@ -198,7 +741,8 @@ void* Mjoin(PATL,utrsmL_alloc)
          if (Diag == AtlasUnit) d = NULL;
          else d = diag + ((N-i) SHIFT);
          if (DoCopy)
-            ATL_ntrcopy(IsConj, mu, Ac, lda, l, MU, d);
+@skip            ATL_ntrcopy(IsConj, mu, Ac, lda, l, MU, d);
+            ATL_ntrcopy(IsConj, IsTrans, mu, Ac, lda, l, MU, d);
          if (mu == MU)
             ATL_ntrsm(nu, d, l, MU, xc, ldx);
          else
@@ -206,28 +750,34 @@ void* Mjoin(PATL,utrsmL_alloc)
       }
    }
 }
-#undef ainc
+@skip #undef ainc
 @ROUT ATL_utrsmL_LN_UT
+#define ATL_ntrcopy ATL_ntrcopyLNUT
+#define ATL_ntrsm ATL_ntrsmLN
+#define ATL_ntrsm_RR ATL_ntrsmLN_RR
 #ifdef Upper_
-   #define ATL_ntrcopy ATL_ntrcopyU
-   #define ATL_ntrsm ATL_ntrsmUT
-   #define ATL_ntrsm_RR ATL_ntrsmUT_RR
-   #define ainc 1
+@skip   #define ATL_ntrcopy ATL_ntrcopyU
+@skip   #define ATL_ntrsm ATL_ntrsmUT
+@skip   #define ATL_ntrsm_RR ATL_ntrsmUT_RR
+@skip   #define ainc 1
    void ATL_utrsmL_UT
 #else
-   #define ATL_ntrcopy ATL_ntrcopyL
-   #define ATL_ntrsm ATL_ntrsmLN
-   #define ATL_ntrsm_RR ATL_ntrsmLN_RR
-   #define ainc lda
+@skip   #define ATL_ntrcopy ATL_ntrcopyL
+@skip   #define ATL_ntrsm ATL_ntrsmLN
+@skip   #define ATL_ntrsm_RR ATL_ntrsmLN_RR
+@skip   #define ainc lda
    void ATL_utrsmL_LN
 #endif
-   (ipinfo_t *ip, const enum ATLAS_DIAG Diag, 
+   (sminfo_t *ip, const enum ATLAS_DIAG Diag, 
     ATL_CINT N, ATL_CINT R, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
     TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
    cm2am_t l2a = ip->a2blk;
    cm2am_t r2a = ip->b2blk;
    ammkern_t amm_b0 = ip->amm_b0, amm_b1 = ip->amm_b1;
+   ATL_CSZT ainc = ip->incA;
+   const int IsTrans = (ainc == (1 SHIFT));
+   const int IsConj = (ip->bv & 8) != 0;
    #ifdef TCPLX
       ammkern_t amm_bn = ip->amm_bn;
       TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
@@ -260,7 +810,8 @@ void* Mjoin(PATL,utrsmL_alloc)
       if (Diag == AtlasUnit) d = NULL;
       else d = diag;
       if (DoCopy)
-         ATL_ntrcopy(IsConj, mu, Ac, lda, L, MU, d);
+@skip         ATL_ntrcopy(IsConj, mu, Ac, lda, L, MU, d);
+         ATL_ntrcopy(IsConj, IsTrans, mu, Ac, lda, L, MU, d);
       if (mu == MU)
       {
          if (!UnitAlpha) { ATL_nscal(nu, alpha, xc, ldx); }
@@ -287,7 +838,7 @@ void* Mjoin(PATL,utrsmL_alloc)
             iL = l;
             r2a(MU, nu, ONE, xc-(MU SHIFT), ldx, rR, iR);
             if (DoCopy) /* do the copy as needed for in-cache comp. */
-               l2a(i, mu, NONE, Ac-(i SHIFT)*ainc, lda, rL, iL);
+               l2a(i, mu, NONE, Ac-i*ainc, lda, rL, iL);
             iR = RW;
             rR = iR + iRWoff;
             #ifndef USE_TRANS
@@ -319,7 +870,8 @@ void* Mjoin(PATL,utrsmL_alloc)
          if (Diag == AtlasUnit) d = NULL;
          else d = diag + (i SHIFT);
          if (DoCopy)
-            ATL_ntrcopy(IsConj, mu, Ac, lda, l, MU, d);
+@skip            ATL_ntrcopy(IsConj, mu, Ac, lda, l, MU, d);
+            ATL_ntrcopy(IsConj, IsTrans, mu, Ac, lda, l, MU, d);
          if (mu == MU)
             ATL_ntrsm(nu, d, l, MU, xc, ldx);
          else
@@ -441,25 +993,31 @@ void Mjoin(PATL,utrsmLLC)
    #endif
 }
 @ROUT ATL_utrsmR_LT_UN
+#define ATL_ntrcopy ATL_ntrcopyLTUN
+#define ATL_ntrsm ATL_ntrsmLT
+#define ATL_ntrsm_RR ATL_ntrsmLT_RR
 #ifndef Upper_
-   #define ATL_ntrcopy ATL_ntrcopyL
-   #define ATL_ntrsm ATL_ntrsmLT
-   #define ATL_ntrsm_RR ATL_ntrsmLT_RR
-   #define ainc lda
+@skip   #define ATL_ntrcopy ATL_ntrcopyL
+@skip   #define ATL_ntrsm ATL_ntrsmLT
+@skip   #define ATL_ntrsm_RR ATL_ntrsmLT_RR
+@skip   #define ainc lda
    void ATL_utrsmR_LT
 #else
-   #define ATL_ntrcopy ATL_ntrcopyU
-   #define ATL_ntrsm ATL_ntrsmUN
-   #define ATL_ntrsm_RR ATL_ntrsmUN_RR
-   #define ainc 1
+@skip   #define ATL_ntrcopy ATL_ntrcopyU
+@skip   #define ATL_ntrsm ATL_ntrsmUN
+@skip   #define ATL_ntrsm_RR ATL_ntrsmUN_RR
+@skip   #define ainc 1
    void ATL_utrsmR_UN
 #endif
-   (ipinfo_t *ip, const enum ATLAS_DIAG Diag,
+   (sminfo_t *ip, const enum ATLAS_DIAG Diag,
     ATL_CINT R, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
     TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
    cm2am_t l2a = ip->a2blk, r2a = ip->b2blk;
    ammkern_t amm_b0 = ip->amm_b0, amm_b1 = ip->amm_b1;
+   ATL_CSZT ainc = ip->incA;
+   const int IsTrans = (ainc != (1 SHIFT));
+   const int IsConj = (ip->bv & 8) != 0;
    #ifdef TCPLX
       ammkern_t amm_bn = ip->amm_bn;
       TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
@@ -491,7 +1049,8 @@ void Mjoin(PATL,utrsmLLC)
       if (Diag == AtlasUnit) d = NULL;
       else d = diag;
       if (DoCopy)
-         ATL_ntrcopy(IsConj, nu, Ac, lda, L, NU, d);
+@skip         ATL_ntrcopy(IsConj, nu, Ac, lda, L, NU, d);
+         ATL_ntrcopy(IsConj, IsTrans, nu, Ac, lda, L, NU, d);
       if (nu == NU)
       {
          if (!UnitAlpha) { ATL_nscal(mu, alpha, xc, ldx); }
@@ -518,7 +1077,7 @@ void Mjoin(PATL,utrsmLLC)
             iL = l;
             r2a(NU, mu, ONE, xc-(NU SHIFT)*ldx, ldx, rR, iR);
             if (DoCopy) /* do the copy as needed for in-cache comp. */
-               l2a(i, nu, NONE, Ac-(i SHIFT)*ainc, lda, rL, iL);
+               l2a(i, nu, NONE, Ac-i*ainc, lda, rL, iL);
             iR = RW;
             rR = iR + iRWoff;
             #ifdef USE_TRANS
@@ -552,7 +1111,8 @@ void Mjoin(PATL,utrsmLLC)
          if (Diag == AtlasUnit) d = NULL;
          else d = diag + (i SHIFT);
          if (DoCopy)
-            ATL_ntrcopy(IsConj, nu, Ac, lda, l, NU, d);
+@skip            ATL_ntrcopy(IsConj, nu, Ac, lda, l, NU, d);
+            ATL_ntrcopy(IsConj, IsTrans, nu, Ac, lda, l, NU, d);
          if (nu == NU)
             ATL_ntrsm(mu, d, l, NU, xc, ldx);
          else
@@ -561,25 +1121,31 @@ void Mjoin(PATL,utrsmLLC)
    }
 }
 @ROUT ATL_utrsmR_LN_UT
+#define ATL_ntrcopy ATL_ntrcopyLNUT
+#define ATL_ntrsm ATL_ntrsmLN
+#define ATL_ntrsm_RR ATL_ntrsmLN_RR
 #ifdef Upper_
-   #define ainc lda
-   #define ATL_ntrcopy ATL_ntrcopyU
-   #define ATL_ntrsm ATL_ntrsmUT
-   #define ATL_ntrsm_RR ATL_ntrsmUT_RR
+@skip   #define ainc lda
+@skip   #define ATL_ntrcopy ATL_ntrcopyU
+@skip   #define ATL_ntrsm ATL_ntrsmUT
+@skip   #define ATL_ntrsm_RR ATL_ntrsmUT_RR
    void ATL_utrsmR_UT
 #else
-   #define ainc 1
-   #define ATL_ntrcopy ATL_ntrcopyL
-   #define ATL_ntrsm ATL_ntrsmLN
-   #define ATL_ntrsm_RR ATL_ntrsmLN_RR
+@skip   #define ainc 1
+@skip   #define ATL_ntrcopy ATL_ntrcopyL
+@skip   #define ATL_ntrsm ATL_ntrsmLN
+@skip   #define ATL_ntrsm_RR ATL_ntrsmLN_RR
    void ATL_utrsmR_LN
 #endif
-   (ipinfo_t *ip, const enum ATLAS_DIAG Diag,
+   (sminfo_t *ip, const enum ATLAS_DIAG Diag,
     ATL_CINT R, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
     TYPE *X, ATL_CINT ldx, TYPE *diag, TYPE *L, TYPE *RW, TYPE *w)
 {
    cm2am_t l2a = ip->a2blk, r2a = ip->b2blk;
    ammkern_t amm_b0 = ip->amm_b0, amm_b1 = ip->amm_b1;
+   ATL_CSZT ainc = ip->incA;
+   const int IsTrans = (ainc != (1 SHIFT));
+   const int IsConj = (ip->bv & 8) != 0;
    #ifdef TCPLX
       ammkern_t amm_bn = ip->amm_bn;
       TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
@@ -613,7 +1179,8 @@ void Mjoin(PATL,utrsmLLC)
       if (Diag == AtlasUnit) d = NULL;
       else d = diag;
       if (DoCopy)
-         ATL_ntrcopy(IsConj, nu, Ac, lda, L, NU, d);
+@skip         ATL_ntrcopy(IsConj, nu, Ac, lda, L, NU, d);
+         ATL_ntrcopy(IsConj, IsTrans, nu, Ac, lda, L, NU, d);
       if (nu == NU)
       {
          if (!UnitAlpha) { ATL_nscal(mu, alpha, xc, ldx); }
@@ -640,7 +1207,7 @@ void Mjoin(PATL,utrsmLLC)
             iL = l;
             r2a(NU, mu, ONE, xc+(nu SHIFT)*ldx, ldx, rR, iR);
             if (DoCopy) /* do the copy as needed for in-cache comp. */
-               l2a(N-i, nu, NONE, Ac+(nu SHIFT)*ainc, lda, rL, iL);
+               l2a(N-i, nu, NONE, Ac+nu*ainc, lda, rL, iL);
             #ifdef USE_TRANS
                amm_b0(1, 1, N-i, iL, iR, w, rL, iR, w+MUNU);
                amm_b0(1, 1, N-i, rL, iR, w+MUNU, rL, rR, w);
@@ -674,7 +1241,8 @@ void Mjoin(PATL,utrsmLLC)
          if (Diag == AtlasUnit) d = NULL;
          else d = diag + ((N-i) SHIFT);
          if (DoCopy)
-            ATL_ntrcopy(IsConj, nu, Ac, lda, l, NU, d);
+@skip            ATL_ntrcopy(IsConj, nu, Ac, lda, l, NU, d);
+            ATL_ntrcopy(IsConj, IsTrans, nu, Ac, lda, l, NU, d);
          if (nu == NU)
             ATL_ntrsm(mu, d, l, NU, xc, ldx);
          else
@@ -740,62 +1308,6 @@ void Mjoin(PATL,utrsmRLC)
          X, ldx, diag, L, RW, w);
 }
 #endif
-
-@ROUT ATL_utrsmR_rh
-#ifdef NO_AMM_NAME
-   void Mjoin(PATL,trsm)
-      (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,   
-       const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag,
-       ATL_CINT N, ATL_CINT R, const SCALAR alpha,        
-       const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx)
-#else
-   int Mjoin(PATL,utrsmKR)
-      (const enum ATLAS_UPLO Uplo,   
-       const enum ATLAS_TRANS TA, const enum ATLAS_DIAG Diag,
-       ATL_CINT N, ATL_CINT R, const SCALAR alpha,        
-       const TYPE *A, ATL_CINT lda, TYPE *X, ATL_CINT ldx)
-#endif
-{
-   const int UPPER = (Uplo == AtlasUpper);
-   void *vp;
-   TYPE *diag, *L, *RW, *w;
-   vp = GetWorkspaceR(R, &diag, &L, &RW, &w);
-   #ifndef NO_AMM_NAME
-      if (!vp) return(-1);
-   #endif
-   if (!UPPER)                   
-   {                                                                
-      if (TA == AtlasNoTrans)                                   
-         Mjoin(PATL,utrsmRLN)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-      else if (TA == AtlasTrans)
-         Mjoin(PATL,utrsmRLT)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-      #ifdef TCPLX
-         else /* (TA == AtlasConjTrans) */
-            Mjoin(PATL,utrsmRLC)(Diag, N, R, alpha, A, lda, X, ldx,
-                  diag, L, RW, w);
-      #endif
-   }
-   else
-   {
-      if (TA == AtlasNoTrans)
-         Mjoin(PATL,utrsmRUN)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-      else if (TA == AtlasTrans)
-         Mjoin(PATL,utrsmRUT)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-   #ifdef TCPLX
-      else /* (TA == AtlasConjTrans) */
-         Mjoin(PATL,utrsmRUC)(Diag, N, R, alpha, A, lda, X, ldx,
-               diag, L, RW, w);
-   #endif
-   }
-   free(vp);
-   #ifndef NO_AMM_NAME
-      return(0);
-   #endif
-}
 @ROUT trsmsrch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2017 
 #define ATL_WANT ILCM 1
@@ -1051,16 +1563,27 @@ ATL_mmnode_t *findBestU(char pre, int flag, int B, int R, int U)
    return(mmB);
 }
 
-void findBestTRSM(char pre, int flag, ATL_mmnode_t *kb)
+void findBestTRSM(char pre, int flag)
 {
    ATL_mmnode_t *bb;   /* blocking base det by left or right setting */
    ATL_mmnode_t *tb=NULL; /* trsm best case queue, 1 for each entry in opmek */
+   ATL_mmnode_t *kb;   /* list of candidate gemm kernels to try */
    ATL_mmnode_t *bp, *mp;
    int R=1, maxB=1, BN, BNN;
    double mf;
    char fnout[16];
+
    sprintf(fnout, "trsm%c_%c%c.sum", (flag&(1<<TSM_RIGHT))?'R':'L',
            (flag&(1<<TSM_UPPER))?'U':'L',(flag&(1<<TSM_TRANSA))?'T':'N');
+   tb = TimeMMFileWithPath(pre, "res", fnout, 0, 1, 0, 1, 0, -1);
+   if (tb)
+   {
+      KillAllMMNodes(tb);
+      return;
+   }
+
+   kb = getAllCandKerns(pre, flag);
+   PrintMMNodes(stdout, kb);
 /*
  * Get NB that we will tune TRSM for
  */
@@ -1186,12 +1709,458 @@ int main(int nargs, char **args)
 {
    char pre;
    int flag;
-   ATL_mmnode_t *mb;
 
    pre = GetFlags(nargs, args, &flag);
-   mb = getAllCandKerns(pre, flag);
-   PrintMMNodes(stdout, mb);
-   findBestTRSM(pre, flag, mb);
+   findBestTRSM(pre, flag);
+   return(0);
+}
+@ROUT trsmgen
+/*
+ * Actually generates TRSM micro & nano kernels and their Makefile, and
+ * moves this to BLDdir/src/blas/ukernel/<pre>UTRSM
+ * Actual performance data is handled by views.
+ */
+#include "atlas_mmgen.h"
+#include "atlas_type.h"
+void GenTrsmALLT
+   (char pre, char sd, char up, char ta, FILE *fp, ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp;
+   unsigned long long flg=0;
+   int k, L, n;
+
+   for (n=0, mp=mb; mp; n++, mp=mp->next)
+   {
+      if (mp->TA == AtlasTrans && mp->TB == AtlasTrans)
+         flg |= (1L<<n);
+   }
+   assert(sizeof(long long) >= ATL_PSIZE);
+   assert((ATL_PSIZE<<3) >= n);
+   fprintf(fp, "#define ATL_trsm%c_%c%c_allT(i_) ((0x%lxL>>(i_))&1)\n", 
+           sd, up, ta, flg);
+   fprintf(fp, "#ifndef ATL_trsm_allT\n");
+   fprintf(fp, "   #define ATL_trsm_allT ATL_trsm%c_%c%c_allT\n",
+           sd, up, ta);
+   fprintf(fp, "#endif\n");
+}
+
+char *GetTrsmDecor(char pre, char sd, char up, char ta, ATL_mmnode_t *mp)
+{
+   static char fn[64];
+   char ALLT = (mp->TA == AtlasTrans && mp->TB == AtlasTrans) ? 'T':'N';
+   if (ALLT == 'T')
+      sprintf(fn, "%c_%c%c%ux%u%c", sd, up, ta, mp->nu, mp->mu, ALLT);
+   else
+      sprintf(fn, "%c_%c%c%ux%u%c", sd, up, ta, mp->mu, mp->nu, ALLT);
+   return(fn);
+}
+
+void genTrsmHead(char pre, char *outd, char sd, char up, char ta,
+                 ATL_mmnode_t *mb, ATL_mmnode_t *ub)
+{
+   char *of;
+   FILE *fp;
+   ATL_mmnode_t *mp;
+   int k, L, n, muoff, nuoff, nxtoff, MULMU;
+   L = strlen(outd) + 24;
+   of = malloc(L);
+   assert(of);
+
+   k = sprintf(of, "%s/atlas_%cutrsm%c_%c%c.h", outd, pre, sd, up, ta);
+   assert(k<L);
+   fp = fopen(of, "w");
+   assert(fp);
+   fprintf(fp, "#ifndef ATLAS_%cTRSM%c_%c%c_H\n", 
+           toupper(pre), toupper(sd), toupper(up), toupper(ta));
+   fprintf(fp, "   #define ATLAS_%cTRSM%c_%c%c_H 1\n\n", 
+           toupper(pre), toupper(sd), toupper(up), toupper(ta));
+
+   fprintf(fp, "#include \"atlas_amm.h\"\n");
+   GenTrsmALLT(pre, sd, up, ta, fp, mb);
+   fprintf(fp, "/*\n * TRSM microkernel prototypes\n */\n");
+   for (mp=ub; mp; mp = mp->next)
+   {
+      char *nm;
+      nm = GetTrsmDecor(pre, sd, up, ta, mp);
+      fprintf(fp, "void ATL_%cutrsm%s\n", pre, nm);
+      fprintf(fp, "   (sminfo_t *ip, const enum ATLAS_DIAG Diag,\n"
+              "    ATL_CINT N, ATL_CINT R, const SCALAR alpha, const TYPE *A,"
+              " ATL_CINT lda,\n    TYPE *X, ATL_CINT ldx, TYPE *diag, "
+              "TYPE *L, TYPE *RW, TYPE *w);\n");
+   }
+   fprintf(fp, "\n#ifndef ATL_NOLOOKUP\n");
+   fprintf(fp, "#ifndef ATL_findutrsm\n");
+   fprintf(fp, "   #define ATL_findutrsm ATL_findutrsm%c_%c%c\n", sd, up, ta);
+   fprintf(fp, "#endif\n");
+   fprintf(fp, "static INLINE void *ATL_findutrsm%c_%c%c(ATL_UINT ALLT, "
+           "ATL_UINT mu, ATL_UINT nu)\n", sd, up, ta);
+   fprintf(fp, "{\n");
+   fprintf(fp, "   void *vp=NULL;\n");
+   fprintf(fp, "\n");
+   ub = CloneMMQueue(ub);
+   muoff = GetOffset(&ub->mu, ub);
+   nuoff = GetOffset(&ub->nu, ub);
+   nxtoff = GetOffset(&mb->next, mb);
+   ub = SortListByIval_G2L(ub, nxtoff, muoff);
+   k = ub->mu;
+   for (mp=ub->next; mp && mp->mu == k; mp = mp->next);
+   MULMU = (mp != NULL);
+   if (MULMU)
+      fprintf(fp, "   switch(mu)\n   {\n");
+   while(ub)
+   {
+      char *nm;
+      int mu=ub->mu, nu=ub->nu;
+      int n;
+      ATL_mmnode_t *mub, *last;
+
+      if (MULMU)
+         fprintf(fp, "   case %u:\n", mu);
+/*
+ *    Remove all identical mu kernels from queue
+ */
+      last = mub = ub;
+      for (n=1,mp=ub->next; mp && mp->mu == mu; mp = mp->next, n++)
+         last = mp;
+      ub = mp;
+      last->next = NULL;
+/*
+ *    Find if there's another utrsm with same mu & nu, then one must be
+ *    using transpose case while other does not
+ */
+      mp = FindNodeWithIval(mub->next, nxtoff, nuoff, mub->nu);
+      if (mp)
+      {
+         mub = RemoveNodeFromList(mub, mp, nxtoff);
+         n--;
+      }
+      nm = GetTrsmDecor(pre, sd, up, ta, mub);
+      if (n == 1)  /* is there only 1 kernel with this mu? */
+      {
+         if (mp)
+         {
+            int ALLT = (mub->TA == AtlasTrans && mub->TB == AtlasTrans);
+            fprintf(fp, "         vp = (%s) ? ATL_%cutrsm%s :",
+                    ALLT ? "ALLT":"!ALLT", pre, nm);
+            nm = GetTrsmDecor(pre, sd, up, ta, mp);
+            fprintf(fp, " ATL_%cutrsm%s;\n", pre, nm);
+            KillMMNode(mp);
+         }
+         else
+            fprintf(fp, "         vp = ATL_%cutrsm%s;\n", pre, nm);
+         mub = KillMMNode(mub);
+      }
+      else
+      {
+         while(mub)
+         {
+            n = CountListEntries(mub, nxtoff);
+            if (n > 1)
+            {
+               fprintf(fp, "      switch(nu)\n      {\n");
+               fprintf(fp, "      case %u:\n", mub->nu);
+            }
+            if (mp)
+            {
+               int ALLT = (mub->TA == AtlasTrans && mub->TB == AtlasTrans);
+               fprintf(fp, "         vp = (%s) ? ATL_%cutrsm%s :",
+                       ALLT ? "ALLT":"!ALLT", pre, nm);
+               nm = GetTrsmDecor(pre, sd, up, ta, mp);
+               fprintf(fp, " ATL_%cutrsm%s;\n", pre, nm);
+               KillMMNode(mp);
+            }
+            else
+               fprintf(fp, "         vp = ATL_%cutrsm%s;\n", pre, nm);
+            if (n > 1)
+               fprintf(fp,    "         break;\n");
+            mub = KillMMNode(mub);
+            if (mub)
+            {
+               nm = GetTrsmDecor(pre, sd, up, ta, mub);
+               mp = FindNodeWithIval(mub->next, nxtoff, nuoff, mub->nu);
+               if (mp)
+                  mub = RemoveNodeFromList(mub, mp, nxtoff);
+            }
+            if (n > 1)
+               fprintf(fp, "      } /* end switch on nu */\n");
+         }
+      }
+      if (MULMU)
+         fprintf(fp, "      break;\n");
+   }
+   if (MULMU)
+      fprintf(fp, "   } /* end switch on mu */\n");
+   fprintf(fp, "   return(vp);\n");
+   fprintf(fp, "} /* end findUtrsm */\n");
+   fprintf(fp, "#endif /* end no-lookup guard */\n");
+
+   fprintf(fp, "\n#endif /* end multiple inclusion guard */\n");
+   fclose(fp);
+   free(of);
+}
+
+ATL_mmnode_t *getUniqueTrsmCases(char pre, ATL_mmnode_t *ub, ATL_mmnode_t *mb)
+/*
+ * Adds all cases of unique cases in mb to ub; mb nodes are cloned, so
+ * mb is unchanged.  ub is already assumed unique on entry, so it is only
+ * added to.
+ * RETURNS: possibly changed ub
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *p;
+      int mu=mp->mu, nu=mp->nu;
+      char ALLT=(mp->TA == AtlasTrans && mp->TB == AtlasTrans) ? 'T' : 'N';
+      assert(mp->TA == mp->TB);
+      for (p=ub; p; p = p->next)
+      {
+         int mu0=p->mu, nu0=p->nu;
+         char ALLT0=(p->TA == AtlasTrans && p->TB == AtlasTrans) ? 'T' : 'N';
+         if (mu0 == mu && nu0 == nu && ALLT0 == ALLT) /* already seen this */
+            break;                                    /* case so stop */
+      }
+      if (p == NULL)  /* this case not already in unique queueu */
+      {
+         p = CloneMMNode(mp);
+         p->next = ub;
+         ub = p;
+      }
+   }
+   return(ub);
+}
+
+ATL_mmnode_t *GenMicroTrsm(char pre, char *outd, char sd, char up, char ta,
+                           ATL_mmnode_t *mb)
+{
+   ATL_mmnode_t *mp, *ub;
+   int *mus, *nus;
+   char *fn;
+   int i, L;
+   int nmu, nnu;
+   char *ln;
+
+   L = strlen(outd) + 256;
+   ln = malloc(L);
+   assert(ln);
+   ub = getUniqueTrsmCases(pre, NULL, mb);
+   for (mp=ub; mp; mp = mp->next)
+   {
+      int mu=mp->mu, nu=mp->nu;
+      char *nm;
+      char ALLT=(mp->TA == AtlasTrans && mp->TB == AtlasTrans) ? 'T' : 'N';
+
+      assert(mu > 0 && nu > 0 && mu < 1000 && nu < 1000);
+      nm = GetTrsmDecor(pre, sd, up, ta, mp);
+      i = sprintf(ln, "make gen_utrsm tALL=%c mu=%u nu=%u sd=%c up=%c ta=%c"
+                  " cx=\"%s\" cnj=N rt=\"%s/ATL_utrsm%s.c\"", 
+                  ALLT, mu, nu, sd, up, ta, (pre == 'c' || pre == 'z')?"c":"",
+                  outd, nm);
+      assert(i < L);
+      assert(!Sys2File(ln, NULL));
+   }
+   free(ln);
+   return(ub);
+}
+
+void GenMakeTrsm(char pre, char *outd, char up, char *sds, char *tas, 
+                 ATL_mmnode_t **MBs)
+{
+   int k, i;
+   FILE *fp;
+   char *fn, *typ, *comp;
+
+   k = strlen(outd) + 10;
+   fn = malloc(k);
+   assert(fn);
+   i = sprintf(fn, "%s/Makefile", outd);
+   fp = fopen(fn, "w");
+   assert(fp);
+   free(fn);
+   fprintf(fp, "include ../Make.inc\n\n");
+
+   fprintf(fp, "lib : %clib.grd\n", pre);
+   fprintf(fp, "all : %clib.grd\n", pre);
+   fprintf(fp, "clean : %cclean\n\n", pre);
+
+   fprintf(fp, "obj = ");
+   if (pre == 'c' || pre == 's')
+      comp = "$(SKC)";
+   else
+      comp = "$(DKC)";
+   if (pre == 'z')
+      typ = "DCPLX";
+   else if (pre == 'c')
+      typ = "SCPLX";
+   else if (pre == 's')
+      typ = "SREAL";
+   else
+      typ = "DREAL";
+   for (k=0; k < 2; k++)
+   {
+      int s;
+      for (i=s=0; s < 2; s++)
+      {
+         char sd=sds[s];
+         int it;
+
+         for (it=0; it < 2; it++)
+         {
+            ATL_mmnode_t *mp;
+            char ta = tas[it];
+            const int NCNJ = (ta == 'T' && (pre == 'c' || pre == 'z')) ? 2:1;
+
+            for (mp=MBs[i++]; mp; mp=mp->next)
+            {
+               int c;
+               for (c=0; c < NCNJ; c++)
+               {
+                  char *nm;
+                  nm = GetTrsmDecor(pre, sd, up, ta, mp);
+                  if (c)
+                     nm[3] = 'H';
+                  if (!k)
+                     fprintf(fp, "\\\n      ATL_%cutrsm%s.o ", pre, nm);
+                  else
+                  {
+                     fprintf(fp, "ATL_%cutrsm%s.o : ", pre, nm);
+                     if (c)
+                        nm[3] = 'T';
+                     fprintf(fp, "ATL_utrsm%s.c $(deps)\n", nm);
+                     if (c)
+                        fprintf(fp, 
+                "\t%s $(%cKCFLAGS) -c -o $@ -D%s=1 -DConj_=1 ATL_utrsm%s.c\n",
+                           comp, pre, typ, nm);
+                     else
+                        fprintf(fp, 
+                           "\t%s $(%cKCFLAGS) -c -o $@ -D%s=1 ATL_utrsm%s.c\n", 
+                                comp, pre, typ, nm);
+                  }
+               }
+            }
+         }
+      }
+      if (!k)
+      {
+         fprintf(fp, "\n\n%clib : %clib.grd\n", pre, pre);
+         fprintf(fp, "%clib.grd : $(obj)\n", pre);
+         fprintf(fp, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)\n");
+         fprintf(fp, "\t$(RANLIB) $(ATLASlib)\n\ttouch %clib.grd\n\n", pre);
+      }
+   }
+   fclose(fp);
+}
+
+void GenAllTrsm(char pre, char *outd)
+{
+   int L, i, s;
+   char sds[2] = {'L', 'R'};
+   char tas[2] = {'N', 'T'};
+   char up='L';
+   char *od;
+   char fn[16];
+   ATL_mmnode_t *MBs[4];
+/*
+ * Delete and the re-create <pre>UTRSM subdir
+ */
+   L = strlen(outd) + 8 + 7;
+   od = malloc(L);
+   assert(od);
+   i = sprintf(od, "rm -rf %s/%cUTRSM", outd, pre);
+   assert(i < L);
+   Sys2File(od, NULL);
+   od[0]='m'; od[1]='k'; od[2]='d'; od[3]='i'; od[4]='r'; od[5]=' ';
+   assert(!Sys2File(od, NULL));
+   strcpy(fn, "trsmS_LN.sum");
+
+   for (i=s=0; s < 2; s++)
+   {
+      char sd=sds[s];
+      int it;
+
+      for (it=0; it < 2; it++)
+      {
+         char ta = tas[it];
+         ATL_mmnode_t *mb;
+         fn[4] = sd;
+         fn[7] = ta;
+         mb = ReadMMFileWithPath(pre, "res", fn);
+         MBs[i] = GenMicroTrsm(pre, od+7, sd, up, ta, mb);
+         genTrsmHead(pre, od+7, sd, 'L', ta, mb, MBs[i]);
+         KillAllMMNodes(mb);
+         i++;
+      }
+   }
+   GenMakeTrsm(pre, od+7, up, sds, tas, MBs);
+   for (i=0; i < 4; i++)
+      KillAllMMNodes(MBs[i]);
+   free(od);
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   fprintf(stderr,
+"This will create the <pre>UTRSM subdir in <outdir>, and populate it with\n"
+"all utrsm kernels and their Makefile.\n");
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr,"USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -o <path>: what directory to output all files to?\n");
+   fprintf(stderr, "   -p [s,d]: set type/precision prefix (d) \n"
+           "      s/d will generate for complex (c/z) as well\n");
+
+   exit(ierr ? ierr : -1);
+}
+
+char *GetFlags(int nargs, char **args, char *PRE)
+{
+   FILE *fpin=stdin;
+   ATL_mmnode_t *mb=NULL, *bkb=NULL, *mp;
+   char *outd=NULL;
+   int i;
+   char pre='d';
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'o':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         outd = DupString(args[i]);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!outd)
+      outd = DupString("tmp");
+
+   *PRE = pre;
+   return(outd);
+}
+
+int main(int nargs, char **args)
+{
+   char *outd;
+   char pre;
+   outd = GetFlags(nargs, args, &pre);
+   GenAllTrsm(pre, outd);
+   free(outd);
    return(0);
 }
 @ROUT !

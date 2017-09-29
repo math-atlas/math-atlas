@@ -1,0 +1,104 @@
+@ifdef ! nacc
+   @abort nacc (# of accumulators) must be defined!
+@endifdef
+#include "atlas_asm.h"
+#ifdef SREAL
+   @whiledef in vmovap movap xorp vxor vadd231p vaddp vmulp addp mulp
+   #define @(in)d @(in)s
+   @endwhile
+#endif
+@ISA AVX SSE
+   @ifdef ! nmul
+      @iexp nmul 1
+   @endifdef
+   @iif @iexp @(nmul) 1 ! @(nmul) @(nacc) ! &
+      @abort nmul must be 1 or set to number of accumulators (@(nacc))
+   @endiif
+@ISA SSE
+#define vmovapd movapd
+@ISA AVXFMA
+   @iexp nmul 0
+@ISA AVXFMA AVX SSE
+#if !defined(VL16) && !defined(VL32) && !defined(VL64)
+   #error "Must set vector length in bytes by defining one of VL[16,32,64]!"
+#endif
+
+#define nrep %rdi
+#define dp   %rsi
+@multidef rn   ymm                 zmm     xmm
+@whiledef ifs #else #elif@^defined(VL64) #ifdef@^VL16
+@(ifs)
+   @iexp ac 0
+   @iwhile ac < nacc
+   #define acc@(ac) %@(rn)@(ac)
+      @iexp ac @(ac) 1 +
+   @endiwhile
+   #define zero %@(rn)@(ac)
+   @iexp ml 0
+   @iwhile ml < nmul
+      @iexp ac @(ac) 1 +
+   #define m@(ml)   %@(rn)@(ac)
+      @iexp ml @(ml) 1 +
+   @endiwhile
+   @undef rn
+@endwhile
+#endif
+/* 
+ * rax                                    rdi        rsi
+ * unsigned long fpuStress(unsigned long nrep, double *d);
+ */
+.text
+.local LOOP
+.local RET_LOOP_FLOPS
+.global ATL_asmdecor(fpuStress)
+ATL_asmdecor(fpuStress):
+   cmp $0, nrep
+   je RET_LOOP_FLOPS
+   @ISA SSE `   xorpd zero, zero `
+   @ISA AVX AVXFMA `   vxorpd zero, zero, zero`
+@iexp ac 0
+@iwhile ac < nacc
+   vmovapd zero, acc@(ac)
+   @iexp ac @(ac) 1 +
+@endiwhile
+@iexp ml 0
+@iwhile ml < nmul
+   vmovapd zero, m@(ml)
+   @iexp ml @(ml) 1 +
+@endiwhile
+   LOOP:
+   @iexp ac 0
+   @iexp ml 0
+   @iwhile ac < nacc
+@ISA AVXFMA
+      vfmadd231pd zero, zero, acc@(ac)
+@ISA AVX
+      vaddpd m@(ml), m@(ml), acc@(ac)
+      vmulpd zero, zero, m@(ml)
+@ISA SSE
+      addpd m@(ml), acc@(ac)
+      mulpd zero, m@(ml)
+@ISA AVX SSE
+      @iexp ml @(ml) 1 +
+      @iif ml = nmul
+         @iexp ml 0
+      @endiif
+@ISA AVXFMA AVX SSE
+      @iexp ac @(ac) 1 +
+   @endiwhile
+      dec nrep
+   jnz LOOP
+
+   ret
+RET_LOOP_FLOPS:
+   mov $@(nacc)*2*2, %rax  /* (#acc)*(mul+add=2)*(VLEN=2) */
+   #ifndef VL16
+      add %rax, %rax  /* VLEN=4 at least */
+      #ifdef YMM_
+         add %rax, %rax  /* VLEN=8 at least */
+      #endif
+   #endif
+   #ifdef SREAL
+      add %rax, %rax   /* single precision has twice the flops */
+   #endif
+   ret

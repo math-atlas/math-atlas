@@ -519,6 +519,23 @@ typedef void (*ammkern_t)(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
 #define ushort unsigned short
 #define uint unsigned int
 #define uchar unsigned char
+
+typedef struct sminfo sminfo_t;  /* struct for trsm microkernel */
+struct sminfo
+{
+   void *utrsm;                  /* function pointer to trsm microkernel */
+   cm2am_t a2blk, b2blk;         /* A/B copy funcs */
+   ammkern_t amm_b0, amm_b1;     /* func ptrs for beta=0,1 gemm */
+   #ifdef TCPLX
+      ammkern_t amm_bn;          /* func ptr for beta=-1 gemm */
+   #endif
+   size_t incA;                  /* (1|lda)SHIFT */
+   ushort mmflg;                 /* flag bitvec from amm master list */
+   ushort kb, rb;                /* triangular & RHS blocking */
+   uchar mu, nu, ku;             /* unrollings of underlying amm */
+   uchar bv;/*0:Right?, 1:Upper?, 2:TransA?, 3:Conj?, 4:NonUnit? 5: ALLT? */
+};
+
 typedef struct amminfo amminfo_t;
 struct amminfo
 {
@@ -613,6 +630,9 @@ void Mjoin(PATL,opinfo) /* populate opinfo_t using atlas_opgen_view K-3 idx */
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
 
+void Mjoin(PATL,iptrsmInfo)
+   (ipinfo_t *ip, enum ATLAS_SIDE SD, enum ATLAS_UPLO Uplo, enum ATLAS_TRANS TA,
+    size_t N, size_t K, size_t lda, size_t ldb, const SCALAR alpha);
 void Mjoin(PATL,ipgenInfo)
    (ipinfo_t *ip, int flg, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
@@ -8650,9 +8670,9 @@ void ComputeKClean(int verb, char pre)
    ATL_mmnode_t *mkb, *mmGE=NULL, *mmSQ=NULL, *mp, *mmGEk=NULL, *mmSQk=NULL;
    ATL_mmnode_t *ipb, *ipk;
    mmGEk = TimeMMFileWithPath(pre, "res", "geAMMKCLEAN.sum", 
-                              0, verb, 0, 0, 0, -1);
+                              0, verb|1, 0, 0, 0, -1);
    mmSQk = TimeMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum", 
-                              0, verb, 0, 0, 0, -1);
+                              0, verb|1, 0, 0, 0, -1);
    @beginskip
    if (mmGEk && mmSQk)
    {
@@ -8730,7 +8750,7 @@ void ComputeKClean(int verb, char pre)
  * for unique, since they come from geAMMRES exclusively
  */
    @whiledef fn mn m n
-   ipk = TimeMMFileWithPath(pre, "res", "@(fn)AMMKCLEAN.sum", 0, verb,0,0,0,-1);
+   ipk = TimeMMFileWithPath(pre, "res", "@(fn)AMMKCLEAN.sum",0,verb|1,0,0,0,-1);
    if (!ipk)
    {
       ipb = ReverseMMQ(ReadMMFileWithPath(pre, "res", "ip@(fn)PERF.sum"));
@@ -9970,7 +9990,7 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
    ATL_mmnode_t *mmSQ;
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
 
-   mmSQ = TimeMMFileWithPath(pre, "res", "sqAMMRES.sum", 0, verb, 0, 1, 0, -1);
+   mmSQ = TimeMMFileWithPath(pre, "res", "sqAMMRES.sum", 0,verb|1, 0, 1, 0, -1);
    if (mmSQ)
       return(mmSQ);
    else
@@ -10280,7 +10300,7 @@ void GenAllIPViews(char pre, int verb)
    ATL_mmnode_t *mmb, *mp, *mpL;
    mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    assert(mmb);
-   mp = TimeMMFileWithPath(pre, "res", "ipmnPERF.sum", 0, verb, 0, 1, 0, -1);
+   mp = TimeMMFileWithPath(pre, "res", "ipmnPERF.sum", 0, verb|1, 0, 1, 0, -1);
    if (mp)
       KillAllMMNodes(mp);
    else /* generate inner-product MB=NB, KB free view */
@@ -10318,7 +10338,7 @@ void GenAllIPViews(char pre, int verb)
       printf("   DONE DEGENERATE MB/NB SEARCH.\n\n");
    }
 
-   mp = TimeMMFileWithPath(pre, "res", "ipnPERF.sum", 0, verb, 0, 1, 0, -1);
+   mp = TimeMMFileWithPath(pre, "res", "ipnPERF.sum", 0, verb|1, 0, 1, 0, -1);
    if (mp)
       KillAllMMNodes(mp);
    else /* generate inner-product NB < MAXNB, MB,KB free view */
@@ -10351,7 +10371,7 @@ void GenAllIPViews(char pre, int verb)
       printf("   DONE DEGENERATE NB SEARCH.\n\n");
    }
 
-   mp = TimeMMFileWithPath(pre, "res", "ipmPERF.sum", 0, verb, 0, 1, 0, -1);
+   mp = TimeMMFileWithPath(pre, "res", "ipmPERF.sum", 0, verb|1, 0, 1, 0, -1);
    if (mp)
       KillAllMMNodes(mp);
    else /* generate inner-product NB < MAXNB, MB,KB free view */
@@ -10396,7 +10416,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
 /* 
  * If we are quick returning, still must possibly retime subsearches
  */
-   mmb = TimeMMFileWithPath(pre, "res", "geAMMRES.sum", 0, verb, 0, 1, 0, -1);
+   mmb = TimeMMFileWithPath(pre, "res", "geAMMRES.sum", 0, verb|1, 0, 1, 0, -1);
    if (mmb)
    {
       KillAllMMNodes(DoSquare(pre, verb, nregs, mmb));
@@ -10641,7 +10661,7 @@ ATL_mmnode_t *DoRankK(char pre, int verb, int nregs, const ATL_mmnode_t *mainb)
    const ATL_mmnode_t *cmp;
    int maxB=0, b;
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
-   rkb = TimeMMFileWithPath(pre, "res", "rkAMMRES.sum", 0, verb, 0, 1, 0, -1);
+   rkb = TimeMMFileWithPath(pre, "res", "rkAMMRES.sum", 0, verb|1, 0, 1, 0, -1);
    if (rkb)
       return(rkb);
 /*
@@ -13384,7 +13404,7 @@ void DoBlock(char pre, int flg, int verb)
       mvsum = "gmvAMMUR.sum";
       kvsum = "gkvAMMUR.sum";
    }
-   mmb = TimeMMFileWithPath(pre, "res", ressum, 0, verb, 0, 1, 0, -1);
+   mmb = TimeMMFileWithPath(pre, "res", ressum, 0, verb|1, 0, 1, 0, -1);
    if (mmb)
    {
       KillAllMMNodes(mmb);
@@ -13615,9 +13635,9 @@ void DoAllSyrkNB(char pre, int vrb, ATL_mmnode_t *mSQ, ATL_mmnode_t *sy, int flg
    ATL_mmnode_t *mSY, *mp;
    const unsigned int nu=sy->nu, ku=sy->ku, maxD;
    if (flg&32)
-      mp = TimeMMFileWithPath(pre, "res", "SYRKFNL_fko.sum", 0, 0, 0, 1, 0, -1);
+      mp = TimeMMFileWithPath(pre, "res", "SYRKFNL_fko.sum", 0, 1, 0, 1, 0, -1);
    else
-      mp = TimeMMFileWithPath(pre, "res", "SYRKFNL.sum", 0, 0, 0, 1, 0, -1);
+      mp = TimeMMFileWithPath(pre, "res", "SYRKFNL.sum", 0, 1, 0, 1, 0, -1);
    if (mp)
    {
       KillAllMMNodes(mp);
@@ -13756,10 +13776,10 @@ void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
       ipsum = "ipmen.sum";
       syrksum = "gAMSYRK.sum";
    }
-   mSQ = TimeMMFileWithPath(pre, "res", ipsum, 0, vrb, 0, 1, 0, -1);
+   mSQ = TimeMMFileWithPath(pre, "res", ipsum, 0, vrb|1, 0, 1, 0, -1);
    if (!mSQ)
       return;
-   mb = TimeMMFileWithPath(pre, "res", syrksum, 0, vrb, 0, 1, 0, -1);
+   mb = TimeMMFileWithPath(pre, "res", syrksum, 0, vrb|1, 0, 1, 0, -1);
    if (mb)
    {
       DoAllSyrkNB(pre, vrb, mSQ, mb, flg);
@@ -27064,6 +27084,7 @@ void Mjoin(PATL,ammPadZero)(ATL_CUINT npan, ATL_CUINT npad, ATL_CUINT szPan,
  * following options:
  *   If A/B i/j block can be copied by passing base A/B ptr 
  *   If rC is NULL, then do only the indicated A/B copy, w/o ammm
+ *   if C is NULL, then don't copy out, else do
  */
 void Mjoin(PATL,opblk)
 (
@@ -27155,18 +27176,24 @@ void Mjoin(PATL,opblk)
    {
       #ifdef TCPLX
          ammkern_t amm_b0=op->amm_b0, amm_b1=op->amm_b1, amm_bn=op->amm_bn;
-         C += (op->nb * n + op->pnb * j)*((op->ldc)SHIFT) +
-              ((op->mb * m + op->pmb * i)SHIFT);
          amm_b0(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
          amm_b0(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
          amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
          amm_b1(nmu, nnu, kb, iA, rB, iC, pAn, pBn, rC);
-         op->blk2C(mb, nb, op->ONE, rC, iC, op->beta, C, op->ldc);
+         if (C)
+         {
+            C += (op->nb * n + op->pnb * j)*((op->ldc)SHIFT) +
+                 ((op->mb * m + op->pmb * i)SHIFT);
+            op->blk2C(mb, nb, op->ONE, rC, iC, op->beta, C, op->ldc);
+         }
       #else
-         C += (op->nb * n + op->pnb * j)*(op->ldc) +
-              (op->mb * m + op->pmb * i);
          op->amm_b0(nmu, nnu, kb, pA, pB, rC, pAn, pBn, rC);
-         op->blk2C(mb, nb, ATL_rone, rC, op->beta, C, op->ldc);
+         if (C)
+         {
+            C += (op->nb * n + op->pnb * j)*(op->ldc) +
+                 (op->mb * m + op->pmb * i);
+            op->blk2C(mb, nb, ATL_rone, rC, op->beta, C, op->ldc);
+         }
       #endif
    }
 }
@@ -36455,6 +36482,69 @@ int minSquareNB(char pre, size_t CS, ATL_mmnode_t *mmb)
    return(D);
 }
 
+void do_ipdek(int verb, char pre, int NEK)
+{
+   ATL_mmnode_t *mp, *mb=NULL;
+   int tflag = 0;
+   unsigned int i, U, N;
+   const char ch=NEK?'N':'M';
+   char *fn=NEK?"ipnek.sum":"ipmek.sum";
+
+   mb = TimeMMFileWithPath(pre, "res", fn, 0, verb|1, 0, 0, 0, -1);
+   if (mb)
+   {
+      KillAllMMNodes(mb);
+      return;
+   }
+   mp = ReadMMFileWithPath(pre, "res", "ipgen.sum");
+   assert(mp);
+   while (mp->next)
+      mp = KillMMNode(mp);
+   mp->flag = (mp->flag&(~MMF_MVSET)) | ((1<<MMF_MVA)|(1<<MMF_MVB));
+   if (NEK)
+      tflag |= 1<<31;
+   mp->mflop[0] = 0;
+   assert(mp);
+   printf("FINDING BEST CASE FOR %c=K INNER PRODUCT:\n", ch);
+   MMExpandNK(verb, pre, tflag, 1, mp);
+   printf("BEST %c=K: ID=%u, B=(%u,%u,%u), mf=.2f\n\n", ch, mp->ID, 
+          mp->mbB, mp->nbB, mp->kbB);
+   U = mp->ku;
+   if (NEK)
+   {
+      U = ATL_iLCM(U, mp->nu);
+      N = mp->nbB;
+   }
+   else
+   {
+      U = ATL_iLCM(U, mp->mu);
+      N = mp->mbB;
+   }
+   U = (U == 1 || U == 2) ? 4 : U;
+   for (i=U; i < N; i += U)
+   {
+      ATL_mmnode_t *p;
+      unsigned int b;
+      printf("   FINDING BEST CASE FOR %c=K=%u:\n", ch, i);
+      p = CloneMMNode(mp);
+      if (NEK)
+         p->nbB = p->kbB = i;
+      else
+         p->mbB = p->kbB = i;
+      MMExpandMorN(verb, pre, tflag, 1, p, !NEK, 512);
+      printf("   BEST CASE FOR %c=K=%u: B=(%u,%u,%u), mf=%.2f\n", ch, i, 
+             p->mbB, p->nbB, p->kbB, p->mflop[0]);
+      p->next = mb;
+      mb = p;
+   }
+   mp->next = mb;
+   mb = mp;
+   mb = ReverseMMQ(mb);
+   MMPruneMflopTol(mb, 0, 1.0);
+   WriteMMFileWithPath(pre, "res", fn, mb);
+   KillAllMMNodes(mb);
+}
+
 void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
 /*
  * This search simply finds best performing kernel, produces ip.sum
@@ -36465,14 +36555,32 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    double mfB, mf, t0;
    unsigned int mbB, nbB, kbB, maxD=240, D, iD, iD0;
    char upr = pre;
+   if (pre == 'z')
+      upr = 'd';
+   else if (pre == 'c')
+      upr = 's';
 
-   mp = TimeMMFileWithPath(pre, "res", "ipgen.sum", 0, 0, 0, 1, 0, -1);
+   mp = TimeMMFileWithPath(pre, "res", "ipgen.sum", 0, 1, 0, 1, 0, -1);
    if (mp)
    {
       KillAllMMNodes(mmb);
       KillAllMMNodes(mp);
       return;
    }
+   nbB = minSquareNB(upr, LLC_SZ, mmb);
+   printf("bLLC = %u\n", nbB);
+   if (nbB >= 132)
+      nbB -= 12;
+/*
+ * Get rid of all kernels that aren't within 60% of max performance
+ */
+   D = ATL_CountNumberOfMMNodes(mmb);
+   printf("ELIMINATING UNCOMPETITIVE KERNELS out of %u:\n", D);
+   mmb = ElimSlowKern(pre, verb, mmb, nbB, nbB, nbB, 0, 0, 0.60);
+   iD = ATL_CountNumberOfMMNodes(mmb);
+   printf("DONE: ELIMINATED %u UNCOMPETITIVE KERNELS, %u LEFT.\n", 
+          D-iD, iD);
+   PrintMMNodes(stdout, mmb);
    printf("LOOKING FOR BEST ASYMPTOTIC INNER-PRODUCT KERNEL:\n");
    mpB = mp = FindMaxMflopMMQ(mmb, 0);
    mfB = mp->mflop[0];
@@ -36603,7 +36711,7 @@ void srch_men(char pre, int verb)
    ATL_mmnode_t *bp, *mmb=NULL;
    unsigned int U, D, d, maxK;
    
-   bp = TimeMMFileWithPath(pre, "res", "ipmen.sum", 0, 0, 0, 1, 0, -1);
+   bp = TimeMMFileWithPath(pre, "res", "ipmen.sum", 0, 1, 0, 1, 0, -1);
    if (bp)
    {
       KillAllMMNodes(bp);
@@ -36661,25 +36769,13 @@ int main(int nargs, char **args)
    flag = (verb > 3) ? 3:(verb&3);
    flag |= 3 << 2;
 
-   bLLC = minSquareNB(upr, LLC_SZ, mmb);
-   printf("bLLC = %u\n", bLLC);
-   if (bLLC >= 132)
-      bLLC -= 12;
-/*
- * Get rid of all kernels that aren't within 60% of max performance
- */
    for (mp=mmb; mp; mp = mp->next)
       mp->flag = ((mp->flag) & (~MMF_MVSET)) | ((1<<MMF_MVA) | (1<<MMF_MVB));
-   nkern0 = ATL_CountNumberOfMMNodes(mmb);
-   printf("ELIMINATING UNCOMPETITIVE KERNELS out of %u:\n", nkern0);
-   mmb = ElimSlowKern(pre, verb, mmb, bLLC, bLLC, bLLC, 0, 0, 0.60);
-   nkern = ATL_CountNumberOfMMNodes(mmb);
-   printf("DONE: ELIMINATED %u UNCOMPETITIVE KERNELS, %u LEFT.\n", 
-          nkern0-nkern, nkern);
-   PrintMMNodes(stdout, mmb);
 
    findBestIP(pre, verb, mmb, NULL);
    srch_men(pre, verb);
+   do_ipdek(verb, pre, 0);
+   do_ipdek(verb, pre, 1);
 
    return(0);
 }
@@ -36702,7 +36798,7 @@ void do_opdek(int verb, char pre, int NEK)
    const char ch=NEK?'N':'M';
    char *fn=NEK?"opnek.sum":"opmek.sum";
 
-   mb = TimeMMFileWithPath(pre, "res", fn, 0, verb, 0, 0, 0, -1);
+   mb = TimeMMFileWithPath(pre, "res", fn, 0, verb|1, 0, 0, 0, -1);
    if (mb)
    {
       KillAllMMNodes(mb);
@@ -36937,7 +37033,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
    ATL_mmnode_t *mb, *mp, *tb, *mpB;
 
-   tb = TimeMMFileWithPath(pre, "res", "opFNL.sum", 0, verb, 0, 0, 0, -1);
+   tb = TimeMMFileWithPath(pre, "res", "opFNL.sum", 0, verb|1, 0, 0, 0, -1);
    if (tb)
    {
       KillAllMMNodes(tb);
@@ -38849,6 +38945,76 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
    }
    KillAllMMNodes(MB);
    fclose(fp);
+}
+
+@BEGINSKIP
+void GetUnrolls(ATL_mmnode_t *mb, int *NMU, int **MUS, int *NNU, int **NUS)
+{
+   ATL_mmnode_t *mp;
+   int *mus, *nus, nmu=0, nnu=0;
+   int N;
+
+   N = ATL_CountNumberOfMMNodes(mb);
+   mus = malloc(2*N*sizeof(int));
+   assert(mus);
+   nus = mus + N;
+   for (mp=mb; mp; mp = mp->next)
+   {
+      int i, U;
+      U = mp->mu;
+      for (i=0; i < nmu; i++)
+         if (mus[i] == U)
+            break;
+      if (i == nmu)
+         mus[nmu++] = U;
+      U = mp->nu;
+      for (i=0; i < nnu; i++)
+         if (nus[i] == U)
+            break;
+      if (i == nnu)
+         nus[nnu++] = U;
+   }
+   *NMU = nmu;
+   *NNU = nnu;
+   *MUS = malloc(nmu*sizeof(int));
+   assert(*MUS);
+   memcpy(*MUS, mus, nmu*sizeof(int));
+   *NUS = malloc(nnu*sizeof(int));
+   assert(*NUS);
+   memcpy(*NUS, nus, nnu*sizeof(int));
+   free(mus);
+}
+@ENDSKIP
+
+void GenTrsmALLT(char pre, char *outd, char sd, ATL_mmnode_t *mb)
+{
+   char *of;
+   FILE *fp;
+   ATL_mmnode_t *mp;
+   unsigned long long flg=0;
+   int k, L, n;
+   L = strlen(outd) + 24;
+   of = malloc(L);
+   assert(of);
+
+   for (n=0, mp=mb; mp; n++, mp=mp->next)
+   {
+      if (mp->TA == AtlasTrans && mp->TB == AtlasTrans)
+         flg |= (1L<<n);
+   }
+   assert((sizeof(long)<<3) >= n);
+   k = sprintf(of, "%s/atlas_%ctrsm%cLN_ALLT.h", outd, pre, sd);
+   assert(k<L);
+   fp = fopen(of, "w");
+   assert(fp);
+   fprintf(fp, "#ifndef ATLAS_%cTRSM%cLN_ALLT_H\n", 
+           toupper(pre), toupper(sd));
+   fprintf(fp, "   #define ATLAS_%cTRSM%cLN_ALLT_H 1\n", 
+           toupper(pre), toupper(sd));
+   fprintf(fp, "   #define ATL_trsm_allT(i_) ((0x%lxL>>(i_))&1)\n", flg);
+   fprintf(fp, "#endif /* end multiple inclusion guard */\n");
+   fclose(fp);
+   free(of);
 }
 
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,

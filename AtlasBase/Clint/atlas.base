@@ -20990,6 +20990,16 @@ void ATL_@(pre)ammm
 void ATL_@(pre)syrk(const enum ATLAS_UPLO, const enum ATLAS_TRANS,
                ATL_CSZT N, ATL_CSZT K, const @(sty)alp, const @(typ) *A,
                ATL_CSZT lda, const @(sty)bet, @(typ) *C, ATL_CSZT ldc);
+int ATL_@(pre)trsmR_IP
+   (ATL_UINT bv, ATL_CSZT, ATL_CSZT, const @(sty), const @(typ)*, ATL_CSZT, 
+    @(typ)*, ATL_CSZT);
+int ATL_@(pre)trsmL_IP
+   (ATL_UINT bv, ATL_CSZT, ATL_CSZT, const @(sty), const @(typ)*, ATL_CSZT, 
+    @(typ)*, ATL_CSZT);
+void ATL_@(pre)trsm
+   (const enum ATLAS_SIDE, const enum ATLAS_UPLO, const enum ATLAS_TRANS,
+    const enum ATLAS_DIAG, ATL_CSZT, ATL_CSZT, const @(sty), const @(typ)*, 
+    ATL_CSZT, @(typ)*, ATL_CSZT);
 void ATL_@(pre)gemm(const enum ATLAS_TRANS, const enum ATLAS_TRANS,
                const int M, const int N, const int K, const @(sty)alpha,
                const @(typ) *A, const int lda, const @(typ) *B, const int ldb,
@@ -21010,7 +21020,7 @@ void ATL_@(pre)trmm(const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,
                const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag,
                const int M, const int N, const @(sty)alpha,
                const @(typ) *A, const int lda, @(typ) *B, const int ldb);
-void ATL_@(pre)trsm(const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,
+void ATL_@(pre)trsm_APR(const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,
                const enum ATLAS_TRANS TransA, const enum ATLAS_DIAG Diag,
                const int M, const int N, const @(sty)alpha,
                const @(typ) *A, const int lda, @(typ) *B, const int ldb);
@@ -21054,6 +21064,12 @@ void ATL_@(pre)her2k(const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
 #include "atlas_amm.h"
 #include "atlas_f77.h"
 #include "atlas_level3.h"
+void *Mjoin(PATL,utrsmR_alloc)
+   (sminfo_t *ip, int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w);
+void *Mjoin(PATL,utrsmL_alloc)
+   (sminfo_t*ip, int N, TYPE **Diag, TYPE **L, TYPE **R, TYPE **w);
+
+@BEGINSKIP
 #ifndef ATL_NOAMM
    #define NOPERF 1
    #define NOK1RATIO 1
@@ -21079,6 +21095,7 @@ void ATL_@(pre)her2k(const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
    #undef NOTIME
 #endif
 #define CPAT Mjoin(C_ATL_, PRE);
+@ENDSKIP
 
 #endif
 @ROUT second
@@ -35964,7 +35981,7 @@ gemm(...)
 
 #ifdef TIME_TRMVK
    #ifdef TIME_AMM_SM
-      void ATL_UTRSM(ipinfo_t *ip, const enum ATLAS_DIAG Diag, ATL_CINT N, 
+      void ATL_UTRSM(sminfo_t *ip, const enum ATLAS_DIAG Diag, ATL_CINT N, 
                      ATL_CINT R, const SCALAR alpha, const TYPE *A, 
                      ATL_CINT lda, TYPE *X, ATL_CINT ldx, TYPE *diag, 
                      TYPE *L, TYPE *RW, TYPE *w);
@@ -36198,7 +36215,7 @@ double GetKmmMflop
       void *wp;
       TYPE *diag, *L, *R, *w;
       void* ATL_usm_alloc
-         (ipinfo_t *ip, const int, TYPE**, TYPE**, TYPE**, TYPE**);
+         (sminfo_t *ip, const int, TYPE**, TYPE**, TYPE**, TYPE**);
       wp = ATL_usm_alloc(&IPINFO, kb, &diag, &L, &R, &w);
    #endif
    setsz = mb*kb + kb*nb;
@@ -37045,8 +37062,8 @@ int main(int nargs, char **args)
       #else
          #define SD_Right 0
       #endif
-      ipinfo_t IPINFO;
-      void ATL_UTRSM(ipinfo_t*, const enum ATLAS_DIAG, ATL_CINT N, ATL_CINT R,
+      sminfo_t IPINFO;
+      void ATL_UTRSM(sminfo_t*, const enum ATLAS_DIAG, ATL_CINT N, ATL_CINT R,
                      const SCALAR, const TYPE*, ATL_CSZT, TYPE*, ATL_CSZT,
                      TYPE*, TYPE*, TYPE*, TYPE*);
       #ifdef TCPLX
@@ -37393,7 +37410,7 @@ double GetKmmMflop
    #ifdef TIME_AMM_SM
       void *wp;
       TYPE *diag, *L, *R, *w;
-      void* ATL_usm_alloc(ipinfo_t*, const int, TYPE**, TYPE**, TYPE**, TYPE**);
+      void* ATL_usm_alloc(sminfo_t*, const int, TYPE**, TYPE**, TYPE**, TYPE**);
       wp = ATL_usm_alloc(&IPINFO, kb, &diag, &L, &R, &w);
    #endif
    setsz = mb*kb + kb*nb;
@@ -37450,6 +37467,19 @@ double GetKmmMflop
             const int TUTU = TU*TU;
          #endif
          TYPE *dd;
+         #ifdef SIDE_R_
+            #ifdef TRANSA_T_
+               IPINFO.incA = lda SHIFT;  /* LT,UT */
+            #else
+               IPINFO.incA = 1 SHIFT;         /* UN,LN */
+            #endif
+         #else
+            #ifdef TRANSA_T_
+               IPINFO.incA = 1 SHIFT;
+            #else
+               IPINFO.incA = lda SHIFT;
+            #endif
+         #endif
          for (a=L; a!=R; a++) *a = ATL_rzero; /* zero everything */
          /* now make diag blks identity */
          for (a=L, dd=diag, i=0; a<R; i++, a+=i*(TUTU SHIFT), dd+=(TU SHIFT))
@@ -38051,8 +38081,8 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    #if defined(TIME_TRMVK) && defined(TIME_AMM_SM)
       IPINFO.mu = kp->mu;
       IPINFO.nu = kp->nu;
-      IPINFO.mb = kp->mb;
-      IPINFO.nb = kp->nb;
+@skip      IPINFO.mb = kp->mb;
+@skip      IPINFO.nb = kp->nb;
    #endif
    #ifdef TIME_COPY  /* Reduce M/N to nmblks, nnblks, handle P */
    {
@@ -42220,5 +42250,388 @@ int main(int nargs, char **args)
 {
    long pgsz;
    pgsz = sysconf(_SC_PAGESIZE);
+}
+@ROUT try_fpu
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+#define INTV 0.2
+#define DEFMF 200.0
+/*
+ * This routine written in assembly to allow useless computations to be used
+ * in order to acheive FPU peak.
+ * if nrep is 0, then the function returns the number of flops done in a single
+ * loop iteration.  If nrep > 0, it performs that many loop iterations and
+ * returns with junk as return value.
+ * The array d is input/output of length at least 5000, and can be used
+ * to make compiler-oriented routine unsure if flops are useless.
+ */
+unsigned long fpuStress(unsigned long nrep, double *d);
+void printUsage(char *name, int iarg, char *flag)
+{
+   if (iarg)
+      fprintf(stderr, "Error around argument %d (%s)!\n", iarg, flag);
+   fprintf(stderr, "USAGE: %s [flags]\n", name);
+   fprintf(stderr, "   -m <mflop> : set the number of MFLOP to time");
+   fprintf(stderr, "   -t <sec> : set floor on timing interval");
+   fprintf(stderr, "   -o <outfile> : default=stdout\n");
+   exit(iarg ? iarg : -1);
+}
+
+FILE *getFlags(int nargs, char **args, double *mflop, double *time)
+{
+   FILE *fpout=stdout;
+   int i;
+
+   *mflop = *time = 0.0;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') 
+         printUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'm':
+         if (++i >= nargs)
+            printUsage(args[0], i, "Out of args");
+         *mflop = atof(args[i]);
+         if (*mflop <= 0.0)  /* <=0 says use default MFLOP */
+            *mflop = DEFMF;
+         *time = 0.0;
+         break;
+      case 't':
+         if (++i >= nargs)
+            printUsage(args[0], i, "Out of args");
+         *time = atof(args[i]);
+         *mflop = 0.0;
+         break;
+      case 'o':
+         if (++i >= nargs)
+            printUsage(args[0], i, "Out of args");
+         if (fpout != stdout)
+            fclose(fpout);
+         fpout = fopen(args[i], "w");
+         assert(fpout);
+         break;
+      default:
+         printUsage(args[0], i, args[i]);
+      }
+   }
+   return(fpout);
+}
+/*
+ * This program is linked to various assembly language backends to attempt
+ * to exercise the FPU at its peak rate.  Once the correct backend is linked
+ * in, we can use this peak performance to auto-discover what thread IDs
+ * share an FPU, and thus which IDs should be used
+ */
+#define NTRY 3
+int main(int nargs, char **args)
+{
+   double *d;
+   double time, mf;
+   FILE *fpout;
+   double ATL_walltime(void);
+
+   d = malloc(sizeof(double)*100);
+   assert(d);
+   fpout = getFlags(nargs, args, &mf, &time);
+   if (mf > 0.0)
+   {
+      unsigned long nrep, fpi, k;
+      double t0, t1, avg=0.0;
+
+      fpi = fpuStress(0, d);      /* get # of flops in 1 loop iteration */
+      nrep = mf/(1e-6*fpi);       /* compute # of its to get desired MFLOPs */
+
+      for (k=0; k < NTRY; k++)
+      {
+         t0 = ATL_walltime();
+         fpuStress(nrep, d);
+         t1 = ATL_walltime() - t0;
+         if (fpout == stdout)
+            fprintf(fpout, "   MFLOP=%.2f (%e sec)\n", nrep*fpi*1e-6/t1, t1);
+         avg += t1;
+      }
+      avg /= (double)NTRY;
+      if (fpout == stdout)
+         fprintf(fpout, "AVG MFLOP=%.2f\n", nrep*fpi*1e-6/avg);
+      else 
+         fprintf(fpout, "%le\n",  nrep*fpi*1e-6 / avg);
+   }
+   else
+     assert(0);
+   free(d);
+   return(0);
+}
+@ROUT probeFPU
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#define SSE    0
+#define AVX    1
+#define AVXFMA 2
+char *isas[3] = {"SSE", "AVX", "AVXFMA"};
+
+#define LNLEN 128
+double getMflop(char pre, int isa, int vlenb, int nacc, int nmul, double mf)
+{
+   char ln[LNLEN];
+   int i;
+   FILE *fpin;
+   i = sprintf(ln, "make fpucase isa=%s nacc=%d nmul=%d vlen=%d mf=%f "
+               "typ=\"%s\" > /dev/null 2>&1", 
+               isas[isa], nacc, nmul, vlenb, mf > 0.0?mf:0.0, 
+               pre=='s'?"-DSREAL=1":"");
+   assert(i < LNLEN);
+   if (system(ln))
+      return(-1.0);
+   fpin = fopen("res/fpuS.out", "r");
+   if (!fpin)
+      return(-2.0);
+   if (fscanf(fpin, "%le", &mf) != 1)
+      return(-3.0);
+   fclose(fpin);
+   return(mf);
+}
+
+int findISA(int *VLENB)
+{
+   #ifdef ATL_AVXMAC
+      *VLENB = 32;
+      return(AVXFMA);
+   #elif defined(ATL_AVX)
+      *VLENB = 32;
+      return(AVX);
+   #elif defined(ATL_SSE1)
+      *VLENB = 16;
+      return(SSE);
+   #endif
+   *VLENB = 0;
+   return(-1);
+}
+
+int findNREG(char pre, int isa, int vlenb)
+{
+   const int nmul = (isa == AVXFMA) ? 0:1, nextra = nmul+1;;
+   int nreg=128;
+   printf("PROBING FOR NUMBER OF REGISTERS:\n");
+   printf("   TRYING NREG=%d: ", nreg);
+   while (getMflop(pre, isa, vlenb, nreg-nextra, 1, 0.0) <= 0.0)
+   {
+      nreg >>= 1;
+      printf("NO.\n   TRYING NREG=%d: ", nreg);
+      assert(nreg > 0);
+   }
+   printf("YES!\nNUMBER OF REGISTERS DETECTED AS: %d\n\n", nreg);
+   return(nreg);
+}
+
+int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL, double *PEAK)
+/*
+ * Finds: peak mflop and effective latency of FMA of selected isa & vlenb.
+ * If this ISA has no FMA (separate mul & add) also finds how many regs must
+ * be dedicated to multiply registers.  If machine supports register renaming
+ * in hardware (modern x86), nmul almost always 1, but w/o it will usually
+ * the stages in the fmul pipe.  This code will detect FMA latency as max of
+ * add and mul latency, usually, so not optimal solution for separate mul&add,
+ * but these are not common in modern architecture anyway.
+ * RETURNS: 0 if selected code will not compile, else detected FMA latency.
+ */
+{
+   int NOFMA=(isa == AVXFMA) ? 0:1;
+   int nmulB, naccB, nacc, nmul;
+   double mfB=0.0, mf, mfF=(*PEAK);
+
+   printf("PROBING FOR EFFECTIVE FMA LATENCY:\n");
+/*
+ * If no FMA, then try maximum NMUL setting that will fit in nreg:
+ *    nmul+nacc+1 <= nreg, nmul=nacc = (nreg-1)/2;
+ */
+   if (NOFMA)
+   {
+      nacc = (nreg-2)>>1;
+      nacc = (nacc < 1) ? 1:nacc;
+      mfB = getMflop(pre, isa, vlenb, nacc, nacc, mfF);
+      naccB = nmulB = nacc;
+      printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nacc, mfB);
+   }
+   else
+      *NMUL = nmul = 0;
+   nacc = nreg-2;
+   mf = getMflop(pre, isa, vlenb, nacc, NOFMA, mfF);
+   printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nmul, mf);
+   if (mf > mfB)
+   {
+      mfB = mf;
+      naccB = nacc;
+      nmulB = NOFMA;
+   }
+   if (mfB <= 0.0)
+   {
+      *PEAK = 0.0;
+      *NMUL = 0;
+      return(0);
+   }
+   nacc = naccB;
+   do
+   {
+      int nacc0=nacc;
+      nacc = (nacc > 16) ? (nacc>>1):nacc-1;
+      nmul = NOFMA;
+      mf = getMflop(pre, isa, vlenb, nacc, 1, mfF);
+      printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nmul, mf);
+      if (NOFMA && nacc + nacc + 1 <= nreg)
+      {
+         double mfM;
+         mfM = getMflop(pre, isa, vlenb, nacc, nacc, mfF);
+         printf("   nacc=%d, nmul=%d, mf=%.2f\n", nacc, nacc, mfM);
+         if (mfM > mf)
+         {
+            nmul = nacc;
+            mf = mfM;
+         }
+      }
+      if (mf*1.03 <= mfB)  /* definite drop-off in performance */
+      {
+         naccB = nacc0;
+         break;
+      }
+      else
+      {
+         mfB = (mf > mfB) ? mf : mfB;
+         naccB = nacc;
+         nmulB = nmul;
+      }
+
+   }
+   while (naccB > 1);
+   printf("EFFECTIVE FMA LATENCY DETECTED AS: %d, NMUL=%d\n\n", naccB, nmulB);
+   *PEAK = mfB;
+   *NMUL = nmulB;
+   return(naccB);
+}
+void findAllPeaks(char pre, int isa, int nreg, int nmul, double peak)
+{
+   double mfF;
+   int i, vlens[3] = {64, 32, 16};
+   char fn[12];
+   FILE *fp;
+
+   mfF = .05*peak;
+   sprintf(fn, "res/%cSIMD.idx", pre);
+   fp = fopen(fn, "w");
+   assert(fp);
+   for (i=isa; i >= 0; i--)
+   {
+      int v;
+      for (v=0; v < 3; v++)
+      {
+         int lat, vl=vlens[v], nmul;
+         double mfpk;
+         lat = findLAT(pre, i, vl, nreg, &nmul, &mfpk);
+         fprintf(fp, "'%s' %d %.2f %d %d\n",  isas[i], vl, mfpk, lat, nmul);
+         printf("******************************\n");
+         printf("'%s' %d %.2f %d %d\n",  isas[i], vl, mfpk, lat, nmul);
+         printf("******************************\n\n");
+      }
+   }
+   fclose(fp);
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -p <pre> [d] : Date type prefix, one of [s,d]\n");
+   exit(ierr ? ierr : -1);
+}
+
+char getFlags(int nargs, char **args)
+{
+   char pre='d';
+   int i;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pre = args[i][0];
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (pre == 'S' || pre == 's' || pre == 'C' || pre == 'c')
+       pre = 's';
+   else
+      pre = 'd';
+   return(pre);
+}
+/*
+ * This probe finds the minimal vector operation necessary to get peak
+ * It presently only works for AMD64.
+ */
+int main(int nargs, char **args)
+{
+   double peak=0.0;
+   FILE *fp;
+   int isa, nreg, vlenb, nlat, nmul;
+   char pre='d';
+   char fn[32];
+
+   pre = getFlags(nargs, args);
+
+   isa = findISA(&vlenb);
+   nreg = findNREG(pre, isa, vlenb);
+   assert(nreg >= 0);
+   nlat = findLAT(pre, isa, vlenb, nreg, &nmul, &peak);
+   assert(nlat > 0 && nlat < nreg && peak > 0.0);
+/*
+ * For backwards compatibility, write <pre>MULADD file
+ */
+   sprintf(fn, "res/%cMULADD", pre);
+   fp = fopen(fn, "w");
+   assert(fp);
+   fprintf(fp, "%d\n%d\n%.2f\n%d\n", isa == AVXFMA, nlat, peak, nreg);
+   fprintf(fp, "#'<simd>' <mflop> <nreg> <vlen bytes> <FMA latency> <nmul>\n");
+   fclose(fp);
+/*
+ * Confirm peak performance of best case using a forced mflop high enough
+ * we think timing is repeatable.
+ * getMflop call ensures last generated fpu.S is an optimal one.
+ */
+   peak = getMflop(pre, isa, vlenb, nlat, nmul, .1*peak);
+/*
+ * Store results in res/<pre>SIMD
+ */
+   fn[5] = 'S'; fn[6] = 'I'; fn[7] = 'M'; fn[8] = 'D'; fn[9] = '\0';
+   fp = fopen(fn, "w");
+   assert(fp);
+   fprintf(fp, "'%s' %.2f %u %u %u %u\n", isas[isa], peak, nreg, vlenb, 
+           nlat, nmul);
+   fclose(fp);
+/*
+ * Ask for peak code to take .05 seconds in <pre>mflop.frc
+ */
+   sprintf(fn, "../blas/gemm/%cmflops.frc", pre);
+   fp = fopen(fn, "w");
+   assert(fp);
+   fprintf(fp, "%le", .05*peak);
+   fclose(fp);
+
+   #if 0
+      findAllPeaks(pre, isa, nreg, nmul, peak);
+   #endif
+   return(0);
 }
 @ROUT !

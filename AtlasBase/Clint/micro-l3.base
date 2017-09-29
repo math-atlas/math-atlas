@@ -1,0 +1,158 @@
+@ROUT ATL_trmm_1B
+#ifdef Right_
+   #define ATL_trmm_IP ATL_trmmR
+   #define INCR 1
+#else
+   #define ATL_trmm_IP ATL_trmmL
+   #define INCR ldr
+#endif
+int Mjoin(PATL,trmm_1B)
+/*
+ * Performs trmm where the triangular matrix fits in one block, so that the
+ * problem can be performed only using the TRMM microkernel.
+ */
+(
+   int bv, /*0:Right?; 1:Upper?; 2:TransA; 3:ConjA?; 4:NonUnit?; 5:ALLT? */
+   ATL_CSZT Nt,  /* size of T */
+   ATL_CSZT Nr,  /* other dim of rectangular B */
+   const SCALAR alpha,
+   const TYPE *T,  /* NtxNt triangular matrix */
+   ATL_CSZT ldt,
+   TYPE *R,  /* input: mat to mul by T, on output: result matrix */
+   ATL_CSZT ldr
+)
+/*
+ * If Side=Left : R = alpha*op(T)*R, R is Nt x Nr
+ * If Side=Right: R = alpha*R*op(T), R is Nr x Nt
+ * RETURNS: 0 if trmm performed, else non-zero.
+ */
+{
+/*
+ * If triangle is 1 element, its a SCAL
+ */
+   if (Nt == 1)
+   {
+      #ifdef TCPLX
+         TYPE alp[2];
+         if (bv&16) /* NonUnit? */
+         {
+            const TYPE rt=*T, it=T[1], ra=(*alpha), ia=alpha[1];
+            alp[0] = rt*ra - it*ia;
+            alp[1] = rt*ia + it*ra;
+         }
+         else
+         {
+            *alp = *alpha;
+            alp[1] = alpha[1];
+         }
+      #else
+         TYPE alp = (bv&16) ? alpha * *A : alpha;
+      #endif
+         Mjoin(PATL,scal)(Nr, alp, R, ldr, R, INCR);
+      return(0);
+   }
+   return(1);
+}
+
+@ROUT ATL_trmm
+static unsigned int ATL_trmm_recR
+/*
+ * Performs trmm where the triangular matrix fits in one block, so that the
+ * problem can be performed only using the TRMM microkernel.
+ */
+(
+   int bv, /*0:Right?; 1:Upper?; 2:TransA; 3:ConjA?; 4:NonUnit?; 5:ALLT? */
+   ATL_CSZT Nt,  /* size of T */
+   ATL_CSZT Nr,  /* other dim of rectangular B */
+   const SCALAR alpha,
+   const TYPE *T,  /* NtxNt triangular matrix */
+   ATL_CSZT ldt,
+   TYPE *R,  /* input: mat to mul by T, on output: result matrix */
+   ATL_CSZT ldr
+)
+{
+   unsigned int nrec=0;
+   return(nrec);
+}
+static unsigned int ATL_trmm_recL
+/*
+ * Performs trmm where the triangular matrix fits in one block, so that the
+ * problem can be performed only using the TRMM microkernel.
+ */
+(
+   int bv, /*0:Right?; 1:Upper?; 2:TransA; 3:ConjA?; 4:NonUnit?; 5:ALLT? */
+   ATL_CSZT Nt,  /* size of T */
+   ATL_CSZT Nr,  /* other dim of rectangular B */
+   const SCALAR alpha,
+   const TYPE *T,  /* NtxNt triangular matrix */
+   ATL_CSZT ldt,
+   TYPE *R,  /* input: mat to mul by T, on output: result matrix */
+   ATL_CSZT ldr
+)
+{
+   unsigned int nrec=0;
+   return(nrec);
+}
+
+void Mjoin(PATL,trmm)
+(
+   const enum ATLAS_SIDE      Side,
+   const enum ATLAS_UPLO      Uplo,
+   const enum ATLAS_TRANS     TA,
+   const enum ATLAS_DIAG      Diag,
+   ATL_CSZT                   M,
+   ATL_CSZT                   N,
+   const SCALAR               alpha,
+   const TYPE                 *A,
+   ATL_CSZT                   lda,
+   TYPE                       *B,
+   ATL_CSZT                   ldb
+)
+/*
+ * If Side=Left : R = alpha*op(A)*B, B is MxN, A is MxM
+ * If Side=Right: R = alpha*B*op(A), B is MxN, A is NxN
+ */
+{
+   ATL_SZT Nt, Nr;
+   int bv;
+
+   if (!M || !N)   /* if B does not exist */
+      return;      /* return w/o operation */
+   if (SCALAR_IS_ZERO(alpha))  /* if alpha=0, just zero matrix */
+   {
+      Mjoin(PATL,gezero)(M, N, B, ldb);
+      return;
+   }
+   if (Side == AtlasLeft)
+   {
+      Nt = M;
+      Nr = N;
+      bv = 0;
+   }
+   else
+   {
+      Nt = N;
+      Nr = M;
+      bv = 1;
+   }
+   if (Nr == 1) /* B is a vector, so really a TRMV */
+   {
+      if (Side == AtlasLeft) /* B = alpha*op(A)*B, B is Mx1, A is MxM */
+         Mjoin(PATL,trmv)(Uplo, TA, Diag, Nt, A, lda, B, 1);
+      else                   /* B = alpha*B*op(A), B is 1xN, A is NxN */
+         Mjoin(PATL,trmv)(Uplo, TA, Diag, Nt, A, ldt, B, ldb);
+   }
+   #ifdef TCPLX
+      if (TA == AtlasConjTrans)
+         bv |= (2|8);
+      else if (TA == AtlasConj)
+         bv |= 8;
+      else
+   #endif
+   bv |= (TA == AtlasTrans) ? 2:0;
+   bv |= (Diag == AtlasNonUnit) ? 16:0;
+   if (SD == AtlasLeft)
+      r = trmm_recL(bv, Nt, Nr, alpha, A, lda, B, ldb);
+   else
+      r = trmm_recR(bv, Nt, Nr, alpha, A, lda, B, ldb);
+}
