@@ -16710,8 +16710,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
           ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 1)
          #define ATL_FRCGNUVEC
       #endif
-@multidef vl    2   2    4      4       2
-@whiledef sv SSE1 SSE2 AVX AVXMAC VECARM1
+@multidef vl    2   2    4      4    8      2
+@whiledef sv SSE1 SSE2 AVX AVXMAC AVXZ VECARM1
    @iexp vl2 @(vl) @(vl) +
    #elif defined(ATL_@(sv))
       #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != @(vl2)) || \
@@ -16739,8 +16739,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #else
          #define ATL_VLEN 1
       #endif
-@multidef vl    2   2    4      4       2
-@whiledef sv SSE1 SSE2 AVX AVXMAC VECARM1
+@multidef vl    2   2    4      4    8      2
+@whiledef sv SSE1 SSE2 AVX AVXMAC AVXZ VECARM1
    @iexp vl2 @(vl) @(vl) +
    #elif defined(ATL_@(sv))
       #if defined(SREAL) || defined(SCPLX)
@@ -16800,7 +16800,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * Undefine all vectorization if VLEN=1 (scalar code)!
  */
 #if defined(ATL_FRCGNUVEC) || ATL_VLEN < 2
-@whiledef sv VXZ VSX AVXMAC AVX SSE3 SSE2 SSE1 VECARM1 NEON
+@whiledef sv VXZ VSX AVXMAC AVX AVXZ SSE3 SSE2 SSE1 VECARM1 NEON
    #ifdef ATL_@(sv)
       #undef ATL_@(sv)
    #endif
@@ -17083,13 +17083,18 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #endif
    #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
    #define ATL_vust(p_, v_) ATL_vst(p_, v_)
-#elif defined(ATL_AVXMAC) || defined(ATL_AVX)
+#elif defined(ATL_AVXMAC) || defined(ATL_AVX) || defined(ATL_AVXZ)
    #include <immintrin.h>
    #if defined(SREAL) || defined(SCPLX)
-      #if ATL_VLEN != 8
-         #error "VLEN != 8 not supported for AVX or AVX2!"
+      #if ATL_VLEN == 16
+         #define ATL_VTYPE __m512
+      #elif ATL_VLEN == 8
+         #define ATL_VTYPE __m256
+      #elif ATL_VLEN == 4
+         #define ATL_VTYPE __m128
+      #else
+         #error "VLEN != [4,8,16] not supported for AVX!"
       #endif
-      #define ATL_VTYPE __m256
       #define ATL_vzero(v_) v_ = _mm256_setzero_ps()
       #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_ss(p_)
       #define ATL_vuld(v_, p_) v_ = _mm256_loadu_ps(p_)
@@ -17208,10 +17213,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
       }
    #else        /* double precision */
-      #if ATL_VLEN != 4
-         #error "AVX SUPPORTS ONLY VLEN=4 FOR DOUBLE!"
+      #if ATL_VLEN == 4
+         #define ATL_VTYPE __m256d
+      #elif ATL_VLEN == 8
+         #define ATL_VTYPE __m512d
+      #elif ATL_VLEN == 2
+         #define ATL_VTYPE __m128d
+      #else
+         #error "AVX SUPPORTS ONLY VLEN=[2,4,8] FOR DOUBLE!"
       #endif
-      #define ATL_VTYPE __m256d
       #define ATL_vzero(v_) v_ = _mm256_setzero_pd()
       #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_sd(p_)
       #define ATL_vuld(v_, p_) v_ = _mm256_loadu_pd(p_)
