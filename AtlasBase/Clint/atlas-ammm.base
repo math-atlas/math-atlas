@@ -17083,17 +17083,269 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #endif
    #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
    #define ATL_vust(p_, v_) ATL_vst(p_, v_)
-#elif defined(ATL_AVXMAC) || defined(ATL_AVX) || defined(ATL_AVXZ)
+#elif defined(ATL_AVXZ) && \
+      ( (ATL_VLEN == 16 && (defined(SREAL) || defined(SCPLX))) || \
+        (ATL_VLEN ==  8 && (defined(DREAL) || defined(DCPLX))) )
    #include <immintrin.h>
    #if defined(SREAL) || defined(SCPLX)
-      #if ATL_VLEN == 16
-         #define ATL_VTYPE __m512
-      #elif ATL_VLEN == 8
-         #define ATL_VTYPE __m256
-      #elif ATL_VLEN == 4
-         #define ATL_VTYPE __m128
+      #define ATL_VTYPE __m512
+      #define ATL_vzero(v_) v_ = _mm512_setzero_ps()
+      #define ATL_vbcast(v_, p_) v_ =  _mm512_set1_ps(*(p_))
+      #define ATL_vuld(v_, p_) v_ = _mm512_loadu_ps(p_)
+      #define ATL_vld(v_, p_) v_ = _mm512_load_ps(p_)
+      #define ATL_vust(p_, v_) _mm512_storeu_ps(p_, v_)
+      #define ATL_vst(p_, v_) _mm512_store_ps(p_, v_)
+      #define ATL_vadd(d_, s1_, s2_) d_ =  _mm512_add_ps(s1_, s2_)
+      #define ATL_vsub(d_, s1_, s2_) d_ =  _mm512_sub_ps(s1_, s2_)
+      #define ATL_vmul(d_, s1_, s2_) d_ =  _mm512_mul_ps(s1_, s2_)
+      #ifdef ATL_AVXMAC
+         #define ATL_vmac(d_, s1_, s2_) \
+            d_ = _mm512_fmadd_ps(s1_, s2_, d_)
       #else
-         #error "VLEN != [4,8,16] not supported for AVX!"
+         #define ATL_vmac(d_, s1_, s2_) \
+         { ATL_VTYPE t_; \
+            t_ = _mm512_mul_ps(s1_, s2_); \
+            d_ = _mm512_add_ps(t_, d_); \
+         }
+      #endif
+      #define ATL_vvrsum8(s0_, s1_, s2_, s3_, s4_, s5_, s6_, s7_) \
+      { \
+         s0_ = _mm512_hadd_ps(s0_, s1_); \
+            /*{s1gh,s1ef,s0gh,s0ef,s1cd,s1ab,s0cd,s0ab}*/\
+         s2_ = _mm512_hadd_ps(s2_, s3_); \
+            /*{s3gh,s3ef,s2gh,s2ef,s3cd,s3ab,s2cd,s2ab}*/\
+         s4_ = _mm512_hadd_ps(s4_, s5_); \
+            /*{s5gh,s5ef,s4gh,s4ef,s5cd,s5ab,s4cd,s4ab}*/\
+         s6_ = _mm512_hadd_ps(s6_, s7_); \
+            /*{s7gh,s7ef,s6gh,s6ef,s7cd,s7ab,s6cd,s6ab}*/\
+         s0_ = _mm512_hadd_ps(s0_, s2_); \
+            /*{s3e-h,s2e-h,s1e-h,s0e-g,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         s4_ = _mm512_hadd_ps(s4_, s6_); \
+            /*{s7e-h,s6e-h,s5e-h,s4e-g,s7a-d,s6a-d,s5a-d,s4a-d}*/\
+         s1_ = _mm512_permute2f128_ps(s0_, s4_, 0x31); \
+            /*{s7e-h,s6e-h,s5e-h,s4e-g,s3e-h,s2e-h,s1e-h,s0e-g}*/\
+         s0_ = _mm512_permute2f128_ps(s0_, s4_, 0x20); \
+            /*{s7a-d,s6a-d,s5a-d,s4a-d,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      { \
+         s0_ = _mm512_hadd_ps(s0_, s1_); \
+            /*{s1gh,s1ef,s0gh,s0ef,s1cd,s1ab,s0cd,s0ab}*/\
+         s2_ = _mm512_hadd_ps(s2_, s3_); \
+            /*{s3gh,s3ef,s2gh,s2ef,s3cd,s3ab,s2cd,s2ab}*/\
+         s0_ = _mm512_hadd_ps(s0_, s2_); \
+            /*{s3e-h,s2e-h,s1e-h,s0e-g,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         s1_ = _mm512_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s3e-h,s2e-h,s1e-h,s0e-g,s3e-h,s2e-h,s1e-h,s0e-g}*/\
+         s0_ = _mm512_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s3a-d,s2a-d,s1a-d,s0a-d,s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         s0_ = _mm512_hadd_ps(s0_, s1_); \
+            /*{s1gh,s1ef,s0gh,s0ef,s1cd,s1ab,s0cd,s0ab}*/\
+         s0_ = _mm512_hadd_ps(s0_, s0_); \
+            /*{s1e-h,s0e-h,s1e-h,s0e-g,s1a-d,s0a-d,s1a-d,s0a-d}*/\
+         s1_ = _mm512_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s1e-h,s0e-h,s1e-h,s0e-g,s1e-h,s0e-h,s1e-h,s0e-g}*/\
+         s0_ = _mm512_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum1(s0_) \
+      {  ATL_VTYPE t1_; \
+         s0_ = _mm512_hadd_ps(s0_, s0_); \
+            /*{s0gh,s0ef,s0gh,s0ef,s0cd,s0ab,s0cd,s0ab}*/\
+         s0_ = _mm512_hadd_ps(s0_, s0_); \
+            /*{s0e-h,s0e-h,s0e-h,s0e-g,s0a-d,s0a-d,s0a-d,s0a-d}*/\
+         t1_ = _mm512_permute2f128_ps(s0_, s0_, 0x31); \
+            /*{s0e-h,s0e-h,s0e-h,s0e-g,s0e-h,s0e-h,s0e-h,s0e-g}*/\
+         s0_ = _mm512_permute2f128_ps(s0_, s0_, 0x20); \
+            /*{s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d,s0a-d}*/\
+         ATL_vadd(s0_, s0_, t1_); \
+      }
+      #define ATL_vsplat0(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0); \
+         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat1(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0x55); \
+         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat2(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0xAA); \
+         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat3(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0xFF); \
+         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat4(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0); \
+         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat5(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0x55); \
+         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat6(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0xAA); \
+         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat7(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0xFF); \
+         d_ = _m512_insertf128_ps(d_, _m512_extractf128_ps(d_,1), 0); \
+      }
+   #else        /* double precision */
+      #if ATL_VLEN == 8
+         #define ATL_VTYPE __m512d
+      #else
+         #error "AVX SUPPORTS ONLY VLEN=8 FOR DOUBLE!"
+      #endif
+      #define ATL_vzero(v_) v_ = _mm512_setzero_pd()
+      #define ATL_vbcast(v_, p_) v_ =  _mm512_set1_pd(*(p_))
+      #define ATL_vuld(v_, p_) v_ = _mm512_loadu_pd(p_)
+      #define ATL_vld(v_, p_) v_ = _mm512_load_pd(p_)
+      #define ATL_vust(p_, v_) _mm512_storeu_pd(p_, v_)
+      #define ATL_vst(p_, v_) _mm512_store_pd(p_, v_)
+      #define ATL_vadd(d_, s1_, s2_) d_ =  _mm512_add_pd(s1_, s2_)
+      #define ATL_vsub(d_, s1_, s2_) d_ =  _mm512_sub_pd(s1_, s2_)
+      #define ATL_vmul(d_, s1_, s2_) d_ =  _mm512_mul_pd(s1_, s2_)
+      #ifdef ATL_AVXMAC
+         #define ATL_vmac(d_, s1_, s2_) \
+            d_ = _mm512_fmadd_pd(s1_, s2_, d_)
+      #else
+         #define ATL_vmac(d_, s1_, s2_) \
+         { ATL_VTYPE t_; \
+            t_ = _mm512_mul_pd(s1_, s2_); \
+            d_ = _mm512_add_pd(t_, d_); \
+         }
+      #endif
+      #define ATL_vrsum1(d_, s_) d_ = _mm512_reduce_add_pd(s_) 
+      #define ATL_vvrsum4_256(s0_, s1_, s2_, s3_) \
+      { \
+         s0_ = _m256_hadd_pd(s0_, s1_); /*{s1cd,s0cd,s1ab,s0ab}*/ \
+         s2_ = _m256_hadd_pd(s2_, s3_); /*{s3cd,s2cd,s3ab,s2ab}*/ \
+         s1_ = _m256_permute2f128_pd(s0_, s2_,0x31);/*{s3cd,s2cd,s1cd,s0cd}*/ \
+         s0_ = _m256_permute2f128_pd(s0_, s2_,0x20);/*{s3ab,s2ab,s1ab,s0ab}*/ \
+         s0_ = _mm256_add_pd(s0_, s1_); \
+      }
+      #define ATL_vvrsum2_256(s0_, s1_) \
+      { \
+         s0_ = __m256_hadd_pd(s0_, s1_); /*{s1cd,s0cd,s1ab,s0ab}*/ \
+         s1_ = __m256_permute2f128_pd(s0_, s1_,0x31);/*{s3cd,s2cd,s1cd,s0cd}*/ \
+         s0_ = _mm256_add_pd(s0_, s1_); \
+      }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      {  _mm256d t0_, t1_, t2_; \
+         t0_ = _mm512_extractf64x4_pd(s0, 0); \
+         t1_ = _mm512_extractf64x4_pd(s0, 1); \
+         t0_ = _mm256_add_pd(t0_, t1_); \
+         t2_ = _mm512_extractf64x4_pd(s1, 0); \
+         t1_ = _mm512_extractf64x4_pd(s1, 1); \
+         t2_ = _mm256_add_pd(t2_, t1_); \
+         ATL_vvrsum2_256(t0_, t2_); \
+         s0_ = _mm512_insertf64x4(s0_, t0_, 0); \
+      }
+      #define ATL_vvrsum8(s0_, s1_, s2_, s3_, s4_, s5_, s6_, s7_) \
+      {  _mm256d t0_, t1_, t2_, t3_, t4_; \
+         t0_ = _mm512_extractf64x4_pd(s0, 0); \
+         t4_ = _mm512_extractf64x4_pd(s0, 1); \
+         t0_ = _mm256_add_pd(t0_, t4_); \
+         t1_ = _mm512_extractf64x4_pd(s1, 0); \
+         t4_ = _mm512_extractf64x4_pd(s1, 1); \
+         t1_ = _mm256_add_pd(t1_, t4_); \
+         t2_ = _mm512_extractf64x4_pd(s2, 0); \
+         t4_ = _mm512_extractf64x4_pd(s2, 1); \
+         t2_ = _mm256_add_pd(t2_, t4_); \
+         t3_ = _mm512_extractf64x4_pd(s3, 0); \
+         t4_ = _mm512_extractf64x4_pd(s3, 1); \
+         t3_ = _mm256_add_pd(t3_, t4_); \
+         ATL_vvrsum4_256(t0_, t1_, t2_, t3_); \
+         s0_ = _mm512_insertf64x4(s0_, t0_, 0); \
+         t0_ = _mm512_extractf64x4_pd(s4, 0); \
+         t4_ = _mm512_extractf64x4_pd(s4, 1); \
+         t0_ = _mm256_add_pd(t0_, t4_); \
+         t1_ = _mm512_extractf64x4_pd(s5, 0); \
+         t4_ = _mm512_extractf64x4_pd(s5, 1); \
+         t1_ = _mm256_add_pd(t1_, t4_); \
+         t2_ = _mm512_extractf64x4_pd(s6, 0); \
+         t4_ = _mm512_extractf64x4_pd(s6, 1); \
+         t2_ = _mm256_add_pd(t2_, t4_); \
+         t3_ = _mm512_extractf64x4_pd(s7, 0); \
+         t4_ = _mm512_extractf64x4_pd(s7, 1); \
+         t3_ = _mm256_add_pd(t3_, t4_); \
+         ATL_vvrsum4_256(t0_, t1_, t2_, t3_); \
+         s0_ = _mm512_insertf64x4(s0_, t0_, 1); \
+      }
+      #define ATL_vvrsum2(s0_, s1_) \
+      {  _mm256d t0_, t1_, t2_; \
+         t0_ = _mm512_extractf64x4_pd(s0, 0); \
+         t1_ = _mm512_extractf64x4_pd(s0, 1); \
+         t0_ = _mm256_add_pd(t0_, t1_); \
+         t2_ = _mm512_extractf64x4_pd(s1, 0); \
+         t1_ = _mm512_extractf64x4_pd(s1, 1); \
+         t2_ = _mm256_add_pd(t2_, t1_); \
+         ATL_vvrsum2_256(t0_, t2__); \
+         s0_ = _mm512_insertf64x2(s0_, t0_, 0); \
+      }
+      #define ATL_vvrsum1(s0_) _mm512_set1_pd(_mm512_reduce_add_pd(s0_))
+      #define ATL_vsplat0(d_, s_) \
+      { \
+         d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 0), 0)); \
+      }
+      #define ATL_vsplat2(d_, s_) \
+      { \
+         d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 0), 1)); \
+      }
+      #define ATL_vsplat1(d_, s_) \
+      { \
+         d_ = _mm512_unpackhi_pd(s_, s_); \
+         d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 0), 0)); \
+         d_ = _mm512_insertf128_pd(d_, _mm512_extractf128_pd(d_,0), 1); \
+      }
+      #define ATL_vsplat3(d_, s_) \
+      { \
+         d_ = _mm512_unpackhi_pd(s_, s_); \
+         d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 0), 1)); \
+      }
+      #define ATL_vsplat4(d_, s_) \
+      { \
+         d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 1), 0)); \
+      }
+      #define ATL_vsplat6(d_, s_) \
+      { \
+         d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 1), 1)); \
+      }
+      #define ATL_vsplat5(d_, s_) \
+      { \
+         d_ = _mm512_unpackhi_pd(s_, s_); \
+         d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 1), 0)); \
+         d_ = _mm512_insertf128_pd(d_, _mm512_extractf128_pd(d_,0), 1); \
+      }
+      #define ATL_vsplat7(d_, s_) \
+      { \
+         d_ = _mm512_unpackhi_pd(s_, s_); \
+         d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 1), 1)); \
+      }
+   #endif
+#elif defined(ATL_AVXMAC) || defined(ATL_AVX)
+   #include <immintrin.h>
+   #if defined(SREAL) || defined(SCPLX)
+      #if ATL_VLEN == 8
+         #define ATL_VTYPE __m256
+      #else
+         #error "VLEN != 8 not supported for AVX/AVX2!"
       #endif
       #define ATL_vzero(v_) v_ = _mm256_setzero_ps()
       #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_ss(p_)
@@ -17974,6 +18226,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_vcxust1(p_, r_) vst1_f32(p_, vget_low_f32(r_))
       #define ATL_vcxld1(r_, p_) ATL_vcxuld1(r_, p_)
       #define ATL_vcxst1(p_, r_) ATL_vcxust1(p_, r_)
+   #elif defined(ATL_AVXZ) && defined(DCPLX)
+      #define ATL_vcxld1(r_, p_) r_ = _mm512_maskz_load_pd(3, p_)
+      #define ATL_vcxuld1(r_, p_) r_ = _mm512_maskz_loadu_pd(3, p_)
+      #define ATL_vcxst1(p_, r_) _mm512_mask_store_pd(p_, 3, r_)
+      #define ATL_vcxust1(p_, r_) _mm512_mask_storeu_pd(p_, 3, r_)
    #elif defined(ATL_AVX) && defined(DCPLX)
       #define ATL_vcxld1(r_, p_) \
       { \
@@ -17987,6 +18244,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       }
       #define ATL_vcxst1(p_, r_) _mm_store_pd(p_, _mm256_extractf128_pd(r_, 0))
       #define ATL_vcxust1(p_, r_) _mm_storeu_pd(p_, _mm256_extractf128_pd(r_,0))
+   #elif defined(ATL_AVXZ) && defined(SCPLX)
+      #define ATL_vcxld1(r_, p_) r_ = _mm512_maskz_load_ps(3, p_)
+      #define ATL_vcxuld1(r_, p_) r_ = _mm512_maskz_loadu_ps(3, p_)
+      #define ATL_vcxst1(p_, r_) _mm512_mask_store_ps(p_, 3, r_)
+      #define ATL_vcxust1(p_, r_) _mm512_mask_storeu_ps(p_, 3, r_)
    #elif defined(ATL_AVX) && defined(SCPLX)
       #define ATL_vcxld1(r_, p_) \
       {  __m128 t0_;\
@@ -18043,7 +18305,16 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * For VL > 8, can only be SCPLX&AVX512 or gnuvec
  */
    #if ATL_VLEN >= 8  /* VL>=8, must define add op[2,3] */
-      #if defined(SCPLX) && defined(ATL_AVX)
+      #if defined(ATL_AVXZ) && defined(SCPLX)
+         #define ATL_vcxld2(r_, p_)  r_ = _mm512_maskz_load_ps(0xF, p_)
+         #define ATL_vcxuld2(r_, p_) r_ = _mm512_maskz_loadu_ps(0xF, p_)
+         #define ATL_vcxld3(r_, p_)  r_ = _mm512_maskz_load_ps(0x3F, p_)
+         #define ATL_vcxuld3(r_, p_) r_ = _mm512_maskz_loadu_ps(0x3F, p_)
+         #define ATL_vcxst2(p_, r_)  _mm512_mask_store_ps(p_, 0xF, r_)
+         #define ATL_vcxust2(p_, r_) _mm512_mask_storeu_ps(p_, 0xF, r_)
+         #define ATL_vcxst3(p_, r_)  _mm512_mask_store_ps(p_, 0x3F, r_)
+         #define ATL_vcxust3(p_, r_) _mm512_mask_storeu_ps(p_, 0x3F, r_)
+      #elif defined(SCPLX) && defined(ATL_AVX)
          #define ATL_vcxld2(r_, p_) \
          { \
             ATL_vzero(r_); \
@@ -18086,10 +18357,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             _mm_store_ss((p_)+4, t_); \
             _mm_store_ss((p_)+5, _mm_shuffle_ps(t_, t_, 1)); \
          }
-      #elif defined(DCPLX) &&  defined(ATL_AVX512__00)
-         #error "AVX512 not presently supported"
-      #elif defined(SCPLX) &&  defined(ATL_AVX512__00)
-         #error "AVX512 not presently supported"
+      #elif defined(DCPLX) &&  defined(ATL_AVXZ)
+         #define ATL_vcxld2(r_, p_)  r_ = _mm512_maskz_load_pd(0xF, p_)
+         #define ATL_vcxuld2(r_, p_) r_ = _mm512_maskz_loadu_pd(0xF, p_)
+         #define ATL_vcxld3(r_, p_)  r_ = _mm512_maskz_load_pd(0x3F, p_)
+         #define ATL_vcxuld3(r_, p_) r_ = _mm512_maskz_loadu_pd(0x3F, p_)
+         #define ATL_vcxst2(p_, r_)  _mm512_mask_store_pd(p_, 0xF, r_)
+         #define ATL_vcxust2(p_, r_) _mm512_mask_storeu_pd(p_, 0xF, r_)
+         #define ATL_vcxst3(p_, r_)  _mm512_mask_store_pd(p_, 0x3F, r_)
+         #define ATL_vcxust3(p_, r_) _mm512_mask_storeu_pd(p_, 0x3F, r_)
       #else /* gnuvec */
          #define ATL_vcxuld2(r_, p_) \
             r_ = (ATL_VTYPE){*(p_), (p_)[1], (p_)[2], (p_)[3]}
@@ -18122,7 +18398,24 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          @endiwhile
       #endif
       #if ATL_VLEN >= 16  /* need [4-7]: gnuvec or SREAL&AVX512 */
-         #if defined(SCPLX__0) &&  defined(ATL_AVX512__0)
+         #if defined(SCPLX) &&  defined(ATL_AVXZ)
+            #define ATL_vcxld4(r_, p_)  r_ = _mm512_maskz_load_ps(0xFF, p_)
+            #define ATL_vcxuld4(r_, p_) r_ = _mm512_maskz_loadu_ps(0xFF, p_)
+            #define ATL_vcxld5(r_, p_)  r_ = _mm512_maskz_load_ps(0x3FF, p_)
+            #define ATL_vcxuld5(r_, p_) r_ = _mm512_maskz_loadu_ps(0x3FF, p_)
+            #define ATL_vcxld6(r_, p_)  r_ = _mm512_maskz_load_ps(0xFFF, p_)
+            #define ATL_vcxuld6(r_, p_) r_ = _mm512_maskz_loadu_ps(0xFFF, p_)
+            #define ATL_vcxld7(r_, p_)  r_ = _mm512_maskz_load_ps(0x3FFF, p_)
+            #define ATL_vcxuld7(r_, p_) r_ = _mm512_maskz_loadu_ps(0x3FFF, p_)
+
+            #define ATL_vcxst4(p_, r_)  _mm512_mask_store_ps(p_, 0xFF, r_)
+            #define ATL_vcxust4(p_, r_) _mm512_mask_storeu_ps(p_, 0xFF, r_)
+            #define ATL_vcxst5(p_, r_)  _mm512_mask_store_ps(p_, 0x3FF, r_)
+            #define ATL_vcxust5(p_, r_) _mm512_mask_storeu_ps(p_, 0x3FF, r_)
+            #define ATL_vcxst6(p_, r_)  _mm512_mask_store_ps(p_, 0xFFF, r_)
+            #define ATL_vcxust6(p_, r_) _mm512_mask_storeu_ps(p_, 0xFFF, r_)
+            #define ATL_vcxst7(p_, r_)  _mm512_mask_store_ps(p_, 0x3FFF, r_)
+            #define ATL_vcxust7(p_, r_) _mm512_mask_storeu_ps(p_, 0x3FFF, r_)
          #else /* gnuvec */
             #define ATL_vcxuld4(r_, p_) r_ = (ATL_VTYPE)\
                {*(p_), (p_)[1], (p_)[2], (p_)[3], \
@@ -18327,6 +18620,29 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       { \
          ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
          ATL_vcxswapRI(rALs_, rALs_); \
+      }
+   #endif
+#elif defined(ATL_AVXZ)
+   #ifdef SCPLX
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm512_moveldup_ps(rXi); \
+         rXi_ = _mm512_movehdup_ps(rXi); \
+      }
+      #define ATL_vcxswapRI(d_, s_) d_ = _mm512_shuffle_ps(s_, s_, 0xB1)
+   #else  /* DCPLX */
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm512_movedup_pd(rXi); \
+         rXi_ = _mm512_shuffle_pd(rXi, rXi, 0xFF); \
+      }
+      #define ATL_vcxswapRI(d_, s_) d_ = _mm512_shuffle_pd(s_, s_, 0x55)
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         (rR_)[0] += (rR_)[2]+(rR_)[4]+(rR_)[6] \
+               - (rR_)[1]-(rR_)[3]-(rR_)[5]-(rR_)[7]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1] + (rI_)[2] + (rI_)[3] \
+                  + (rI_)[4] + (rI_)[5] + (rI_)[6] + (rI_)[7]; \
       }
    #endif
 #elif defined(ATL_AVXMAC) || defined(ATL_AVX)
