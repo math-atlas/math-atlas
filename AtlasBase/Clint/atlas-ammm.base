@@ -12507,6 +12507,8 @@ void GetFlags(int nargs, char **args, int *FLG, int *VERB, char *PRE, int *NREG,
    }
    if (!nreg)
       nreg = GetNumVecRegs(pre);
+   if (pre == 's' || pre == 'c' && (*NB)%16)
+      *NB = (*NB == 120) ? 240 : (((*NB+15)>>4)<<4);
    *PRE = pre;
    *FLG = flg;
    *NREG = nreg;
@@ -12611,6 +12613,13 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
       KillAllMMNodes(mpN);
    FindDefMUNU(flag, verb, pre, NB, &nreg, &vlen);
    printf("\nNREG=%d, VLEN=%d\n", nreg, vlen);
+   if (NB%vlen)
+   {
+      if ((NB+NB)%vlen == 0)
+         NB += NB;
+      else
+         while((++NB)%vlen);
+   }
 /*
  * With nreg & vlen set, create output with best K- & M- vectorized code
  * in standard names with nreg in mp->ivar
@@ -17164,7 +17173,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          x0_ = _mm_add_ps(x0_, x1_); \
          x0_ = _mm_hadd_ps(x0_, x0_); /* {X,X,x0dc,x0ab} */ \
          x0_ = _mm_hadd_ps(x0_, x0_); /* {X,X,X,x0abcd} */ \
-         d_ = _mm_cvtsd_f64(x0_); \
+         d_ = x0_[0]; \
       }
       #define ATL_vvrsum1(s0_) \
       { __m256 t0_, t1_; __m128 x0_, x1_; \
@@ -17250,42 +17259,82 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_vsplat0(d_, s_) \
       { \
          d_ = _mm512_shuffle_ps(s_, s_, 0); \
-         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,0), 1); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,0)); \
       }
       #define ATL_vsplat1(d_, s_) \
       { \
          d_ = _mm512_shuffle_ps(s_, s_, 0x55); \
-         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,0), 1); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,0)); \
       }
       #define ATL_vsplat2(d_, s_) \
       { \
          d_ = _mm512_shuffle_ps(s_, s_, 0xAA); \
-         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,0), 1); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,0)); \
       }
       #define ATL_vsplat3(d_, s_) \
       { \
          d_ = _mm512_shuffle_ps(s_, s_, 0xFF); \
-         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,0), 1); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,0)); \
       }
       #define ATL_vsplat4(d_, s_) \
       { \
          d_ = _mm512_shuffle_ps(s_, s_, 0); \
-         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,1), 0); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,1)); \
       }
       #define ATL_vsplat5(d_, s_) \
       { \
          d_ = _mm512_shuffle_ps(s_, s_, 0x55); \
-         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,1), 0); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,1)); \
       }
       #define ATL_vsplat6(d_, s_) \
       { \
          d_ = _mm512_shuffle_ps(s_, s_, 0xAA); \
-         d_ = _mm512_insertf128_ps(d_, _mm512_extractf128_ps(d_,1), 0); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,1)); \
       }
       #define ATL_vsplat7(d_, s_) \
       { \
          d_ = _mm512_shuffle_ps(s_, s_, 0xFF); \
-         d_ = _m512_insertf128_ps(d_, _m512_extractf128_ps(d_,1), 0); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,1)); \
+      }
+      #define ATL_vsplat8(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,2)); \
+      }
+      #define ATL_vsplat9(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0x55); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,2)); \
+      }
+      #define ATL_vsplat10(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0xAA); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,2)); \
+      }
+      #define ATL_vsplat11(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0xFF); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,2)); \
+      }
+      #define ATL_vsplat12(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,3)); \
+      }
+      #define ATL_vsplat13(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0x55); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,3)); \
+      }
+      #define ATL_vsplat14(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0xAA); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,3)); \
+      }
+      #define ATL_vsplat15(d_, s_) \
+      { \
+         d_ = _mm512_shuffle_ps(s_, s_, 0xFF); \
+         d_ = _mm512_broadcast_f32x4(_mm512_extractf32x4_ps(d_,3)); \
       }
    #else        /* double precision */
       #if ATL_VLEN == 8
@@ -17375,7 +17424,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          x1_ = _mm256_extractf128_pd(t0_, 1); \
          x0_ = _mm_add_pd(x0_, x1_); \
          x0_ = _mm_hadd_pd(x0_, x0_); \
-         d_ = _mm_cvtsd_f64(x0_); \
+         d_ = x0_[0];  \
       }
       #define ATL_vvrsum1(s0_) \
       { __m256d t0_, t1_; __m128d x0_, x1_; \
@@ -17400,7 +17449,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       { \
          d_ = _mm512_unpackhi_pd(s_, s_); \
          d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 0), 0)); \
-         d_ = _mm512_insertf128_pd(d_, _mm512_extractf128_pd(d_,0), 1); \
       }
       #define ATL_vsplat3(d_, s_) \
       { \
@@ -17419,7 +17467,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       { \
          d_ = _mm512_unpackhi_pd(s_, s_); \
          d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(s_, 1), 0)); \
-         d_ = _mm512_insertf128_pd(d_, _mm512_extractf128_pd(d_,0), 1); \
       }
       #define ATL_vsplat7(d_, s_) \
       { \
