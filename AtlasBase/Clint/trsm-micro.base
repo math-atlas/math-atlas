@@ -1772,22 +1772,65 @@ int main(int nargs, char **args)
  */
 #include "atlas_mmgen.h"
 #include "atlas_type.h"
+ATL_mmnode_t *allT2bv(ATL_mmnode_t *mp, unsigned long *lp)
+{
+   unsigned long bv=0;
+   unsigned int n;
+   assert(sizeof(long) >= ATL_PSIZE);
+   for (n=0; mp && n < (ATL_PSIZE<<3); n++, mp=mp->next)
+      if (mp->TA == AtlasTrans && mp->TB == AtlasTrans)
+         bv |= (1L<<n);
+
+   *lp = bv;
+   return(mp);
+}
 void GenTrsmALLT
    (char pre, char sd, char up, char ta, FILE *fp, ATL_mmnode_t *mb)
 {
    ATL_mmnode_t *mp;
-   unsigned long long flg=0;
-   int k, L, n;
+   unsigned long flg=0;
+   int k, L, n, ALL1=1, ALL0=1;
 
-   for (n=0, mp=mb; mp; n++, mp=mp->next)
+   for (mp=mb, n=0; mp; mp = mp->next, n++)
    {
       if (mp->TA == AtlasTrans && mp->TB == AtlasTrans)
-         flg |= (1L<<n);
+         ALL0 = 0;
+      else
+         ALL1 = 0;
    }
-   assert(sizeof(long long) >= ATL_PSIZE);
-   assert((ATL_PSIZE<<3) >= n);
-   fprintf(fp, "#define ATL_trsm%c_%c%c_allT(i_) ((0x%lxL>>(i_))&1)\n", 
-           sd, up, ta, flg);
+   if (ALL0)
+      fprintf(fp, "#define ATL_trsm%c_%c%c_allT(i_) 0\n", sd, up, ta);
+   else if (ALL1)
+      fprintf(fp, "#define ATL_trsm%c_%c%c_allT(i_) 1\n", sd, up, ta);
+   else
+   {
+      mp = allT2bv(mb, &flg);
+      if (!mp) /* only 1 constant needed */
+         fprintf(fp, "#define ATL_trsm%c_%c%c_allT(i_) ((0x%lxL>>(i_))&1)\n", 
+                 sd, up, ta, flg);
+      else
+      {
+         int ne = (ATL_PSIZE<<3);
+         ATL_mmnode_t *cp;
+         for (cp=mb, n=0; cp; cp = cp->next, n++);
+         ne = (n+ne-1)/ne;
+         fprintf(fp, "#ifdef ATL_DECL_\n   const ATL_iptr_t ATL_UTRSM_ALLT[%u]="
+                 "{0x%lxL", ne, flg);
+         do
+         {
+            mp = allT2bv(mp, &flg);
+            fprintf(fp, ",0x%lxL", flg);
+         }
+         while(mp);
+         fprintf(fp, "};\n#else\n   extern const ATL_iptr_t ATL_UTRSM_ALLT[%u];"
+                 "\n#endif\n", ne);
+         for (ne=(ATL_PSIZE<<3), n=0; (ne^(1L<<n)); n++);
+         n++;
+         fprintf(fp, "#define ATL_trsm%c_%c%c_allT(i_) \\\n", sd, up, ta);
+         fprintf(fp, "   ((ATL_UTRSM_ALLT[((i_)>>%u)]>>((i_)-"
+                 "(((i_)>>%u)<<%u)))&1)\n", n, n, n);
+      }
+   }
    fprintf(fp, "#ifndef ATL_trsm_allT\n");
    fprintf(fp, "   #define ATL_trsm_allT ATL_trsm%c_%c%c_allT\n",
            sd, up, ta);
