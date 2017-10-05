@@ -1332,12 +1332,60 @@ void PrintUsage(char *name, int ierr, char *flag)
    exit(ierr ? ierr : -1);
 }
 
+ATL_mmnode_t *forceTrsmCases(char pre, int flag)
+{
+   ATL_mmnode_t *mb, *mp, *gb=NULL;
+
+   gb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   if (flag&(1<<TSM_RIGHT))      /* Right case requires  N=K */
+      mb = ReadMMFileWithPath(pre, "res", "ipnek.sum");
+   else
+      mb = ReadMMFileWithPath(pre, "res", "ipmek.sum");
+/*
+ * We know no candidate kernels satisfy all criteria, so search for one that
+ * is generated, and we will then vary ku until it works
+ */
+   for (mp=mb; mp; mp = mp->next)
+   {
+      if (!mp->ID)
+      {
+         ATL_mmnode_t *gp;
+         gp = CloneMMNode(mp);
+         gp->next = gb;
+         gb = gp;
+      }
+   }
+   KillAllMMNodes(mb);
+/*
+ * Now, force these generated kernels to satisfy TRSM requirements
+ */
+   for (mp=gb; mp; mp = mp->next)
+   {
+      int U, ku=mp->ku;
+      mp->flag |= 1<<MMF_KRUNTIME;
+      U = (flag&(1<<TSM_RIGHT)) ? mp->nu : mp->mu;
+      while ((U/ku)*ku != U)
+         ku--;
+      mp->ku = ku;
+   }
+/* 
+ * Remove duplicate cases after forcing TRSM reqs, then make them TRSM kerns
+ */
+   mb = AddUniqueMMKernsToList(NULL, gb);
+   KillAllMMNodes(gb);
+   for (mp=mb; mp; mp = mp->next)
+   {
+      mp->blask = ATL_KTRSM;
+      mp->flag = (mp->flag&(~MMF_MVSET))|MMF_MVDEF;
+   }
+   return(mb);
+}
+
 ATL_mmnode_t *getAllCandKerns(char pre, int flag)
 {
    ATL_mmnode_t *mb, *mp;
-   mb = ReadMMFileWithPath(pre, "res", "opmek.sum");
-   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "opnek.sum"));
-   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "opgen.sum"));
+   mb = ReadMMFileWithPath(pre, "res", "ipmek.sum");
+   mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "ipnek.sum"));
    mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "ipgen.sum"));
    mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "ipmen.sum"));
    mp = AddUniqueMMKernsToList(NULL, mb);
@@ -1361,7 +1409,9 @@ ATL_mmnode_t *getAllCandKerns(char pre, int flag)
       }
       mp = nxt;
    }
-   assert(mb);  /* later create one in this case, for now assert */
+   if (!mb) /* no candidates! */
+      mb = forceTrsmCases(pre, flag);
+   assert(mb);
    return(mb);
 }
 
