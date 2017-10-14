@@ -51,6 +51,7 @@
    #endif
 #endif
 #undef ATL_DECL_
+   /* bv: 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
 int ATL_sminfo
    (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R, 
     const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb)
@@ -429,8 +430,8 @@ void Mjoin(PATL,trsm)
 int ATL_trsm_IP
 (
    ATL_UINT bv,  /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
-   ATL_CSZT               NT,
-   ATL_CSZT               NR,
+   ATL_CSZT               NT,  /* number of diagonals in triangle */
+   ATL_CSZT               NR,  /* number of right hand sides */
    const SCALAR           alpha,
    const TYPE             *A,
    ATL_CSZT               lda,
@@ -439,21 +440,15 @@ int ATL_trsm_IP
 )
 {
    int RECUR;
-   #ifdef Right_
-      RECUR = 0;
-   #else
-   RECUR = bv & ~(8|16);  /* Unit,Conj does not affect recursion decision */
-// Left cases that should work: LN,UT */
-   RECUR = (!RECUR);
-   RECUR = !RECUR;
-   #endif
    RECUR=0;
+   #define DEBUG
+   #ifdef DEBUG
+   printf("D=(%u,%u), SD=%c, UP=%c TA=%c DI=%c, alpha=%e\n", NT, NR, 
+          (bv&1)?'R':'L', (bv&2)?'U':'L', (bv&4)?'T':'N', (bv&16)?'N':'U', 
+          alpha);
+   #endif
    if (NT == 1)
    {
-      #ifdef DEBUG
-      printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&1)?'U':'L', 
-             (bv&2)?'T':'N', (bv&8)?'N':'U', alpha);
-      #endif
       if (bv&16)   /* if non-unit, work to do, else nothing to do at M=1! */
       #ifdef TCPLX
       {
@@ -506,7 +501,7 @@ int ATL_trsm_IP
       if (NT > si.kb)
          return(2);
       #ifdef DEBUG
-         fprintf(stderr, "M=%u, kb=%u\n", M, si.kb);
+         fprintf(stderr, "NT=%u, kb=%u\n", NT, si.kb);
       #endif
       vp = ATL_utrsm_alloc(&si, NT, &diag, &T, &R, &w);
       if (!vp)
@@ -1363,6 +1358,7 @@ ATL_mmnode_t *forceTrsmCases(char pre, int flag)
    {
       int U, ku=mp->ku;
       mp->flag |= 1<<MMF_KRUNTIME;
+      mp->flag &= ~(1<<MMF_KUISKB);
       U = (flag&(1<<TSM_RIGHT)) ? mp->nu : mp->mu;
       while ((U/ku)*ku != U)
          ku--;
@@ -1396,6 +1392,7 @@ ATL_mmnode_t *getAllCandKerns(char pre, int flag)
       ATL_mmnode_t *nxt = mp->next;
       int KILL;
       KILL = !(mp->flag & (1<<MMF_KRUNTIME));  /* kill compile-time K */
+      KILL |= mp->flag & (1<<MMF_KUISKB);  /* kill fixed ku=KB kerns */
       if (flag&(1<<TSM_RIGHT))      /* Right case requires */
          KILL |= (mp->nu % mp->ku); /* nu a multiple of ku */
       else                          /* Left case requires */
@@ -1507,8 +1504,9 @@ double timeTRSM(char pre, int flag, int B, int R, ATL_mmnode_t *mmp)
          mf = TimeMMKernel(0, tfl, mmp, pre, NR, NR, B, 1, 0, -1);
          mmp->blask = blask;
          mmp->flag = mvflags;
-         printf("      ID=%d : B=%u, NRHS=%u U=(%2u,%2u) TRANS=%c, mf=%.2f\n", 
-                mmp->ID, B, R, mmp->mu, mmp->nu, TA[it], mf);
+         printf("      ID=%d : B=%u, NRHS=%u U=(%2u,%2u,%2u) TRANS=%c, "
+                "mf=%.2f\n", mmp->ID, B, R, mmp->mu, mmp->nu, mmp->ku, 
+                TA[it], mf);
          if (mf > mfB)
          {
             mmp->TA = mmp->TB = it ? AtlasTrans : AtlasNoTrans;
