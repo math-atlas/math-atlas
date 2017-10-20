@@ -4389,6 +4389,172 @@ unsigned int CountRegion(int N, ATL_cpnode_t **cbs)
    return(N);
 }
 
+void DoShareBV(const uint N,  ATL_cpnode_t **cbs)
+/*
+ * cbs is N-length array of cpnodes that must cohere (use same idx for same cp)
+ * This routine creates a bitmask starting at CPF_MAXB.  Call MAXB 0, then
+ * having bit 0 set means that this cpy func appears in the first list, and
+ * so on.
+ */
+{
+   int i;
+
+   assert(N < (sizeof(uint)<<3)-CPF_MAXB); /* have enough room in flag? */
+   for (i=0; i < N-1; i++)
+   {
+      ATL_cpnode_t *p0;
+      for (p0=cbs[i]; p0; p0 = p0->next)
+      {
+         int j;
+
+         p0->flag |= (1<<(i+CPF_MAXB);
+         for (j=i+1; j < N; j++)
+         {
+            ATL_cpnode_t *p1;
+            p1 = FindCopy_cohere(cbs[j], p0);
+            if (p1)
+            {
+               p0->flag |= (1<<(j+CPF_MAXB);
+               p1->flag |= (1<<(i+CPF_MAXB);
+            }
+         }
+      }
+   }
+}
+
+uint *CountDictShared(const uint N, ATL_cpnode_t **cbs)
+/*
+ * Counts how many dictating entries their are in each of the N cp queus of cbs
+ * there.  A dictating entry is any one where its not the two extreme cases:
+ * shared by everyone (so any file can dictate w/o problem) or shared by
+ * nobody except this queue (private, so we can use any index we like).
+ */
+{
+   uint *cnts, i;
+   const uint mall=(1<<N)-1;
+   cnts = malloc(N*sizeof(uint));
+   assert(cnts);
+   for (i=0; i < N; i++)
+   {
+      const uint mprv=(1<<i);
+      uint bv, cnt=0;
+      ATL_cpnode_t *p;
+      for (p=cbs[i], p; p = p->next)
+      {
+         const uint flg=(p->flag)>>CPF_MAXB;
+         if (flg != mall && flg != mprv)
+            cnt++;
+      }
+      cnts[i] = cnt;
+   }
+   return(cnts);
+}
+
+
+INLINE int NumSetBits(const uint N, uint flg)
+{
+   uint nset=0, i;
+   for (i=0; i < N; i++)
+      if (flg&(1<<i))
+         nset++;
+   return(nset);
+}
+
+uint findMaxSetBits(const uint N, ATL_cpnode_t *cb)
+{
+   if (cb)
+   {
+      ATL_cpnode_t *cp;
+      uint nset;
+      
+      nset = NumSetBits(N, (cb->mask)>>CPF_MAXB);
+      for (cp=cb->next; cp; cp = cp->next)
+      {
+         uint ns = NumSetBits(N, (cp->mask)>>CPF_MAXB);
+         if (ns > nset)
+         {
+            mp = cp;
+            nset = ns;
+         }
+      }
+      return(nset);
+   }
+   return(0);
+}
+void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
+/*
+ * Given N copy files that need to cohere (have the same routine at same idx)
+ * Sort into an order that minimizes the number of NULLs that must be stored.
+ */
+{
+   ATL_cpnode_t **newb, **prvb, *cb, *cp;
+   const uint mall=(1<<N)-1;
+   uint i, maxcnt=0, imax=0;
+   uint *cnts;
+/*
+ * Create bitvec showing what all files each node must show up in
+ */
+   DoShareBV(N,  cbs);
+   newb = malloc((N+N)*sizeof(ATL_cpnode*));
+   cnts = malloc(N*sizeof(uint));
+   assert(cnts && newb);
+   prvb = newb + N;
+   newb[0] = cb = CPmoveMaskNewQ(mall<<CPF_MAXB, mall<<CPF_MAXB, cbs[0]);
+/*
+ * If we've got copy kerns appearing in all files, that will be our first
+ * idx entries and they are guaranteed to cohere, so just let 1st queue
+ * dictate order to all others
+ */
+   if (cb)
+   {
+      for (i=1; i < N; i++)
+      {
+         ATL_cpnode_t *cp;
+         cp = CPmoveMaskNewQ(mall<<CPF_MAXB, mall<<CPF_MAXB, cbs[i]);
+         newb[i] = CopyDictateOrder(cb, cp);
+      }
+   }
+/*
+ * If no copy appears everwhere, start with empty sorted queues
+ */
+   else
+      for (i=1; i < N; i++)
+         newb[i] = NULL;
+/*
+ * Any copy appearing in only one file can't cause a coherence problem,
+ * any remaining after plugging in NULLs can just be dumped at end of file
+ */
+   for (i=0; i < N; i++)
+      prvb[i] = CPmoveMaskNewQ(mall<<CPF_MAXB, 1<<(CPF_MAXB+i), cbs[i]);
+/*
+ * Figure out maximum number of set bits in any file, imax will be file index
+ */
+   for (i=0; i < N; i++)
+   {
+      uint cnt
+      cnt = findMaxSetBits(N, cbs[i])
+      if (cnt > maxcnt)
+      {
+         maxcnt = cnt;
+         imax = i;
+      }
+      cnts[i] = cnt;
+   }
+/*
+ * Keep taking maxcnt case as new index, and then attempting to match it
+ * to avoid NULLs HERE HERE HERE 
+ */
+   while(maxcnt > 0)
+   {
+   }
+
+/*
+ * Put sorted list back into input array
+ */
+   for (i=0; i < N; i++)
+      cbs[i] = newb[i];
+   free(newb);
+}
 uint *CountMoveShared(const uint N,  ATL_cpnode_t **cbs)
 {
    uint *cnts;
