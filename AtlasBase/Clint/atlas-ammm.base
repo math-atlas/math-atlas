@@ -36166,11 +36166,11 @@ void FindValidCleanKUs(ATL_mmnode_t *p, ATL_mmnode_t *mb)
    unsigned int flg = (0x7<<29);
    ATL_mmnode_t *mp;
 
-   if (!FLAG_IS_SET(mb->flag, MMF_KCLN))
+   if (!FLAG_IS_SET(p->flag, MMF_KCLN))
       return;
    for (mp=mb; mp; mp = mp->next)
    {
-      if (FLAG_IS_SET(mp->flag, MMF_KCLN) && MMKernCompsSame(mb, mp))
+      if (FLAG_IS_SET(mp->flag, MMF_KCLN) && MMKernCompsSame(p, mp))
       {
          const unsigned kb = mp->kbB;
          if (kb & 0x3)            /* if (mp->kbB % 4 != 0) */
@@ -36470,7 +36470,12 @@ ATL_mmnode_t *FindK1Clean
    return(gb);
 }
 
-int GetIdxOfKClean(ATL_mmnode_t *kb, ATL_mmnode_t *dp)
+int GetIdxOfKClean
+(
+   ATL_mmnode_t *dp, /* kern desiring K1 cleaner */
+   ATL_mmnode_t *kb, /* queue containing K1 cleaner kerns */
+   ATL_mmnode_t *ml  /* master list showing all kbs used by dp */
+)
 /*
  * dp is kern desiring K1 cleaner, kb is queue containing such cleaners
  */
@@ -36481,7 +36486,7 @@ int GetIdxOfKClean(ATL_mmnode_t *kb, ATL_mmnode_t *dp)
  * Prioritize self-cleaning over other-cleaning so that we don't do unnec
  * instruction load for kb0 case
  */
-   FindValidCleanKUs(dp, kb);
+   FindValidCleanKUs(dp, ml);
    if (MMKernCleansK(dp, dp))
    {
       for (cnt=0,kp=kb; kp; kp = kp->next, cnt++)
@@ -36497,7 +36502,11 @@ int GetIdxOfKClean(ATL_mmnode_t *kb, ATL_mmnode_t *dp)
    return(-1);
 }
 
-void NumberKClean(ATL_mmnode_t *mb)
+void NumberKClean
+(
+   ATL_mmnode_t *ml, /* non-unique list of all kernel usages */
+   ATL_mmnode_t *mb  /* unique list of things requiring cleaning */
+)
 {
    ATL_mmnode_t *mp;
    int cnt;
@@ -36507,7 +36516,7 @@ void NumberKClean(ATL_mmnode_t *mb)
       if (FLAG_IS_SET(mp->flag, MMF_KCLN))
       {
           int idx;
-          idx = GetIdxOfKClean(mb, mp);
+          idx = GetIdxOfKClean(mp, mb, ml);
           if (idx < 0)
           {
              fprintf(stderr, "WTF: cnt=%d\n", cnt);
@@ -36542,16 +36551,15 @@ void NumberKClean(ATL_mmnode_t *mb)
  */
 int main(int nargs, char **args)
 {
-   ATL_mmnode_t *mb, *db, *kb;
+   ATL_mmnode_t *mb, *db, *kb, *ml;
+   unsigned int msk;
    char pre;
    char *fout;
 
-   mb = GetFlags(nargs, args, &pre, &fout);
+   ml = GetFlags(nargs, args, &pre, &fout);
 
-   db = GetDesiredK1(mb);  /* get list of K cleaners to make */
-   kb = AddUniqueMMKernCompList(NULL, mb); /* remove repeated comps frm lst */
-   KillAllMMNodes(mb);
-   mb = kb;
+   db = GetDesiredK1(ml);  /* get list of K cleaners to make */
+   mb = AddUniqueMMKernCompList(NULL, ml); /* remove repeated comps frm lst */
    printf("KERNELS REQUIRING NON-SELF KCLEANERS:\n");
    PrintMMNodes(stdout, db);
    printf("\n\n");
@@ -36571,7 +36579,8 @@ int main(int nargs, char **args)
  * will renumber after reordering nodes to try to place Kcleaners right
  * next to node they clean up for.
  */
-   NumberKClean(mb);
+   NumberKClean(ml, mb);
+   KillAllMMNodes(ml);
    WriteMMFile("tmp.sum", mb);
    MMIvar2str(mb);
 /*
@@ -36614,6 +36623,12 @@ int main(int nargs, char **args)
    if (mb)
       mb = ATL_JoinMMQs(kb, mb);
    MMstr2Ivar(mb);
+/*
+ * Get rid of temporary flag bits
+ */
+   msk = (1<<MMF_MAXBIT)-1;
+   for (kb=mb; kb; kb=kb->next)
+      kb->flag &= msk;
    printf("DONE K CLEANUP SEARCH, OUTPUT IN '%s'\n", fout);
    WriteMMFile(fout, mb);
    free(fout);
