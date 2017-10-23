@@ -4407,15 +4407,15 @@ void DoShareBV(const uint N,  ATL_cpnode_t **cbs)
       {
          int j;
 
-         p0->flag |= (1<<(i+CPF_MAXB);
+         p0->flag |= (1<<(i+CPF_MAXB));
          for (j=i+1; j < N; j++)
          {
             ATL_cpnode_t *p1;
             p1 = FindCopy_cohere(cbs[j], p0);
             if (p1)
             {
-               p0->flag |= (1<<(j+CPF_MAXB);
-               p1->flag |= (1<<(i+CPF_MAXB);
+               p0->flag |= (1<<(j+CPF_MAXB));
+               p1->flag |= (1<<(i+CPF_MAXB));
             }
          }
       }
@@ -4439,7 +4439,7 @@ uint *CountDictShared(const uint N, ATL_cpnode_t **cbs)
       const uint mprv=(1<<i);
       uint bv, cnt=0;
       ATL_cpnode_t *p;
-      for (p=cbs[i], p; p = p->next)
+      for (p=cbs[i]; p; p = p->next)
       {
          const uint flg=(p->flag)>>CPF_MAXB;
          if (flg != mall && flg != mprv)
@@ -4451,7 +4451,7 @@ uint *CountDictShared(const uint N, ATL_cpnode_t **cbs)
 }
 
 
-INLINE int NumSetBits(const uint N, uint flg)
+int NumSetBits(const uint N, uint flg)
 {
    uint nset=0, i;
    for (i=0; i < N; i++)
@@ -4460,27 +4460,57 @@ INLINE int NumSetBits(const uint N, uint flg)
    return(nset);
 }
 
-uint findMaxSetBits(const uint N, ATL_cpnode_t *cb)
+ATL_cpnode_t *findMaxSetBits(const uint N, ATL_cpnode_t *cb)
+/*
+ * RETURNS: node in cb that has the most bits above CPF_MAXB set
+ */
 {
    if (cb)
    {
-      ATL_cpnode_t *cp;
-      uint nset;
+      ATL_cpnode_t *cp, *mp=cb;;
       
-      nset = NumSetBits(N, (cb->mask)>>CPF_MAXB);
-      for (cp=cb->next; cp; cp = cp->next)
+      if (cb->next)
       {
-         uint ns = NumSetBits(N, (cp->mask)>>CPF_MAXB);
-         if (ns > nset)
+         uint nset;
+         nset = NumSetBits(N, (cb->flag)>>CPF_MAXB);
+         for (cp=cb->next; cp; cp = cp->next)
          {
-            mp = cp;
-            nset = ns;
+            uint ns = NumSetBits(N, (cp->flag)>>CPF_MAXB);
+            if (ns > nset)
+            {
+               mp = cp;
+               nset = ns;
+            }
          }
       }
-      return(nset);
+      return(mp);
    }
-   return(0);
+   return(NULL);
 }
+
+void moveCopiesInMask
+(
+   const uint N,         /* number of files being created */
+   ATL_cpnode_t **cbs,   /* unsorted copies that need to cohere */
+   ATL_cpnode_t **srtb,  /* queue of sorted-by-idx that already cohere */
+   ATL_cpnode_t *mp,     /* cohere pattern to move */
+   const int msk         /* bitvec indicating kern to move cbs->srtb */
+)
+{
+   uint i;
+   for (i=0; i < N; i++)
+   {
+      if (msk & (1<<i))
+      {
+         ATL_cpnode_t *cp;
+         cp = FindCopy_cohere(cbs[i], mp);
+         assert(cp);
+         cbs[i] = RemoveCPNodeFromQ(cbs[i], cp);
+         srtb[i] = ATL_JoinCPQs(srtb[i], cp);
+      }
+   }
+}
+
 void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
 /*
  * Given N copy files that need to cohere (have the same routine at same idx)
@@ -4489,13 +4519,13 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
 {
    ATL_cpnode_t **newb, **prvb, *cb, *cp;
    const uint mall=(1<<N)-1;
-   uint i, maxcnt=0, imax=0;
+   uint i, mincnt=0, imin=0, n=N, dnmsk=0;
    uint *cnts;
 /*
  * Create bitvec showing what all files each node must show up in
  */
    DoShareBV(N,  cbs);
-   newb = malloc((N+N)*sizeof(ATL_cpnode*));
+   newb = malloc((N+N)*sizeof(ATL_cpnode_t*));
    cnts = malloc(N*sizeof(uint));
    assert(cnts && newb);
    prvb = newb + N;
@@ -4515,7 +4545,7 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
       }
    }
 /*
- * If no copy appears everwhere, start with empty sorted queues
+ * If no copy appears everywhere, start with empty sorted queues
  */
    else
       for (i=1; i < N; i++)
@@ -4526,6 +4556,108 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
  */
    for (i=0; i < N; i++)
       prvb[i] = CPmoveMaskNewQ(mall<<CPF_MAXB, 1<<(CPF_MAXB+i), cbs[i]);
+/*
+ * The shortest queue of shared files will be finished first, in order
+ * to allow us to reduce N, and ensure the short file doesn't need a large
+ * number of NULLs to keep matching larger files
+ */
+   maxcnt = ATL_CountNumberOfCPNodes(cbs[0]);  /* actually min */
+   for (imax=dnmsk=i=0; i < N; i++)
+   {
+      uint cnt;
+      cnt = ATL_CountNumberOfCPNodes(cbs[i]);
+      if (cnt == 0)
+      {
+         dnmsk |= 1<<i;
+         if (prvb[i])
+            allb[i] = ATL_JoinCPQs(allb[i], prvb[i]);
+         prvb[i] = NULL;
+      }
+      else if (!mincnt || cnt < mincnt)
+      {
+         mincnt = cnt;
+         imin = i;
+      }
+      cnts[i] = cnt; 
+   }
+   dnmsk = mall & (~dnmsk);  /* unset bit means file i done */
+/*
+ * While we've got uncohered files, cohere all remaining files using the
+ * file with the minimum number of kerns to be cohered.  This may result
+ * in NULLs in longer files, but it keeps a small count file from being
+ * primarily NULLs.
+ */
+   while (mincnt)
+   {
+      uint cmsk, omsk;  /* cohere & other mask */
+/*
+ *    Get entry in file that needs to cohere with the most other files
+ */
+      cp = findMaxSetBits(N, cbs[imin])
+      cmsk = ((cp->flag)>>CPF_MAXB)&mall;
+      assert((cmsk & dnmsk) == cmsk); /* can't find copy in finished file! */
+/*
+ *    For all files, put the matching copy into the sorted-by-idx newb
+ */
+      moveCopiesInMask(N, cbs, newb, cp, cmsk);
+/*
+ *    If we only cohere on some files, we will need to find parallel copy
+ *    routs to use at this gap, or insert NULLs
+ */
+      if (cmsk != dnmsk)
+      {
+         uint fmsk;     /* mask of files that need NULLs or other cohere */
+         fmsk = (~cmsk) & dnmsk;  /* set if file not in this case active */
+         for (i=0; (fmsk&(1<<i))==0; i++); /* find first uncohered idx */
+/*
+ *       See if we can find a kern with the exact span we need, which allows
+ *       for full span using only two copies, and not using private copies
+ */
+         tp = CPfindMaskedFlag(cbs[i], dnmsk<<CPF_MAXB, fmsk);
+         if (tp)  /* no need for NULLs! */
+            moveCopiesInMask(N, cbs, newb, tp, fmsk);
+/*
+ *       See the largest subset of these bits we can find
+ */
+         else
+         {
+            int nset;
+            nset = NumSetBits(fmsk);
+/*
+ *          If we couldn't get all files, and nset == 1 or 2, then we must
+ *          fill in with private or NULL HERE HERE
+ */
+            if (nset < 3)
+            else /* can try to get two sets that add up to this */
+         }
+      }
+/*
+ *    go thru all files indicated by cmsk
+ */
+      for (i=0; i < N; i++)
+      {
+         if (cmsk & (1<<i))
+         {
+            ATL_cpnode_t *tp;
+            tp = FindCopy_cohere(cbs[i], cp);
+            assert(tp);
+            cbs[i] = RemoveCPNodeFromQ(cbs[i], tp);
+            ATL_JoinCPQs(allb[i], tp);
+            cnts[i]--;
+         }
+      }
+      for (i=0; i < N; i++)
+      {
+         if (dnmsk & (1<<i))
+         {
+            if (cnts[i] < mincnt)
+            {
+               mincnt = cnts[i]
+               imin=i;
+            }
+         }
+      }
+      i = n-1;
 /*
  * Figure out maximum number of set bits in any file, imax will be file index
  */
@@ -4542,7 +4674,7 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
    }
 /*
  * Keep taking maxcnt case as new index, and then attempting to match it
- * to avoid NULLs HERE HERE HERE 
+ * to avoid NULLs
  */
    while(maxcnt > 0)
    {
