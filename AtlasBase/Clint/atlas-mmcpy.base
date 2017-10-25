@@ -4513,6 +4513,25 @@ void moveCopiesInMask
    }
 }
 
+uint coherePatt2Arr     /* RETURNS: number of unique coherence patterns */
+(
+   ATL_cpnode_t *cb,    /* list of all copies in file */
+   uint *bp             /* uint array long enough to hold all unique bitpatts */
+)
+{
+   ATL_cpnode_t *cp;
+   int n=0;
+   for (cp=cb; cp; cp = cp->next)
+   {
+      uint patt = cp->flag >> CPF_MAXB;
+      uint i;
+
+      for (i=0; i < n && bp[i] != patt; i++); /* see if pattern already there */
+      if (i == n)
+         bp[n++] = patt;
+   }
+   return(n);
+}
 void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
 /*
  * Given N copy files that need to cohere (have the same routine at same idx)
@@ -4523,6 +4542,7 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
    const uint mall=(1<<N)-1;
    uint i, mincnt=0, imin=0, n=N, dnmsk=0;
    uint *cnts;
+   uint **bps, *nbp; /* coherence bit patterns, and their counts */
 /*
  * Create bitvec showing what all files each node must show up in
  */
@@ -4563,8 +4583,7 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
  * to allow us to reduce N, and ensure the short file doesn't need a large
  * number of NULLs to keep matching larger files
  */
-   mincnt = ATL_CountNumberOfCPNodes(cbs[0]);
-   for (imin=dnmsk=i=0; i < N; i++)
+   for (mincnt=imin=dnmsk=i=0; i < N; i++)
    {
       uint cnt;
       cnt = ATL_CountNumberOfCPNodes(cbs[i]);
@@ -4574,6 +4593,7 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
          if (prvb[i])
             newb[i] = ATL_JoinCPQs(newb[i], prvb[i]);
          prvb[i] = NULL;
+         n--;
       }
       else if (!mincnt || cnt < mincnt)
       {
@@ -4583,6 +4603,68 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
       cnts[i] = cnt; 
    }
    dnmsk = mall & (~dnmsk);  /* unset bit means file i done */
+/*
+ * Construct list of all coherence bit patterns that appear in each active file
+ */
+   bps = malloc((sizeof(uint*)+sizeof(uint))*N);
+   assert(bps);
+   npb = (void*) (bps + N);
+   for (i=0; i < N; i++)
+   {
+      if (dnmsk & (1<<i))
+      {
+         uint np, j;
+         np = (1<<n);  /* number of diff bit patterns based on binary */
+         np = Mmin(cnts[i], np); /* can't have more than copies! */
+         bps[i] = malloc(sizeof(uint)*np);
+         assert(bps[i]);
+         j = coherePatt2Arr(cbs[i], bps[i]);
+         if (prbv[i])
+            cbs[j++] = (1<<i);
+         assert(j <= np);
+         npb[i] = j;
+      }
+      else
+      {
+         nbp[i] = 0;
+         bps[i] = NULL;
+      }
+   }
+   while (n)
+   {
+      assert(n > 1);  /* impossible to cohere wt no other files */
+      int np = nbp[imin];
+/*
+ *    If we can find a coherence pattern using all remaining files, can
+ *    just take assign that the next slot at no cost to later flexibility
+ */
+      for (i=0; i < np && bps[imin] != dnmsk; i++);
+      if (i < np)
+      {
+         ATL_cpnode_t *tp;
+         cp = CPfindMaskedFlag(cbs[imin], dnmsk, dnmsk);
+         assert(cp);
+         moveCopiesInMask(N, cnts, cbs, newb, cp, dnmsk);
+      }
+/*
+ *    Recompute n, dnmsk,imin,mincnt after changes
+ */
+      for (dnmsk=mall,mincnt=imin=i=n=0; i < N; i++)
+      {
+         uint cnt = cnts[i];
+         if (!cnt)
+            dnmsk ^= 1<<i;
+         else
+         {
+            n++;
+            if (!mincnt || cnt < mincnt)
+            {
+               mincnt = cnt;
+               imin = i;
+            }
+         }
+      }  /* end loop computing: n, dnmsk,imin,mincnt */
+   }
 /*
  * While we've got uncohered files, cohere all remaining files using the
  * file with the minimum number of kerns to be cohered.  This may result
@@ -4691,6 +4773,13 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
          }
       }
    }
+/*
+ * Free coherence bit pattern arrays 
+ */
+   for (i=0; i < N; i++)
+      if (bps[i])
+         free(bps[i];
+   free(bps);
 /*
  * Put sorted list back into input array
  */
