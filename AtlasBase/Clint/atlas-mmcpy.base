@@ -4542,7 +4542,7 @@ uint maxSpanIdx
 {
    if (N)
    {
-      uint vmax = (*bp)>>N, imax=0, i;
+      uint vmax = (*bp)>>B, imax=0, i;
       for (i=1; i < N; i++)
       {
          uint v = bp[i] >> N;
@@ -4642,6 +4642,11 @@ uint selDrawFile
    return(idx);
 }
 
+uint findMaxSpan(uint N, uint id, uint *cnts, uint **bps, uint *seq)
+{
+   return(0);
+}
+
 void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
 /*
  * Given N copy files that need to cohere (have the same routine at same idx)
@@ -4652,16 +4657,17 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
    const uint mall=(1<<N)-1; /* mask fo all N bits set */
    uint mcoh=mall;  /* assume all files must cohere at beginning */
    uint i, mincnt=0, imin=0, n=N;
-   uint *cnts;
-   uint **bps, *nbp; /* coherence bit patterns, and their counts */
+   uint *cnts, *seq;
+   uint **bps; /* coherence bit patterns, count 1st entry */
 /*
  * Create bitvec showing what all files each node must show up in
  */
    DoShareBV(N,  cbs);
-   newb = malloc((N+N)*sizeof(ATL_cpnode_t*)+N*sizeof(uint));
+   newb = malloc((N+N)*(sizeof(ATL_cpnode_t*)+sizeof(uint)));
    assert(newb);
    prvb = newb + N;
    cnts = (uint*) prvb + N;
+   seq = cnts + N;   /* sequence of patterns used to span */
    newb[0] = cb = CPmoveMaskNewQ(mall<<CPF_MAXB, mall<<CPF_MAXB, cbs);
 /*
  * If we've got copy kerns appearing in all files, that will be our first
@@ -4746,9 +4752,58 @@ void SetCopyOrder(const uint N,  ATL_cpnode_t **cbs)
  */
    while (mcoh)
    {
-      uint id;  /* index of draw file */
+      uint ns, id;  /* index of draw file */
+      uint b, bv, nspan;
       assert(mcoh & (mcoh-1)); /* impossible to cohere wt no other files! */
       id = selDrawFile(N, cnts, bps);  /* find file to draw from */
+      bv = findMaxSpan(N, id, cnts, bps, seq);
+/*
+ *    Loop over all possible bit positions, and move kern or NULL to sorted Q
+ */
+      for (i=0; i < N; i++)
+      {
+         const uint bp=1<<i;
+         if ((bp&mcoh) == 0)  /* if file no longer active */
+            continue;         /* go to next bit position */
+         if (bv&bp) /* this file contributes kern towards span */
+         {
+            ATL_cpnode_t *tp;
+            uint *ip = bps[i];
+            uint j=0, b, s;
+
+            do
+               s = seq[j++];
+            while (!(s&bp));
+            cp = CPfindMaskedFlag(cbs[i], mall<<CPF_MAXB, s<<CPF_MAXB);
+            assert(cp);
+            tp = cp->next;
+            cbs[i] = RemoveCPNodeFromQ(cbs[i], cp);
+            if (--cnts[i] == 0)
+            {
+               mcoh ^= 1<<i;
+               n--;
+            }
+/*
+ *          If this was the last entry of that bit pattern in this file,
+ *          we must reduce the number bit patterns!
+ */
+            if (!CPfindMaskedFlag(tp, mall<<CPF_MAXB, s<<CPF_MAXB))
+            {
+               const uint np = --(ip[i]);
+               if (np)       /* if we've got remaining entries */
+               {             /* must move trailing entries down 1 */
+                  uint k;
+                  for (k=1; ip[k] != s; k++);
+                  for (; k <= np; k++)
+                     ip[k] = ip[k+1];
+               }
+            }
+         }
+         else /* an active doesn't contribute: need NULL here! */
+            cp = GetCPNode();
+         newb[i] = ATL_JoinCPQs(newb[i], cp);
+      /* HERE HERE HERE */
+      }
    }
 /*
  * While we've got uncohered files, cohere all remaining files using the
