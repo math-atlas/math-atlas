@@ -96,7 +96,9 @@ struct CPNode
    int vlen;       /* > 1: vector length used in copy generation */
    int kvec;       /* > 1: vec with size kvec along K dim */
    int rtlen;      /* # of chars/bytes in rout */
-   unsigned int flag, asmbits;
+   uint flag;      /* main bitvec, using CPF_ macros */
+   uint asmbits;   /* bitfield indicating which assembly(ies) is required */
+   uint bv;        /* temp bitvec, used to determine coherence */
 };
 @ROUT mmread
 #ifndef ATLAS_MMPARSE_H
@@ -4435,7 +4437,24 @@ ATL_cpnode_t *CPfindMaskedFlag(ATL_cpnode_t *cb, const uint msk, uint bv)
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
-ATL_cpnode_t *CPmoveMaskNewQ(const uint msk, const uint bv, ATL_cpnode_t **CB)
+ATL_cpnode_t *CPfindMaskedBV(ATL_cpnode_t *cb, const uint msk, uint bv)
+/*
+ * RETURNS: first node in cb whose (msk&->bv) == (bv&msk)
+ */
+{
+   if (cb)
+   {
+      ATL_cpnode_t *mp;
+      bv &= msk;
+      for (mp=cb; mp && ((mp->bv&msk) != bv); mp = mp->next);
+      return(mp);
+   }
+   return(NULL);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+ATL_cpnode_t *CPmoveMaskBVNewQ(const uint msk, const uint bv, ATL_cpnode_t **CB)
 /*
  * Assumes set bits in msk are a superset of mask bits set in bv.
  * Removes any entries in cb that match exactly on msk with bv and returns
@@ -4449,7 +4468,7 @@ ATL_cpnode_t *CPmoveMaskNewQ(const uint msk, const uint bv, ATL_cpnode_t **CB)
       while(cp)
       {
          ATL_cpnode_t *nxt=cp->next;
-         if (((cp->flag)&msk) == bv)
+         if (((cp->bv)&msk) == bv)
          {
             cb = RemoveCPNodeFromQ(cb, cp);
             cp->next = nb;
@@ -4503,10 +4522,32 @@ ATL_cpnode_t *CopyNoRep(ATL_cpnode_t *cb, int minSz)
 /*
  * Eliminates cpnodes with duplicate copy routines. In throwing away duplicates,
  * retain routine with mb*nb > minSz, if both > minSz, throw away biggest, 
- * if both < minSz throw away smallest.
+ * if both < minSz throw away smallest.  Also eliminates NULL cpy kerns,
+ * which are signaled by mu & nu = 0
  */
 {
-   ATL_cpnode_t *cp, *dup;
+   ATL_cpnode_t *cp, *dup, *prev;
+/*
+ * Eliminate all NULL cpy kerns in first pass thru kerns
+ */
+   while (!(cb->mu | cb->nu))
+      cb = KillCPNode(cb);
+   if (!cb)
+      return(NULL);
+   cp = cb->next;
+   prev = cb;
+   while (cp)
+   {
+      ATL_cpnode_t *nxt=cp->next;
+      if (!(cp->mu | cp->nu))
+         prev->next = KillCPNode(cp);
+      else
+         prev = cp;
+      cp = nxt;
+   }
+/*
+ * Now, eliminate duplicates from queue containing no NULLs
+ */
    for (cp=cb; cp && cp->next; cp = cp->next)
    {
       unsigned int sz0 = cp->mb * cp->nb;
