@@ -42172,18 +42172,27 @@ int main(int nargs, char **args)
    nlvl=0;
    while ( (LS = cacheInf(nlvl, &nset, &nway, &INCL, &nthr, &ncor)) )
    {
+      unsigned int nshar;
+
       nlvl++;
+      if (nhyp > 1)
+      {
+         nshar = nthr / nhyp;
+         assert(nshar*nhyp == nthr);
+      }
+      else
+         nshar = nthr;
       cs = nset*nway*LS;
       printf("L%u: INCL=%d nsets=%u, nway=%u LS=%u sz=%lu (%lu) nshar=%u\n",
-             nlvl, INCL, nset, nway, LS, cs*nthr, cs, nthr);
-@skip      if (nthr > 1)  /* we want per-node size */
-@skip         cs *= nhyp / nthr;
+             nlvl, INCL, nset, nway, LS, cs, cs/nshar, nshar);
+      if (nshar > 1)  /* we want per-node size */
+         cs /= nshar;
       fprintf(fp, "#define L%uC_SZ %luL\n", nlvl, cs);
       fprintf(fp, "#define L%uC_LS %u\n", nlvl, LS);
       fprintf(fp, "#define L%uC_NSET %u\n", nlvl, nset);
       fprintf(fp, "#define L%uC_NWAY %u\n", nlvl, nway);
       fprintf(fp, "#define L%uC_INCLUSIVE %u\n", nlvl, INCL);
-      fprintf(fp, "#define L%uC_NSHARE %u\n", nlvl, nthr);
+      fprintf(fp, "#define L%uC_NSHARE %u\n", nlvl, nshar);
       fprintf(fp, "#define L%uC_SURE 1\n", nlvl);
       fprintf(fp, "#ifdef SREAL\n   #define L%uC_ELTS %luL\n", nlvl, cs>>2);
       fprintf(fp, "   #define L%uC_LSELTS %u\n", nlvl, LS>>2);
@@ -42195,13 +42204,14 @@ int main(int nargs, char **args)
       fprintf(fp, "   #define L%uC_LSELTS %u\n", nlvl, LS>>4);
       fprintf(fp, "#endif\n\n");
       safeLS = (LS > safeLS) ? LS : safeLS;
-      if (nthr == 1)
+      if (nthr <= nhyp )
       {
          llp_prev_cs = llp_cs;
          LLP = nlvl;
          llp_cs = cs;
       }
    }
+   printf("\nLAST PRIVATE LEVEL = %u\n", LLP);
    fprintf(fp, "#define LLPC_LVL %u\n", LLP);
    fprintf(fp, "#define LLPC_SZ  L%uC_SZ\n", LLP);
    fprintf(fp, "#define LLPC_LSELTS L%uC_LSELTS\n", LLP);
