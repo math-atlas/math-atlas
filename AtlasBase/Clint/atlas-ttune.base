@@ -2995,8 +2995,8 @@ int main(int nargs, char **args)
  * from the set of threads to use.  We keep adding core IDs until every
  * core has either been added to the non-aliased list or eliminated.
  */
-static int nact=1, actIDs[ATL_AFF_NUMID]={0};
-static volatile unsigned long NREP=0;
+static int nact=1, actRanks[ATL_AFF_NUMID]={0};
+static unsigned long NREP=0;
 static volatile unsigned chkin[ATL_AFF_NUMID]={0};
 static double PEAK=27065.0, times[ATL_AFF_NUMID];
 #define NTRY 3
@@ -3011,52 +3011,38 @@ static double PEAK=27065.0, times[ATL_AFF_NUMID];
  * to make compiler-oriented routine unsure if flops are useless.
  */
 unsigned long fpuStress(unsigned long nrep, double *d);
+double ATL_walltime(void);
+
 static void DoWork(void *vpp, int rank, int vrank)
 {
    unsigned int i;
    unsigned long nrep;
-   unsigned int myrank;
    double avg=0.0, t0;
+
+//   printf("%u,%u:\n", rank, vrank);
+   nrep = NREP;
+/*
+ * Barrier until all active & inactive threads arrive
+ */
+   if (!rank)
+   {
+      for (i=1; i < ATL_AFF_NUMID; i++)
+         while(!chkin[i]);
+      *chkin = 1;
+   }
+   else
+   {
+      chkin[rank] = 1;
+      while (!(*chkin));
+   }
 /*
  * If my core isn't active in this test, just return;
  */
-   for (i=0; i != rank && i < nact; i++)
+   for (i=0; rank != actRanks[i] && i < nact; i++);
    if (i == nact)
+   {
+//      printf("RETURNING: nact=%u, rank=%u\n", nact, rank);
       return;
-   myrank = i;
-/*
- * We always start with core 0 in set of used threads, so it computes
- * how many reps to do in first call.  NREP should always be set when
- * we start timing with multiple cores, but have code to wait on 0 in 
- * case we change order.
- */
-   if (!myrank)
-   {
-      if (!NREP)
-      {
-         nrep = fpuStress(0, NULL);
-         NREP = (0.05*PEAK+nrep-1)/nrep;
-      }
-   }
-   else
-      while(!NREP);
-   nrep = NREP;
-/*
- * Barrier until all threads arrive
- */
-   if (nact > 1)
-   {
-      if (!myrank)
-      {
-         for (i=1; i < nact; i++)
-            while(!chkin[i]);
-         *chkin = 1;
-      }
-      else
-      {
-         chkin[myrank] = 1;
-         while (!(*chkin));
-      }
    }
 /*
  * Take average of NTRY timings
@@ -3068,17 +3054,101 @@ static void DoWork(void *vpp, int rank, int vrank)
       avg += ATL_walltime() - t0;
    }
    avg /= NTRY;
+//printf("times[%d]=%e ntry=%u, nrep=%lu)\n", rank, avg, NTRY, nrep);
    times[rank] = avg;
+
+   if (nact > 1)
+   {
+      if (!rank)
+      {
+         for (i=1; i < nact; i++)
+            while(!chkin[i]);
+         *chkin = 1;
+      }
+      else
+      {
+         chkin[rank] = 1;
+         while (!(*chkin));
+      }
+   }
 }
 
 int main(int nargs, char **args)
 {
    int i;
+   unsigned long nf;
+   double mf;
+/*
+ * Compute how many reps to run around .05 seconds at detected peak
+ */
+   nf = fpuStress(0, NULL);            /* find # of flops in 1 it of loop */
+   NREP = (0.05*PEAK*1e6+nf-1)/nf;     /* .05 above most wallclock res */
+   mf = NREP*1e-6*nf;
 /*
  * First time with only ID=0 running
  */
    ATL_goParallel(ATL_AFF_NUMID, DoWork, NULL, NULL, NULL);
-   printf("\nSingle-node timings = %e sec\n", *times);
+   printf("\nSingle-node timings = %e sec, mf=%.0f\n", *times, mf/(*times));
+/*
+ * Now try adding each affID in turn, and look for performance regressions
+ */
+   for (i=1; i < ATL_AFF_NUMID; i++)
+   {
+      double oldt[ATL_AFF_NUMID];
+      int k, NO=0;
+      for (k=0; k < nact; k++)
+         oldt[k] = times[k];
+      actRanks[nact++] = i;
+      for (k=0; k < ATL_AFF_NUMID; k++)
+         chkin[k] = 0;
+      ATL_goParallel(ATL_AFF_NUMID, DoWork, NULL, NULL, NULL);
+      for (k=0; k < nact-1; k++)
+      {
+/*
+ *       If new timing more than 10% slower than old, declare these threads
+ *       to share too much hardware to be used as indepedent thread
+ */
+         if (oldt[k]*1.1 < times[k])
+         {
+            NO++;
+            printf("      affID %u seems %.2f aliased with affID %u "
+                   "(old=%e,new=%e)!\n",
+            #ifndef ATL_RANK_IS_PROCESSORID
+                   ATL_affinityIDs[i], (oldt[k]/times[k])*100.0, 
+                   ATL_affinityIDs[k], oldt[k], times[k]);
+            #else
+                   i, (oldt[k]/times[k]), k, oldt[k], times[k]);
+            #endif
+         }
+      }
+      if (NO)
+      {
+         #ifndef ATL_RANK_IS_PROCESSORID
+            printf("   Dependent thread ID %u rejected!\n", ATL_affinityIDs[i]);
+         #else
+            printf("   Dependent thread ID %u rejected!\n", i);
+         #endif
+         nact--;
+      }
+      else
+         #ifndef ATL_RANK_IS_PROCESSORID
+            printf("   Independent thread ID %u accepted.\n", 
+                   ATL_affinityIDs[i]);
+         #else
+            printf("   Independent thread ID %u accepted.\n", i);
+         #endif
+
+   }
+   #ifndef ATL_RANK_IS_PROCESSORID
+      printf("Independent IDs={%u", ATL_affinityIDs[actRanks[0]]);
+      for (i=1; i < nact; i++)
+         printf(",%u", ATL_affinityIDs[actRanks[i]]);
+   #else
+      printf("Independent IDs={0");
+      for (i=1; i < nact; i++)
+         printf(",%u", actRanks[i]);
+   #endif
+   printf("}\n");
    return(0);
 }
 @ROUT
