@@ -2980,7 +2980,9 @@ int main(int nargs, char **args)
 #include <stdio.h>
 #include <stdlib.h>
 #include "atlas_fopen.h"
-#include "atlas_taffinity.h"
+#define ATL_DEF_RUNTHR 1
+#include "atlas_tprim.h"
+@skip #include "atlas_taffinity.h"
 /*
  * The idea here is to find cores that share significant FPU hardware
  * resources, and eliminate them as threading targets for ATLAS, which is
@@ -3013,11 +3015,14 @@ static double PEAK=27065.0, times[ATL_AFF_NUMID];
 unsigned long fpuStress(unsigned long nrep, double *d);
 double ATL_walltime(void);
 
-static void DoWork(void *vpp, int rank, int vrank)
+@skip static void DoWork(void *vpp, int rank, int vrank)
+static void *DoWork(void *vp)
 {
-   unsigned int i;
-   unsigned long nrep;
+   ATL_thread_t *tp=vp;
    double avg=0.0, t0;
+   unsigned long nrep;
+   unsigned int i;
+   const unsigned int rank = tp->rank;
 
 //   printf("%u,%u:\n", rank, vrank);
    nrep = NREP;
@@ -3042,7 +3047,7 @@ static void DoWork(void *vpp, int rank, int vrank)
    if (i == nact)
    {
 //      printf("RETURNING: nact=%u, rank=%u\n", nact, rank);
-      return;
+      return(NULL);
    }
 /*
  * Take average of NTRY timings
@@ -3071,6 +3076,7 @@ static void DoWork(void *vpp, int rank, int vrank)
          while (!(*chkin));
       }
    }
+   return(NULL);
 }
 
 int main(int nargs, char **args)
@@ -3087,7 +3093,8 @@ int main(int nargs, char **args)
 /*
  * First time with only ID=0 running
  */
-   ATL_goParallel(ATL_AFF_NUMID, DoWork, NULL, NULL, NULL);
+   ATL_runThreads(ATL_AFF_NUMID, DoWork, NULL);
+//   ATL_goParallel(ATL_AFF_NUMID, DoWork, NULL, NULL, NULL);
    printf("\nSingle-node timings = %e sec, mf=%.0f\n", *times, mf/(*times));
 /*
  * Now try adding each affID in turn, and look for performance regressions
@@ -3101,7 +3108,8 @@ int main(int nargs, char **args)
       actRanks[nact++] = i;
       for (k=0; k < ATL_AFF_NUMID; k++)
          chkin[k] = 0;
-      ATL_goParallel(ATL_AFF_NUMID, DoWork, NULL, NULL, NULL);
+@skip      ATL_goParallel(ATL_AFF_NUMID, DoWork, NULL, NULL, NULL);
+      ATL_runThreads(ATL_AFF_NUMID, DoWork, NULL);
       for (k=0; k < nact-1; k++)
       {
 /*
@@ -3111,13 +3119,13 @@ int main(int nargs, char **args)
          if (oldt[k]*1.1 < times[k])
          {
             NO++;
-            printf("      affID %u seems %.2f aliased with affID %u "
-                   "(old=%e,new=%e)!\n",
+            printf("      affID %u seems %.0f%% aliased with affID %u "
+                   "(old=%.2e,new=%.2e)!\n",
             #ifndef ATL_RANK_IS_PROCESSORID
                    ATL_affinityIDs[i], (oldt[k]/times[k])*100.0, 
                    ATL_affinityIDs[k], oldt[k], times[k]);
             #else
-                   i, (oldt[k]/times[k]), k, oldt[k], times[k]);
+                   i, (oldt[k]/times[k])*100.0, k, oldt[k], times[k]);
             #endif
          }
       }
