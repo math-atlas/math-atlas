@@ -42622,6 +42622,11 @@ int main(int nargs, char **args)
  * getMflop call ensures last generated fpu.S is an optimal one.
  */
    peak = getMflop(pre, isa, vlenb, nlat, nmul, .1*peak);
+   fp = fopen("fnlfpu.S", "w");
+   assert(fp);
+   fprintf(fp, "#define VL%u 1\n", vlenb);
+   fclose(fp);
+   assert(!system("cat fpu.S >> fnlfpu.S"));
 /*
  * Store results in res/<pre>SIMD
  */
@@ -42630,6 +42635,7 @@ int main(int nargs, char **args)
    assert(fp);
    fprintf(fp, "'%s' %.2f %u %u %u %u\n", isas[isa], peak, nreg, vlenb, 
            nlat, nmul);
+   fprintf(fp, "#'<simd>' <mflop> <nreg> <vlen bytes> <FMA latency> <nmul>\n");
    fclose(fp);
 /*
  * Ask for peak code to take .05 seconds in <pre>mflop.frc
@@ -42643,6 +42649,108 @@ int main(int nargs, char **args)
    #if 0
       findAllPeaks(pre, isa, nreg, nmul, peak);
    #endif
+   return(0);
+}
+@ROUT tprobeFPU
+#include "atlas_taffinity.h"
+/*
+ * The idea here is to find cores that share significant FPU hardware
+ * resources, and eliminate them as threading targets for ATLAS, which is
+ * essentially FPU-bound.  This should eliminate using hyperthreading,
+ * for instance.  We read in the fpu.S produced by probeFPU, which is
+ * assembly code that usually drives the FPU at peak rate while accessing
+ * almost no memory and requiring negligible ALU usage.
+ *
+ * We will first run this code with only 1 thread active on core=0 to get
+ * the base case.  We will then add core 1, and retime: if 0's performance
+ * drops by >= 8%, we declare that as a virtual thread and eliminate it
+ * from the set of threads to use.  We keep adding core IDs until every
+ * core has either been added to the non-aliased list or eliminated.
+ */
+static int nact=1, actIDs[ATL_AFF_NUMID]={0};
+static volatile unsigned long NREP=0;
+static volatile unsigned chkin[ATL_AFF_NUMID]={0};
+static double PEAK=27065.0, times[ATL_AFF_NUMID];
+#define NTRY 3
+
+/*
+ * This routine written in assembly to allow useless computations to be used
+ * in order to achieve FPU peak.
+ * if nrep is 0, then the function returns the number of flops done in a single
+ * loop iteration.  If nrep > 0, it performs that many loop iterations and
+ * returns with junk as return value.
+ * The array d is input/output of length at least 5000, and can be used
+ * to make compiler-oriented routine unsure if flops are useless.
+ */
+unsigned long fpuStress(unsigned long nrep, double *d);
+static void DoWork(void *vpp, int rank, int vrank)
+{
+   unsigned int i;
+   unsigned long nrep;
+   unsigned int myrank;
+   double avg=0.0, t0;
+/*
+ * If my core isn't active in this test, just return;
+ */
+   for (i=0; i != rank && i < nact; i++)
+   if (i == nact)
+      return;
+   myrank = i;
+/*
+ * We always start with core 0 in set of used threads, so it computes
+ * how many reps to do in first call.  NREP should always be set when
+ * we start timing with multiple cores, but have code to wait on 0 in 
+ * case we change order.
+ */
+   if (!myrank)
+   {
+      if (!NREP)
+      {
+         nrep = fpuStress(0, NULL);
+         NREP = (0.05*PEAK+nrep-1)/nrep;
+      }
+   }
+   else
+      while(!NREP);
+   nrep = NREP;
+/*
+ * Barrier until all threads arrive
+ */
+   if (nact > 1)
+   {
+      if (!myrank)
+      {
+         for (i=1; i < nact; i++)
+            while(!chkin[i]);
+         *chkin = 1;
+      }
+      else
+      {
+         *chkin[myrank] = 1;
+         while (!(*chkin));
+      }
+   }
+/*
+ * Take average of NTRY timings
+ */
+   for (i=0; i < NTRY; i++)
+   {
+      t0 = ATL_walltime();
+      fpuStress(nrep, NULL);
+      avg += ATL_walltime() - t0;
+   }
+   avg /= NTRY;
+   times[rank] = avg;
+}
+
+int main(int nargs, char **args)
+{
+   int i;
+/*
+ * First time with only ID=0 running
+ */
+   ATL_goParallel(ATL_AFF_NUMID, DoWork, NULL, NULL, NULL);
+   printf("\nSingle-node timings = %e sec\n", *times);
    return(0);
 }
 @ROUT !
