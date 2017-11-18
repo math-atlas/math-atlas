@@ -1028,11 +1028,17 @@ fnlfpu.S: $(SYSdir)/fnlfpu.S
 	rm -f fnlfpu.S
 	cat $(SYSdir)/fnlfpu.S > fnlfpu.S
 
+$(SYSdir)/res/dSIMD:
+	cd $(SYSdir) ; make res/dSIMD
+
 res/dSIMD : $(SYSdir)/res/dSIMD
 	cp $(SYSdir)/res/dSIMD res/.
 
-xprobe_aff2 : $(mySRCdir)/tprobeFPU.c fnlfpu.S
-	$(KC) $(KCFLAGS) -o xprobe_aff2 $(mySRCdir)/tprobeFPU.c \
+Run_indAff : xprobe_indAff
+	$(ATLRUN) $(myBLDdir) xprobe_indAff -o $(INCAdir)/atlas_taffinity.h
+
+xprobe_indAff : res/dSIMD $(mySRCdir)/tprobeFPU.c fnlfpu.S
+	$(KC) $(KCFLAGS) -o $@ $(mySRCdir)/tprobeFPU.c \
               fnlfpu.S $(ATLASlib) $(LIBS)
 
 xprobe_aff : probe_aff.o atlconf_misc.o
@@ -1392,6 +1398,8 @@ x@(pre)ma : force_build time.o @(pre)muladd.c @(pre)matime.o
 	$(ATLRUN) $(SYSdir) x@(pre)ma -f $(outf) $(flags)
 @(pre)matime.o : $(mySRCdir)/matime.c
 	$(KC) -c $(KCFLAGS) -D@(typ) $(mySRCdir)/matime.c
+res/@(pre)SIMD : xprobeFPU
+	$(ATLRUN) $(SYSdir) xprobeFPU -p @(pre)
    @undef typ
 @endwhile
 
@@ -4196,6 +4204,7 @@ mySRCdir = $(SRCdir)/bin
 scalf = $(mflop_l1)
 
 LOCK=mut
+prim=ITprim1
 ammidx=0
 pre=j
 nb = 88
@@ -4302,12 +4311,11 @@ Tprim_@(ar) :
         -e "s/ARC=mut/ARC=@(ar)/" > $(BLDdir)/src/threads/Make.tprim
 @endwhile
 	
-ITprim: Tprim_$(LOCK)
+ITprim1: Tprim_$(LOCK)
 	cd $(BLDdir)/tune/threads ; $(MAKE) IRun_nthr
 	cd $(BLDdir/src/threads ; $(MAKE) -f Make.tprim lib
-ITprim2:
-	cd $(SYSdir) ; $(MAKE) dprobeFPU
-	cd $(BLDdir)/tune/threads ; $(MAKE) IRun_affind
+ITprim2: ITprim1
+	cd $(BLDdir)/tune/threads ; $(MAKE) Run_indAff
 	cd $(BLDdir)/tune/threads ; $(MAKE) IRun_nthr
 	cd $(BLDdir/src/threads ; $(MAKE) -f Make.tprim lib
 IPTtune:
@@ -4455,7 +4463,7 @@ ISet$(pre)KernDef.grd:
 IStage1: xatlas_waitfile
 	cd $(AUXdir) ; $(MAKE) xerbla.grd
 	cd $(SYSdir) ; $(MAKE) $(INCAdir)/atlas_type.h
-	$(MAKE) ITprim
+	$(MAKE) $(prim)
 	cd $(SYSdir) ; $(MAKE) findCache
 	cd $(SYSdir) ; $(MAKE) sRunSysSum dRunSysSum cRunSysSum zRunSysSum
 	cd $(AUXdir) ; $(MAKE) lib

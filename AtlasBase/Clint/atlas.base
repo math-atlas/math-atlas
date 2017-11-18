@@ -31421,7 +31421,7 @@ void GetMMRES(char pre, int *muladd, int *lat, int *nb, int *pref,
    fclose(fp);
 }
  
-void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
+void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG, int INDTHR)
 {
    const char TR[2] = {'N','T'};
    char prec[4] = {'d', 's', 'z', 'c'}, pre, upre, *typ;
@@ -31475,8 +31475,8 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
    #else
       typ = "mut";
    #endif
-   sprintf(ln, "%s IStage1 nreg=%d LOCK=%s %s INSTALL_LOG/Stage1.log\n", 
-           fmake, NREG, typ, redir);
+   sprintf(ln, "%s IStage1 nreg=%d LOCK=%s prim=%s %s INSTALL_LOG/Stage1.log\n", 
+           fmake, NREG, typ, INDTHR?"ITprim2":"ITprim1", redir);
    ATL_Cassert(system(ln)==0, "Stage 1 install", ln2);
    fp = fopen("INSTALL_LOG/L1CacheSize", "r");
 
@@ -32273,23 +32273,32 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
 
 void PrintUsage(char *nam)
 {
-   fprintf(stderr, "\n\nUSAGE: %s [-a <#(use archdef)> -1 <#(bozoL1)>]\n\n", 
-           nam);
+   fprintf(stderr, "\n\nUSAGE: %s [flags]:\n", nam);
+   fprintf(stderr, "   -a 1/0: do/don't use architectural defaults\n");
+   fprintf(stderr, "   -1 0/1: don't/do use bozo L1BLAS guesses if "
+                   "no archdef\n");
+   fprintf(stderr, "   -A 0/1: don't/do eliminate non-independent"
+           " affinity thread IDs\n");
    exit(-1);
 }
 
 void GetFlags(int nargs, char *args[], int *ARCHDEF, int *L1DEF, int *TuneLA,
-              int *NREG)
+              int *NREG, int *INDTHR)
 {
    int i;
 
-   *NREG = *TuneLA = *L1DEF = 0;
+   *INDTHR = *NREG = *TuneLA = *L1DEF = 0;
    *ARCHDEF = 1;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-') PrintUsage(args[0]);
       switch(args[i][1])
       {
+      case 'A':
+         if (++i > nargs)
+            PrintUsage(args[0]);
+         *INDTHR = atoi(args[i]);
+         break;
       case 'a':
          if (++i > nargs)
             PrintUsage(args[0]);
@@ -32318,9 +32327,9 @@ void GetFlags(int nargs, char *args[], int *ARCHDEF, int *L1DEF, int *TuneLA,
 
 int main(int nargs, char *args[])
 {
-   int L1DEF, ARCHDEF, TuneLA, NREG;
-   GetFlags(nargs, args, &ARCHDEF, &L1DEF, &TuneLA, &NREG);
-   GoToTown(ARCHDEF, L1DEF, TuneLA, NREG);
+   int L1DEF, ARCHDEF, TuneLA, NREG, INDTHR;
+   GetFlags(nargs, args, &ARCHDEF, &L1DEF, &TuneLA, &NREG, &INDTHR);
+   GoToTown(ARCHDEF, L1DEF, TuneLA, NREG, INDTHR);
    return(0);
 }
 @ROUT fname
