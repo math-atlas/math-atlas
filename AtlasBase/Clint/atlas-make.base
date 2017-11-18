@@ -1034,12 +1034,19 @@ $(SYSdir)/res/dSIMD:
 res/dSIMD : $(SYSdir)/res/dSIMD
 	cp $(SYSdir)/res/dSIMD res/.
 
-Run_indAff : xprobe_indAff
+Run_indAff : xprobe_nthr xprobe_indAff
 	$(ATLRUN) $(myBLDdir) xprobe_indAff -o $(INCAdir)/atlas_taffinity.h
+	rm -f $(INCAdir)/atlas_pthreads.h
+	$(MAKE) xprobe_nthr
+	./xprobe_nthr -o $(INCAdir)/atlas_pthreads.h
 
-xprobe_indAff : res/dSIMD $(mySRCdir)/tprobeFPU.c fnlfpu.S
+$(SYSdir)/ATL_walltime.o :
+	cd $(SYSdir) ; make ATL_walltime.o 
+xprobe_indAff : res/dSIMD $(mySRCdir)/tprobeFPU.c fnlfpu.S \
+        $(SYSdir)/ATL_walltime.o
+	cd $(BLDdir)/src/threads ; $(MAKE) -f Make.tprim lib
 	$(KC) $(KCFLAGS) -o $@ $(mySRCdir)/tprobeFPU.c \
-              fnlfpu.S $(ATLASlib) $(LIBS)
+              fnlfpu.S $(SYSdir)/ATL_walltime.o $(ATLASlib) $(LIBS)
 
 xprobe_aff : probe_aff.o atlconf_misc.o
 	$(XCC) $(XCCFLAGS) -o xprobe_aff probe_aff.o atlconf_misc.o $(LIBS)
@@ -1142,7 +1149,7 @@ iForceUseMutex:
 @whiledef rt probe_nthr
 x@(rt) : @(rt).o
 	$(XCC) $(XCCFLAGS) -o x@(rt) @(rt).o $(LIBS)
-@(rt).o : $(mySRCdir)/@(rt).c
+@(rt).o : $(mySRCdir)/@(rt).c $(INCAdir)/atlas_taffinity.h
 	$(XCC) $(XCCFLAGS) -o @(rt).o -c $(mySRCdir)/@(rt).c
 @endwhile
 mutcnt :
@@ -4316,7 +4323,6 @@ ITprim1: Tprim_$(LOCK)
 	cd $(BLDdir/src/threads ; $(MAKE) -f Make.tprim lib
 ITprim2: ITprim1
 	cd $(BLDdir)/tune/threads ; $(MAKE) Run_indAff
-	cd $(BLDdir)/tune/threads ; $(MAKE) IRun_nthr
 	cd $(BLDdir/src/threads ; $(MAKE) -f Make.tprim lib
 IPTtune:
 	cd $(BLDdir)/tune/threads ; $(MAKE) IThreadTune
