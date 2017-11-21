@@ -1,7 +1,38 @@
+@BEGINSKIP
+This file generates:
+   unsigned long fpuStress(unsigned long nrep, double *d);
+*d is ignored right now.  
+If nrep==0, then this function returns the number of flops per rep.
+If nrep>0, then that many iterations are done, and return value is undefined.
+
+This is file generates assembly that predicts peak FPU performance by doing
+nothing except floating point multipy and accumulate instructions into
+the specified number of accumulators.  
+
+For x86, this basefile offers these user-settable variables:
+   BASEFILE SETTINGS:
+      KEY=ISA : SSE, AVX, AVXFMA (no x87 support)
+      ivar=nmul: w/o FMA, this is number of regs to pipeline multiplies
+      ivar=nacc: number of accumulators to pipeline runnings sums into
+   CPP SETTINGS:
+     SREAL,DREAL : choose single or double precision
+     VLXX: XX can be 16,32,64: length (in bytes) of vectors
+
+GENERAL NOTES:
+ * Can detect total number of registers by increasing nacc until error,
+   file uses nacc+nmul+1 registers
+ * For x86, can detect length of vector registers by defining VL[16,32,64]
+
+For ARM64, then ISA must be ARM64, Advanced SIMD will always be used,
+and only nacc is referenced.
+
+For ARM32, then we use only scalar FPU (not NEON), and only nacc is used.
+@ENDSKIP
 @ifdef ! nacc
    @abort nacc (# of accumulators) must be defined!
 @endifdef
 #include "atlas_asm.h"
+@ISA AVXFMA AVX SSE
 #ifdef SREAL
    @whiledef in vmovap movap xorp vxor vadd231p vaddp vmulp addp mulp
    #define @(in)d @(in)s
@@ -102,3 +133,60 @@ RET_LOOP_FLOPS:
       add %rax, %rax   /* single precision has twice the flops */
    #endif
    ret
+@ISA ARM64
+#define Mjoin(pre, nam) my_join(pre, nam)
+#define my_join(pre, nam) pre ## nam
+#ifdef SREAL
+   #define TP .4s
+#else
+   #define TP .2d
+#endif
+@iexp ac 0
+@iwhile ac < nacc
+   #define acc@(ac) Mjoin(v@(ac),TP)
+   @iexp ac @(ac) 1 +
+@endiwhile
+@iexp nz @(ac)
+   #define zero Mjoin(v@(ac),TP)
+   #define nrep x0
+/* 
+ * x0                                     x0          x1
+ * unsigned long fpuStress(unsigned long nrep, double *d);
+ */
+.text
+.local LOOP
+.local RET_LOOP_FLOPS
+.globl ATL_asmdecor(fpuStress)
+.type   ATL_asmdecor(fpuStress), %function
+ATL_asmdecor(fpuStress):
+   cmp x0, 0
+   bLE RET_LOOP_FLOPS
+
+   eor v@(nz).16b, v@(nz).16b, v@(nz).16b
+   @iexp ac 0
+   @iwhile ac < nacc
+   eor v@(ac).16b, v@(ac).16b, v@(ac).16b
+      @iexp ac @(ac) 1 +
+   @endiwhile
+
+   LOOP:
+   @iexp ac 0
+   @iwhile ac < nacc
+      fmla acc@(ac), zero, zero
+      @iexp ac @(ac) 1 +
+   @endiwhile
+      subs nrep, nrep, 1
+   bne LOOP
+   ret
+/*
+ * Just return flop count for 1 loop iteration
+ */
+RET_LOOP_FLOPS:
+   @iexp nf @(nacc) 2 * 2 *
+   #ifdef SREAL
+      mov x0, @(nacc)*2*4   /* (nacc)*(fmac)*(vlen) */
+   #else
+      mov x0, @(nacc)*2*2   /* (nacc)*(fmac)*(vlen) */
+   #endif
+   ret
+.size ATL_asmdecor(fpuStress),.-ATL_asmdecor(fpuStress)

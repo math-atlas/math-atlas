@@ -42388,11 +42388,24 @@ int main(int nargs, char **args)
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
-#define SSE    0
-#define AVX    1
-#define AVXFMA 2
-char *isas[3] = {"SSE", "AVX", "AVXFMA"};
 
+#if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
+   #define GAS_X86 1
+   #define SSE    0
+   #define AVX    1
+   #define AVXFMA 2
+   #define NISA   3
+   char *isas[NISA] = {"SSE", "AVX", "AVXFMA"};
+#else
+   #define GAS_X86 0
+   #if defined(ATL_GAS_ARM64)
+      char *isas[1] = {"ARM64"};
+      #define ARM64 0
+      #define NISA 1
+   #else
+      #error "ISA not presented supported!"
+   #endif
+#endif
 #define LNLEN 128
 double getMflop(char pre, int isa, int vlenb, int nacc, int nmul, double mf)
 {
@@ -42426,6 +42439,9 @@ int findISA(int *VLENB)
    #elif defined(ATL_SSE1)
       *VLENB = 16;
       return(SSE);
+   #elif defined(ATL_GAS_ARM64)
+      *VLENB = 16;
+      return(ARM64);
    #endif
    *VLENB = 0;
    return(-1);
@@ -42433,7 +42449,11 @@ int findISA(int *VLENB)
 
 int findNREG(char pre, int isa, int vlenb)
 {
-   const int nmul = (isa == AVXFMA) ? 0:1, nextra = nmul+1;;
+   #ifdef ATL_GAS_ARM64
+      const int nmul=0, nextra=1;;
+   #else
+      const int nmul = (isa == AVXFMA) ? 0:1, nextra = nmul+1;;
+   #endif
    int nreg=128;
    printf("PROBING FOR NUMBER OF REGISTERS WITH VLENB=%u:\n", vlenb);
    printf("   TRYING NREG=%d: ", nreg);
@@ -42459,7 +42479,11 @@ int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL, double *PEAK)
  * RETURNS: 0 if selected code will not compile, else detected FMA latency.
  */
 {
-   int NOFMA=(isa == AVXFMA) ? 0:1;
+   #ifdef ATL_GAS_ARM64
+      int NOFMA=0;
+   #else
+      int NOFMA=(isa == AVXFMA) ? 0:1;
+   #endif
    int nmulB, naccB, nacc, nmul;
    double mfB=0.0, mf, mfF=(*PEAK);
 
@@ -42531,6 +42555,7 @@ int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL, double *PEAK)
    *NMUL = nmulB;
    return(naccB);
 }
+
 void findAllPeaks(char pre, int isa, int nreg, int nmul, double peak)
 {
    double mfF;
@@ -42605,6 +42630,11 @@ int main(int nargs, char **args)
 {
    double peak=0.0;
    FILE *fp;
+   #ifdef ATL_GAS_ARM64
+      int FMA=1;
+   #else
+      int FMA;
+   #endif
    int isa, nreg, vlenb, nlat, nmul;
    char pre='d';
    char fn[32];
@@ -42612,6 +42642,9 @@ int main(int nargs, char **args)
    pre = getFlags(nargs, args);
 
    isa = findISA(&vlenb);
+   #if GAS_X86
+      FMA = (isa == AVXFMA);
+   #endif
    nreg = findNREG(pre, isa, vlenb);
    assert(nreg >= 0);
    nlat = findLAT(pre, isa, vlenb, nreg, &nmul, &peak);
@@ -42622,8 +42655,10 @@ int main(int nargs, char **args)
    sprintf(fn, "res/%cMULADD", pre);
    fp = fopen(fn, "w");
    assert(fp);
-   fprintf(fp, "%d\n%d\n%.2f\n%d\n", isa == AVXFMA, nlat, peak, nreg);
+   fprintf(fp, "%d\n%d\n%.2f\n%d\n", FMA, nlat, peak, nreg);
    fprintf(fp, "#'<simd>' <mflop> <nreg> <vlen bytes> <FMA latency> <nmul>\n");
+   fprintf(fp, "'%s' %.2f %u %u %u %u\n", isas[isa], peak, nreg, vlenb, 
+           nlat, nmul);
    fclose(fp);
 /*
  * Confirm peak performance of best case using a forced mflop high enough
