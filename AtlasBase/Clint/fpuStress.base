@@ -149,6 +149,7 @@ RET_LOOP_FLOPS:
 @iexp nz @(ac)
    #define zero Mjoin(v@(ac),TP)
    #define nrep x0
+#define FSZ 8*8  /* save all regs regardless of how many used */
 /* 
  * x0                                     x0          x1
  * unsigned long fpuStress(unsigned long nrep, double *d);
@@ -161,6 +162,18 @@ RET_LOOP_FLOPS:
 ATL_asmdecor(fpuStress):
    cmp x0, 0
    bLE RET_LOOP_FLOPS
+   sub SP, SP, #FSZ
+/*
+ * Store all callee-saved fpregs so all calls pay same cost
+ */
+   @iexp ac 8
+   @iexp off 0
+   @iwhile ac < 15
+      @iexp acp1 @(ac) 1 +
+   stp d@(ac), d@(acp1), [SP, #@(off)]
+      @iexp off @(off) 16 +
+      @iexp ac @(ac) 2 +
+   @endiwhile
 
    eor v@(nz).16b, v@(nz).16b, v@(nz).16b
    @iexp ac 0
@@ -177,6 +190,18 @@ ATL_asmdecor(fpuStress):
    @endiwhile
       subs nrep, nrep, 1
    bne LOOP
+/*
+ * Restore callee-saved fpregs
+ */
+   @iexp ac 8
+   @iexp off 0
+   @iwhile ac < 15
+      @iexp acp1 @(ac) 1 +
+   ldp d@(ac), d@(acp1), [SP, #@(off)]
+      @iexp off @(off) 16 +
+      @iexp ac @(ac) 2 +
+   @endiwhile
+   add SP, SP, #FSZ
    ret
 /*
  * Just return flop count for 1 loop iteration
@@ -189,4 +214,72 @@ RET_LOOP_FLOPS:
       mov x0, @(nacc)*2*2   /* (nacc)*(fmac)*(vlen) */
    #endif
    ret
+.size ATL_asmdecor(fpuStress),.-ATL_asmdecor(fpuStress)
+@ISA ARM32
+#define Mjoin(pre, nam) my_join(pre, nam)
+#define my_join(pre, nam) pre ## nam
+#ifdef SREAL
+   #define fcpyd fcpys
+@iexp ac 0
+@iwhile ac < nacc
+   #define acc@(ac) s@(ac)
+   @iexp ac @(ac) 1 +
+@endiwhile
+@iexp nz @(ac)
+   #define zero s@(ac)
+#else
+@iexp ac 0
+@iwhile ac < nacc
+   #define acc@(ac) d@(ac)
+   @iexp ac @(ac) 1 +
+@endiwhile
+@iexp nz @(ac)
+   #define zero d@(ac)
+#endif
+   #define nrep r0
+/* 
+ * r0                                     r0          r1
+ * unsigned long fpuStress(unsigned long nrep, double *d);
+ */
+.text
+.local LOOP
+.local RET_LOOP_FLOPS
+.align 2
+.globl ATL_asmdecor(fpuStress)
+.type   ATL_asmdecor(fpuStress), %function
+ATL_asmdecor(fpuStress):
+   cmp r0, #0
+   bLE RET_LOOP_FLOPS
+   fstmDBd SP!, {d8-d15}  /* save all fp regs */
+
+   eor r1, r1, r1
+   #ifdef SREAL
+      fmsr zero, r1
+   #else
+      fmdlr zero, r1
+      fmdhr zero, r1
+   #endif
+   @iexp ac 0
+   @iwhile ac < nacc
+   fcpyd acc@(ac), zero
+      @iexp ac @(ac) 1 +
+   @endiwhile
+
+   LOOP:
+   @iexp ac 0
+   @iwhile ac < nacc
+      fmacd acc@(ac), zero, zero
+      @iexp ac @(ac) 1 +
+   @endiwhile
+      subs nrep, nrep, #1
+   bne LOOP
+
+   fldmIad SP!, {d8-d15}  /* restore all fpregs */
+   bx lr
+/*
+ * Just return flop count for 1 loop iteration
+ */
+RET_LOOP_FLOPS:
+   mov r0, #@(nacc)*2   /* (nacc)*(fmac) */
+   bx lr
 .size ATL_asmdecor(fpuStress),.-ATL_asmdecor(fpuStress)
