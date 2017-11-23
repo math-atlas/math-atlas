@@ -41040,7 +41040,7 @@ volatile void *VP=NULL;
 size_t NSZP=0;
 ulong SZ0=0, SZN=0, SZINC=0;
 float *SZTIMES=NULL;
-unsigned int MINREP=16;
+unsigned int MINREP=16, NTHR=ATL_NTHREADS;
 volatile unsigned char chkin[ATL_NTHREADS]={0};
 
 double ATL_walltime(void);
@@ -41056,7 +41056,7 @@ static void my_barrier(int rnk)
    else
    {
       unsigned int i;
-      for (i=1; i < ATL_NTHREADS; i++)
+      for (i=1; i < NTHR; i++)
          while (chkin[i] != newv);
       *chkin = newv;
    }
@@ -41383,6 +41383,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr,"   -o <resfile> : (stdout)\n");
    fprintf(stderr,"   -m <minrepeats> : (8)\n");
    fprintf(stderr,"   -w 0/1 : don't/do write during buffer traversal\n");
+   fprintf(stderr,"   -p # : use only # threads (0 < # <= %u)\n", ATL_NTHREADS);
    fprintf(stderr, 
       "   -S sz0 szN szINC set szINC=0 for power-of-2 search (default)\n");
    fprintf(stderr, "   -o <output file>\n");
@@ -41408,6 +41409,11 @@ FILE *GetFlags(int nargs, char **args)
             PrintUsage(args[0], i-1, NULL);
         fpout = fopen(args[i], "w");
         assert(fpout);
+        break;
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        NTHR = atoi(args[i]);
         break;
       case 'w':
         if (++i >= nargs)
@@ -41468,7 +41474,7 @@ void *GetMem
       do
       {
          szN = ((szN+pgsz-1)/pgsz)*pgsz;
-         totsz = pgsz + ATL_NTHREADS*(szN + nsz*sizeof(float));
+         totsz = pgsz + NTHR*(szN + nsz*sizeof(float));
          vp = NULL;
          if (totsz <= MAXSZ)
          {
@@ -41503,7 +41509,7 @@ void *GetMem
    }
    else /* doing simple range search */
    {    /* max size already known to work from pwr2 search */
-      totsz = pgsz + ATL_NTHREADS*(szN + nsz*sizeof(float));
+      totsz = pgsz + NTHR*(szN + nsz*sizeof(float));
       vp = malloc(totsz);
       NSZP = nsz;
       assert(vp);
@@ -41536,7 +41542,7 @@ int main(int nargs, char **args)
    exit(0);
    @ENDSKIP
    nsz = NSZP;
-   ATL_runThreads(ATL_NTHREADS, doWork, NULL);
+   ATL_runThreads(NTHR, doWork, NULL);
    if (SZINC)
    {
       ulong i, sz=SZ0;
@@ -41545,7 +41551,7 @@ int main(int nargs, char **args)
          int j;
          sz = (i != nsz-1) ? sz : SZN;
          printf("%6lu ", (unsigned long)(sz>>KSH));
-         for (j=0; j < ATL_NTHREADS; j++)
+         for (j=0; j < NTHR; j++)
                printf(" %.2e", SZTIMES[i+j*nsz]/sz);
          printf("\n");
       }
@@ -41558,12 +41564,12 @@ int main(int nargs, char **args)
       {
          int j;
          printf("%6lu ", (unsigned long)(sz>>KSH));
-         for (j=0; j < ATL_NTHREADS; j++)
+         for (j=0; j < NTHR; j++)
                printf(" %.2e", SZTIMES[i+j*nsz]);
          printf("\n");
       }
       printf("varien:");
-      for (i=0; i < ATL_NTHREADS; i++)
+      for (i=0; i < NTHR; i++)
          printf(" %.2e", SZTIMES[nsz-1+i*nsz]);
    }
    printf("\n");
@@ -41575,35 +41581,35 @@ int main(int nargs, char **args)
       if (!SZINC)
       {
          int j;
-         fprintf(fp, "%u %lu\n", ATL_NTHREADS, nsz);
+         fprintf(fp, "%u %lu\n", NTHR, nsz);
          fprintf(fp, "%lu\n", SZ0);
          for (sz=SZN; sz >= SZ0; sz >>= 1)
             fprintf(fp, "%lu\n", sz);
          fprintf(fp, "\n");
-         for (j=0; j < ATL_NTHREADS; j++, f += nsz)
+         for (j=0; j < NTHR; j++, f += nsz)
          {
             int i;
             fprintf(fp, "%e\n", f[nsz-1]);
             for (i=0; i < nsz-1; i++)
                fprintf(fp, "%e\n", f[i]);
-            if (j != ATL_NTHREADS-1)
+            if (j != NTHR-1)
                fprintf(fp, "\n");
          }
       }
       else
       {
          int j;
-         fprintf(fp, "%u %lu\n", ATL_NTHREADS, nsz);
+         fprintf(fp, "%u %lu\n", NTHR, nsz);
          fprintf(fp, "%lu\n", SZ0);
          for (j=0; j < nsz; j++)
             fprintf(fp, "%lu\n", (j != nsz-1) ? (SZ0+j*SZINC) : SZN);
          fprintf(fp, "\n");
-         for (j=0; j < ATL_NTHREADS; j++, f += nsz)
+         for (j=0; j < NTHR; j++, f += nsz)
          {
             int i;
             for (i=0; i < nsz; i++)
                fprintf(fp, "%e\n", f[i]);
-            if (j != ATL_NTHREADS-1)
+            if (j != NTHR-1)
                fprintf(fp, "\n");
          }
       }
