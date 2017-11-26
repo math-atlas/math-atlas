@@ -283,3 +283,150 @@ RET_LOOP_FLOPS:
    mov r0, #@(nacc)*2   /* (nacc)*(fmac) */
    bx lr
 .size ATL_asmdecor(fpuStress),.-ATL_asmdecor(fpuStress)
+@ISA VSX POWER
+#define Mjoin(pre, nam) my_join(pre, nam)
+#define my_join(pre, nam) pre ## nam
+@iexp ac 0
+@iwhile ac < nacc
+@ISA VSX   `   #define acc@(ac) v@(ac)`
+@ISA POWER `   #define acc@(ac) f@(ac)`
+   @iexp ac @(ac) 1 +
+@endiwhile
+@iexp nz @(ac)
+@ISA VSX   `   #define zero v@(ac)`
+@ISA POWER `   #define zero f@(ac)`
+   #define nrep r3
+@ISA POWER
+#define FOFF 16           /* need space to store zero & caller's r1 */
+#define FSIZE (FOFF+18*8)
+@ISA VSX
+#define ISZ 0        /* not save/restoring any iregs */
+#define FSZ 6*8      /* saving f14-19, f20-31 overlapped with v regs */
+#define VSZ 12*16    /* saving v[20-31] 16-byte vregs, overlapped wt f20-31 */
+#define LSZ 0        /* don't need any local area */
+#define MSZ 32       /* mandatory 32 bytes for stack frame tail */
+#define VOFF (MSZ+LSZ)
+#define FOFF (VOFF+VSZ)
+#define IOFF (FOFF+FSZ)
+#define FSIZE (MSZ+LSZ+VSZ+FSZ+ISZ)
+@ISA POWER VSX
+/* 
+ * r3                                     r3          r4
+ * unsigned long fpuStress(unsigned long nrep, double *d);
+ */
+.text
+.local LOOP
+.local RET_LOOP_FLOPS
+.globl ATL_asmdecor(fpuStress)
+.type   ATL_asmdecor(fpuStress), %function
+ATL_asmdecor(fpuStress):
+   cmpdi nrep, 0
+   ble- RET_LOOP_FLOPS
+   stdu r1, -FSIZE(r1)   /* allocate stack & store old stack ptr */
+@ISA POWER
+   #ifdef SREAL
+      #define fmadd fmadds
+   #endif
+/*
+ * Store callee-saved f14-f31
+ */
+   @iexp off 0
+   @iexp ac 14
+   @iwhile ac < 32
+   stfd f@(ac) FOFF+@(off)(r1)
+      @iexp ac @(ac) 1 +
+      @iexp off @(off) 8 +
+   @endiwhile
+   xor r4, r4, r4
+   std r4, 8(r1)
+   lfd zero, 8(r1)
+   @iexp ac 0
+   @iwhile ac < nacc
+      fmr acc@(ac), zero
+      @iexp ac @(ac) 1 +
+   @endiwhile
+@ISA VSX
+   std r2, 24(r1)        /* TOC reg always at 24(sp) */
+/*
+ * Store all callee-saved fpregs so all calls pay same cost: v20-v31,f14-f31
+ * Need to save f[14-19], then f[20-31] handled by save of v of same #
+ */
+   addi r4, r1, VOFF
+   @iexp ac 20
+   @iwhile ac < 32
+   stvebx v@(ac), r0, r4
+   addi r4, r4, 16
+      @iexp ac @(ac) 1 +
+   @endiwhile
+   @iexp off 0
+   @iexp ac 14
+   @iwhile ac < 20
+   stfd f@(ac) FOFF+@(off)(r1)
+      @iexp ac @(ac) 1 +
+      @iexp off @(off) 8 +
+   @endiwhile
+
+   xxlxor zero, zero, zero
+   @iexp ac 0
+   @iwhile ac < nacc
+      xxlxor acc@(ac), acc@(ac), acc@(ac)
+      @iexp ac @(ac) 1 +
+   @endiwhile
+
+@ISA VSX POWER
+   LOOP:
+   @iexp ac 0
+   @iwhile ac < nacc
+@ISA VSX
+      #if SREAL
+         xvmaddadp acc@(ac), zero, zero, acc@(ac)
+      #else
+         xvmaddadp acc@(ac), zero, zero
+      #endif
+@ISA POWER
+      fmadd acc@(ac), zero, zero, acc@(ac)
+@ISA POWER VSX
+      @iexp ac @(ac) 1 +
+   @endiwhile
+      addic. nrep, nrep, -1
+   bne+ LOOP
+/*
+ * Restore callee-saved fpregs
+ */
+@ISA POWER
+   @iexp off 0
+   @iexp ac 14
+   @iwhile ac < 32
+   lfd  f@(ac) FOFF+@(off)(r1)
+      @iexp ac @(ac) 1 +
+      @iexp off @(off) 8 +
+   @endiwhile
+@ISA VSX
+   ld r2, 24(r1)
+   addi r4, r1, VOFF
+   @iexp ac 20
+   @iwhile ac < 32
+   lvebx v@(ac), r0, r4
+   addi r4, r4, 16
+      @iexp ac @(ac) 1 +
+   @endiwhile
+   @iexp off 0
+   @iexp ac 14
+   @iwhile ac < 20
+   lfd  f@(ac) FOFF+@(off)(r1)
+      @iexp ac @(ac) 1 +
+      @iexp off @(off) 8 +
+   @endiwhile
+@ISA POWER VSX
+   addi r1, r1, FSIZE
+   blr
+/*
+ * Just return flop count for 1 loop iteration
+ */
+RET_LOOP_FLOPS:
+   #ifdef SREAL
+      mov x0, @(nacc)*2*4   /* (nacc)*(fmac)*(vlen) */
+   #else
+      mov x0, @(nacc)*2*2   /* (nacc)*(fmac)*(vlen) */
+   #endif
+   blr
