@@ -647,6 +647,10 @@ double Mjoin(PATL,ipsyrkInfo) /* returns predicted time */
 int Mjoin(PATL,opsyrkInfo)
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
     ATL_CSZT lda, ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta);
+int Mjoin(PATL,opsyr2kInfo)
+   (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
+    ATL_CSZT lda, ATL_CSZT ldb, TL_CSZT ldc, 
+    const SCALAR alpha, const SCALAR beta);
 @whiledef vw ipgen ipmen
 void Mjoin(PATL,@(vw)InfoPop)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
@@ -39582,14 +39586,14 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
 @ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@`
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
 #include "atlas_amm.h"
 @ROUT ATL_ipinfo ATL_ipmeninfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #define  ATL_DECL_ 1
 #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
 #undef ATL_DECL_
-@ROUT ATL_opsyrkInfo
+@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
 #define ATL_WANT_ILCM
 #include "atlas_iopt.h"
 @ROUT ATL_opinfo
@@ -39602,13 +39606,13 @@ int main(int nargs, char **args)
 #ifndef TREAL
    #define  ATL_DECL_ 1
 #endif
-@ROUT ATL_opinfo ATL_opsyrkInfo
+@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
-@ROUT ATL_opsyrkInfo
+@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
 @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
 @endwhile
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
 @whiledef al 1 N X
    @whiledef ta N T
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
@@ -39622,7 +39626,7 @@ int main(int nargs, char **args)
    @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a@(al)b@(be).h))
    @endwhile
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
 
 @endwhile
 @ROUT ATL_opinfo
@@ -39893,6 +39897,14 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       *cp = (SCALAR_IS_ZERO(beta)) ? 
             ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
 }
+
+@ROUT ATL_opsyrkInfo
+int Mjoin(PATL,opsyr2kInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
+   (opinfo_t *out, int flag, enum ATLAS_TRANS TA,
+    ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldc,
+    const SCALAR alpha, const SCALAR beta)
+/*
+ * RETURNS: 0 if opsyr2k can do this, problem, non-zero if it can't.
 @ROUT ATL_opsyrkInfo
 
 int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
@@ -39901,6 +39913,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
     const SCALAR alpha, const SCALAR beta)
 /*
  * RETURNS: 0 if opsyrk can do this, problem, non-zero if it can't.
+@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
  *          If non-zero is returned, out may not be fully populated.
  */
 {
@@ -39937,19 +39950,19 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    if (MB != NB)   /* need to make square */
    {
       int U;
-      U = ATL_iLCM(mu, nu);
+      U = ATL_iLCM(mu, nu);  /* square NB must be multiple of U */
       if (N < U)
         return(2);
-      NB = (MB+NB)>>1;
+      NB = (MB+NB)>>1;       /* average B keeps cache usage similar */
       NB = Mmin(NB, N);
-      if (NB <= N)
+      if (NB <= U)
          NB = U;
       else if (NB >= 3*U)
          NB = (NB/U)*U;
       else
          NB = ((NB+U-1)/U)*U;
    }
-   if (N > NB)
+   if (N > NB)  /* if we have more than 1 block, set everything up */
    {
       nb = NB;
       nfnblks = N / NB;
@@ -39961,7 +39974,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       pnb = pnnu * nu;
       npnblks = (pnb) ? 1 : 0;
    }
-   else
+   else   /* else only one, perhaps partial, block */
    {
       npnblks = 1;
       pnnu = nnu = (N+nu-1)/nu;
