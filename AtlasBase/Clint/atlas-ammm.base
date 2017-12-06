@@ -33350,6 +33350,112 @@ void syrk_rec
 #if defined(Conj_) || defined(TREAL)
    #undef ONE
 #endif
+@ROUT ATL_syr2k_OP
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2017
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+#include "atlas_level2.h"
+#include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
+#ifdef Conj_
+   #define syrkBlk Mjoin(PATL,herkBlk_OP)
+   #define syrk_OP Mjoin(PATL,herk_OP)
+#else
+   #define syrkBlk Mjoin(PATL,syrkBlk_OP)
+   #define syrk_OP Mjoin(PATL,syrk_OP)
+#endif
+
+int syrk_OP
+(
+   const enum ATLAS_UPLO  Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CSZT  N,
+   ATL_CSZT K,
+   #ifdef Conj_
+   const TYPE ralpha,
+   #else
+   const SCALAR alpha,
+   #endif
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   #ifdef Conj_
+   const TYPE rbeta,
+      #define IFLG 1
+   #else
+      #define IFLG 0
+   const SCALAR beta,
+   #endif
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   void *vp=NULL;
+   ATL_SZT szC, szA, szB, sz, j;
+   unsigned int mb, nb, KB;
+   TYPE *aC, *bC;  /* access- and block-major C */
+   TYPE *aA, *aB;  /* access-major A & B */
+   void (*syput)(const int N, cont TYPE *D, const SCALAR beta0, TYPE *A, 
+                 const int lda);
+   #ifdef TCPLX
+      TYPE *aCr;
+      const TYPE ZERO[2] = {ATL_rzero, ATL_rzero};
+   #else
+      #define ZERO ATL_rzero
+      #define aCr aC
+   #endif
+   if (Mjoin(PATL,opsyrkInfo)(&op, 1, TA, N, K, lda, ldb, ldc, alpha, beta))
+      return(2);
+   KB = op.KB;
+   #ifdef TCPLX
+   #else
+      if (beta == 1.0)
+         syput = (Uplo == AtlasUpper) ? 
+                 Mjoin(PATL,syr2k_putL_b1):Mjoin(PATL,syr2k_putU_b1);
+      else if (beta == 0.0);
+         syput = (Uplo == AtlasUpper) ? 
+                 Mjoin(PATL,syr2k_putL_b0):Mjoin(PATL,syr2k_putU_b0);
+      else
+         syput = (Uplo == AtlasUpper) ? 
+                 Mjoin(PATL,syr2k_putL_bX):Mjoin(PATL,syr2k_putU_bX);
+   #endif
+   if (op.nfmblks) 
+   {
+      mb = nb = op.nb;
+   }
+   else
+   {
+      mb = op.pmb;
+      nb = op.pnb;
+   }
+   szC = mb*nb;    /* need 1 access-major & 1 block-major C workspace */
+   szB = nb*KB;    /* need only 1 block for B */
+   szA += (op.nfmblks*op.mb + op.npmblks*op.pmb)*KB;  /* need entire A! */
+   sz = ATL_MulBySize(szA+szB+szC+szC+szC) + 3*ATL_Cachelen;
+   if (sz <= ATL_MaxMalloc)
+      vp = malloc(sz);
+   if (!vp)
+      return(1);
+   bC = ATL_AlignPtr(vp);
+   aC = bC + (szC SHIFT);
+   aC = ATL_AlignPtr(aC);
+   aB = aC + (szC SHIFT);
+   aB = ATL_AlignPtr(aB);
+   aA = aB + (szB SHIFT);
+   aA = ATL_AlignPtr(aA);
+   sz = mb*KB;
+   if (Uplo == AtlasLower)
+   {
+      TYPE *an = aA + sz;
+/*
+ *    Need to copy both A & B for first column panel of C
+ */
+      Mjoin(PATL,opblk)(op, 0, 0, A, B, NULL, aA, an, aB, aB, aC, aCr);
+      blk2C_b0(mb, nb, op->ONE, aC, ZERO, bC, mb);
+      syput(Mmin(mb,nb), D, beta, C, ldc);
+   }
+   free(vp);
+}
 @ROUT ATL_syrk_OP
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #include "atlas_misc.h"
@@ -39962,15 +40068,22 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       else
          NB = ((NB+U-1)/U)*U;
    }
+@ROUT ATL_opsyr2kInfo
+   #if defined(LLPC_SZ) && LLPC_SZ > 0 && LLPC_SZ > L1C_SZ
+   while (ATL_MulBySize(3*NB*NB+2*NB*K) > LLPC_SZ)
+      NB -= U;
+   #endif
+@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
    if (N > NB)  /* if we have more than 1 block, set everything up */
    {
-      nb = NB;
+      mb = nb = NB;
       nfnblks = N / NB;
       nmu = NB / mu;
       nnu = NB / nu;
       out->mF = out->nF = pnb = N - nfnblks*NB;
       pnmu = (pnb+mu-1)/mu;
       pnnu = (pnb+nu-1)/nu;
+      pmb = pnmu * mu;
       pnb = pnnu * nu;
       npnblks = (pnb) ? 1 : 0;
    }
@@ -39980,6 +40093,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       pnnu = nnu = (N+nu-1)/nu;
       pnmu = nmu = (N+mu-1)/mu;
       pnb = nb = nnu * nu;
+      pmb = mb = pnmu * mu;
       nfnblks = 0;
       out->mF = out->nF = N;
    }
@@ -39988,8 +40102,10 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
 
    out->nfmblks = out->nfnblks = nfnblks;
    out->npmblks = out->npnblks = npnblks;
-   out->mb = out->nb = nb;
-   out->pmb = out->pnb = pnb;
+   out->mb = mb;
+   out->nb = nb;
+   out->pmb = pmb;
+   out->pnb = pnb;
    out->mu = mu;
    out->nu = nu;
    out->ku = ku;
@@ -40037,8 +40153,8 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
             *cp = (SCALAR_IS_ONE(alpha))? ATL_CpyFromATg_a1[icpB]
                                          :ATL_CpyFromATg_aX[icpB];
       #endif
-      out->incAm  = nb SHIFT;
-      out->pincAm = pnb SHIFT;
+      out->incAm  = mb SHIFT;
+      out->pincAm = pmb SHIFT;
       out->incBn  = nb SHIFT;
       out->pincBn = pnb SHIFT;
    }
@@ -40055,8 +40171,8 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       else
          *cp = (SCALAR_IS_ONE(alpha)) ?  ATL_CpyFromANg_a1[icpB]
                                        : ATL_CpyFromANg_aX[icpB];
-      out->incAm = lda*(nb SHIFT);
-      out->pincAm = lda*(pnb SHIFT);
+      out->incAm = lda*(mb SHIFT);
+      out->pincAm = lda*(pmb SHIFT);
       out->incBn = lda*(nb SHIFT);
       out->pincBn = lda*(pnb SHIFT);
    }
