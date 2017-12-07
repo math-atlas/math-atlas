@@ -649,7 +649,7 @@ int Mjoin(PATL,opsyrkInfo)
     ATL_CSZT lda, ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta);
 int Mjoin(PATL,opsyr2kInfo)
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
-    ATL_CSZT lda, ATL_CSZT ldb, TL_CSZT ldc, 
+    ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc, 
     const SCALAR alpha, const SCALAR beta);
 @whiledef vw ipgen ipmen
 void Mjoin(PATL,@(vw)InfoPop)
@@ -33355,6 +33355,7 @@ void syrk_rec
 #include "atlas_misc.h"
 #include "atlas_level1.h"
 #include "atlas_level2.h"
+#include "atlas_kernel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #ifdef Conj_
    #define syrkBlk Mjoin(PATL,herkBlk_OP)
@@ -33391,7 +33392,8 @@ int syrk_OP
 )
 {
    void *vp=NULL;
-   ATL_SZT szC, szA, szB, sz, j;
+   ATL_SZT sz, szA, szB, nfnblks;
+   unsigned int szC;
    unsigned int mb, nb, KB;
    TYPE *aC, *bC;  /* access- and block-major C */
    TYPE *aA, *aB;  /* access-major A & B */
@@ -33399,9 +33401,10 @@ int syrk_OP
                  const int lda);
    #ifdef TCPLX
       TYPE *aCr;
-      const TYPE ZERO[2] = {ATL_rzero, ATL_rzero};
+      const TYPE ZERO[2] = {ATL_rzero, ATL_rzero}, *ONE=op->ONE;
    #else
       #define ZERO ATL_rzero
+      #define ONE ATL_rone;
       #define aCr aC
    #endif
    if (Mjoin(PATL,opsyrkInfo)(&op, 1, TA, N, K, lda, ldb, ldc, alpha, beta))
@@ -33419,7 +33422,8 @@ int syrk_OP
          syput = (Uplo == AtlasUpper) ? 
                  Mjoin(PATL,syr2k_putL_bX):Mjoin(PATL,syr2k_putU_bX);
    #endif
-   if (op.nfmblks) 
+   nfnblks = op.nfnblks;
+   if (nfnblks) 
    {
       mb = nb = op.nb;
    }
@@ -33428,10 +33432,13 @@ int syrk_OP
       mb = op.pmb;
       nb = op.pnb;
    }
+/*
+ * This algorithm requires allocating all of A & B + 2 blks for C 
+ */
    szC = mb*nb;    /* need 1 access-major & 1 block-major C workspace */
-   szB = nb*KB;    /* need only 1 block for B */
-   szA += (op.nfmblks*op.mb + op.npmblks*op.pmb)*KB;  /* need entire A! */
-   sz = ATL_MulBySize(szA+szB+szC+szC+szC) + 3*ATL_Cachelen;
+   szA = mb*nfnblks + op.npnblks*op.pmb*KB;
+   szB = nb*nfnblks + op.npnblks*op.pnb*KB;
+   sz = ATL_MulBySize(szA+szB+(szC<<1)+szC) + 3*ATL_Cachelen;
    if (sz <= ATL_MaxMalloc)
       vp = malloc(sz);
    if (!vp)
@@ -33439,21 +33446,50 @@ int syrk_OP
    bC = ATL_AlignPtr(vp);
    aC = bC + (szC SHIFT);
    aC = ATL_AlignPtr(aC);
-   aB = aC + (szC SHIFT);
-   aB = ATL_AlignPtr(aB);
-   aA = aB + (szB SHIFT);
+   aA = aC + (szC SHIFT);
    aA = ATL_AlignPtr(aA);
-   sz = mb*KB;
+   aB = aA + (szA SHIFT);
+   aB = ATL_AlignPtr(aB);
+   szB = nb*KB;    /* increment between normal B blks */
+   szA = mb*KB;    /* increment between normal A blks */
    if (Uplo == AtlasLower)
    {
-      TYPE *an = aA + sz;
+      ATL_SZT i;
+      TYPE *an=aA+szA, *wA=aA, *wB=aB, *bn=aB+szB;
 /*
  *    Need to copy both A & B for first column panel of C
  */
       Mjoin(PATL,opblk)(op, 0, 0, A, B, NULL, aA, an, aB, aB, aC, aCr);
-      blk2C_b0(mb, nb, op->ONE, aC, ZERO, bC, mb);
+      if (!nfnblks)
+      {
+         mb = op.mF;
+         nb = op.nF;
+      }
+      blk2C_b0(mb, nb, ONE, aC, ZERO, bC, mb);
       syput(Mmin(mb,nb), D, beta, C, ldc);
+      wA = an;
+      wB = bn;
+      for (i=1; i < nfnblks; i++)
+      {
+         an = wA + szA;
+         bn = wB + szB;
+         Mjoin(PATL,opblk)(op, i, 0, A, NULL, NULL, wA, an, aB, aB, aC, aCr);
+         blk2C_b0(nb, nb, ONE, aC, ZERO, bC, nb);
+         Mjoin(PATL,sqtrans)(nb, bC, nb);
+         /* Need hermition transpose for HER2K! */
+         Mjoin(PATL,opblk)(op, 0, i, NULL, B, NULL, aA, an, wB, bn, aC, aCr);
+         blk2C_b1(nb, nb, ONE, aC, ONE, bC, nb);
+         Mjoin(PATL,geadd)(nb, nb, ONE, bC, nb, beta, pC, ldc);
+         wA = an;
+         wB = bn;
+      }
+      if (nfnblks && op.npnblks)  /* is there a partial block at end */
+      {
+         ATL_assert(0);  /* not handled until above debugged */
+      }
    }
+   else
+      return(4);  /* Upper not yet supported */
    free(vp);
 }
 @ROUT ATL_syrk_OP
@@ -40038,7 +40074,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       #define CONE ATL_rone
    #endif
 
-   if (iv < ATL_VWopgen_NCASES)
+   if (iv >= ATL_VWopgen_NCASES)
       return(1);
    ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
    ATL_assert(imm < ATL_AMM_NCASES);
