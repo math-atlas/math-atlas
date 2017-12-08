@@ -11261,8 +11261,13 @@ static int NSAMP=1;
       Mjoin(AP4, trsm)(SI, UP, TA, DI, M, N, al, A, lA, B, lB)
    #define test_trmm(SI, UP, TA, DI, M, N, al, A, lA, B, lB) \
       Mjoin( AP4, trmm  )(SI, UP, TA, DI, M, N, al, A, lA, B, lB)
-   #define test_syr2k(UP, TA, N, K, al, A, lA, B, lB, be, C, lC) \
-      Mjoin( AP4, syr2k )(UP, TA, N, K, al, A, lA, B, lB, be, C, lC)
+   #if defined(AMSYRK)
+      #define test_syr2k(UP, TA, N, K, al, A, lA, B, lB, be, C, lC) \
+         Mjoin(ATL,syr2k_OP)(UP, TA, N, K, al, A, lA, B, lB, be, C, lC)
+   #else
+      #define test_syr2k(UP, TA, N, K, al, A, lA, B, lB, be, C, lC) \
+         Mjoin( AP4, syr2k )(UP, TA, N, K, al, A, lA, B, lB, be, C, lC)
+   #endif
    #define test_symm(SI, UP, M, N, al, A, lA, B, lB, be, C, lC) \
       Mjoin(AP4,symm)(SI, UP, M, N, al, A, lA, B, lB, be, C, lC)
    #if defined(AMSYRK)
@@ -12027,6 +12032,7 @@ TYPE syr2ktst
    TYPE                       normA, normB, normC, normD, resid;
    TYPE                       * A = NULL, * B = NULL, * C = NULL, * C0,
                               * a, * b, * c; 
+@ROUT l3blastst `   ATL_BV_t *errBV=NULL;`
    int                        mAB, nAB, Aseed, Bseed, Cseed;
    enum ATLAS_TRANS           ta;
    const int DOFLUSH=(ATL_MulBySize((size_t)N*N + (size_t)N*K*2)
@@ -12186,6 +12192,18 @@ TYPE syr2ktst
    normB = Mjoin( PATL, genrm1 )( mAB, nAB, B, LDB );
    if( normB == ATL_rzero ) normB = ATL_rone;
    free( B  );
+   if (N < 80)
+   {
+      #ifdef TREAL
+         double ferr= 2.0 * (Mabs(ALPHA) * 2.0*(K+N)*EPSILON + 
+                      Mabs(BETA) * EPSILON) + EPSILON;
+      #else
+         double ferr = Mabs(*ALPHA) + Mabs(ALPHA[1]);
+         ferr = 2.0 * (ferr*8.0*(K+N)*EPSILON + 
+                (Mabs(*BETA)+Mabs(BETA[1]))*EPSILON) + EPSILON;
+      #endif
+      errBV = Mjoin(PATL,trcmpBV)(0, ferr+ferr, UPLO, N, N, C0, LDC, C, LDC);
+   }
 /*
  * Ensure the difference of the output operands is relatively tiny enough
  */
@@ -12202,6 +12220,12 @@ TYPE syr2ktst
       Mjoin( PATL, geprint )( "C_trusted", N, N, C0, LDC );
       Mjoin( PATL, geprint )( "C_test",    N, N, C,  LDC );
 #endif
+   }
+   if (errBV)
+   {
+      if (ATL_FindFirstSetBitBV(errBV, 0) != -1)
+         ATL_print2dBV(N, N, errBV);
+      ATL_FreeBV(errBV);
    }
 
    free( C  );
@@ -12392,7 +12416,7 @@ TYPE syrktst
          ferr = 2.0 * (ferr*8.0*(K+N)*EPSILON + 
                 (Mabs(*BETA)+Mabs(BETA[1]))*EPSILON) + EPSILON;
       #endif
-      errBV = Mjoin(PATL,cmpmatBV)(0, ferr, N, N, C0, LDC, C, LDC);
+      errBV = Mjoin(PATL,trcmpBV)(0, ferr, UPLO, N, N, C0, LDC, C, LDC);
    }
 #ifdef TREAL
    if( Mabs1( ALPHA ) > ATL_rone ) normA *= Mabs1( ALPHA );

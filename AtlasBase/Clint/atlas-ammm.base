@@ -33350,22 +33350,23 @@ void syrk_rec
 #if defined(Conj_) || defined(TREAL)
    #undef ONE
 #endif
-@ROUT ATL_syr2k_OP
+@ROUT ATL_opsyr2k
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2017
 #include "atlas_misc.h"
+#include "atlas_amm.h"
 #include "atlas_level1.h"
 #include "atlas_level2.h"
 #include "atlas_kernel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #ifdef Conj_
-   #define syrkBlk Mjoin(PATL,herkBlk_OP)
-   #define syrk_OP Mjoin(PATL,herk_OP)
+   #define syr2kBlk Mjoin(PATL,her2kBlk_OP)
+   #define syr2k_OP Mjoin(PATL,opher2k)
 #else
-   #define syrkBlk Mjoin(PATL,syrkBlk_OP)
-   #define syrk_OP Mjoin(PATL,syrk_OP)
+   #define syr2kBlk Mjoin(PATL,syr2kBlk_OP)
+   #define syr2k_OP Mjoin(PATL,opsyr2k)
 #endif
 
-int syrk_OP
+int syr2k_OP
 (
    const enum ATLAS_UPLO  Uplo,
    const enum ATLAS_TRANS TA,
@@ -33398,33 +33399,36 @@ int syrk_OP
    unsigned int mb, nb, KB;
    TYPE *aC, *bC;  /* access- and block-major C */
    TYPE *aA, *aB;  /* access-major A & B */
-   void (*syput)(const int N, cont TYPE *D, const SCALAR beta0, TYPE *A, 
-                 const int lda);
+   void (*syput)(const int N, const TYPE *D, const SCALAR beta0, TYPE *A, 
+                 ATL_CSZT lda);
    #ifdef TCPLX
       TYPE *aCr;
-      const TYPE ZERO[2] = {ATL_rzero, ATL_rzero}, *ONE=op->ONE;
+      const TYPE ZERO[2] = {ATL_rzero, ATL_rzero}, *ONE;
    #else
       #define ZERO ATL_rzero
-      #define ONE ATL_rone;
+      #define ONE ATL_rone
       #define aCr aC
    #endif
+   opinfo_t op;
+
    blk2C_b0 = Mjoin(PATL,opsyr2kInfo)(&op, 1, TA, N, K, lda, ldb, ldc, 
-                                      alpha, beta))
+                                      alpha, beta);
    if (!blk2C_b0)
       return(2);
    blk2C_b1 = op.blk2C;
    KB = op.KB;
    #ifdef TCPLX
+      ONE = op.ONE;
    #else
       if (beta == 1.0)
-         syput = (Uplo == AtlasUpper) ? 
-                 Mjoin(PATL,syr2k_putL_b1):Mjoin(PATL,syr2k_putU_b1);
-      else if (beta == 0.0);
-         syput = (Uplo == AtlasUpper) ? 
-                 Mjoin(PATL,syr2k_putL_b0):Mjoin(PATL,syr2k_putU_b0);
+         syput = ((Uplo == AtlasUpper) ? 
+                  Mjoin(PATL,syr2k_putL_b1):Mjoin(PATL,syr2k_putU_b1));
+      else if (beta == 0.0)
+         syput = ((Uplo == AtlasUpper) ? 
+                  Mjoin(PATL,syr2k_putL_b0):Mjoin(PATL,syr2k_putU_b0));
       else
-         syput = (Uplo == AtlasUpper) ? 
-                 Mjoin(PATL,syr2k_putL_bX):Mjoin(PATL,syr2k_putU_bX);
+         syput = ((Uplo == AtlasUpper) ? 
+                  Mjoin(PATL,syr2k_putL_bX):Mjoin(PATL,syr2k_putU_bX));
    #endif
    nfnblks = op.nfnblks;
    if (nfnblks) 
@@ -33463,16 +33467,21 @@ int syrk_OP
 /*
  *    Need to copy both A & B for first column panel of C
  */
-      Mjoin(PATL,opblk)(op, 0, 0, A, B, NULL, aA, an, aB, aB, aC, aCr);
+      Mjoin(PATL,opblk)(&op, 0, 0, A, B, NULL, aA, an, aB, aB, aC, aCr);
       if (!nfnblks)
       {
          mb = op.mF;
          nb = op.nF;
       }
-      blk2C_b0(mb, nb, ONE, aC, ZERO, bC, mb);
-      syput(Mmin(mb,nb), D, beta, C, ldc);
+      nb = Mmin(mb, nb);
+      #ifdef TCPLX
+      #else
+         blk2C_b0(nb, nb, ONE, aC, ZERO, bC, nb);
+      #endif
+      syput(nb, bC, beta, C, ldc);
       wA = an;
       wB = bn;
+      #if 0
       for (i=1; i < nfnblks; i++)
       {
          an = wA + szA;
@@ -33487,6 +33496,7 @@ int syrk_OP
          wA = an;
          wB = bn;
       }
+      #endif
       if (nfnblks && op.npnblks)  /* is there a partial block at end */
       {
          ATL_assert(0);  /* not handled until above debugged */
@@ -39746,7 +39756,7 @@ int main(int nargs, char **args)
 #ifdef TREAL
    #define  ATL_DECL_ 1
 #endif
-@ROUT ATL_opinfo ATL_opsyrkInfo
+@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 @ROUT ATL_opinfo
 #ifndef TREAL
@@ -40051,7 +40061,7 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
 @ROUT ATL_opsyr2kInfo
 ablk2cmat_t Mjoin(PATL,opsyr2kInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA,
-    ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldc,
+    ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc,
     const SCALAR alpha, const SCALAR beta)
 /*
  * RETURNS: If syr2k_OP can do this problem, C2blk_b0, else NULL
@@ -40105,7 +40115,8 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       int U;
       U = ATL_iLCM(mu, nu);  /* square NB must be multiple of U */
       if (N < U)
-        return(2);
+@ROUT ATL_opsyr2kInfo `        return(NULL);`
+@ROUT ATL_opsyrkInfo `        return(2);`
       NB = (MB+NB)>>1;       /* average B keeps cache usage similar */
       NB = Mmin(NB, N);
       if (NB <= U)
@@ -40116,11 +40127,15 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
          NB = ((NB+U-1)/U)*U;
    }
 @ROUT ATL_opsyr2kInfo
+   {
+      int U;
+      U = ATL_iLCM(mu, nu);  /* square NB must be multiple of U */
    #if defined(LLPC_SZ) && LLPC_SZ > 0 && LLPC_SZ > L1C_SZ
    while (ATL_MulBySize(3*NB*NB+2*NB*K) > LLPC_SZ)
       NB -= U;
    #endif
    NB = ((N+U-1)/U)*U;  /* temp so we can debug diag only */
+   }
 @ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
    if (N > NB)  /* if we have more than 1 block, set everything up */
    {
@@ -40158,7 +40173,12 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->nu = nu;
    out->ku = ku;
    out->vlen = vlen;
+@ROUT ATL_opsyrkInfo
    out->ldb = out->lda = lda;
+@ROUT ATL_opsyr2kInfo
+   out->lda = lda;
+   out->ldb = ldb;
+@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
    out->ldc = ldc;
 
    out->nmu = nmu;
