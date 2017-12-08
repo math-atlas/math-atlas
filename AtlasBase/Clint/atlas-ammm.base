@@ -647,7 +647,7 @@ double Mjoin(PATL,ipsyrkInfo) /* returns predicted time */
 int Mjoin(PATL,opsyrkInfo)
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
     ATL_CSZT lda, ATL_CSZT ldc, const SCALAR alpha, const SCALAR beta);
-int Mjoin(PATL,opsyr2kInfo)
+ablk2cmat_t Mjoin(PATL,opsyr2kInfo)
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
     ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc, 
     const SCALAR alpha, const SCALAR beta);
@@ -33392,6 +33392,7 @@ int syrk_OP
 )
 {
    void *vp=NULL;
+   ablk2cmat_t blk2C_b0, blk2C_b1;
    ATL_SZT sz, szA, szB, nfnblks;
    unsigned int szC;
    unsigned int mb, nb, KB;
@@ -33407,8 +33408,11 @@ int syrk_OP
       #define ONE ATL_rone;
       #define aCr aC
    #endif
-   if (Mjoin(PATL,opsyrkInfo)(&op, 1, TA, N, K, lda, ldb, ldc, alpha, beta))
+   blk2C_b0 = Mjoin(PATL,opsyr2kInfo)(&op, 1, TA, N, K, lda, ldb, ldc, 
+                                      alpha, beta))
+   if (!blk2C_b0)
       return(2);
+   blk2C_b1 = op.blk2C;
    KB = op.KB;
    #ifdef TCPLX
    #else
@@ -39750,7 +39754,11 @@ int main(int nargs, char **args)
 #endif
 @ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
-@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opsyr2kInfo
+@whiledef be 0 1
+#include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
+@endwhile
+@ROUT ATL_opsyrkInfo
 @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
 @endwhile
@@ -40041,12 +40049,14 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
 }
 
 @ROUT ATL_opsyr2kInfo
-int Mjoin(PATL,opsyr2kInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
+ablk2cmat_t Mjoin(PATL,opsyr2kInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA,
     ATL_CSZT N, ATL_CSZT K, ATL_CSZT lda, ATL_CSZT ldc,
     const SCALAR alpha, const SCALAR beta)
 /*
- * RETURNS: 0 if opsyr2k can do this, problem, non-zero if it can't.
+ * RETURNS: If syr2k_OP can do this problem, C2blk_b0, else NULL
+ *          If NULL is returned, out may not be fully populated.
+ */
 @ROUT ATL_opsyrkInfo
 
 int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
@@ -40055,9 +40065,9 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
     const SCALAR alpha, const SCALAR beta)
 /*
  * RETURNS: 0 if opsyrk can do this, problem, non-zero if it can't.
-@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
  *          If non-zero is returned, out may not be fully populated.
  */
+@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
 {
    ammkern_t amm1, amm0, ammN;
    ATL_cparr_t *cp = (ATL_cparr_t *)&out->a2blk;
@@ -40075,7 +40085,8 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    #endif
 
    if (iv >= ATL_VWopgen_NCASES)
-      return(1);
+@ROUT ATL_opsyrkInfo `      return(1);`
+@ROUT ATL_opsyr2kInfo `      return(NULL);`
    ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
    ATL_assert(imm < ATL_AMM_NCASES);
    icpA += icpA;
@@ -40109,6 +40120,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    while (ATL_MulBySize(3*NB*NB+2*NB*K) > LLPC_SZ)
       NB -= U;
    #endif
+   NB = ((N+U-1)/U)*U;  /* temp so we can debug diag only */
 @ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
    if (N > NB)  /* if we have more than 1 block, set everything up */
    {
@@ -40213,6 +40225,10 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
       out->pincBn = lda*(pnb SHIFT);
    }
    cp = (ATL_cparr_t *) &out->blk2C;
+@ROUT ATL_opsyr2kInfo
+   *cp = ATL_CpyIntoCNg_a1b1[icpC];
+   return((ablk2cmat_t)ATL_CpyIntoCNg_a1b0[icpC]);
+@ROUT ATL_opsyrkInfo
    if (SCALAR_IS_NONE(beta))
       *cp = ATL_CpyIntoCNg_a1bN[icpC];
    else if (SCALAR_IS_ONE(beta))
@@ -40220,6 +40236,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    else
       *cp = (SCALAR_IS_ZERO(beta)) ? 
             ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
+@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
 }
 @ROUT ATL_ipinfo ATL_ipmeninfo
 void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
