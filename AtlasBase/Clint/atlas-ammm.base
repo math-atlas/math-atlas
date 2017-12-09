@@ -845,7 +845,7 @@ int Mjoin(PATL,@(rt)syr2k)
 #ifdef TCPLX
 int Mjoin(PATL,@(rt)her2k)
    (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
-    const TYPE, const TYPE*, ATL_CSZT, const TYPE*, ATL_CSZT,
+    const SCALAR, const TYPE*, ATL_CSZT, const TYPE*, ATL_CSZT,
     const TYPE, TYPE*,ATL_CSZT);
 #endif
 @endwhile
@@ -33371,10 +33371,8 @@ void syrk_rec
 #include "atlas_kernel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #ifdef Conj_
-   #define syr2kBlk Mjoin(PATL,her2kBlk_OP)
    #define syr2k_OP Mjoin(PATL,opher2k)
 #else
-   #define syr2kBlk Mjoin(PATL,syr2kBlk_OP)
    #define syr2k_OP Mjoin(PATL,opsyr2k)
 #endif
 
@@ -33396,7 +33394,11 @@ static INLINE void geaddT_bX
          {
             const register TYPE rc=C[i], ic=C[i+1];
             C[i]   = *a   + rc*rb - ic*ib;
-            C[i+1] = a[1] + rc*ib + ic*rb;
+            #ifdef Conj_
+               C[i+1] = rc*ib + ic*rb - a[1];
+            #else
+               C[i+1] = a[1] + rc*ib + ic*rb;
+            #endif
          }
       }
    #else
@@ -33416,11 +33418,7 @@ int syr2k_OP
    const enum ATLAS_TRANS TA,
    ATL_CSZT  N,
    ATL_CSZT K,
-   #ifdef Conj_
-   const TYPE ralpha,
-   #else
    const SCALAR alpha,
-   #endif
    const TYPE *A,
    ATL_CSZT lda,
    const TYPE *B,
@@ -33448,6 +33446,9 @@ int syr2k_OP
    #ifdef TCPLX
       TYPE *aCr;
       const TYPE ZERO[2] = {ATL_rzero, ATL_rzero}, *ONE;
+      #ifdef Conj_
+         const TYPE beta[2]={rbeta, ATL_rzero};
+      #endif
    #else
       #define ZERO ATL_rzero
       #define ONE ATL_rone
@@ -33463,24 +33464,37 @@ int syr2k_OP
    KB = op.KB;
    #ifdef TCPLX
       ONE = op.ONE;
-      if (beta[1] == ATL_rzero) /* real beta */
-      {
-         const TYPE rb=(*beta);
-         if (rb == ATL_rone)
+      #ifdef Conj_
+         if (rbeta == ATL_rone)
             syput = ((Uplo == AtlasUpper) ? 
-                     Mjoin(PATL,syr2k_putU_b1):Mjoin(PATL,syr2k_putL_b1));
-         else if (rb == ATL_rzero)
+                     Mjoin(PATL,her2k_putU_b1):Mjoin(PATL,her2k_putL_b1));
+         else if (rbeta == ATL_rzero)
             syput = ((Uplo == AtlasUpper) ? 
-                     Mjoin(PATL,syr2k_putU_b0):Mjoin(PATL,syr2k_putL_b0));
-         else if (rb == ATL_rnone)
-            syput = ((Uplo == AtlasUpper) ? 
-                     Mjoin(PATL,syr2k_putU_bn1):Mjoin(PATL,syr2k_putL_bn1));
+                     Mjoin(PATL,her2k_putU_b0):Mjoin(PATL,her2k_putL_b0));
          else
             syput = ((Uplo == AtlasUpper) ? 
-                     Mjoin(PATL,syr2k_putU_bXi0):Mjoin(PATL,syr2k_putL_bXi0));
-      }
-      else
-         ATL_assert(0);
+                     Mjoin(PATL,her2k_putU_bXi0):Mjoin(PATL,her2k_putL_bXi0));
+      #else
+         if (beta[1] == ATL_rzero) /* real beta */
+         {
+            const TYPE rb=(*beta);
+            if (rb == ATL_rone)
+               syput = ((Uplo == AtlasUpper) ? 
+                        Mjoin(PATL,syr2k_putU_b1):Mjoin(PATL,syr2k_putL_b1));
+            else if (rb == ATL_rzero)
+               syput = ((Uplo == AtlasUpper) ? 
+                        Mjoin(PATL,syr2k_putU_b0):Mjoin(PATL,syr2k_putL_b0));
+            else if (rb == ATL_rnone)
+               syput = ((Uplo == AtlasUpper) ? 
+                        Mjoin(PATL,syr2k_putU_bn1):Mjoin(PATL,syr2k_putL_bn1));
+            else
+               syput = ((Uplo == AtlasUpper) ? 
+                       Mjoin(PATL,syr2k_putU_bXi0):Mjoin(PATL,syr2k_putL_bXi0));
+         }
+         else
+            syput = ((Uplo == AtlasUpper) ? 
+                     Mjoin(PATL,syr2k_putU_bX):Mjoin(PATL,syr2k_putL_bX));
+      #endif
    #else
       if (beta == ATL_rone)
          syput = ((Uplo == AtlasUpper) ? 
@@ -33529,7 +33543,7 @@ int syr2k_OP
    szA = (mb*KB)SHIFT;    /* increment between normal A blks */
    if (Uplo == AtlasLower)
    {
-      ATL_SZT i;
+      ATL_SZT i, j;
       TYPE *an=aA+szA, *wA=aA, *wB=aB, *bn=aB+szB, *pC;
 /*
  *    Need to copy both A & B for first column panel of C
@@ -33561,7 +33575,9 @@ int syr2k_OP
             blk2C_b0(nb, nb, ONE, aC, ZERO, bC, nb);
          #endif
          Mjoin(PATL,sqtrans)(nb, bC, nb);
-         /* Need hermition transpose for HER2K! */
+         #ifdef Conj_ /* Need hermition transpose for HER2K! */
+            Mjoin(PATLU,scal)(nb*nb, ATL_rnone, bC+1, 2);
+         #endif
          Mjoin(PATL,opblk)(&op, i, 0, A, NULL, NULL, wA, aA, aB, bn, aCr, aC);
          #ifdef TCPLX
             blk2C_b1(nb, nb, ONE, aCr, aC, ONE, bC, nb);
@@ -33571,7 +33587,7 @@ int syr2k_OP
          Mjoin(PATL,geadd)(nb, nb, ONE, bC, nb, beta, pC, ldc);
          wA = an;
          wB = bn;
-         pC += nb;
+         pC += (nb SHIFT);
       }
       if (nfnblks && op.npnblks)  /* is there a partial block at end */
       {
@@ -33584,23 +33600,18 @@ int syr2k_OP
             blk2C_b0(nb, mF, ONE, aC, ZERO, bC, nb);
          #endif
          geaddT_bX(mF, nb, bC, nb, beta, pC, ldc);
-         #if 0
-            for (j=0; j < nb; j++, pC += ldc)
-            {
-               unsigned int i;
-               const TYPE *c=bC+j;
-               for (i=0; i < mF; i++, c += nb)
-               {
-                  pC[i] = beta*pC[i] + *c;
-               }
-            }
-            pC -= ldc*nb;
-         #endif
          Mjoin(PATL,opblk)(&op, i, 0, A, NULL, NULL, wA, aA, aB, bn, aCr, aC);
          #ifdef TCPLX
+            blk2C_b1(mF, nb, ONE, aCr, aC, ONE, pC, ldc);
          #else
             blk2C_b1(mF, nb, ONE, aC, ONE, pC, ldc);
          #endif
+      }
+/*
+ *    Remaining cols just use prior-copied workspace
+ */
+      for (j=1; j < nfnblks; j++)
+      {
       }
    }
    else
@@ -40215,8 +40226,8 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    {
       int U;
       U = ATL_iLCM(mu, nu);  /* square NB must be multiple of U */
-      if (N < U)
-@ROUT ATL_opsyr2kInfo `        return(NULL);`
+@skip @ROUT ATL_opsyr2kInfo `        return(NULL);`
+@ROUT ATL_opsyrkInfo `      if (N < U)`
 @ROUT ATL_opsyrkInfo `        return(2);`
       NB = (MB+NB)>>1;       /* average B keeps cache usage similar */
       NB = Mmin(NB, N);
@@ -40294,8 +40305,15 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->idx = iv;
    out->kb = K;
    out->KB = kb;
+@ROUT ATL_opsyr2kInfo
+   out->pszA = pmb*kb;
+   out->szA = kb * mb;
+   out->pszB = pnb*kb;
+   out->szB = kb * nb;
+@ROUT ATL_opsyrkInfo
    out->pszB = out->pszA = pnb*kb;
    out->szB = out->szA = kb * nb;
+@ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
    out->alpA = out->alpB = CONE;
    out->beta = beta;
    out->alpB = alpha;
