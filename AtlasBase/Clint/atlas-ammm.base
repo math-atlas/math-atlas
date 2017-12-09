@@ -33378,6 +33378,38 @@ void syrk_rec
    #define syr2k_OP Mjoin(PATL,opsyr2k)
 #endif
 
+static INLINE void geaddT_bX
+   (ATL_CUINT M, ATL_CUINT N, const TYPE *A, ATL_CSZT lda, 
+    const SCALAR beta, TYPE *C, ATL_CSZT ldc)
+/* C = beta*C + A^T, C is MxN */
+{
+   ATL_UINT j;
+   #ifdef TCPLX
+      register TYPE rb=*beta, ib=beta[1];
+      const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+      ATL_CSZT ldc2 = ldc+ldc, M2=M+M, lda2=lda+lda;
+      for (j=0; j < N; j++, C += ldc2)
+      {
+         const TYPE *a=A+j+j;
+         ATL_UINT i;
+         for (i=0; i < M2; i += 2, a += lda2)
+         {
+            const register TYPE rc=C[i], ic=C[i+1];
+            C[i]   = *a   + rc*rb - ic*ib;
+            C[i+1] = a[1] + rc*ib + ic*rb;
+         }
+      }
+   #else
+      for (j=0; j < N; j++, C += ldc)
+      {
+         const TYPE *a=A+j;
+         ATL_UINT i;
+         for (i=0; i < M; i++, a += lda)
+            C[i] = beta*C[i] + *a;
+      }
+   #endif
+}
+
 int syr2k_OP
 (
    const enum ATLAS_UPLO  Uplo,
@@ -33423,7 +33455,7 @@ int syr2k_OP
    #endif
    opinfo_t op;
 
-   blk2C_b0 = Mjoin(PATL,opsyr2kInfo)(&op, 1, TA, N, K, lda, ldb, ldc, 
+   blk2C_b0 = Mjoin(PATL,opsyr2kInfo)(&op, IFLG, TA, N, K, lda, ldb, ldc, 
                                       alpha, beta);
    if (!blk2C_b0)
       return(2);
@@ -33431,11 +33463,29 @@ int syr2k_OP
    KB = op.KB;
    #ifdef TCPLX
       ONE = op.ONE;
+      if (beta[1] == ATL_rzero) /* real beta */
+      {
+         const TYPE rb=(*beta);
+         if (rb == ATL_rone)
+            syput = ((Uplo == AtlasUpper) ? 
+                     Mjoin(PATL,syr2k_putU_b1):Mjoin(PATL,syr2k_putL_b1));
+         else if (rb == ATL_rzero)
+            syput = ((Uplo == AtlasUpper) ? 
+                     Mjoin(PATL,syr2k_putU_b0):Mjoin(PATL,syr2k_putL_b0));
+         else if (rb == ATL_rnone)
+            syput = ((Uplo == AtlasUpper) ? 
+                     Mjoin(PATL,syr2k_putU_bn1):Mjoin(PATL,syr2k_putL_bn1));
+         else
+            syput = ((Uplo == AtlasUpper) ? 
+                     Mjoin(PATL,syr2k_putU_bXi0):Mjoin(PATL,syr2k_putL_bXi0));
+      }
+      else
+         ATL_assert(0);
    #else
-      if (beta == 1.0)
+      if (beta == ATL_rone)
          syput = ((Uplo == AtlasUpper) ? 
                   Mjoin(PATL,syr2k_putU_b1):Mjoin(PATL,syr2k_putL_b1));
-      else if (beta == 0.0)
+      else if (beta == ATL_rzero)
          syput = ((Uplo == AtlasUpper) ? 
                   Mjoin(PATL,syr2k_putU_b0):Mjoin(PATL,syr2k_putL_b0));
       else
@@ -33456,9 +33506,9 @@ int syr2k_OP
  * This algorithm requires allocating all of A & B + 2 blks for C 
  */
    szC = mb*nb;    /* need 1 access-major & 1 block-major C workspace */
-   szA = mb*nfnblks + op.npnblks*op.pmb*KB;
-   szB = nb*nfnblks + op.npnblks*op.pnb*KB;
-   sz = ATL_MulBySize(szA+szB+(szC<<1)+szC) + 3*ATL_Cachelen;
+   szA = (mb*nfnblks + op.npnblks*op.pmb)*KB;
+   szB = (nb*nfnblks + op.npnblks*op.pnb)*KB;
+   sz = ATL_MulBySize(szA+szB+szC+szC) + 3*ATL_Cachelen;
    if (sz <= ATL_MaxMalloc)
       vp = malloc(sz);
    if (!vp)
@@ -33466,20 +33516,25 @@ int syr2k_OP
    bC = ATL_AlignPtr(vp);
    aC = bC + (szC SHIFT);
    aC = ATL_AlignPtr(aC);
-   aA = aC + (szC SHIFT);
+   #ifdef TCPLX
+     aCr = aC + szC;
+     aA = aCr + szC;
+   #else
+      aA = aC + szC;
+   #endif
    aA = ATL_AlignPtr(aA);
    aB = aA + (szA SHIFT);
    aB = ATL_AlignPtr(aB);
-   szB = nb*KB;    /* increment between normal B blks */
-   szA = mb*KB;    /* increment between normal A blks */
+   szB = (nb*KB)SHIFT;    /* increment between normal B blks */
+   szA = (mb*KB)SHIFT;    /* increment between normal A blks */
    if (Uplo == AtlasLower)
    {
       ATL_SZT i;
-      TYPE *an=aA+szA, *wA=aA, *wB=aB, *bn=aB+szB;
+      TYPE *an=aA+szA, *wA=aA, *wB=aB, *bn=aB+szB, *pC;
 /*
  *    Need to copy both A & B for first column panel of C
  */
-      Mjoin(PATL,opblk)(&op, 0, 0, A, B, NULL, aA, an, aB, aB, aC, aCr);
+      Mjoin(PATL,opblk)(&op, 0, 0, A, B, NULL, aA, an, aB, aB, aCr, aC);
       if (!nfnblks)
       {
          mb = op.mF;
@@ -33487,31 +33542,65 @@ int syr2k_OP
       }
       nb = Mmin(mb, nb);
       #ifdef TCPLX
+         blk2C_b0(nb, nb, ONE, aCr, aC, ZERO, bC, nb);
       #else
          blk2C_b0(nb, nb, ONE, aC, ZERO, bC, nb);
       #endif
       syput(nb, bC, beta, C, ldc);
       wA = an;
       wB = bn;
-      #if 0
+      pC = C + (nb SHIFT);
       for (i=1; i < nfnblks; i++)
       {
          an = wA + szA;
          bn = wB + szB;
-         Mjoin(PATL,opblk)(op, i, 0, A, NULL, NULL, wA, an, aB, aB, aC, aCr);
-         blk2C_b0(nb, nb, ONE, aC, ZERO, bC, nb);
+         Mjoin(PATL,opblk)(&op, 0, i, NULL, B, NULL, aA, wA, wB, aB, aCr, aC);
+         #ifdef TCPLX
+            blk2C_b0(nb, nb, ONE, aCr, aC, ZERO, bC, nb);
+         #else
+            blk2C_b0(nb, nb, ONE, aC, ZERO, bC, nb);
+         #endif
          Mjoin(PATL,sqtrans)(nb, bC, nb);
          /* Need hermition transpose for HER2K! */
-         Mjoin(PATL,opblk)(op, 0, i, NULL, B, NULL, aA, an, wB, bn, aC, aCr);
-         blk2C_b1(nb, nb, ONE, aC, ONE, bC, nb);
+         Mjoin(PATL,opblk)(&op, i, 0, A, NULL, NULL, wA, aA, aB, bn, aCr, aC);
+         #ifdef TCPLX
+            blk2C_b1(nb, nb, ONE, aCr, aC, ONE, bC, nb);
+         #else
+            blk2C_b1(nb, nb, ONE, aC, ONE, bC, nb);
+         #endif
          Mjoin(PATL,geadd)(nb, nb, ONE, bC, nb, beta, pC, ldc);
          wA = an;
          wB = bn;
+         pC += nb;
       }
-      #endif
       if (nfnblks && op.npnblks)  /* is there a partial block at end */
       {
-         ATL_assert(0);  /* not handled until above debugged */
+         const unsigned int mF=op.mF;
+         unsigned int j;
+         Mjoin(PATL,opblk)(&op, 0, i, NULL, B, NULL, aA, wA, wB, aB, aCr, aC);
+         #ifdef TCPLX
+            blk2C_b0(nb, mF, ONE, aCr, aC, ZERO, bC, nb);
+         #else
+            blk2C_b0(nb, mF, ONE, aC, ZERO, bC, nb);
+         #endif
+         geaddT_bX(mF, nb, bC, nb, beta, pC, ldc);
+         #if 0
+            for (j=0; j < nb; j++, pC += ldc)
+            {
+               unsigned int i;
+               const TYPE *c=bC+j;
+               for (i=0; i < mF; i++, c += nb)
+               {
+                  pC[i] = beta*pC[i] + *c;
+               }
+            }
+            pC -= ldc*nb;
+         #endif
+         Mjoin(PATL,opblk)(&op, i, 0, A, NULL, NULL, wA, aA, aB, bn, aCr, aC);
+         #ifdef TCPLX
+         #else
+            blk2C_b1(mF, nb, ONE, aC, ONE, pC, ldc);
+         #endif
       }
    }
    else
@@ -40146,7 +40235,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    while (ATL_MulBySize(3*NB*NB+2*NB*K) > LLPC_SZ)
       NB -= U;
    #endif
-   NB = ((N+U-1)/U)*U;  /* temp so we can debug diag only */
+   NB = U;  /* temp so we can debug */
    }
 @ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
    if (N > NB)  /* if we have more than 1 block, set everything up */
