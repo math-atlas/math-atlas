@@ -384,6 +384,7 @@ int syr2k_OP
 }
 @ROUT ATL_syr2k
 #include "atlas_amm.h"
+#include "atlas_level1.h"
 #include "atlas_level3.h"
 #include "atlas_reflevel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
@@ -435,6 +436,86 @@ void Mjoin(PATL,syr2k_rec)
    void *syr2kOP
 )
 {
+   #ifdef TCPLX
+      const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+   #endif
+   if (N == 1)  /* can use dot product! */
+   {
+      ATL_SZT incA, incB;
+      if (bv&2) /* K is rows */
+      {
+         incA = 1;
+         incB = 1;
+      }
+      else
+      {
+         incA = lda;
+         incB = ldb;
+      }
+      #ifdef TCPLX
+         if (bv&4) /* dotc */
+         {
+            TYPE dot[2];
+            register TYPE rd;
+            const register TYPE ra=(*alpha), ia=alpha[1], rb=(*beta);
+            if (ia == ATL_rzero)
+            {
+               rd = Mjoin(PATLU,dot)(K+K, A, incA, B, incB);
+               rd *= ra;
+               rd += rd;
+            }
+            else /* so far, I cannot making negative alpha work correctly! */
+            {
+               register TYPE id, rc, ic;
+               Mjoin(PATL,dotc_sub)(K, A, incA, B, incB, dot);
+               rd = *dot;
+               id = dot[1];
+               rc = rd;
+               ic = -id;
+
+               rd = rd*ra + rc*ra - id*ia - ic*(-ia);
+//               Mjoin(PATL,dotc_sub)(K, B, incB, A, incA, dot);
+//               printf("dot=(%g,%g), (%g,%g)\n", rd, id, dot[0], dot[1]);
+            }
+            *C = rd;
+            C[1] = ATL_rzero;
+         }
+         else /* dotu */
+         {
+            TYPE dot[2];
+            register TYPE rc, ic, rd, id;
+            const register TYPE ra=(*alpha),ia=alpha[1], rb=(*beta),ib=beta[1];
+            Mjoin(PATL,dotu_sub)(K, A, incA, B, incB, dot);
+            rd = *dot;
+            id = dot[1];
+            rc = rd*ra - id*ia;  /* multiply by alpha */
+            ic = rd*ia + id*ra;
+            rc += rc;            /* double it */
+            ic += ic;
+            if (rb != ATL_rzero || ib != ATL_rzero)  /* apply beta to C */
+            {                                        /* and add into answer */
+               rd = *C;
+               id = C[1];
+               rc += rb*rd - ib*id;
+               ic += rb*id + ib*rd;
+            }
+            *C = rc;
+            C[1] = ic;
+         }
+      #else
+         TYPE dot;
+         dot = Mjoin(PATL,dot)(K, A, incA, B, incB);
+         dot *= alpha;
+         dot += dot;
+         if (beta == ATL_rzero)
+            *C = dot;
+         else
+            *C = *C * beta + dot;
+      #endif
+       return;
+   }
    if (K <= ATL_VWopgen_MAX_KB)
    {
       syr2k_t opsyr2k = syr2kOP;
@@ -459,7 +540,51 @@ void Mjoin(PATL,syr2k_rec)
       #if 0
       if (N >= K)
       {
-         ATL_assert(0);
+         ATL_SZT NL=N>>1, NR=N-NL;
+         const TYPE *an, *bn;
+         enum ATLAS_TRANS TA, TB;
+         if (bv&2) /* A & B are KxN */
+         {
+            an += (NL SHIFT)*lda;
+            bn += (NL SHIFT)*ldb;
+            #ifdef TCPLX
+               TA = (bv&4) ? AtlasConjTrans:AtlasTrans;
+            #else
+               TA = AtlasTrans;
+            #endif
+               TB = AtlasNoTrans;
+         }
+         else      /* A & B are NxK */
+         {
+            TA = AtlasNoTrans;
+            #ifdef TCPLX
+               TB = (bv&4) ? AtlasConjTrans:AtlasTrans;
+            #else
+               TB = AtlasTrans;
+            #endif
+            an += (NL SHIFT);
+            bn += (NL SHIFT);
+         }
+         Mjoin(PATL,syr2k_rec)(bv, NL, K, alpha, A, lda, B, ldb, 
+                               beta, C, ldc, syr2kOP);
+         Mjoin(PATL,syr2k_rec)(bv, NR, K, alpha, A, lda, B, ldb, 
+                               beta, C+(((ldc+1)<<1)SHIFT)*NL, ldc, syr2kOP);
+         if (bv&1) /* Upper */
+         {
+            C += ldc*(NL SHIFT);
+            Mjoin(PATL,ammm)(TA, TB, NL, NR, K, alpha, A, lda, bn, ldb, 
+                             beta, C, ldc);
+            Mjoin(PATL,ammm)(TB, TA, NL, NR, K, alpha, an, lda, B, ldb, 
+                             ONE, C, ldc);
+         }
+         else
+         {
+            C += (NL SHIFT);
+            Mjoin(PATL,ammm)(TA, TB, NR, NL, K, alpha, an, lda, B, ldb, 
+                             beta, C, ldc);
+            Mjoin(PATL,ammm)(TB, TA, NR, NL, K, alpha, A, lda, bn, ldb, 
+                             ONE, C, ldc);
+         }
       }
       #endif
    }
@@ -468,11 +593,6 @@ void Mjoin(PATL,syr2k_rec)
  */
    {
       ATL_SZT KL=(K>>1), KR = K - KL;
-      #ifdef TCPLX
-         const TYPE ONE[2] = {ATL_rone, ATL_rzero};
-      #else
-         #define ONE ATL_rone
-      #endif
       Mjoin(PATL,syr2k_rec)(bv, N, KL, alpha, A, lda, B, ldb, 
                              beta, C, ldc, syr2kOP);
       #ifdef TCPLX
@@ -492,6 +612,9 @@ void Mjoin(PATL,syr2k_rec)
                             syr2kOP);
    }
 }
+   #ifndef TCPLX
+      #undef ONE
+   #endif
 #endif
 void SYR2K
 (
