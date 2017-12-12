@@ -304,7 +304,6 @@ int syr2k_OP
       {
          TYPE *wAi=wAj+szA, *wBi=wBj+szB;
          TYPE *pC = C;
-         ATL_CSZT jn = (j < nnblks-1) ? j+1 : 0;
          ATL_SZT i;
          ATL_UINT n;
 
@@ -378,7 +377,86 @@ int syr2k_OP
       }
    }
    else
-      return(4);  /* Upper not yet supported */
+   {
+      ATL_SZT j;
+      ATL_CUINT NB = Mmin(mb,nb);
+      TYPE *wAj=aA, *wBj=aB;
+
+      for (j=0; j < nnblks; j++, C += nb*(ldc SHIFT), wAj += szA, wBj += szB)
+      {
+         const TYPE *aa=A, *bb=B;
+         TYPE *wAi=aA, *wBi=aB;
+         TYPE *pC = C;
+         ATL_SZT i;
+         ATL_UINT n;
+
+         if (j < nfnblks)
+            nb = n = NB;
+         else
+         {
+            nb = op.pnb;
+            n = op.nF;
+         }
+         for (i=0; i < j; i++, wAi += szA, wBi += szB)
+         {
+            ATL_UINT m;
+            if (i < nfnblks)
+               mb = m = NB;
+            else
+            {
+               mb = op.pmb;
+               m = op.mF;
+            }
+            Mjoin(PATL,opblk)(&op, j, i, aa, NULL, NULL, wAj, wAi,
+                              wBi, wBj, aCr, aC);
+            aa = NULL;
+            #ifdef TCPLX
+               blk2C_b0(n, m, ONE, aCr, aC, ZERO, bC, n);
+            #else
+               blk2C_b0(n, m, ONE, aC, ZERO, bC, n);
+            #endif
+            if (m == n)
+            {
+               Mjoin(PATL,sqtrans)(n, bC, n);
+               #ifdef Conj_  /* need hermitian transpose for HER2K! */
+                  Mjoin(PATLU,scal)(n*n, ATL_rnone, bC+1, 2);
+               #endif
+            }
+            else
+               geaddT(m, n, bC, n, beta, pC, ldc);
+            Mjoin(PATL,opblk)(&op, i, j, NULL, bb, NULL, wAi, wAj+szA,
+                              wBj, wBi+szB, aCr, aC);
+            bb = NULL;
+            if (m == n)
+            {
+               #ifdef TCPLX
+                  blk2C_b1(n, n, ONE, aCr, aC, ONE, bC, n);
+               #else
+                  blk2C_b1(n, n, ONE, aC, ONE, bC, n);
+               #endif
+               Mjoin(PATL,geadd)(n, n, ONE, bC, n, beta, pC, ldc);
+            }
+            else
+               #ifdef TCPLX
+                  blk2C_b1(m, n, ONE, aCr, aC, ONE, pC, ldc);
+               #else
+                  blk2C_b1(m, n, ONE, aC, ONE, pC, ldc);
+               #endif
+            pC += m SHIFT;
+         }
+/*
+ *       Do diagonal block to copy new A block
+ */
+         Mjoin(PATL,opblk)(&op, j, j, aa, bb, NULL, wAj, wAj,
+                           wBj, wBj+szB, aCr, aC);
+         #ifdef TCPLX
+            blk2C_b0(n, n, ONE, aCr, aC, ZERO, bC, n);
+         #else
+            blk2C_b0(n, n, ONE, aC, ZERO, bC, n);
+         #endif
+         syput(n, bC, beta, pC, ldc);
+      }
+   }
    free(vp);
    return(0);
 }
@@ -530,26 +608,23 @@ void Mjoin(PATL,syr2k_rec)
       #else
          const enum ATLAS_TRANS TA = (bv&2) ? AtlasTrans : AtlasNoTrans;
       #endif
-      #if 0
       if (!opsyr2k(UL, TA, N, K, alpha, A, lda, B, ldb, beta, C, ldc))
          return;
-      #else
 /*
  *    Outer product can reduce required memory by splitting N or K; once we've
  *    got a small enough K to do opsyrk, don't reduce K until its bigger than N
  *    (this should never happen).  When we split along N, we wind up with two
  *    syr2k calls, and two calls to GEMM.
  */
-      
-//      if (N >= K)
+      if (N > K)
       {
          ATL_SZT NL=N>>1, NR=N-NL;
          const TYPE *an, *bn;
          enum ATLAS_TRANS TA, TB;
          if (bv&2) /* A & B are KxN */
          {
-            an += (NL SHIFT)*lda;
-            bn += (NL SHIFT)*ldb;
+            an = A + (NL SHIFT)*lda;
+            bn = B + (NL SHIFT)*ldb;
             #ifdef TCPLX
                TA = (bv&4) ? AtlasConjTrans:AtlasTrans;
             #else
@@ -565,19 +640,19 @@ void Mjoin(PATL,syr2k_rec)
             #else
                TB = AtlasTrans;
             #endif
-            an += (NL SHIFT);
-            bn += (NL SHIFT);
+            an = A + (NL SHIFT);
+            bn = B + (NL SHIFT);
          }
          Mjoin(PATL,syr2k_rec)(bv, NL, K, alpha, A, lda, B, ldb, 
                                beta, C, ldc, syr2kOP);
-         Mjoin(PATL,syr2k_rec)(bv, NR, K, alpha, A, lda, B, ldb, 
+         Mjoin(PATL,syr2k_rec)(bv, NR, K, alpha, an, lda, bn, ldb, 
                                beta, C+((ldc+1)SHIFT)*NL, ldc, syr2kOP);
          if (bv&1) /* Upper */
          {
             C += ldc*(NL SHIFT);
             Mjoin(PATL,ammm)(TA, TB, NL, NR, K, alpha, A, lda, bn, ldb, 
                              beta, C, ldc);
-            Mjoin(PATL,ammm)(TB, TA, NL, NR, K, alpha, an, lda, B, ldb, 
+            Mjoin(PATL,ammm)(TA, TB, NL, NR, K, alpha, B, ldb, an, lda, 
                              ONE, C, ldc);
          }
          else
@@ -585,20 +660,19 @@ void Mjoin(PATL,syr2k_rec)
             C += (NL SHIFT);
             Mjoin(PATL,ammm)(TA, TB, NR, NL, K, alpha, an, lda, B, ldb, 
                              beta, C, ldc);
-            Mjoin(PATL,ammm)(TB, TA, NR, NL, K, alpha, A, lda, bn, ldb, 
+            Mjoin(PATL,ammm)(TA, TB, NR, NL, K, alpha, bn, ldb, A, lda, 
                              ONE, C, ldc);
          }
+         return;
       }
-      #endif
    }
 /*
  * If we reach here, split K, resulting in 2 syr2k, 2nd with BETA=ONE
  */
-   if (0)
    {
       ATL_SZT KL=(K>>1), KR = K - KL;
       Mjoin(PATL,syr2k_rec)(bv, N, KL, alpha, A, lda, B, ldb, 
-                             beta, C, ldc, syr2kOP);
+                            beta, C, ldc, syr2kOP);
       #ifdef TCPLX
          KL += KL;
       #endif
@@ -675,9 +749,9 @@ void SYR2K
       if (TA == AtlasConjTrans)
          bv |= 2;
    #else
-//      if (!Mjoin(PATL,opsyr2k)(Uplo, TA, N, K, alpha, A, lda, B, ldb, 
-//                               beta, C, ldc))
-//         return;
+      if (!Mjoin(PATL,opsyr2k)(Uplo, TA, N, K, alpha, A, lda, B, ldb, 
+                               beta, C, ldc))
+         return;
       vp = Mjoin(PATL,opsyr2k);
       bv = 0;
       #ifdef TCPLX
