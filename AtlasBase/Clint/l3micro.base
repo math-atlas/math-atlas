@@ -3,7 +3,6 @@
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include "atlas_level1.h"
-#include "atlas_level2.h"
 #include "atlas_kernel3.h"
 #include "atlas_reflevel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
@@ -34,6 +33,7 @@ int Mjoin(PATL,ipsyr2k)
    ATL_CSZT ldc
 )
 {
+   ATL_iptr_t imsk = ~(0L);
    void *vp=NULL;
    ablk2cmat_t blk2C_b0, blk2C_b1;
    ATL_SZT sz, szA, szB, nfnblks, nnblks, nkblks;
@@ -160,7 +160,7 @@ int Mjoin(PATL,ipsyr2k)
    #endif
    nfnblks = ip.nfnblks;
    nnblks = nfnblks + ip.npnblks;
-   nkblks = nfkblks + 1;
+   nkblks = ip.nfkblks + 1;
 /*
  * This algorithm requires allocating all of A & B + 2 blks for C 
  */
@@ -193,53 +193,58 @@ int Mjoin(PATL,ipsyr2k)
    if (Uplo == AtlasLower)
    {
       ATL_SZT j;
-      ATL_CUINT NB = op.nb;
+      ATL_CUINT NB = ip.nb;
       TYPE *wAj=aA, *wBj=aB;
 
-      for (j=0; j < nnblks; j++, C += nb*((ldc+1)SHIFT), wAj += szA, wBj += szB)
+      for (j=0; j < nnblks; j++, wAj += szA, wBj += szB)
       {
          TYPE *wAi=wAj+szA, *wBi=wBj+szB;
          TYPE *pC = C;
-         ATL_SZT i;
+         ATL_SZT incA, incB, i;
          ATL_UINT nb, n;
 
          if (j < nfnblks)
+         {
             nb = n = NB;
+            incA = ip.incAm & imsk;
+            incB = ip.incBn & imsk;
+         }
          else
          {
-            nb = op.pnb;
-            n = op.nF;
+            nb = ip.pnb;
+            n = ip.nF;
+            incA = ip.pincAm & imsk;
+            incB = ip.pincBn & imsk;
          }
 /*
  *       First do diagonal block
  */
-         Mjoin(PATL,opblk)(&op, j, j, A, B, NULL, wAj, wAj, 
-                           wBj, wBj+szB, aCr, aC);
-         #ifdef TCPLX
-            blk2C_b0(n, n, ONE, aCr, aC, ZERO, bC, n);
-         #else
-            blk2C_b0(n, n, ONE, aC, ZERO, bC, n);
-         #endif
+         ip.ldc = n;
+         Mjoin(PATL,iploopsK)(&ip, j, j, A, B, bC, 3, wAj, wBj, aCr, aC, 
+                              ZERO, blk2C_b0);
          syput(n, bC, beta, pC, ldc);
          pC += n SHIFT;
+         A += incA;
+         B += incB;
          for (i=j+1; i < nnblks; i++, wAi += szA, wBi += szB)
          {
-            ATL_CSZT in = (i < nnblks-1) ? i+1 : 0;
             ATL_UINT mb, m;
             if (i < nfnblks)
+            {
                mb = m = NB;
+               incA = ip.incAm & imsk;
+               incB = ip.incBn & imsk;
+            }
             else
             {
-               mb = op.pmb;
-               m = op.mF;
+               mb = ip.pmb;
+               m = ip.mF;
+               incA = ip.pincAm & imsk;
+               incB = ip.incBn & imsk;
             }
-            Mjoin(PATL,opblk)(&op, j, i, NULL, B, NULL, wAj, wAi, 
-                              wBi, wBj, aCr, aC);
-            #ifdef TCPLX
-               blk2C_b0(n, m, ONE, aCr, aC, ZERO, bC, n);
-            #else
-               blk2C_b0(n, m, ONE, aC, ZERO, bC, n);
-            #endif
+            ip.ldc = n;
+            Mjoin(PATL,iploopsK)(&ip, j, i, NULL, B, bC, 3, wAj, wBi, aCr, aC, 
+                                 ZERO, blk2C_b0);
             if (m == n)
             {
                Mjoin(PATL,sqtrans)(n, bC, n);
@@ -249,31 +254,31 @@ int Mjoin(PATL,ipsyr2k)
             }
             else
                geputT(m, n, bC, n, beta, pC, ldc);
-            Mjoin(PATL,opblk)(&op, i, j, A, NULL, NULL, wAi, wAj+szA, 
-                              wBj, wBi+szB, aCr, aC);
             if (m == n)
             {
-               #ifdef TCPLX
-                  blk2C_b1(n, n, ONE, aCr, aC, ONE, bC, n);
-               #else
-                  blk2C_b1(n, n, ONE, aC, ONE, bC, n);
-               #endif
+               Mjoin(PATL,iploopsK)(&ip, i, j, A, NULL, bC, 3, wAi, wBj, 
+                                    aCr, aC, ONE, blk2C_b1);
                Mjoin(PATL,geadd)(n, n, ONE, bC, n, beta, pC, ldc);
             }
             else
-               #ifdef TCPLX
-                  blk2C_b1(m, n, ONE, aCr, aC, ONE, pC, ldc);
-               #else
-                  blk2C_b1(m, n, ONE, aC, ONE, pC, ldc);
-               #endif
+            {
+               ip.ldc = ldc;
+               Mjoin(PATL,iploopsK)(&ip, i, j, A, NULL, pC, 3, wAi, wBj, 
+                                    aCr, aC, ONE, blk2C_b1);
+            }
             pC += m SHIFT;
+            A += incA;
+            B += incB;
          }
          A = NULL;
          B = NULL;
+         imsk = 0L;
+         C += nb*((ldc+1)SHIFT);
       }
    }
    else
    {
+   #if 0
       ATL_SZT j;
       ATL_CUINT NB = Mmin(mb,nb);
       TYPE *wAj=aA, *wBj=aB;
@@ -352,6 +357,7 @@ int Mjoin(PATL,ipsyr2k)
          #endif
          syput(n, bC, beta, pC, ldc);
       }
+   #endif
    }
    free(vp);
    return(0);
@@ -807,11 +813,19 @@ void Mjoin(PATL,syr2k_rec)
    void *syr2kOP
 )
 {
+   const enum ATLAS_UPLO UL=(bv&1) ? AtlasUpper:AtlasLower;
    #ifdef TCPLX
       const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+      enum ATLAS_TRANS TA;
+      if (bv&4)
+         TA = (bv&2) ? AtlasConjTrans : AtlasNoTrans;
+      else
+         TA = (bv&2) ? AtlasTrans : AtlasNoTrans;
    #else
+      const enum ATLAS_TRANS TA = (bv&2) ? AtlasTrans : AtlasNoTrans;
       #define ONE ATL_rone
    #endif
+   #if 0
    if (N == 1)  /* can use dot product! */
    {
       ATL_SZT incA, incB;
@@ -891,18 +905,15 @@ void Mjoin(PATL,syr2k_rec)
    if (K <= ATL_VWopgen_MAX_KB)
    {
       syr2k_t opsyr2k = syr2kOP;
-      const enum ATLAS_UPLO UL=(bv&1) ? AtlasUpper:AtlasLower;
-      #ifdef TCPLX
-         enum ATLAS_TRANS TA;
-         if (bv&4)
-            TA = (bv&2) ? AtlasConjTrans : AtlasNoTrans;
-         else
-            TA = (bv&2) ? AtlasTrans : AtlasNoTrans;
-      #else
-         const enum ATLAS_TRANS TA = (bv&2) ? AtlasTrans : AtlasNoTrans;
-      #endif
       if (!opsyr2k(UL, TA, N, K, alpha, A, lda, B, ldb, beta, C, ldc))
          return;
+   }
+   #endif
+   {
+      ATL_assert(!Mjoin(PATL,ipsyr2k)(UL, TA, N, K, alpha, A, lda, B, ldb, 
+                                      beta, C, ldc));
+      return;
+   }
 /*
  *    Outer product can reduce required memory by splitting N or K; once we've
  *    got a small enough K to do opsyrk, don't reduce K until its bigger than N
@@ -958,7 +969,6 @@ void Mjoin(PATL,syr2k_rec)
          }
          return;
       }
-   }
 /*
  * If we reach here, split K, resulting in 2 syr2k, 2nd with BETA=ONE
  */
@@ -1032,7 +1042,7 @@ void SYR2K
 /*
  * Outer-product syr2k handles degenerate K, along with any 1-block K
  */
-   if (K <= ATL_VWopgen_MAX_KB)
+   if (K < 3) // ATL_VWopgen_MAX_KB)
    #ifdef Conj_
       if (!Mjoin(PATL,opher2k)(Uplo, TA, N, K, alpha, A, lda, B, ldb, 
                                rbeta, C, ldc))
