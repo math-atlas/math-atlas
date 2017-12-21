@@ -33,12 +33,10 @@ int Mjoin(PATL,ipsyr2k)
    ATL_CSZT ldc
 )
 {
-   ATL_iptr_t imsk = ~(0L);
    void *vp=NULL;
    ablk2cmat_t blk2C_b0, blk2C_b1;
    ATL_SZT sz, szA, szB, nfnblks, nnblks, nkblks;
    unsigned int szC, MVS=0;
-   unsigned int mb, nb;
    TYPE *aC, *bC;  /* access- and block-major C */
    TYPE *aA, *aB;  /* access-major A & B */
    void (*syput)(ATL_CSZT N, const TYPE *D, const SCALAR beta0, TYPE *A, 
@@ -199,15 +197,24 @@ int Mjoin(PATL,ipsyr2k)
    aA = ATL_AlignPtr(aA);
    aB = aA + (szA SHIFT);
    aB = ATL_AlignPtr(aB);
-   szA = (nfnblks) ? ip.szA : ip.pszA;
-   szA *= nkblks;
-   szB = (nfnblks) ? ip.szB : ip.pszB;
-   szB *= nkblks;
+/*
+ * Now, set sz[A,B] for incr workspace ptrs
+ */
+   if (nnblks > 1)
+   {
+      szA = ip.szA;
+      szB = ip.szB;
+      szA *= nkblks SHIFT;
+      szB *= nkblks SHIFT;
+   }
+   else   /* just reusing same A/B space for 1 blk C! */
+      szA = szB = 0;
 
    if (Uplo == AtlasLower)
    {
+      ATL_iptr_t imsk = ~(0L);
       ATL_SZT j;
-      ATL_CUINT NB = ip.nb;
+      ATL_CUINT NB = (nfnblks) ? ip.nb : ip.pnb;
       TYPE *wAj=aA, *wBj=aB;
 
       for (j=0; j < nnblks; j++, wAj += szA, wBj += szB)
@@ -215,17 +222,16 @@ int Mjoin(PATL,ipsyr2k)
          TYPE *wAi=wAj+szA, *wBi=wBj+szB;
          TYPE *pC = C;
          ATL_SZT incA, incB, i;
-         ATL_UINT nb, n;
+         ATL_UINT n;
 
          if (j < nfnblks)
          {
-            nb = n = NB;
+            n = NB;
             incA = ip.incAm & imsk;
             incB = ip.incBn & imsk;
          }
          else
          {
-            nb = ip.pnb;
             n = ip.nF;
             incA = ip.pincAm & imsk;
             incB = ip.pincBn & imsk;
@@ -242,16 +248,15 @@ int Mjoin(PATL,ipsyr2k)
          B += incB;
          for (i=j+1; i < nnblks; i++, wAi += szA, wBi += szB)
          {
-            ATL_UINT mb, m;
+            ATL_UINT m;
             if (i < nfnblks)
             {
-               mb = m = NB;
+               m = NB;
                incA = ip.incAm & imsk;
                incB = ip.incBn & imsk;
             }
             else
             {
-               mb = ip.pmb;
                m = ip.mF;
                incA = ip.pincAm & imsk;
                incB = ip.incBn & imsk;
@@ -287,49 +292,46 @@ int Mjoin(PATL,ipsyr2k)
          A = NULL;
          B = NULL;
          imsk = 0L;
-         C += nb*((ldc+1)SHIFT);
+         C += NB*((ldc+1)SHIFT);
       }
    }
-   else
+   else   /* C is symmetric matrix stored in Upper format */
    {
-   #if 0
+      ATL_CSZT incB = (nfnblks) ? ip.incBn : ip.pincBn;
+      ATL_CSZT incA = (nfnblks) ? ip.incAm : ip.pincAm;
       ATL_SZT j;
-      ATL_CUINT NB = Mmin(mb,nb);
+      ATL_CUINT NB = (nfnblks) ? ip.nb : ip.pnb;
       TYPE *wAj=aA, *wBj=aB;
 
-      for (j=0; j < nnblks; j++, C += nb*(ldc SHIFT), wAj += szA, wBj += szB)
+      for (j=0; j < nnblks; j++, C += NB*(ldc SHIFT), wAj += szA, wBj += szB)
       {
          const TYPE *aa=A, *bb=B;
          TYPE *wAi=aA, *wBi=aB;
          TYPE *pC = C;
-         ATL_SZT i;
+         ATL_SZT i, incA;
          ATL_UINT n;
 
          if (j < nfnblks)
-            nb = n = NB;
+         {
+            n = NB;
+            incA = ip.incAm;
+         }
          else
          {
-            nb = op.pnb;
-            n = op.nF;
+            n = ip.nF;
+            incA = ip.pincAm;
          }
          for (i=0; i < j; i++, wAi += szA, wBi += szB)
          {
             ATL_UINT m;
-            if (i < nfnblks)
-               mb = m = NB;
-            else
-            {
-               mb = op.pmb;
-               m = op.mF;
-            }
-            Mjoin(PATL,opblk)(&op, j, i, aa, NULL, NULL, wAj, wAi,
-                              wBi, wBj, aCr, aC);
+            ip.ldc = n;
+            Mjoin(PATL,iploopsK)(&ip, j, i, aa, NULL, bC, 3, wAj, wBi, aCr, aC,
+                                 ZERO, blk2C_b0);
             aa = NULL;
-            #ifdef TCPLX
-               blk2C_b0(n, m, ONE, aCr, aC, ZERO, bC, n);
-            #else
-               blk2C_b0(n, m, ONE, aC, ZERO, bC, n);
-            #endif
+            if (i < nfnblks)
+               m = NB;
+            else
+               m = ip.mF;
             if (m == n)
             {
                Mjoin(PATL,sqtrans)(n, bC, n);
@@ -339,39 +341,32 @@ int Mjoin(PATL,ipsyr2k)
             }
             else
                geputT(m, n, bC, n, beta, pC, ldc);
-            Mjoin(PATL,opblk)(&op, i, j, NULL, bb, NULL, wAi, wAj+szA,
-                              wBj, wBi+szB, aCr, aC);
-            bb = NULL;
+
             if (m == n)
             {
-               #ifdef TCPLX
-                  blk2C_b1(n, n, ONE, aCr, aC, ONE, bC, n);
-               #else
-                  blk2C_b1(n, n, ONE, aC, ONE, bC, n);
-               #endif
+               Mjoin(PATL,iploopsK)(&ip, i, j, NULL, bb, bC, 3, wAi, wBj,
+                                    aCr, aC, ONE, blk2C_b1);
                Mjoin(PATL,geadd)(n, n, ONE, bC, n, beta, pC, ldc);
             }
             else
-               #ifdef TCPLX
-                  blk2C_b1(m, n, ONE, aCr, aC, ONE, pC, ldc);
-               #else
-                  blk2C_b1(m, n, ONE, aC, ONE, pC, ldc);
-               #endif
+            {
+               ip.ldc = ldc;
+               Mjoin(PATL,iploopsK)(&ip, i, j, NULL, bb, pC, 3, wAi, wBj,
+                                    aCr, aC, ONE, blk2C_b1);
+            }
+            bb = NULL;
             pC += m SHIFT;
          }
 /*
  *       Do diagonal block to copy new A block
  */
-         Mjoin(PATL,opblk)(&op, j, j, aa, bb, NULL, wAj, wAj,
-                           wBj, wBj+szB, aCr, aC);
-         #ifdef TCPLX
-            blk2C_b0(n, n, ONE, aCr, aC, ZERO, bC, n);
-         #else
-            blk2C_b0(n, n, ONE, aC, ZERO, bC, n);
-         #endif
+         ip.ldc = n;
+         Mjoin(PATL,iploopsK)(&ip, j, j, aa, bb, bC, MVS, wAj, wBj, aCr, aC,
+                              ZERO, blk2C_b0);
          syput(n, bC, beta, pC, ldc);
+         B += incB;
+         A += incA;
       }
-   #endif
    }
    free(vp);
    return(0);
@@ -924,8 +919,19 @@ void Mjoin(PATL,syr2k_rec)
    }
    #endif
    {
-      ATL_assert(!Mjoin(PATL,ipsyr2k)(UL, TA, N, K, alpha, A, lda, B, ldb, 
-                                      beta, C, ldc));
+      #ifdef TCPLX
+      if (bv&4)
+      {
+         ATL_assert(!Mjoin(PATL,ipher2k)(UL, TA, N, K, alpha, A, lda, B, ldb, 
+                                         *beta, C, ldc));
+      }
+      else
+      #else
+      {
+         ATL_assert(!Mjoin(PATL,ipsyr2k)(UL, TA, N, K, alpha, A, lda, B, ldb, 
+                                         beta, C, ldc));
+      }
+      #endif
       return;
    }
 /*
