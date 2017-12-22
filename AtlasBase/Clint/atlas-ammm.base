@@ -37428,6 +37428,7 @@ int main(int nargs, char **args)
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
 @ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@`
 @ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
+#include "atlas_cache.h"
 #include "atlas_amm.h"
 @ROUT ATL_ipinfo ATL_ipmeninfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
@@ -38296,7 +38297,7 @@ void Mjoin(PATL,@(vwf)Info)
    size_t nfmblks, npmblks, nfnblks, npnblks;
    const ATL_iptr_t *ipp;
    ATL_UINT mb, pmb, nb, pnb, mu, nu, nmu, pnmu, nnu, pnnu;
-   ATL_UINT MB, NB, k, imm, idx=ATL_VW@(vwf)_BEST_IDX;
+   ATL_UINT MB, NB, KB, k, imm, idx=ATL_VW@(vwf)_BEST_IDX;
    float spf;
 
    #if ATL_VW@(vwf)_NCASES > 1
@@ -38307,7 +38308,7 @@ void Mjoin(PATL,@(vwf)Info)
             break;
    }
    #endif
-   ATL_GetVW@(vwf)Info(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
+   ATL_GetVW@(vwf)Info(idx, spf, MB, NB, KB, imm, k, k, k, k, k, k);
    ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
    ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
 @BEGINSKIP
@@ -38336,6 +38337,20 @@ void Mjoin(PATL,@(vwf)Info)
    mb = pmb = nmu * mu;
    nb = pnb = nnu * nu;
 @ENDSKIP
+/*
+ * Consider expanding M/N block to cover whole C if best block factor is 
+ * already close in size, to avoid having one large block, and one tiny
+ */
+   if (NB+NB > N && MB+MB > M)
+   {
+      mb = ((M+mu-1)/mu)*mu;
+      nb = ((N+nu-1)/nu)*nu;
+      if (ATL_MulBySize(mb*nb + 2*(mb+nb)*KB) <= LLPC_SZ)
+      {
+         MB = mb;
+         NB = nb;
+      }
+   }
 @ROUT ATL_ipmeninfo `   if (MB >= M)`
 @ROUT ATL_ipinfo `   if ((flg&1) || MB >= M)`
    {

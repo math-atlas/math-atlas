@@ -834,7 +834,6 @@ void Mjoin(PATL,syr2k_rec)
       const enum ATLAS_TRANS TA = (bv&2) ? AtlasTrans : AtlasNoTrans;
       #define ONE ATL_rone
    #endif
-   #if 0
    if (N == 1)  /* can use dot product! */
    {
       ATL_SZT incA, incB;
@@ -911,36 +910,40 @@ void Mjoin(PATL,syr2k_rec)
       #endif
        return;
    }
+/*
+ * If K small enough, need the outer-product version of syrk
+ */
    if (K <= ATL_VWopgen_MAX_KB)
    {
       syr2k_t opsyr2k = syr2kOP;
       if (!opsyr2k(UL, TA, N, K, alpha, A, lda, B, ldb, beta, C, ldc))
          return;
    }
-   #endif
+/*
+ * Try the inner product version for any case outer-product fails on
+ */
    {
       #ifdef TCPLX
       if (bv&4)
       {
-         ATL_assert(!Mjoin(PATL,ipher2k)(UL, TA, N, K, alpha, A, lda, B, ldb, 
-                                         *beta, C, ldc));
+         if (!Mjoin(PATL,ipher2k)(UL, TA, N, K, alpha, A, lda, B, ldb, 
+                                  *beta, C, ldc));
+            return;
       }
       else
-      #else
-      {
-         ATL_assert(!Mjoin(PATL,ipsyr2k)(UL, TA, N, K, alpha, A, lda, B, ldb, 
-                                         beta, C, ldc));
-      }
       #endif
-      return;
+      {
+         if (!Mjoin(PATL,ipsyr2k)(UL, TA, N, K, alpha, A, lda, B, ldb, 
+                                  beta, C, ldc));
+            return;
+      }
    }
 /*
- *    Outer product can reduce required memory by splitting N or K; once we've
- *    got a small enough K to do opsyrk, don't reduce K until its bigger than N
- *    (this should never happen).  When we split along N, we wind up with two
- *    syr2k calls, and two calls to GEMM.
+ *    Splitting K or N reduces mem req by same amount, so split largest.
+ *    When we split along N, we wind up with two syr2k calls, and two calls 
+ *    to GEMM.
  */
-      if (N > K)
+      if (N >= K)
       {
          ATL_SZT NL=N>>1, NR=N-NL;
          const TYPE *an, *bn;
