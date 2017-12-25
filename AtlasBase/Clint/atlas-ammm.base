@@ -37427,7 +37427,7 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
 @ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@`
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo ATL_opsymmInfo
 #include "atlas_cache.h"
 #include "atlas_amm.h"
 @ROUT ATL_ipinfo ATL_ipmeninfo
@@ -37442,22 +37442,24 @@ int main(int nargs, char **args)
 #ifdef TREAL
    #define  ATL_DECL_ 1
 #endif
-@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo ATL_opsymmInfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 @ROUT ATL_opinfo
 #ifndef TREAL
    #define  ATL_DECL_ 1
 #endif
-@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo ATL_opsymmInfo
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
 @ROUT ATL_opsyr2kInfo
 @whiledef be 0 1
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
 @endwhile
-@ROUT ATL_opsyrkInfo
+@ROUT ATL_opsyrkInfo ATL_opsymmInfo
 @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
 @endwhile
+@ROUT ATL_opsymmInfo
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
 @ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
 @whiledef al 1 N X
    @whiledef ta N T
@@ -37744,6 +37746,200 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
             ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
 }
 
+@ROUT ATL_opsymmInfo
+
+int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
+   (opinfo_t *op, ATL_UINT bv,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc,
+    const SCALAR alpha, const SCALAR beta)
+/*
+ * bv: 0:Left, 1:Upper
+ * RETURNS: 0 if A fits in cache for outer-product, else non-zero.
+@skip *          the transpose copy for the cross-diagonal copy of A, else NULL.
+@skip *          If NULL is returned, out may not be fully populated.
+ */
+{
+   ATL_cparr_t *cp = (ATL_cparr_t *)&op->a2blk;
+   ATL_iptr_t iptmp;
+   double spmfMM;
+   #ifdef TCPLX
+      static const CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define CONE ATL_rone
+   #endif
+   ATL_CUINT K = (bv&1) ? M:N, iv=K-3;
+   ATL_UINT MB, NB, mb, nb, k, imm, icpA, icpB, icpC, mu, nu, ku, nmu, nnu;
+
+   if (iv >= ATL_VWopgen_NCASES)
+         return(1);
+   ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
+   ATL_assert(imm < ATL_AMM_NCASES);
+   icpA += icpA;
+   icpB += icpB;
+   icpC += icpC;
+   #ifdef TCPLX
+      ATL_AMM_info(imm, &op->amm_b0, &op->amm_b1, &op->amm_bn, k,
+                   mu, nu, ku, op->vlen, k, k, k);
+   #else
+      ATL_AMM_info(imm, &op->amm_b0, &iptmp, &iptmp, k,
+                   mu, nu, ku, op->vlen, k, k, k);
+   #endif
+   op->idx = iv;
+   op->mu = mu;
+   op->nu = nu;
+   op->ku = ku;
+   op->exsz = (mu*nu)<<1;
+   op->ldc = ldc;
+   *cp = ATL_CpyFromANg_a1[icpA];
+   cp = (ATL_cparr_t *)&op->b2blk;
+   *cp = ATL_CpyFromANg_a1[icpB];
+   cp = (ATL_cparr_t *) &op->blk2C;
+   if (SCALAR_IS_NONE(beta))
+      *cp = ATL_CpyIntoCNg_a1bN[icpC];
+   else if (SCALAR_IS_ONE(beta))
+      *cp = ATL_CpyIntoCNg_a1b1[icpC];
+   else
+      *cp = (SCALAR_IS_ZERO(beta)) ?
+         ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
+/*
+ * If M==K ask at least A fit in LLPC
+ */
+   if (bv&1)  /* Left, M=K, symmetric matrix A is gemm's A */
+   {
+      op->lda = lda;
+      op->ldb = ldb;
+      op->kb = M;
+      op->alpA = alpha;
+      op->alpB = CONE;
+      nmu = (M+mu-1)/mu;
+      mb = nmu*mu;
+      if (mb > MB) /* must shrink NB to keep working set same */
+      {
+         ATL_UINT t;
+         k = mb*nu;
+         if (k > ATL_DivBySize(LLPC_SZ))
+            return(2);
+         t = MB*NB;
+         k = (k > t) ? ATL_DivBySize(LLPC_SZ) : t;
+         nb = k / mb;
+         if (!nb)
+            return(3);
+      }
+      else if (mb+mu <= MB) /* can increase NB to keep working set same */
+      {
+         nb = MB*NB / mb;
+         nnu = nb/nu;
+         nb = MB*NB / mb;
+      }
+      nnu = nb / nu;
+      nnu = ((nnu+1)*nu*mb <= k) ? nnu+1 : nnu;
+      nb = nnu * nu;
+   }
+   else      /* Right, N=K, symm's symmetric A is gemm's B */
+   {
+      op->lda = ldb;
+      op->ldb = lda;
+      op->kb = N;
+      op->alpA = alpha;
+      op->alpB = CONE;
+      nnu = (N+nu-1)/nu;
+      nb = nnu*nu;
+      if (nb > NB) /* must shrink MB to keep working set same */
+      {
+         nmu = (MB*NB*nu) / (N*mu);
+         if (!nmu)
+         {
+            nmu = ATL_DivBySize(LLPC_SZ)/(nb*mu);
+            if (!nmu)
+               return(4);
+            else if (nmu > 3)
+               nmu >>= 1;
+         }
+      }
+      else
+      {
+         nmu = (MB*NB*nu) / (N*mu);
+         ATL_assert(nmu);
+      }
+      mb = nmu * mu;
+      op->pincBn = op->incBn = 0;  /* not used for 1 blk opsymm */
+   }
+   op->KB = ((op->kb+ku-1)/ku)*ku;
+   op->beta = beta;
+   #ifdef TCPLX
+      op->ONE = CONE;
+   #endif
+   if (M > mb)
+   {
+      op->mb = mb;
+      op->nmu = nmu;
+      op->nfmblks = M / mb;
+      op->mF = M - mb*op->nfmblks;
+      if (op->mF)
+      {
+         op->nmuF = (op->mF+mu-1)/mu;
+         op->pmb = op->nmuF * mu;
+         op->npmblks = 1;
+      }
+      else
+         op->nmuF = op->pmb = op->npmblks = 0;
+      op->npmblks = (op->pmb) ? 1 : 0;
+      op->pnmu = op->nmuF;
+   }
+   else
+   {
+      nnu = (N+nu-1)/nu;
+      op->npnblks = 1;
+      op->nfnblks = 0;
+      op->nnuF = op->pnnu = op->nnu = nnu;
+      op->nb = op->pnb = nnu*nu;
+      op->nF = N;
+   }
+   if (N > nb)
+   {
+      op->nb = nb;
+      op->nnu = nnu;
+      op->nfnblks = N / nb;
+      op->nF = N - nb*op->nfnblks;
+      if (op->nF)
+      {
+         op->nnuF = (op->nF+nu-1)/nu;
+         op->pnb = op->nnuF * nu;
+         op->npnblks = 1;
+      }
+      else
+         op->nnuF = op->pnb = op->npnblks = 0;
+      op->npnblks = (op->pnb) ? 1 : 0;
+      op->pnnu = op->nnuF;
+   }
+   else
+   {
+      nnu = (N+nu-1)/nu;
+      op->npnblks = 1;
+      op->nfnblks = 0;
+      op->nnuF = op->pnnu = op->nnu = nnu;
+      op->nb = op->pnb = nnu*nu;
+      op->nF = N;
+   }
+   op->szA = op->mb * op->KB;
+   op->szB = op->nb * op->KB;
+   op->pszA = op->pmb * op->KB;
+   op->pszB = op->pnb * op->KB;
+   op->szC = op->mb * op->nb;
+   if (bv&1)  /* Left,  M=K, symm matrix A is gemm's A */
+   {
+      op->incBn = op->nb * (ldb SHIFT);
+      op->pincBn = op->pnb * (ldb SHIFT);
+      op->incAm = op->pincAm = 0;  /* not used for opsymm */
+   }
+   else       /* Right, N=K, symm matrix A is gemm's B */
+   {
+      op->incAm = op->mb SHIFT;
+      op->pincAm = op->pmb SHIFT;
+      op->incBn = op->pincBn = 0;  /* not used for opsymm */
+   }
+   printf("symmB=(%u,%u,%u)\n", mb, nb, K);
+}
 @ROUT ATL_opsyr2kInfo
 ablk2cmat_t Mjoin(PATL,opsyr2kInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA,

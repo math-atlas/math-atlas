@@ -3329,3 +3329,92 @@ void Mjoin(PATL,ipsyrk)
    free(vp);
 }
 #undef one
+@ROUT ATL_opsymm
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_level1.h"
+#include "atlas_kernel3.h"
+#include "atlas_reflevel3.h"
+#include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
+
+#ifdef Conj_
+int Mjoin(PATL,ophemm)
+#else
+int Mjoin(PATL,opsymm)
+#endif
+(
+   const enum ATLAS_SIDE  Side,
+   const enum ATLAS_UPLO  Uplo,
+   ATL_CSZT  M,
+   ATL_CSZT N,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   ATL_SZT sz, szW;
+   void *vp=NULL;
+   TYPE *aA, *aB, *aC, *bA;
+   opinfo_t oi;
+   ATL_UINT bv;
+int Mjoin(PATL,opsymmInfo)
+   (opinfo_t *op, ATL_UINT bv,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc,
+     const SCALAR alpha, const SCALAR beta);
+
+   if (!M || !N)
+      return(0);
+   if (SCALAR_IS_ZERO(alpha))  /* doing nothing but scaling C */
+   {
+      if (!SCALAR_IS_ONE(beta))  /* if there is scaling of C to do */
+         Mjoin(PATL,trscal)(Uplo, M, N, alpha, C, ldc);
+     
+      return(0);
+   }
+   bv = (Side == AtlasLeft) ? 1 : 0;
+   bv |= (Uplo == AtlasUpper) ? 2 : 0;
+   if (Mjoin(PATL,opsymmInfo)(&oi, bv, M, N, lda, ldb, ldc, alpha, beta))
+      return(1);
+
+   if (Side == AtlasLeft) /* K=M, K < MAXK */
+   {
+      szW = oi.szB;
+      szW = Mmax(szW, oi.szA);
+      sz = oi.szA + szW + oi.szC;
+      sz = ATL_MulBySize(sz) + 3*ATL_Cachelen + oi.exsz;
+      vp = malloc(sz);
+      assert(vp);
+      aA = bA + oi.szA;
+      aA = ATL_AlignPtr(aA);
+      aB = aA + oi.szA;
+      aB = ATL_AlignPtr(aB);
+      aC = aB + szW;
+      aC = ATL_AlignPtr(aC);
+      #ifdef TCPLX
+         if (alpha[1] == ATL_rzero)
+         {
+         }
+         else
+            Mjoin(PATL,sycpyLNB_aX)(M, alpha, A, lda, aB, M);
+      #else
+         if (alpha == ATL_rone)
+            Mjoin(PATL,sycpyLNB_a1)(M, alpha, A, lda, aB, M);
+         else if (alpha == ATL_rnone)
+            Mjoin(PATL,sycpyLNB_an)(M, alpha, A, lda, aB, M);
+         else
+            Mjoin(PATL,sycpyLNB_aX)(M, alpha, A, lda, aB, M);
+         oi.a2blk(oi.kb, oi.mb, ATL_rone, aB, M, aA);
+      #endif
+      Mjoin(PATL,oploopsN)(&oi, 0, 0, NULL, B, C, 0, aA, aB, aC, aC);
+   }
+   else /* K = N, K < MAXK  */
+   {
+   }
+   free(vp);
+   return(0);
+}
