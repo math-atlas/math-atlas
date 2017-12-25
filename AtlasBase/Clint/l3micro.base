@@ -3329,18 +3329,202 @@ void Mjoin(PATL,ipsyrk)
    free(vp);
 }
 #undef one
-@ROUT ATL_opsymm
+@ROUT ATL_symmL
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include "atlas_level1.h"
-#include "atlas_kernel3.h"
+#include "atlas_level3.h"
+@skip #include "atlas_kernel3.h"
 #include "atlas_reflevel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
-
+#include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
+/*
+ * On the left, symmetrix matrix is GEMM's A, with K=M
+ */
 #ifdef Conj_
-int Mjoin(PATL,ophemm)
+int Mjoin(PATL,ophemmL)
 #else
-int Mjoin(PATL,opsymm)
+int Mjoin(PATL,opsymmL)
+#endif
+(
+   const enum ATLAS_UPLO  Uplo,
+   ATL_CSZT  M,
+   ATL_CSZT N,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   ATL_SZT sz, szW;
+   void *vp=NULL;
+   TYPE *aA, *aB, *aC, *bA;
+   opinfo_t oi;
+int Mjoin(PATL,opsymmInfo)
+   (opinfo_t *op, ATL_UINT bv,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc,
+     const SCALAR alpha, const SCALAR beta);
+
+   if (!M || !N)
+      return(0);
+   if (M == 1) /* symmetric matrix is dense scalar! */
+   {
+      #ifdef TCPLX
+         const register TYPE ra=(*alpha), ia=alpha[1], rA = *A;
+         #ifdef Conj_
+            const TYPE X[2] = {ra*rA, ia*rA};
+         #else
+            const register TYPE  iA=A[1];
+            TYPE X[2];
+            *X = ra*rA - ia*iA;
+            X[1] = ra*iA + ia*rA;
+         #endif
+         Mjoin(PATL,axpby)(N, X, B, ldb, beta, C, ldc);
+      #else
+         Mjoin(PATL,axpby)(N, alpha*(*A), B, ldb, beta, C, ldc);
+      #endif
+      return(0);
+   }
+   return(1);   /* for now, just debugging recursion */
+   if (Mjoin(PATL,opsymmInfo)(&oi, (Uplo == AtlasUpper)?3:1, M, N, lda, ldb,
+                              ldc, alpha, beta))
+      return(1);
+
+   szW = oi.szB;
+   szW = Mmax(szW, oi.szA);
+   sz = oi.szA + szW + oi.szC;
+   sz = ATL_MulBySize(sz) + 3*ATL_Cachelen + oi.exsz;
+   vp = malloc(sz);
+   assert(vp);
+   aA = bA + oi.szA;
+   aA = ATL_AlignPtr(aA);
+   aB = aA + oi.szA;
+   aB = ATL_AlignPtr(aB);
+   aC = aB + szW;
+   aC = ATL_AlignPtr(aC);
+   #ifdef TCPLX
+      if (alpha[1] == ATL_rzero)
+      {
+      }
+      else
+         Mjoin(PATL,sycpyLNB_aX)(M, alpha, A, lda, aB, M);
+   #else
+      if (alpha == ATL_rone)
+         Mjoin(PATL,sycpyLNB_a1)(M, alpha, A, lda, aB, M);
+      else if (alpha == ATL_rnone)
+         Mjoin(PATL,sycpyLNB_an)(M, alpha, A, lda, aB, M);
+      else
+         Mjoin(PATL,sycpyLNB_aX)(M, alpha, A, lda, aB, M);
+      oi.a2blk(oi.kb, oi.mb, ATL_rone, aB, M, aA);
+   #endif
+   Mjoin(PATL,oploopsN)(&oi, 0, 0, NULL, B, C, 0, aA, aB, aC, aC);
+   free(vp);
+   return(0);
+}
+
+#ifndef Conj_
+   #ifdef TCPLX
+      #define MY_ENUM TA, Uplo
+   #else
+      #define ONE ATL_rone
+      #define MY_ENUM Uplo
+      #define TA AtlasTrans
+   #endif
+void Mjoin(PATL,symmL_rec)
+(
+   #ifdef TCPLX
+   const enum ATLAS_TRANS TA,  /* AtlasConjTrans for HEMM, else AtlasTrans */
+   #endif
+   const enum ATLAS_UPLO  Uplo,
+   ATL_CSZT  M,
+   ATL_CSZT N,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   if (M <= ATL_VWopgen_LAST_KB)
+   {
+      #ifdef TCPLX
+         if (TA == AtlasConjTrans)
+         {
+            if (!Mjoin(PATL,ophemmL)(Uplo, M, N, alpha, A, lda, B, ldb, 
+                                     beta, C, ldc))
+               return;
+         }
+         else
+            if (!Mjoin(PATL,opsymmL)(Uplo, M, N, alpha, A, lda, B, ldb, 
+                                     beta, C, ldc))
+               return;
+      #else
+         if (!Mjoin(PATL,opsymmL)(Uplo, M, N, alpha, A, lda, B, ldb, 
+                                  beta, C, ldc))
+            return;
+      #endif
+   }
+/*
+ * C0 = A00 * B0 + beta*C0 (symm)
+ * C0 = A10^T * B1 + C0    (gemm)
+ * C1 = A10 * B0 + beta*C1 (gemm)
+ * C1 = A11 * B1 + C1      (symm)
+ */
+   {
+      #ifdef TCPLX
+         const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+      #endif
+      const int ML=(M>>1), MR = M-ML;
+      ATL_assert(ML);  /* debugging, remove later */
+      const TYPE *B1 = B + (ML SHIFT);
+      TYPE *C1 = C + (ML SHIFT);
+      Mjoin(PATL,symmL_rec)(MY_ENUM, ML, N, alpha, A, lda, B, ldb, 
+                            beta, C, ldc);
+      if (Uplo == AtlasLower)
+      {
+         const TYPE *A10 = A + (ML SHIFT);
+         Mjoin(PATL,ammm)(TA, AtlasNoTrans, ML, N, MR, alpha, A10, lda,
+                          B1, ldb, ONE, C, ldc);
+         Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, MR, N, ML, alpha, 
+                          A10, lda, B, ldb, beta, C1, ldc);
+      }
+      else /* Upper matrix */
+      {
+         const TYPE *A01 = A + ML*(lda SHIFT);
+         Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, ML, N, MR, alpha, 
+                          A01, lda, B1, ldb, ONE, C, ldc);
+         Mjoin(PATL,ammm)(TA, AtlasNoTrans, MR, N, ML, alpha, 
+                          A01, lda, B, ldb, beta, C1, ldc);
+      }
+      Mjoin(PATL,symmL_rec)(MY_ENUM, MR, N, alpha, A+(ML SHIFT)*(lda+1), 
+                            lda, B1, ldb, ONE, C1, ldc);
+   }
+}
+   #undef MY_ENUM
+   #ifdef TCPLX
+      #define MY_TRAN AtlasTrans,
+   #else
+      #undef TA
+      #define MY_TRAN
+   #endif
+#else
+void Mjoin(PATL,symmL_rec)
+(const enum ATLAS_TRANS, const enum ATLAS_UPLO, ATL_CSZT, ATL_CSZT,
+ const SCALAR, const TYPE*, ATL_CSZT, const TYPE*, ATL_CSZT,
+ const SCALAR, TYPE*, ATL_CSZT);
+      #define MY_TRAN AtlasConjTrans,
+#endif
+#ifdef Conj_
+void Mjoin(PATL,hemm)
+#else
+void Mjoin(PATL,symm)
 #endif
 (
    const enum ATLAS_SIDE  Side,
@@ -3362,59 +3546,30 @@ int Mjoin(PATL,opsymm)
    TYPE *aA, *aB, *aC, *bA;
    opinfo_t oi;
    ATL_UINT bv;
-int Mjoin(PATL,opsymmInfo)
-   (opinfo_t *op, ATL_UINT bv,
-    ATL_CSZT M, ATL_CSZT N, ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc,
-     const SCALAR alpha, const SCALAR beta);
 
    if (!M || !N)
-      return(0);
+      return;
    if (SCALAR_IS_ZERO(alpha))  /* doing nothing but scaling C */
    {
       if (!SCALAR_IS_ONE(beta))  /* if there is scaling of C to do */
-         Mjoin(PATL,trscal)(Uplo, M, N, alpha, C, ldc);
+         Mjoin(PATL,gescal)(M, N, beta, C, ldc);
      
-      return(0);
+      return;
    }
-   bv = (Side == AtlasLeft) ? 1 : 0;
-   bv |= (Uplo == AtlasUpper) ? 2 : 0;
-   if (Mjoin(PATL,opsymmInfo)(&oi, bv, M, N, lda, ldb, ldc, alpha, beta))
-      return(1);
 
-   if (Side == AtlasLeft) /* K=M, K < MAXK */
+   if (Side == AtlasLeft) /* K=M, A is GEMM's A */
    {
-      szW = oi.szB;
-      szW = Mmax(szW, oi.szA);
-      sz = oi.szA + szW + oi.szC;
-      sz = ATL_MulBySize(sz) + 3*ATL_Cachelen + oi.exsz;
-      vp = malloc(sz);
-      assert(vp);
-      aA = bA + oi.szA;
-      aA = ATL_AlignPtr(aA);
-      aB = aA + oi.szA;
-      aB = ATL_AlignPtr(aB);
-      aC = aB + szW;
-      aC = ATL_AlignPtr(aC);
-      #ifdef TCPLX
-         if (alpha[1] == ATL_rzero)
-         {
-         }
-         else
-            Mjoin(PATL,sycpyLNB_aX)(M, alpha, A, lda, aB, M);
+      Mjoin(PATL,symmL_rec)(MY_TRAN Uplo, M, N, alpha, A, lda, B, ldb, 
+                            beta, C, ldc);
+   }
+   else                   /* K=N, A is GEMM's B */
+   {
+      #ifdef Conj_
+      Mjoin(PATL,hemm_APR)(Side, Uplo, M, N, alpha, A, lda, B, ldb, 
+                           beta, C, ldc);
       #else
-         if (alpha == ATL_rone)
-            Mjoin(PATL,sycpyLNB_a1)(M, alpha, A, lda, aB, M);
-         else if (alpha == ATL_rnone)
-            Mjoin(PATL,sycpyLNB_an)(M, alpha, A, lda, aB, M);
-         else
-            Mjoin(PATL,sycpyLNB_aX)(M, alpha, A, lda, aB, M);
-         oi.a2blk(oi.kb, oi.mb, ATL_rone, aB, M, aA);
+      Mjoin(PATL,symm_APR)(Side, Uplo, M, N, alpha, A, lda, B, ldb, 
+                           beta, C, ldc);
       #endif
-      Mjoin(PATL,oploopsN)(&oi, 0, 0, NULL, B, C, 0, aA, aB, aC, aC);
    }
-   else /* K = N, K < MAXK  */
-   {
-   }
-   free(vp);
-   return(0);
 }

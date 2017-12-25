@@ -11164,18 +11164,20 @@ static int NSAMP=1;
 #endif
 #define trusted_trmm(SI, UP, TA, DI, M, N, al, A, lA, B, lB) \
    Mjoin( TP3, trmm  )(SI, UP, TA, DI, M, N,  al, A, lA, B, lB)
-#define trusted_symm(SI, UP, M, N, al, A, lA, B, lB, be, C, lC) \
-   Mjoin(TP3,symm)(SI, UP, M, N, al, A, lA, B, lB, be, C, lC)
 #ifdef APR
    #define trusted_syrk(UP, TA, N, K, al, A, lA, be, C, lC) \
       Mjoin(PATL,syrk_APR)(UP, TA, N, K, al, A, lA, be, C, lC)
    #define trusted_syr2k(UP, TA, N, K, al, A, lA, B, lB, be, C, lC) \
       Mjoin(PATL,syr2k_APR)(UP, TA, N, K, al, A, lA, B, lB, be, C, lC)
+   #define trusted_symm(SI, UP, M, N, al, A, lA, B, lB, be, C, lC) \
+      Mjoin(PATL,symm_APR)(SI, UP, M, N, al, A, lA, B, lB, be, C, lC)
 #else
    #define trusted_syrk(UP, TA, N, K, al, A, lA, be, C, lC) \
       Mjoin(TP3, syrk)(UP, TA, N, K, al, A, lA, be, C, lC)
    #define trusted_syr2k(UP, TA, N, K, al, A, lA, B, lB, be, C, lC) \
       Mjoin(TP3,syr2k)(UP, TA, N, K, al, A, lA, B, lB, be, C, lC)
+   #define trusted_symm(SI, UP, M, N, al, A, lA, B, lB, be, C, lC) \
+      Mjoin(TP3,symm)(SI, UP, M, N, al, A, lA, B, lB, be, C, lC)
 #endif
 #ifdef TCPLX
    #ifdef APR
@@ -11183,14 +11185,16 @@ static int NSAMP=1;
          Mjoin(PATL,herk_APR)(UP, TA, N, K, al, A, lA, be, C, lC)
       #define trusted_her2k(UP, TA, N, K, al, A, lA, B, lB, be, C, lC) \
          Mjoin(PATL,her2k_APR)(UP, TA, N, K, al, A, lA, B, lB, be, C, lC)
+      #define trusted_hemm( SI, UP, M, N, al, A, lA, B, lB, be, C, lC) \
+         Mjoin(PATL,hemm_APR)(SI, UP, M, N, al, A, lA, B, lB, be, C, lC)
    #else
       #define trusted_herk(UP, TA, N, K, al, A, lA, be, C, lC) \
          Mjoin(TP3, herk)(UP, TA, N, K, al, A, lA, be, C, lC)
       #define trusted_her2k(UP, TA, N, K, al, A, lA, B, lB, be, C, lC) \
          Mjoin(TP3,her2k)(UP, TA, N, K, al, A, lA, B, lB, be, C, lC)
+      #define trusted_hemm( SI, UP, M, N, al, A, lA, B, lB, be, C, lC) \
+         Mjoin(TP3,hemm)(SI, UP, M, N, al, A, lA, B, lB, be, C, lC)
    #endif
-   #define trusted_hemm( SI, UP, M, N, al, A, lA, B, lB, be, C, lC) \
-      Mjoin(TP3,hemm)(SI, UP, M, N, al, A, lA, B, lB, be, C, lC)
 #endif
 
 /*
@@ -11836,6 +11840,7 @@ TYPE symmtst
    double                     * MFTEST0
 )
 {
+   ATL_BV_t *errBV=NULL;
    double                     l2ret, ops, t0, ttest, ttrust;
    TYPE                       normA, normB, normC, normD, resid;
    TYPE                       * A  = NULL, * B = NULL, * C = NULL, * C0,
@@ -11992,6 +11997,19 @@ TYPE symmtst
    normB = Mjoin( PATL, genrm1 )( M, N, B, LDB );
    if( normB == ATL_rzero ) normB = ATL_rone;
    free( B  );
+   if (N < 80)
+   {
+      ATL_CSZT K = (SIDE == AtlasLeft) ? M : N;
+      #ifdef TREAL
+         double ferr= 2.0 * (Mabs(ALPHA) * 2.0*(K+N)*EPSILON +
+                      Mabs(BETA) * EPSILON) + EPSILON;
+      #else
+         double ferr = Mabs(*ALPHA) + Mabs(ALPHA[1]);
+         ferr = 2.0 * (ferr*8.0*(K+N)*EPSILON +
+                (Mabs(*BETA)+Mabs(BETA[1]))*EPSILON) + EPSILON;
+      #endif
+      errBV = Mjoin(PATL,gecmpBV)(0, ferr, M, N, C0, LDC, C, LDC);
+   }
 /*
  * Ensure the difference of the output operands is relatively tiny enough
  */
@@ -12008,6 +12026,12 @@ TYPE symmtst
       Mjoin( PATL, geprint )( "C_trusted", M, N, C0, LDC );
       Mjoin( PATL, geprint )( "C_test",    M, N, C,  LDC );
 #endif
+   }
+   if (errBV)
+   {
+      if (ATL_FindFirstSetBitBV(errBV, 0) != -1)
+         ATL_print2dBV(N, N, errBV);
+      ATL_FreeBV(errBV);
    }
  
    free( C  );
