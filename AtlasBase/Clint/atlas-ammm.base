@@ -37761,7 +37761,7 @@ int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
  */
 {
    ATL_cparr_t *cp = (ATL_cparr_t *)&op->a2blk;
-   ATL_iptr_t iptmp;
+   ATL_iptr_t szSet;
    double spmfMM;
    #ifdef TCPLX
       static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
@@ -37769,7 +37769,7 @@ int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
       #define CONE ATL_rone
    #endif
    ATL_CUINT K = (bv&1) ? M:N, iv=K-3;
-   ATL_UINT MB, NB, mb, nb, k, imm, icpA, icpB, icpC, mu, nu, ku, nmu, nnu;
+   ATL_UINT MB, NB, KB, mb, nb, k, imm, icpA, icpB, icpC, mu, nu, ku, nmu, nnu;
 
    if (iv >= ATL_VWopgen_NCASES)
          return(1);
@@ -37782,7 +37782,7 @@ int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
       ATL_AMM_info(imm, &op->amm_b0, &op->amm_b1, &op->amm_bn, k,
                    mu, nu, ku, op->vlen, k, k, k);
    #else
-      ATL_AMM_info(imm, &op->amm_b0, &iptmp, &iptmp, k,
+      ATL_AMM_info(imm, &op->amm_b0, &szSet, &szSet, k,
                    mu, nu, ku, op->vlen, k, k, k);
    #endif
    op->idx = iv;
@@ -37805,67 +37805,52 @@ int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
 /*
  * If M==K ask at least A fit in LLPC
  */
+   KB = ((K+ku-1)/ku)*ku;
    if (bv&1)  /* Left, M=K, symmetric matrix A is gemm's A */
    {
-      op->lda = lda;
-      op->ldb = ldb;
-      op->kb = M;
-      op->alpA = alpha;
-      op->alpB = CONE;
       nmu = (M+mu-1)/mu;
       mb = nmu*mu;
       if (mb > MB) /* must shrink NB to keep working set same */
       {
          ATL_UINT t;
-         k = mb*nu;
-         if (k > ATL_DivBySize(LLPC_SZ))
+         szSet = (MB+NB)*KB + MB*NB;
+         nb = (szSet - mb*KB) / (KB+mb);
+         if (nb < nu)
             return(2);
-         t = MB*NB;
-         k = (k > t) ? ATL_DivBySize(LLPC_SZ) : t;
-         nb = k / mb;
-         if (!nb)
-            return(3);
       }
-      else if (mb+mu <= MB) /* can increase NB to keep working set same */
-      {
-         nb = MB*NB / mb;
-         nnu = nb/nu;
-         nb = MB*NB / mb;
-      }
+      else
+         nb = NB;
       nnu = nb / nu;
-      nnu = ((nnu+1)*nu*mb <= k) ? nnu+1 : nnu;
-      nb = nnu * nu;
+      nb = nnu*nu;
+      op->lda = lda;
+      op->ldb = ldb;
+      op->kb = M;
+      op->alpA = alpha;
+      op->alpB = CONE;
    }
    else      /* Right, N=K, symm's symmetric A is gemm's B */
    {
+      nnu = (N+nu-1)/nu;
+      nb = nnu*nu;
+      if (nb > NB) /* must shrink MB to keep working set same */
+      {
+         szSet = (MB+NB)*KB + MB*NB;
+         mb = (szSet - nb*KB) / (KB+nb);
+         if (mb < mu)
+            return(2);
+      }
+      else
+         mb = MB;
+      nmu = mb / mu;
+      mb = nmu*mu;
+      op->pincBn = op->incBn = 0;  /* not used for 1 blk opsymm */
       op->lda = ldb;
       op->ldb = lda;
       op->kb = N;
       op->alpA = alpha;
       op->alpB = CONE;
-      nnu = (N+nu-1)/nu;
-      nb = nnu*nu;
-      if (nb > NB) /* must shrink MB to keep working set same */
-      {
-         nmu = (MB*NB*nu) / (N*mu);
-         if (!nmu)
-         {
-            nmu = ATL_DivBySize(LLPC_SZ)/(nb*mu);
-            if (!nmu)
-               return(4);
-            else if (nmu > 3)
-               nmu >>= 1;
-         }
-      }
-      else
-      {
-         nmu = (MB*NB*nu) / (N*mu);
-         ATL_assert(nmu);
-      }
-      mb = nmu * mu;
-      op->pincBn = op->incBn = 0;  /* not used for 1 blk opsymm */
    }
-   op->KB = ((op->kb+ku-1)/ku)*ku;
+   op->KB = KB;
    op->beta = beta;
    #ifdef TCPLX
       op->ONE = CONE;
@@ -37939,8 +37924,8 @@ int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
       op->pincAm = op->pmb SHIFT;
       op->incBn = op->pincBn = 0;  /* not used for opsymm */
    }
-   printf("symmB=(%u,%u,%u),(%u,%u,%u)\n", op->mb, op->nb, op->KB, 
-          op->pmb, op->pnb, op->kb);
+   printf("symmB=(%u,%u,%u),(%u,%u,%u), OB=(%u,%u)\n", op->mb, op->nb, op->KB, 
+          op->pmb, op->pnb, op->kb, MB, NB);
    return(0);
 }
 @ROUT ATL_opsyr2kInfo
