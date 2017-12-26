@@ -34,9 +34,81 @@ void SYCPY(ATL_CSZT N, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
  */
 {
 #ifdef TCPLX
+   ATL_CSZT ldc2=ldc+ldc;
+   #if defined(ALPHAR) || defined(ALPHAX)
+      const register TYPE ral=(*alpha);
+      #ifdef ALPHAX
+         const register TYPE ial=alpha[1];
+      #endif
+   #endif
+   ATL_SZT j;
+   ATL_CSZT incC = (ldc+1)<<1, incA=(lda+1)<<1;
+   for (j=0; j < N; j++, C += incC, A += incA)
+   {
+      TYPE *cr=C+ldc2;
+      ATL_CSZT NN = (N-j)<<1;
+      ATL_SZT i;
+      #ifndef ALPHAX
+         register TYPE iA;
+      #endif
+      #ifdef ALPHA1
+         *C = *A;
+         #ifndef Conj_
+            C[1] = A[1];
+         #endif
+      #elif defined(ALPHAN)
+         *C = -(*A);
+         #ifndef Conj_
+            C[1] = -A[1];
+         #endif
+      #elif defined(ALPHAR)
+         register TYPE rA = *A;
+         *C = ral*rA;
+         #ifndef Conj_
+            C[1] = ral*A[1];
+         #endif
+      #elif defined(ALPHAX)
+         register TYPE rA = *A, iA;
+         *C = rA * ral;
+         C[1] = rA*ial;
+      #endif
+      #if !defined(ALPHAX) && defined(Conj_)
+         C[1] = ATL_rzero;
+      #endif
+      #ifdef Conj_
+         #define IAC -iA
+      #else
+         #define IAC iA
+      #endif
+      for (i=2; i < NN; i += 2, cr += ldc2)
+      {
+         #ifdef ALPHA1
+            C[i] = *cr = A[i];
+            C[i+1] = iA = A[i+1];
+            cr[1] = IAC;
+         #elif defined(ALPHAN)
+            C[i] = *cr = -A[i];
+            #ifdef Conj_
+               cr[i] = iA = A[i+1];
+               C[i+1] = -iA;
+            #else
+               cr[i] = C[i+1] = A[i+1];
+            #endif
+         #elif defined(ALPHAR)
+            C[i] = *cr = ral*A[i];
+            C[i+1] = iA = ral*A[i+1];
+            cr[1] = IAC;
+         #elif defined(ALPHAX)
+            rA = A[i]; iA = A[i+1];
+            C[i] = *cr = ral*rA - ial*iA;
+            C[i+1] = iA = ral*iA + ial*rA;
+            cr[1] = IAC;
+         #endif
+      }
+   }
 #else
    ATL_SZT j;
-   ATL_CSZT incC = (ldc+1), incA=(ldc+1);
+   ATL_CSZT incC = (ldc+1), incA=(lda+1);
    for (j=0; j < N; j++, C += incC, A += incA)
    {
       TYPE *cr=C+ldc;
