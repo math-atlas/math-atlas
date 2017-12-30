@@ -13458,6 +13458,101 @@ void DoBlock(char pre, int flg, int verb)
    KillAllMMNodes(mmb);
 }
 
+void DoSyrkAmmMU(char pre, int flag, int verb, int nreg)
+/*
+ * Find best generated ammm kernel to use for SYRK with restriction that MU
+ * must be a multiple of NU (or vice versa if NU > MU).
+ */
+{
+   ATL_mmnode_t *mb, *mD, *pT;
+   ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB;
+   double mfB = 0.0;
+
+   mb = TimeMMFileWithPath(pre, "res", "gSYRKMU.sum", 0, verb|1, 0, 1, 0, -1);
+   if (mb)
+   {
+      KillAllMMNodes(mb);
+      return;
+   }
+/*
+ * Should read in 5 kernels, we want only highest performing
+ */
+   mb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   mD = FindMaxMflopMMQ(mb, 0);
+   mb = RemoveMMNodeFromQ(mb, mD);
+   KillAllMMNodes(mb);
+/*
+ * If mu already a multiple of nu (or vice versa), no need to search!
+ */
+   if (!(mD->mu % mD->nu) || !(mD->nu % mD->mu))
+   {
+      WriteMMFileWithPath(pre, "res", "gSYRKMU.sum", mD);
+      KillMMNode(mD);
+      return;
+   }
+   VL = mD->vlen;
+   NB = (mD->mbB + mD->nbB)>>1;
+   KB = (mD->kbB);
+   flg = mD->flag;
+   KVEC = ((flg>>MMF_KVEC)&1)*VL;
+   flg &= ~(1<<MMF_KUISKB);
+   flg |= (1<<MMF_KRUNTIME);
+   pT = MMGetNodeGEN(pre, 0, 0, VL, 1, 1, VL, 0, 0, 0,
+                     DupString("ATL_tmp.c"));
+   pT->flag = flg;
+   printf("FULL SEARCH FOR MU%%NU == 0 (or vice versa) AMM, NREG=%u, "
+          "B=(%u,%u), VLEN=%u:\n", nreg, NB, KB, VL);
+   for (i=1; i <= nreg; i++)
+   {
+      ATL_UINT j;
+      if (i > NB)
+         break;
+      for (j=1; j <= nreg; j++)
+      {
+         double mf;
+         ATL_UINT mu, nu, mb, nb;
+         if (j > NB || i*j+1 > nreg)
+            break;
+         if (i*j+i+j > nreg)
+            pT->flag |= 1<<MMF_BREG1;
+         else
+            pT->flag &= ~(1<<MMF_BREG1);
+         pT->mu = mu = (KVEC) ? i : i*VL;
+         pT->nu = nu = j;
+         mb = (NB/mu)*mu;
+         nb = (NB/nu)*nu;
+         if (mu%nu && nu%mu)
+            continue;
+         if (!mb || !nb)
+            continue;
+         if (pT->genstr)
+            free(pT->genstr);
+         pT->genstr = MMGetGenString(pre, pT);
+         mf = TimeMMKernel(verb, 0, pT, pre, mb, nb, KB, 1, 0, -1);
+         printf("   MU=%2u/%2u, NU=%2u, MFLOP=%.2f\n", i, mu, j, mf);
+         if (mf > mfB)
+         {
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+            flgB = pT->flag;
+         }
+      }
+   }
+   assert(mfB > 0.0);
+   KillMMNode(pT);
+   pT = MMGetNodeGEN(pre, flgB, mD->kbB, muB, nuB, mD->ku, VL, KVEC, 
+                     mD->pref, mD->pfLS, NULL);
+   pT->mbB = (NB/muB)*muB;
+   pT->nbB = (NB/nuB)*nuB;
+   pT->mbB = mD->kbB;
+   printf("BEST MU%%NU==0 CASE is B=(%u,%u,%u), U=(%u,%u), MFLOP=%.2f\n", 
+          pT->mbB, pT->nbB, pT->kbB, muB, nuB, mfB);
+   KillMMNode(mD);
+   WriteRefreshedMMFileWithPath(pre, "res", "gSYRKMU.sum", pT);
+   KillMMNode(pT);
+}
+
 int getSzC(ATL_mmnode_t *mp, int nb)
 {
    const int nu = mp->nu, nnu = (nb+nu-1)/nu;
@@ -14097,6 +14192,7 @@ int main(int nargs, char **args)
    if (flg&4)     /* If I just wanted nreg calc */
       return(0);  /* then I'm done */
    DoBlock(pre, flg, verb);
+   DoSyrkAmmMU(pre, flg, verb, nreg);
    DoSyrk(flg, verb, pre, nreg, NB, VLEN);
    return(0);
 }
@@ -35023,6 +35119,54 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    KillAllMMNodes(mmb);
 }
 
+void srch_menMU(char pre, int verb)
+/*
+ * Finds kernels for cases with M=N at fixed values, while K is tuned.
+ * Used in SYRK.
+ */
+{
+   ATL_mmnode_t *bp, *mmb=NULL;
+   unsigned int U, D, d, maxK;
+   
+   bp = TimeMMFileWithPath(pre, "res", "ipmenMU.sum", 0, 1, 0, 1, 0, -1);
+   if (bp)
+   {
+      KillAllMMNodes(bp);
+      return;
+   }
+   bp = ReadMMFileWithPath(pre, "res", "ipgen.sum");
+   assert(bp);
+   while (bp->next)
+      bp = KillMMNode(bp);
+   if (bp->mu % bp->nu && bp->nu % bp->mu)
+   {
+      KillMMNode(bp);
+      bp = ReadMMFileWithPath(pre, "res", "gSYRKMU.sum");
+      assert(bp);
+   }
+   U = ATL_iLCM(bp->mu, bp->nu);
+   D = Mmax(bp->mbB, bp->nbB);
+   maxK = Mmax(bp->kbB, D);
+   for (d=U; d <= D; d += U)
+   {
+      ATL_mmnode_t *mp;
+      mp = CloneMMNode(bp);
+      mp->next = mmb;
+      mmb = mp;
+      mp->mbB = mp->nbB = d;
+      MMExpandK(verb, pre, 0, 1, mp, maxK);
+      printf("\n");
+   }
+   KillMMNode(bp);
+//   PrintMMNodes(stdout, mmb);
+   while (mmb->next && mmb->mflop[0] < mmb->next->mflop[0])
+      mmb = KillMMNode(mmb);
+   mmb = ReverseMMQ(mmb);
+   MMPruneMflopTol(mmb, 0, 1.0);
+   WriteMMFileWithPath(pre, "res", "ipmenMU.sum", mmb);
+   KillAllMMNodes(mmb);
+}
+
 void srch_men(char pre, int verb)
 /*
  * Finds kernels for cases with M=N at fixed values, while K is tuned.
@@ -35095,6 +35239,7 @@ int main(int nargs, char **args)
 
    findBestIP(pre, verb, mmb, NULL);
    srch_men(pre, verb);
+   srch_menMU(pre, verb);
    do_ipdek(verb, pre, 0);
    do_ipdek(verb, pre, 1);
 
