@@ -641,7 +641,7 @@ void Mjoin(PATL,ipmenInfo)
    (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
-void Mjoin(PATL,ipmenMUInfo)
+void Mjoin(PATL,ipmenUMInfo)
    (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
@@ -13462,7 +13462,7 @@ void DoBlock(char pre, int flg, int verb)
    KillAllMMNodes(mmb);
 }
 
-void DoSyrkAmmMU(char pre, int flag, int verb, int nreg)
+void DoSyrkAmmUM(char pre, int flag, int verb, int nreg)
 /*
  * Find best generated ammm kernel to use for SYRK with restriction that MU
  * must be a multiple of NU (or vice versa if NU > MU).
@@ -13472,7 +13472,7 @@ void DoSyrkAmmMU(char pre, int flag, int verb, int nreg)
    ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB;
    double mfB = 0.0;
 
-   mb = TimeMMFileWithPath(pre, "res", "gSYRKMU.sum", 0, verb|1, 0, 1, 0, -1);
+   mb = TimeMMFileWithPath(pre, "res", "gSYRKUM.sum", 0, verb|1, 0, 1, 0, -1);
    if (mb)
    {
       KillAllMMNodes(mb);
@@ -13490,7 +13490,7 @@ void DoSyrkAmmMU(char pre, int flag, int verb, int nreg)
  */
    if (!(mD->mu % mD->nu) || !(mD->nu % mD->mu))
    {
-      WriteMMFileWithPath(pre, "res", "gSYRKMU.sum", mD);
+      WriteMMFileWithPath(pre, "res", "gSYRKUM.sum", mD);
       KillMMNode(mD);
       return;
    }
@@ -13553,7 +13553,7 @@ void DoSyrkAmmMU(char pre, int flag, int verb, int nreg)
    printf("BEST MU%%NU==0 CASE is B=(%u,%u,%u), U=(%u,%u), MFLOP=%.2f\n", 
           pT->mbB, pT->nbB, pT->kbB, muB, nuB, mfB);
    KillMMNode(mD);
-   WriteRefreshedMMFileWithPath(pre, "res", "gSYRKMU.sum", pT);
+   WriteRefreshedMMFileWithPath(pre, "res", "gSYRKUM.sum", pT);
    KillMMNode(pT);
 }
 
@@ -14196,7 +14196,7 @@ int main(int nargs, char **args)
    if (flg&4)     /* If I just wanted nreg calc */
       return(0);  /* then I'm done */
    DoBlock(pre, flg, verb);
-   DoSyrkAmmMU(pre, flg, verb, nreg);
+   DoSyrkAmmUM(pre, flg, verb, nreg);
    DoSyrk(flg, verb, pre, nreg, NB, VLEN);
    return(0);
 }
@@ -35123,7 +35123,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    KillAllMMNodes(mmb);
 }
 
-void srch_menMU(char pre, int verb)
+void srch_menUM(char pre, int verb)
 /*
  * Finds kernels for cases with M=N at fixed values, while K is tuned.
  * Used in SYRK.
@@ -35132,7 +35132,7 @@ void srch_menMU(char pre, int verb)
    ATL_mmnode_t *bp, *mmb=NULL;
    unsigned int U, D, d, maxK;
    
-   bp = TimeMMFileWithPath(pre, "res", "ipmenMU.sum", 0, 1, 0, 1, 0, -1);
+   bp = TimeMMFileWithPath(pre, "res", "ipmenUM.sum", 0, 1, 0, 1, 0, -1);
    if (bp)
    {
       KillAllMMNodes(bp);
@@ -35145,7 +35145,7 @@ void srch_menMU(char pre, int verb)
    if (bp->mu % bp->nu && bp->nu % bp->mu)
    {
       KillMMNode(bp);
-      bp = ReadMMFileWithPath(pre, "res", "gSYRKMU.sum");
+      bp = ReadMMFileWithPath(pre, "res", "gSYRKUM.sum");
       assert(bp);
    }
    U = ATL_iLCM(bp->mu, bp->nu);
@@ -35167,7 +35167,7 @@ void srch_menMU(char pre, int verb)
       mmb = KillMMNode(mmb);
    mmb = ReverseMMQ(mmb);
    MMPruneMflopTol(mmb, 0, 1.0);
-   WriteMMFileWithPath(pre, "res", "ipmenMU.sum", mmb);
+   WriteMMFileWithPath(pre, "res", "ipmenUM.sum", mmb);
    KillAllMMNodes(mmb);
 }
 
@@ -35243,7 +35243,7 @@ int main(int nargs, char **args)
 
    findBestIP(pre, verb, mmb, NULL);
    srch_men(pre, verb);
-   srch_menMU(pre, verb);
+   srch_menUM(pre, verb);
    do_ipdek(verb, pre, 0);
    do_ipdek(verb, pre, 1);
 
@@ -36692,14 +36692,16 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
    return(cb);
 }
 
-void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
+void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
 /*
  * Generate syrk-specific header file
  */
 {
    ATL_cpnode_t *cb;
    FILE *fp;
+   const int RCSAME=bv&1, UM=bv&2;
    const int ntr = (pre == 'd' || pre == 's') ? 2 : 4;
+   const char *ums = (UM) ? "UM":"";
    int ial, ibe, itr, flg;
    const char be[3] = {'0', '1', 'n'};
    char bes[4] = {'1', 'N', 'X', '0'};
@@ -36712,10 +36714,12 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
 
    if (!mb)
       return;
-   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "syrk", NULL);
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", UM?"syrkUM":"syrk", NULL);
    fprintf(fp, "#define ATL_SYRKK_VLEN %d\n", mb->vlen);
    fprintf(fp, "#define ATL_SYRKK_KVEC %d\n",
            FLAG_IS_SET(mb->flag, MMF_KVEC) ? mb->vlen:0);
+   if (UM)
+      fprintf(fp, "#define ATL_SYRKK_MU %d\n", mb->mu);
    fprintf(fp, "#define ATL_SYRKK_NU %d\n", mb->nu);
    fprintf(fp, "#define ATL_SYRKK_KU %d\n", mb->ku);
 /*
@@ -36725,14 +36729,14 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    {
       const char upr = (pre == 'z') ? 'd' : 's';
       for (ibe=0; ibe < 3; ibe++)
-         fprintf(fp, "#define ATL_%camsyrkK_b%c ATL_%camsyrkK_b%c\n",
-                 pre, be[ibe], upr, be[ibe]);
+         fprintf(fp, "#define ATL_%camsyrkK%s_b%c ATL_%camsyrkK%s_b%c\n",
+                 pre, ums, be[ibe], upr, ums, be[ibe]);
    }
    for (ibe=0; ibe < 3; ibe++)
    {
       fprintf(fp,
-"void ATL_%camsyrkK_b%c(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,\n",
-              pre, be[ibe]);
+"void ATL_%camsyrkK%s_b%c(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,\n",
+              pre, ums, be[ibe]);
       fprintf(fp,
       "                     TYPE*, const TYPE*, const TYPE*, const TYPE*);\n");
    }
@@ -36775,12 +36779,12 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
          for (is=0; is < 2; is++)
          {
             fprintf(fp, "#ifdef Conj_\n");
-            fprintf(fp, "#define ATL_%cSyrkIntoC_a%cb%c%s "
-                    "ATL_%cHerkIntoC_a%cb%c%s\n", 
-                     pre, bes[ial], bes[ibe], sfx[is],
-                     pre, bes[ial], bes[ibe], hfx[is]);
+            fprintf(fp, "#define ATL_%cSyrk%sIntoC_a%cb%c%s "
+                    "ATL_%cHerk%sIntoC_a%cb%c%s\n", 
+                     pre, ums, bes[ial], bes[ibe], sfx[is],
+                     pre, ums, bes[ial], bes[ibe], hfx[is]);
             fprintf(fp, "#endif\n");
-            fprintf(fp, "void ATL_%cSyrkIntoC_a%cb%c%s\n", pre, bes[ial],
+            fprintf(fp, "void ATL_%cSyrk%sIntoC_a%cb%c%s\n", pre, ums, bes[ial],
                     bes[ibe], sfx[is]);
             if (pre == 's' || pre == 'd')
                fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
@@ -37584,9 +37588,9 @@ int main(int nargs, char **args)
 #define  ATL_DECL_ 1
 @ROUT ATL_ipmeninfo
 #ifdef MUNUMUL_
-   #include Mstr(Mjoin(ATLAS_PRE,@(vwf)MU_view.h))
-   #define ipInfo Mjoin(PATL,ipmenMUInfo)
-   #define ipPop  Mjoin(PATL,ipmenMUInfoPop)
+   #include Mstr(Mjoin(ATLAS_PRE,@(vwf)UM_view.h))
+   #define ipInfo Mjoin(PATL,ipmenUMInfo)
+   #define ipPop  Mjoin(PATL,ipmenUMInfoPop)
 #else
    #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
    #define ipInfo Mjoin(PATL,ipmenInfo)
