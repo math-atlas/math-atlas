@@ -35123,6 +35123,74 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    KillAllMMNodes(mmb);
 }
 
+ATL_mmnode_t *bestUM(char pre, int verb, ATL_mmnode_t *IP) 
+   /* IP: fastest inner product kernel with mu not mult of nu */
+{
+   ATL_mmnode_t *bp, *prv, *mp, *bestp=NULL;
+   const unsigned int MB=IP->mbB, NB=IP->nbB, KB=IP->kbB;
+   double mfB=0.0;
+   mp = TimeMMFileWithPath(pre, "res", "ipbestUM.sum", 0, 1, 0, 1, 0, -1);
+   if (mp)
+      return(mp);
+/*
+ * Get all working user cases, and remove any where M/N unroll not multiple or
+ * K isn't runtime <= 4;
+ */
+   bp = ReadMMFileWithPath(pre, "res", "gSYRKUM.sum");
+   assert(bp);
+   bp->next = GetWorkingUserCases(verb, pre);
+   prv = bp;
+   mp = bp->next;
+   while(mp)
+   {
+      ATL_mmnode_t *nxt=mp->next;
+      const unsigned int mu=mp->mu, nu=mp->nu,
+         maxKU=(FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 4);
+      if (mu%nu && nu%mu || mp->ku > maxKU || 
+          !FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      {
+         prv->next = nxt;
+         KillMMNode(mp);
+      }
+      else
+         prv = mp;
+      mp = nxt;
+   }
+/*
+ * Now, find fastest asymptotic sized kernel
+ */
+   printf("FINDING FASTEST AMM WITH MU/NU THAT DIVIDE EVENLY:\n");
+   for (mp=bp; mp; mp = mp->next)
+   {
+      double mf;
+      const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
+      unsigned int mb=(MB/mu)*mu, nb=(NB/nu)*nu, kb=(KB/ku)/ku;
+      mb = (mb) ? mb : mu;
+      nb = (nb) ? nb : nu;
+      kb = (kb) ? kb : ku;
+      mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 1, -1, -1);
+      printf("   ID=%u: B=(%u,%u,%u), U=(%u,%u,%u), mf=%.2f\n", mp->ID, 
+             mb, nb, kb, mu, nu, ku, mf);
+      if (mf > mfB)
+      {
+         mp->mbB = mb;
+         mp->nbB = nb;
+         mp->nbB = kb;
+         bestp = mp;
+         mfB = mf;
+      }
+   }
+   assert(bestp);
+   bestp->mflop[0] = mfB;
+   mp = bestp;
+   printf("CHOSE: ID=%u: B=(%u,%u,%u), mf=%.2f\n", mp->ID, mp->mbB, mp->nbB, 
+          mp->kbB, mfB);
+   bp = RemoveMMNodeFromQ(bp, bestp);
+   KillAllMMRouts(bp);
+   WriteMMFileWithPath(pre, "res", "ipbestUM.sum", bestp);
+   return(bestp);
+}
+
 void srch_menUM(char pre, int verb)
 /*
  * Finds kernels for cases with M=N at fixed values, while K is tuned.
@@ -35138,15 +35206,15 @@ void srch_menUM(char pre, int verb)
       KillAllMMNodes(bp);
       return;
    }
-   bp = ReadMMFileWithPath(pre, "res", "ipgen.sum");
+   bp = ReadMMFileWithPath(pre, "res", "ipmen.sum");
    assert(bp);
    while (bp->next)
       bp = KillMMNode(bp);
    if (bp->mu % bp->nu && bp->nu % bp->mu)
    {
-      KillMMNode(bp);
-      bp = ReadMMFileWithPath(pre, "res", "gSYRKUM.sum");
-      assert(bp);
+      ATL_mmnode_t *tp=bp;
+      bp = bestUM(pre, verb, bp);
+      KillMMNode(tp);
    }
    U = ATL_iLCM(bp->mu, bp->nu);
    D = Mmax(bp->mbB, bp->nbB);
