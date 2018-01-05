@@ -35203,7 +35203,12 @@ void srch_menUM(char pre, int verb)
    bp = TimeMMFileWithPath(pre, "res", "ipmenUM.sum", 0, 1, 0, 1, 0, -1);
    if (bp)
    {
+      mmb = bp;
+      bp = TimeMMFileWithPath(pre, "res", "ipsyrkUM.sum", 0, 1, 0, 1, 0, -1);
+      if (!bp)
+         goto TIME_SYRKUM;
       KillAllMMNodes(bp);
+      KillAllMMNodes(mmb);
       return;
    }
    bp = ReadMMFileWithPath(pre, "res", "ipmen.sum");
@@ -35236,7 +35241,25 @@ void srch_menUM(char pre, int verb)
    mmb = ReverseMMQ(mmb);
    MMPruneMflopTol(mmb, 0, 1.0);
    WriteMMFileWithPath(pre, "res", "ipmenUM.sum", mmb);
-   KillAllMMNodes(mmb);
+/*
+ * Now, create a SYRK kernel with its own time in mflop[0], and gemm's in
+ * mflop[1], and write it it to "ipsyrkUM.sum"
+ */
+TIME_SYRKUM:
+   while (mmb->next)                      /* get rid of all but */
+      mmb = KillMMNode(mmb);              /* asymptotic case */
+   mmb->mflop[1] = mmb->mflop[0];
+   mmb->blask = ATL_KSYRK;
+   if (mmb->genstr)
+      free(mmb->genstr);
+   mmb->genstr = MMGetGenString(pre, mmb);
+   mmb->mflop[0] = TimeMMKernel(verb, 0, mmb, pre, mmb->mbB, mmb->nbB, mmb->kbB,
+                               1, 0, -1);
+   printf("SYRK/GEMM MFLOP=%.4f\n", mmb->mflop[0]/mmb->mflop[1]);
+   if (pre == 'c' || pre == 'z')
+      mmb->flag |= 1<<MMF_COMPLEX;
+   WriteMMFileWithPath(pre, "res", "ipsyrkUM.sum", mmb);
+   KillMMNode(mmb);
 }
 
 void srch_men(char pre, int verb)
@@ -36723,7 +36746,7 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
          cpflag |= 1 << CPF_REAL;
       switch(mp->blask)
       {
-      case 1:  /* SYRK needs C copies for all alpha,beta */
+      case ATL_KSYRK:  /* SYRK needs C copies for all alpha,beta */
          cpflag |= (1<<CPF_SYRK) | (1<<CPF_CBLK);
          cp = GetCopyNodeFromMM(cpflag, mp, NULL);
 /*
@@ -37559,6 +37582,78 @@ void GenTrsmALLT(char pre, char *outd, char sd, ATL_mmnode_t *mb)
    free(of);
 }
 
+ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
+{
+   ATL_mmnode_t *rp, *cp, *rU, *cU, *ret, *bkb=(*BKB);
+   unsigned int bv;
+   char cpr = (pre == 's') ? 'c' : 'z';
+
+   for (rp=bkb; rp && (rp->mu != rp->nu); rp = rp->next);
+   assert(rp);
+   assert(rp->blask == ATL_KSYRK);
+   for (cp=rp->next; cp && (cp->mu != cp->nu); cp = cp->next);
+   assert(cp);
+   assert(cp->blask == ATL_KSYRK);
+   for (rU=bkb; rU && (rU->mu == rU->nu); rU = rU->next);
+   if (rU)
+   {
+      for (cU=rU->next; cU && (cU->mu == cU->nu); cU = cU->next);
+      assert(cU);
+      ret = cU->next;
+      if (FLAG_IS_SET(rU->flag, MMF_COMPLEX)) /* cplx first */
+      {
+         ATL_mmnode_t *tp;
+         assert(!FLAG_IS_SET(cU->flag, MMF_COMPLEX));
+         tp = cU;
+         cU = rU;
+         rU = tp;
+      }
+      else /* real first */
+      {
+         assert(FLAG_IS_SET(cU->flag, MMF_COMPLEX));
+      }
+   }
+   else
+   {
+      cU = NULL;
+      ret = cp->next;
+   }
+   if (FLAG_IS_SET(rp->flag, MMF_COMPLEX)) /* cplx first */
+   {
+      ATL_mmnode_t *tp;
+      assert(!FLAG_IS_SET(cp->flag, MMF_COMPLEX));
+      tp = cp;
+      cp = rp;
+      rp = tp;
+   }
+   else /* real first */
+   {
+      assert(FLAG_IS_SET(cp->flag, MMF_COMPLEX));
+   }
+   bv = MMKernsPerfSame(rp, cp);
+   GenSyrkH(pre, outd, rp, bv);
+   GenSyrkH(cpr, outd, cp, bv);
+   if (bv) /* if real & cplx same, take cplx out to avoid double compile */
+   {
+      bkb = RemoveMMNodeFromQ(bkb, cp);
+      KillMMNode(cp);
+   }
+   if (rU)
+   {
+      unsigned int bvU;
+      bvU = MMKernsPerfSame(rU, cU) | 2;
+      GenSyrkH(pre, outd, rU, bvU);
+      GenSyrkH(cpr, outd, cU, bvU);
+      if (bvU & 1)
+      {
+         bkb = RemoveMMNodeFromQ(bkb, cU);
+         KillMMNode(cU);
+      }
+   }
+   *BKB = bkb;
+   return(ret);
+}
+
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
                  ATL_cpnode_t *cb)
 {
@@ -37568,42 +37663,31 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
    char bes[3] = {'0', '1', 'n'};
    char fn[24];
 
-   for (mp=bkb; mp; mp = mp->next)
+   mp = bkb;
+   while (mp)
    {
+      ATL_mmnode_t *nxt = mp->next;
       char cpr = (pre == 's') ? 'c' : 'z';
       switch(mp->blask)
       {
-         ATL_mmnode_t *cp, *nxt;
+         ATL_mmnode_t *cp;
          int i;
-      case 1:
-         cp = mp->next;
-         assert(cp);
-         assert(cp->blask == mp->blask); /* expect real&cplx kerns! */
-         if (FLAG_IS_SET(mp->flag, MMF_COMPLEX)) /* cplx first */
-         {
-            ATL_mmnode_t *tmp;
-            assert(!FLAG_IS_SET(cp->flag, MMF_COMPLEX));
-            nxt = cp;
-            tmp = cp;
-            cp = mp;
-            mp = tmp;
-         }
-         else /* real first */
-         {
-            assert(FLAG_IS_SET(cp->flag, MMF_COMPLEX));
-            nxt = cp;
-         }
-         i = MMKernsPerfSame(mp, cp);
-         GenSyrkH(pre, outd, mp, i);
-         GenSyrkH(cpr, outd, cp, i);
-         if (i)  /* get rid of complex node to avoid useless compile  */
-             bkb = RemoveMMNodeFromQ(bkb, cp);
-         else
-            mp = nxt;
+/*
+ *    For SYRK, we expect 4 kernels, with each pair being the real & complex
+ *    versions of the same kernel, with the first pair being the mu=nu case
+ *    used by pure inner-product and cases ip when diagonal C block's A are
+ *    stored in different format than gemm's.  The second pair is for when
+ *    ipmenUM is used for gemm.
+ */
+      case ATL_KSYRK:
+         i = mp == bkb;
+         nxt = GenAllSyrkH(pre, outd, &mp);
+         bkb = (i) ? mp : bkb;
          break;
       default:
          assert(0);
       }
+      mp =  nxt;
    }
    fpout = OpenMMGenHeader(outd, 0, pre, "amm", NULL, "proto", mb);
    assert(fpout);
