@@ -31414,14 +31414,14 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    fprintf(fp, "#define ATL_SYRKK_NU %d\n", mb->nu);
    fprintf(fp, "#define ATL_SYRKK_KU %d\n", mb->ku);
 /*
- * Prototype ATL_<pre>_amsyrkK kernel
+ * Prototype ATL_<pre>_[sq,um]syrkK kernel
  */
    if (RCSAME && (pre == 'c' || pre == 'z'))
    {
       const char upr = (pre == 'z') ? 'd' : 's';
       for (ibe=0; ibe < 3; ibe++)
-         fprintf(fp, "#define ATL_%camsyrkK_b%c ATL_%camsyrkK_b%c\n", 
-                 pre, be[ibe], upr, be[ibe]);
+         fprintf(fp, "#define ATL_%c%ssyrkK_b%c ATL_%c%ssyrkK_b%c\n", 
+                 pre, sh, be[ibe], upr, sh, be[ibe]);
    }
    for (ibe=0; ibe < 3; ibe++)
    {
@@ -36783,6 +36783,21 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
    return(cb);
 }
 
+void GenSyrkPerfH(char pre, char *outd, ATL_mmnode_t *sq, ATL_mmnode_t *um)
+{
+   FILE *fp;
+   
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "syrkPerf", NULL);
+   fprintf(fp, "   #define ATL_sqsyrkMF %e\n", sq->mflop[0]);
+   if (um)
+   {
+      double syMF=*um->mflop, mmMF=um->mflop[1];
+      fprintf(fp, "   #define ATL_umsyrkMF %e\n", syMF);
+      fprintf(fp, "   #define ATL_umgemmMF %e\n", mmMF);
+      fprintf(fp, "   #define ATL_umratio %f\n", syMF/mmMF);
+   }
+   CloseGenHeader(fp);
+}
 void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
 /*
  * Generate syrk-specific header file
@@ -36792,6 +36807,8 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
    FILE *fp;
    const int RCSAME=bv&1, UM=bv&2;
    const int ntr = (pre == 'd' || pre == 's') ? 2 : 4;
+   const char *sh = (UM) ? "um" : "sq";
+   const char *SH = (UM) ? "UM" : "SQ";
    const char *ums = (UM) ? "UM":"";
    int ial, ibe, itr, flg;
    const char be[3] = {'0', '1', 'n'};
@@ -36805,62 +36822,78 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
 
    if (!mb)
       return;
-   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", UM?"syrkUM":"syrk", NULL);
-   fprintf(fp, "#define ATL_SYRKK_VLEN %d\n", mb->vlen);
-   fprintf(fp, "#define ATL_SYRKK_KVEC %d\n",
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", UM?"umsyrk":"sqsyrk", NULL);
+   fprintf(fp, "#define ATL_%sSYRKK_VLEN %d\n", SH, mb->vlen);
+   fprintf(fp, "#define ATL_%sSYRKK_KVEC %d\n", SH,
            FLAG_IS_SET(mb->flag, MMF_KVEC) ? mb->vlen:0);
    if (UM)
-      fprintf(fp, "#define ATL_SYRKK_MU %d\n", mb->mu);
-   fprintf(fp, "#define ATL_SYRKK_NU %d\n", mb->nu);
-   fprintf(fp, "#define ATL_SYRKK_KU %d\n", mb->ku);
+      fprintf(fp, "#define ATL_%sSYRKK_MU %d\n", SH, mb->mu);
+   fprintf(fp, "#define ATL_%sSYRKK_NU %d\n", SH, mb->nu);
+   fprintf(fp, "#define ATL_%sSYRKK_KU %d\n", SH, mb->ku);
+
+   fprintf(fp, "/*\n * Generic names for syrk info\n */\n");
+   @whiledef mn VLEN KVEC NU KU
+   fprintf(fp, "#ifndef ATL_SYRKK_@(mn)\n  #define ATL_SYRKK_@(mn) "
+           "ATL_%sSYRKK_@(mn)\n#endif\n", SH);
+   @endwhile
+   fprintf(fp, "#ifndef ATL_SYRKK_MU\n  #define ATL_SYRKK_MU "
+           "ATL_%sSYRKK_%s\n#endif\n", SH, UM?"MU":"NU");
 /*
- * Prototype ATL_<pre>_amsyrkK kernel
+ * Prototype ATL_<pre>_[sq,um]syrkK kernel
  */
    if (RCSAME && (pre == 'c' || pre == 'z'))
    {
       const char upr = (pre == 'z') ? 'd' : 's';
       for (ibe=0; ibe < 3; ibe++)
-         fprintf(fp, "#define ATL_%camsyrkK%s_b%c ATL_%camsyrkK%s_b%c\n",
-                 pre, ums, be[ibe], upr, ums, be[ibe]);
+      {
+         fprintf(fp, "#define ATL_%c%ssyrkK_b%c ATL_%c%ssyrkK_b%c\n",
+                 pre, sh, be[ibe], upr, sh, be[ibe]);
+      }
    }
    for (ibe=0; ibe < 3; ibe++)
    {
       fprintf(fp,
-"void ATL_%camsyrkK%s_b%c(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,\n",
-              pre, ums, be[ibe]);
+"void ATL_%c%ssyrkK_b%c(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,\n",
+              pre, sh, be[ibe]);
       fprintf(fp,
       "                     TYPE*, const TYPE*, const TYPE*, const TYPE*);\n");
+      fprintf(fp, "#ifndef ATL_%camsyrkK_b%c\n   "
+                  "#define ATL_%camsyrkK_b%c ATL_%c%ssyrkK_b%c\n#endif\n", 
+               pre, be[ibe], pre, be[ibe], pre, sh, be[ibe]);
    }
 /*
  * Prototype/rename all A cpy routs: ATL_<pre>cm2am_syrk<TA>
+ * UM case uses gemm's A/B copy, so no need for UM
  */
-@skip   cb = AddMMUniqueACopyFromMMNodes(pre, 'T', mb, NULL);
-   flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
-   flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
-   flg |= (pre == 'c' || pre == 's') ? (1<<CPF_SINGLE):0;
-   cb = GetCopyNodeFromMM(flg, mb, NULL);
-   cb->rout = GetCopyName(cb, 0);
-   fprintf(fp, "#define ATL_%ca2blk_syrkN %s\n",
-           pre, cb->rout);
-   free(cb->rout);
-   cb->flag |= 1<<CPF_TRANS;
-   cb->rout = GetCopyName(cb, 0);
-   fprintf(fp, "#define ATL_%ca2blk_syrkT %s\n",
-           pre, cb->rout);
-   KillAllCopyNodes(cb);
-   for (itr=0; itr < 2; itr++)
+   if (!UM)
    {
-      char tr = itr ? 'T' : 'N';
-      fprintf(fp, "void ATL_%ca2blk_syrk%c", pre, tr);
-      if (pre == 'd' || pre == 's')
-         fprintf(fp,
-         "(ATL_CSZT,ATL_CSZT,const TYPE,const TYPE*,ATL_CSZT,TYPE*);\n");
-      else
-         fprintf(fp,
-         "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,ATL_CSZT,TYPE*,TYPE*);\n");
+      flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
+      flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
+      flg |= (pre == 'c' || pre == 's') ? (1<<CPF_SINGLE):0;
+      cb = GetCopyNodeFromMM(flg, mb, NULL);
+      cb->rout = GetCopyName(cb, 0);
+      fprintf(fp, "#define ATL_%ca2blk_%ssyrkN %s\n",
+              pre, sh, cb->rout);
+      free(cb->rout);
+      cb->flag |= 1<<CPF_TRANS;
+      cb->rout = GetCopyName(cb, 0);
+      fprintf(fp, "#define ATL_%ca2blk_%ssyrkT %s\n",
+              pre, sh, cb->rout);
+      KillAllCopyNodes(cb);
+      for (itr=0; itr < 2; itr++)
+      {
+         char tr = itr ? 'T' : 'N';
+         fprintf(fp, "void ATL_%ca2blk_syrk%c", pre, tr);
+         if (pre == 'd' || pre == 's')
+            fprintf(fp,
+            "(ATL_CSZT,ATL_CSZT,const TYPE,const TYPE*,ATL_CSZT,TYPE*);\n");
+         else
+            fprintf(fp, "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,"
+                        "ATL_CSZT,TYPE*,TYPE*);\n");
+      }
    }
 /*
- * Prototype all C cpy routs: ATL_<pre>SyrkIntoC_a<alp>_b<bet>
+ * Prototype all C cpy routs: ATL_<pre>[sq,um]SyrkIntoC_a<alp>_b<bet>
  */
    for (ial=0; ial < 3; ial++)
    {
@@ -36870,20 +36903,28 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
          for (is=0; is < 2; is++)
          {
             fprintf(fp, "#ifdef Conj_\n");
-            fprintf(fp, "#define ATL_%cSyrk%sIntoC_a%cb%c%s "
-                    "ATL_%cHerk%sIntoC_a%cb%c%s\n", 
-                     pre, ums, bes[ial], bes[ibe], sfx[is],
-                     pre, ums, bes[ial], bes[ibe], hfx[is]);
+            fprintf(fp, "#define ATL_%c%sSyrkIntoC_a%cb%c%s "
+                    "ATL_%c%sHerkIntoC_a%cb%c%s\n", 
+                     pre, sh, bes[ial], bes[ibe], sfx[is],
+                     pre, sh, bes[ial], bes[ibe], hfx[is]);
             fprintf(fp, "#endif\n");
-            fprintf(fp, "void ATL_%cSyrk%sIntoC_a%cb%c%s\n", pre, ums, bes[ial],
+            fprintf(fp, "void ATL_%c%sSyrkIntoC_a%cb%c%s\n", pre, sh, bes[ial],
                     bes[ibe], sfx[is]);
             if (pre == 's' || pre == 'd')
                fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
             else
-               fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+               fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,"
+                       "const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+
+            fprintf(fp, "#ifndef ATL_%cSyrkIntoC_a%cb%c%s\n   #define "
+            "ATL_%cSyrkIntoC_a%cb%c%s ATL_%c%sSyrkIntoC_a%cb%c%s\n#endif\n",  
+               pre, bes[ial], bes[ibe], sfx[is],
+               pre, bes[ial], bes[ibe], sfx[is],
+               pre, sh, bes[ial], bes[ibe], sfx[is]);
          }
       }
    }
+   
    CloseGenHeader(fp);
 }
 
@@ -37588,6 +37629,8 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
    unsigned int bv;
    char cpr = (pre == 's') ? 'c' : 'z';
 
+   for (bv=0,ret=bkb; ret && ret->blask == ATL_KSYRK; ret = ret->next, bv++);
+   assert(bv == 2 || bv == 4);
    for (rp=bkb; rp && (rp->mu != rp->nu); rp = rp->next);
    assert(rp);
    assert(rp->blask == ATL_KSYRK);
@@ -37595,11 +37638,11 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
    assert(cp);
    assert(cp->blask == ATL_KSYRK);
    for (rU=bkb; rU && (rU->mu == rU->nu); rU = rU->next);
+   assert(rU);
    if (rU)
    {
       for (cU=rU->next; cU && (cU->mu == cU->nu); cU = cU->next);
       assert(cU);
-      ret = cU->next;
       if (FLAG_IS_SET(rU->flag, MMF_COMPLEX)) /* cplx first */
       {
          ATL_mmnode_t *tp;
@@ -37614,10 +37657,7 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
       }
    }
    else
-   {
       cU = NULL;
-      ret = cp->next;
-   }
    if (FLAG_IS_SET(rp->flag, MMF_COMPLEX)) /* cplx first */
    {
       ATL_mmnode_t *tp;
@@ -37633,6 +37673,8 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
    bv = MMKernsPerfSame(rp, cp);
    GenSyrkH(pre, outd, rp, bv);
    GenSyrkH(cpr, outd, cp, bv);
+   GenSyrkPerfH(pre, outd, rp, rU);
+   GenSyrkPerfH(cpr, outd, cp, cU);
    if (bv) /* if real & cplx same, take cplx out to avoid double compile */
    {
       bkb = RemoveMMNodeFromQ(bkb, cp);
