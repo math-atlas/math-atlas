@@ -641,6 +641,10 @@ void Mjoin(PATL,ipmenInfo)
    (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
+void Mjoin(PATL,ipmenUMInfo)
+   (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta);
 double Mjoin(PATL,ipsyrkInfo) /* returns predicted time */
    (ipinfo_t*, int, enum ATLAS_TRANS,size_t,size_t,size_t,size_t, 
     const SCALAR alpha, const SCALAR beta);
@@ -13458,6 +13462,101 @@ void DoBlock(char pre, int flg, int verb)
    KillAllMMNodes(mmb);
 }
 
+void DoSyrkAmmUM(char pre, int flag, int verb, int nreg)
+/*
+ * Find best generated ammm kernel to use for SYRK with restriction that MU
+ * must be a multiple of NU (or vice versa if NU > MU).
+ */
+{
+   ATL_mmnode_t *mb, *mD, *pT;
+   ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB;
+   double mfB = 0.0;
+
+   mb = TimeMMFileWithPath(pre, "res", "gSYRKUM.sum", 0, verb|1, 0, 1, 0, -1);
+   if (mb)
+   {
+      KillAllMMNodes(mb);
+      return;
+   }
+/*
+ * Should read in 5 kernels, we want only highest performing
+ */
+   mb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   mD = FindMaxMflopMMQ(mb, 0);
+   mb = RemoveMMNodeFromQ(mb, mD);
+   KillAllMMNodes(mb);
+/*
+ * If mu already a multiple of nu (or vice versa), no need to search!
+ */
+   if (!(mD->mu % mD->nu) || !(mD->nu % mD->mu))
+   {
+      WriteMMFileWithPath(pre, "res", "gSYRKUM.sum", mD);
+      KillMMNode(mD);
+      return;
+   }
+   VL = mD->vlen;
+   NB = (mD->mbB + mD->nbB)>>1;
+   KB = (mD->kbB);
+   flg = mD->flag;
+   KVEC = ((flg>>MMF_KVEC)&1)*VL;
+   flg &= ~(1<<MMF_KUISKB);
+   flg |= (1<<MMF_KRUNTIME);
+   pT = MMGetNodeGEN(pre, 0, 0, VL, 1, 1, VL, 0, 0, 0,
+                     DupString("ATL_tmp.c"));
+   pT->flag = flg;
+   printf("FULL SEARCH FOR MU%%NU == 0 (or vice versa) AMM, NREG=%u, "
+          "B=(%u,%u), VLEN=%u:\n", nreg, NB, KB, VL);
+   for (i=1; i <= nreg; i++)
+   {
+      ATL_UINT j;
+      if (i > NB)
+         break;
+      for (j=1; j <= nreg; j++)
+      {
+         double mf;
+         ATL_UINT mu, nu, mb, nb;
+         if (j > NB || i*j+1 > nreg)
+            break;
+         if (i*j+i+j > nreg)
+            pT->flag |= 1<<MMF_BREG1;
+         else
+            pT->flag &= ~(1<<MMF_BREG1);
+         pT->mu = mu = (KVEC) ? i : i*VL;
+         pT->nu = nu = j;
+         mb = (NB/mu)*mu;
+         nb = (NB/nu)*nu;
+         if (mu%nu && nu%mu)
+            continue;
+         if (!mb || !nb)
+            continue;
+         if (pT->genstr)
+            free(pT->genstr);
+         pT->genstr = MMGetGenString(pre, pT);
+         mf = TimeMMKernel(verb, 0, pT, pre, mb, nb, KB, 1, 0, -1);
+         printf("   MU=%2u/%2u, NU=%2u, MFLOP=%.2f\n", i, mu, j, mf);
+         if (mf > mfB)
+         {
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+            flgB = pT->flag;
+         }
+      }
+   }
+   assert(mfB > 0.0);
+   KillMMNode(pT);
+   pT = MMGetNodeGEN(pre, flgB, mD->kbB, muB, nuB, mD->ku, VL, KVEC, 
+                     mD->pref, mD->pfLS, NULL);
+   pT->mbB = (NB/muB)*muB;
+   pT->nbB = (NB/nuB)*nuB;
+   pT->mbB = mD->kbB;
+   printf("BEST MU%%NU==0 CASE is B=(%u,%u,%u), U=(%u,%u), MFLOP=%.2f\n", 
+          pT->mbB, pT->nbB, pT->kbB, muB, nuB, mfB);
+   KillMMNode(mD);
+   WriteRefreshedMMFileWithPath(pre, "res", "gSYRKUM.sum", pT);
+   KillMMNode(pT);
+}
+
 int getSzC(ATL_mmnode_t *mp, int nb)
 {
    const int nu = mp->nu, nnu = (nb+nu-1)/nu;
@@ -14097,6 +14196,7 @@ int main(int nargs, char **args)
    if (flg&4)     /* If I just wanted nreg calc */
       return(0);  /* then I'm done */
    DoBlock(pre, flg, verb);
+   DoSyrkAmmUM(pre, flg, verb, nreg);
    DoSyrk(flg, verb, pre, nreg, NB, VLEN);
    return(0);
 }
@@ -31314,14 +31414,14 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    fprintf(fp, "#define ATL_SYRKK_NU %d\n", mb->nu);
    fprintf(fp, "#define ATL_SYRKK_KU %d\n", mb->ku);
 /*
- * Prototype ATL_<pre>_amsyrkK kernel
+ * Prototype ATL_<pre>_[sq,um]syrkK kernel
  */
    if (RCSAME && (pre == 'c' || pre == 'z'))
    {
       const char upr = (pre == 'z') ? 'd' : 's';
       for (ibe=0; ibe < 3; ibe++)
-         fprintf(fp, "#define ATL_%camsyrkK_b%c ATL_%camsyrkK_b%c\n", 
-                 pre, be[ibe], upr, be[ibe]);
+         fprintf(fp, "#define ATL_%c%ssyrkK_b%c ATL_%c%ssyrkK_b%c\n", 
+                 pre, sh, be[ibe], upr, sh, be[ibe]);
    }
    for (ibe=0; ibe < 3; ibe++)
    {
@@ -35023,6 +35123,199 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    KillAllMMNodes(mmb);
 }
 
+ATL_mmnode_t *bestUM(char pre, int verb, ATL_mmnode_t *IP) 
+   /* IP: fastest inner product kernel with mu not mult of nu */
+{
+   ATL_mmnode_t *bp, *prv, *mp, *bestp=NULL;
+   const unsigned int MB=IP->mbB, NB=IP->nbB, KB=IP->kbB;
+   double mfB=0.0;
+   mp = TimeMMFileWithPath(pre, "res", "ipbestUM.sum", 0, 1, 0, 1, 0, -1);
+   if (mp)
+      return(mp);
+/*
+ * Get all working user cases, and remove any where M/N unroll not multiple or
+ * K isn't runtime <= 4;
+ */
+   bp = ReadMMFileWithPath(pre, "res", "gSYRKUM.sum");
+   assert(bp);
+   bp->next = GetWorkingUserCases(verb, pre);
+   prv = bp;
+   mp = bp->next;
+   while(mp)
+   {
+      ATL_mmnode_t *nxt=mp->next;
+      const unsigned int mu=mp->mu, nu=mp->nu,
+         maxKU=(FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 4);
+      if (mu%nu && nu%mu || mp->ku > maxKU || 
+          !FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      {
+         prv->next = nxt;
+         KillMMNode(mp);
+      }
+      else
+         prv = mp;
+      mp = nxt;
+   }
+/*
+ * Now, find fastest asymptotic sized kernel
+ */
+   printf("FINDING FASTEST AMM WITH MU/NU THAT DIVIDE EVENLY:\n");
+   for (mp=bp; mp; mp = mp->next)
+   {
+      double mf;
+      const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
+      unsigned int mb=(MB/mu)*mu, nb=(NB/nu)*nu, kb=(KB/ku)/ku;
+      mb = (mb) ? mb : mu;
+      nb = (nb) ? nb : nu;
+      kb = (kb) ? kb : ku;
+      mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 1, -1, -1);
+      printf("   ID=%u: B=(%u,%u,%u), U=(%u,%u,%u), mf=%.2f\n", mp->ID, 
+             mb, nb, kb, mu, nu, ku, mf);
+      if (mf > mfB)
+      {
+         mp->mbB = mb;
+         mp->nbB = nb;
+         mp->nbB = kb;
+         bestp = mp;
+         mfB = mf;
+      }
+   }
+   assert(bestp);
+   bestp->mflop[0] = mfB;
+   mp = bestp;
+   printf("CHOSE: ID=%u: B=(%u,%u,%u), mf=%.2f\n", mp->ID, mp->mbB, mp->nbB, 
+          mp->kbB, mfB);
+   bp = RemoveMMNodeFromQ(bp, bestp);
+   KillAllMMRouts(bp);
+   WriteMMFileWithPath(pre, "res", "ipbestUM.sum", bestp);
+   return(bestp);
+}
+
+void srch_menUM(char pre, int verb)
+/*
+ * Finds kernels for cases with M=N at fixed values, while K is tuned.
+ * Used in SYRK.
+ */
+{
+   ATL_mmnode_t *bp, *mmb=NULL;
+   unsigned int U, D, d, maxK;
+   
+   bp = TimeMMFileWithPath(pre, "res", "ipmenUM.sum", 0, 1, 0, 1, 0, -1);
+   if (bp)
+   {
+      mmb = bp;
+      bp = TimeMMFileWithPath(pre, "res", "ipsyrkUM.sum", 0, 1, 0, 1, 0, -1);
+      if (!bp)
+         goto TIME_SYRKUM;
+      KillAllMMNodes(bp);
+      KillAllMMNodes(mmb);
+      return;
+   }
+   bp = ReadMMFileWithPath(pre, "res", "ipmen.sum");
+   assert(bp);
+   while (bp->next)
+      bp = KillMMNode(bp);
+   if (bp->mu % bp->nu && bp->nu % bp->mu)
+   {
+      ATL_mmnode_t *tp=bp;
+      bp = bestUM(pre, verb, bp);
+      KillMMNode(tp);
+   }
+   U = ATL_iLCM(bp->mu, bp->nu);
+   D = Mmax(bp->mbB, bp->nbB);
+   maxK = Mmax(bp->kbB, D);
+   for (d=U; d <= D; d += U)
+   {
+      ATL_mmnode_t *mp;
+      mp = CloneMMNode(bp);
+      mp->next = mmb;
+      mmb = mp;
+      mp->mbB = mp->nbB = d;
+      MMExpandK(verb, pre, 0, 1, mp, maxK);
+      printf("\n");
+   }
+   KillMMNode(bp);
+//   PrintMMNodes(stdout, mmb);
+   while (mmb->next && mmb->mflop[0] < mmb->next->mflop[0])
+      mmb = KillMMNode(mmb);
+   mmb = ReverseMMQ(mmb);
+   MMPruneMflopTol(mmb, 0, 1.0);
+   WriteMMFileWithPath(pre, "res", "ipmenUM.sum", mmb);
+/*
+ * Now, create a SYRK kernel with its own time in mflop[0], and gemm's in
+ * mflop[1], and write it it to "ipsyrkUM.sum"
+ */
+TIME_SYRKUM:
+   while (mmb->next)                      /* get rid of all but */
+      mmb = KillMMNode(mmb);              /* asymptotic case */
+/*
+ * Try generating with straight params from search
+ */
+   bp = MMGetNodeGEN(pre, 0, 0, mmb->mu, mmb->nu, mmb->ku, mmb->vlen, 
+                     FLAG_IS_SET(mmb->flag, MMF_KVEC), mmb->pref, mmb->pfLS, 
+                     NULL);
+   bp->flag = ((mmb->flag | (1<<MMF_KRUNTIME)) & 
+               (~((1<<MMF_X87)|(1<<MMF_KUISKB))));
+   bp->mbB = mmb->mbB;
+   bp->nbB = mmb->nbB;
+   bp->kbB = mmb->kbB;
+   if (bp->ku > 4)
+   {
+      unsigned int ku=4, kb=mmb->kbB;
+      while((kb/ku)*ku != kb)
+         ku--;
+      bp->ku = ku;
+   }
+   bp->mflop[1] = mmb->mflop[0];
+   bp->blask = ATL_KSYRK;
+   if (bp->genstr)
+      free(bp->genstr);
+   bp->genstr = NULL;
+/*
+ * Duplicate this node so we can try BREG1 & NOBCAST
+ */
+   KillMMNode(mmb);
+   mmb = CloneMMNode(bp);
+   mmb->flag |= (1<<MMF_BREG1);
+   bp->mflop[0] = TimeMMKernel(verb, 0, bp, pre, bp->mbB, bp->nbB, bp->kbB,
+                               1, 0, -1);
+   printf("   SYRK/GEMM DEFAULT MFLOP=%.4f\n", bp->mflop[0]/bp->mflop[1]);
+   mmb->mflop[0] = TimeMMKernel(verb, 0, mmb, pre, bp->mbB, bp->nbB, bp->kbB,
+                                1, 0, -1);
+   printf("   SYRK/GEMM BREG1   MFLOP=%.4f\n", mmb->mflop[0]/mmb->mflop[1]);
+/*
+ * bp is best found case so far
+ */
+   if (mmb->mflop[0] >= bp->mflop[0])
+   {
+      ATL_mmnode_t *tp=mmb;
+      mmb = bp;
+      bp = tp;
+   }
+/*
+ * If nu mult of vlen, try NOBCAST
+ */
+   if (!bp->vlen || (bp->nu % bp->vlen) == 0)
+   {
+      mmb->flag = (mmb->flag | (1<<MMF_NOBCAST)) & (~(1<<MMF_BREG1));
+      mmb->mflop[0] = TimeMMKernel(verb, 0, mmb, pre, bp->mbB, bp->nbB, bp->kbB,
+                                   1, 0, -1);
+      printf("   SYRK/GEMM NOBCAST MFLOP=%.4f\n", mmb->mflop[0]/mmb->mflop[1]);
+      if (mmb->mflop[0] >= bp->mflop[0])
+      {
+         ATL_mmnode_t *tp=mmb;
+         mmb = bp;
+         bp = tp;
+      }
+   }
+   KillMMNode(mmb);
+   printf("SYRK/GEMM MFLOP=%.4f\n", bp->mflop[0]/bp->mflop[1]);
+   if (pre == 'c' || pre == 'z')
+      bp->flag |= 1<<MMF_COMPLEX;
+   WriteMMFileWithPath(pre, "res", "ipsyrkUM.sum", bp);
+   KillMMNode(bp);
+}
+
 void srch_men(char pre, int verb)
 /*
  * Finds kernels for cases with M=N at fixed values, while K is tuned.
@@ -35095,6 +35388,7 @@ int main(int nargs, char **args)
 
    findBestIP(pre, verb, mmb, NULL);
    srch_men(pre, verb);
+   srch_menUM(pre, verb);
    do_ipdek(verb, pre, 0);
    do_ipdek(verb, pre, 1);
 
@@ -36489,10 +36783,10 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
    char *fnd, *fn;
    int dlen;
    dlen = strlen(outd) + 1;
-   fnd = malloc(dlen+22);
+   fnd = malloc(dlen+24);
    assert(fnd);
    fn = fnd + dlen;
-   sprintf(fnd, "%s/ATL_XSyrkIntoC_aXbX.c", outd);
+   sprintf(fnd, "%s/ATL_XssSyrkIntoC_aXbX.c", outd);
    for (mp=kb; mp; mp = mp->next)
    {
       ATL_cpnode_t *cp;
@@ -36506,7 +36800,7 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
          cpflag |= 1 << CPF_REAL;
       switch(mp->blask)
       {
-      case 1:  /* SYRK needs C copies for all alpha,beta */
+      case ATL_KSYRK:  /* SYRK needs C copies for all alpha,beta */
          cpflag |= (1<<CPF_SYRK) | (1<<CPF_CBLK);
          cp = GetCopyNodeFromMM(cpflag, mp, NULL);
 /*
@@ -36522,12 +36816,22 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
                p->rout = fnd;
                assert(p->rout);
                fn[4] = cpr;
-               fn[16] = bn[ia];
-               fn[18] = bn[ib];
+               if (mp->mu == mp->nu)
+               {
+                  fn[5] = 's';
+                  fn[6] = 'q';
+               }
+               else
+               {
+                  fn[5] = 'u';
+                  fn[6] = 'm';
+               }
+               fn[18] = bn[ia];
+               fn[20] = bn[ib];
                p->genstr = GetCopyGenStr(p);
-               fn[19] = '\0';
+               fn[21] = '\0';
                p->rout = DupString(fn);
-               fn[19] = '.';
+               fn[21] = '.';
                p->next = cb;
                cb = p;
             }
@@ -36543,14 +36847,33 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
    return(cb);
 }
 
-void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
+void GenSyrkPerfH(char pre, char *outd, ATL_mmnode_t *sq, ATL_mmnode_t *um)
+{
+   FILE *fp;
+   
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "syrkPerf", NULL);
+   fprintf(fp, "   #define ATL_sqsyrkMF %e\n", sq->mflop[0]);
+   if (um)
+   {
+      double syMF=*um->mflop, mmMF=um->mflop[1];
+      fprintf(fp, "   #define ATL_umsyrkMF %e\n", syMF);
+      fprintf(fp, "   #define ATL_umgemmMF %e\n", mmMF);
+      fprintf(fp, "   #define ATL_umratio %f\n", syMF/mmMF);
+   }
+   CloseGenHeader(fp);
+}
+void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
 /*
  * Generate syrk-specific header file
  */
 {
    ATL_cpnode_t *cb;
    FILE *fp;
+   const int RCSAME=bv&1, UM=bv&2;
    const int ntr = (pre == 'd' || pre == 's') ? 2 : 4;
+   const char *sh = (UM) ? "um" : "sq";
+   const char *SH = (UM) ? "UM" : "SQ";
+   const char *ums = (UM) ? "UM":"";
    int ial, ibe, itr, flg;
    const char be[3] = {'0', '1', 'n'};
    char bes[4] = {'1', 'N', 'X', '0'};
@@ -36563,60 +36886,78 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
 
    if (!mb)
       return;
-   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "syrk", NULL);
-   fprintf(fp, "#define ATL_SYRKK_VLEN %d\n", mb->vlen);
-   fprintf(fp, "#define ATL_SYRKK_KVEC %d\n",
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", UM?"umsyrk":"sqsyrk", NULL);
+   fprintf(fp, "#define ATL_%sSYRKK_VLEN %d\n", SH, mb->vlen);
+   fprintf(fp, "#define ATL_%sSYRKK_KVEC %d\n", SH,
            FLAG_IS_SET(mb->flag, MMF_KVEC) ? mb->vlen:0);
-   fprintf(fp, "#define ATL_SYRKK_NU %d\n", mb->nu);
-   fprintf(fp, "#define ATL_SYRKK_KU %d\n", mb->ku);
+   if (UM)
+      fprintf(fp, "#define ATL_%sSYRKK_MU %d\n", SH, mb->mu);
+   fprintf(fp, "#define ATL_%sSYRKK_NU %d\n", SH, mb->nu);
+   fprintf(fp, "#define ATL_%sSYRKK_KU %d\n", SH, mb->ku);
+
+   fprintf(fp, "/*\n * Generic names for syrk info\n */\n");
+   @whiledef mn VLEN KVEC NU KU
+   fprintf(fp, "#ifndef ATL_SYRKK_@(mn)\n  #define ATL_SYRKK_@(mn) "
+           "ATL_%sSYRKK_@(mn)\n#endif\n", SH);
+   @endwhile
+   fprintf(fp, "#ifndef ATL_SYRKK_MU\n  #define ATL_SYRKK_MU "
+           "ATL_%sSYRKK_%s\n#endif\n", SH, UM?"MU":"NU");
 /*
- * Prototype ATL_<pre>_amsyrkK kernel
+ * Prototype ATL_<pre>_[sq,um]syrkK kernel
  */
    if (RCSAME && (pre == 'c' || pre == 'z'))
    {
       const char upr = (pre == 'z') ? 'd' : 's';
       for (ibe=0; ibe < 3; ibe++)
-         fprintf(fp, "#define ATL_%camsyrkK_b%c ATL_%camsyrkK_b%c\n",
-                 pre, be[ibe], upr, be[ibe]);
+      {
+         fprintf(fp, "#define ATL_%c%ssyrkK_b%c ATL_%c%ssyrkK_b%c\n",
+                 pre, sh, be[ibe], upr, sh, be[ibe]);
+      }
    }
    for (ibe=0; ibe < 3; ibe++)
    {
       fprintf(fp,
-"void ATL_%camsyrkK_b%c(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,\n",
-              pre, be[ibe]);
+"void ATL_%c%ssyrkK_b%c(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,\n",
+              pre, sh, be[ibe]);
       fprintf(fp,
       "                     TYPE*, const TYPE*, const TYPE*, const TYPE*);\n");
+      fprintf(fp, "#ifndef ATL_%camsyrkK_b%c\n   "
+                  "#define ATL_%camsyrkK_b%c ATL_%c%ssyrkK_b%c\n#endif\n", 
+               pre, be[ibe], pre, be[ibe], pre, sh, be[ibe]);
    }
 /*
  * Prototype/rename all A cpy routs: ATL_<pre>cm2am_syrk<TA>
+ * UM case uses gemm's A/B copy, so no need for UM
  */
-@skip   cb = AddMMUniqueACopyFromMMNodes(pre, 'T', mb, NULL);
-   flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
-   flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
-   flg |= (pre == 'c' || pre == 's') ? (1<<CPF_SINGLE):0;
-   cb = GetCopyNodeFromMM(flg, mb, NULL);
-   cb->rout = GetCopyName(cb, 0);
-   fprintf(fp, "#define ATL_%ca2blk_syrkN %s\n",
-           pre, cb->rout);
-   free(cb->rout);
-   cb->flag |= 1<<CPF_TRANS;
-   cb->rout = GetCopyName(cb, 0);
-   fprintf(fp, "#define ATL_%ca2blk_syrkT %s\n",
-           pre, cb->rout);
-   KillAllCopyNodes(cb);
-   for (itr=0; itr < 2; itr++)
+   if (!UM)
    {
-      char tr = itr ? 'T' : 'N';
-      fprintf(fp, "void ATL_%ca2blk_syrk%c", pre, tr);
-      if (pre == 'd' || pre == 's')
-         fprintf(fp,
-         "(ATL_CSZT,ATL_CSZT,const TYPE,const TYPE*,ATL_CSZT,TYPE*);\n");
-      else
-         fprintf(fp,
-         "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,ATL_CSZT,TYPE*,TYPE*);\n");
+      flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
+      flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
+      flg |= (pre == 'c' || pre == 's') ? (1<<CPF_SINGLE):0;
+      cb = GetCopyNodeFromMM(flg, mb, NULL);
+      cb->rout = GetCopyName(cb, 0);
+      fprintf(fp, "#define ATL_%ca2blk_%ssyrkN %s\n",
+              pre, sh, cb->rout);
+      free(cb->rout);
+      cb->flag |= 1<<CPF_TRANS;
+      cb->rout = GetCopyName(cb, 0);
+      fprintf(fp, "#define ATL_%ca2blk_%ssyrkT %s\n",
+              pre, sh, cb->rout);
+      KillAllCopyNodes(cb);
+      for (itr=0; itr < 2; itr++)
+      {
+         char tr = itr ? 'T' : 'N';
+         fprintf(fp, "void ATL_%ca2blk_syrk%c", pre, tr);
+         if (pre == 'd' || pre == 's')
+            fprintf(fp,
+            "(ATL_CSZT,ATL_CSZT,const TYPE,const TYPE*,ATL_CSZT,TYPE*);\n");
+         else
+            fprintf(fp, "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,"
+                        "ATL_CSZT,TYPE*,TYPE*);\n");
+      }
    }
 /*
- * Prototype all C cpy routs: ATL_<pre>SyrkIntoC_a<alp>_b<bet>
+ * Prototype all C cpy routs: ATL_<pre>[sq,um]SyrkIntoC_a<alp>_b<bet>
  */
    for (ial=0; ial < 3; ial++)
    {
@@ -36626,20 +36967,28 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
          for (is=0; is < 2; is++)
          {
             fprintf(fp, "#ifdef Conj_\n");
-            fprintf(fp, "#define ATL_%cSyrkIntoC_a%cb%c%s "
-                    "ATL_%cHerkIntoC_a%cb%c%s\n", 
-                     pre, bes[ial], bes[ibe], sfx[is],
-                     pre, bes[ial], bes[ibe], hfx[is]);
+            fprintf(fp, "#define ATL_%c%sSyrkIntoC_a%cb%c%s "
+                    "ATL_%c%sHerkIntoC_a%cb%c%s\n", 
+                     pre, sh, bes[ial], bes[ibe], sfx[is],
+                     pre, sh, bes[ial], bes[ibe], hfx[is]);
             fprintf(fp, "#endif\n");
-            fprintf(fp, "void ATL_%cSyrkIntoC_a%cb%c%s\n", pre, bes[ial],
+            fprintf(fp, "void ATL_%c%sSyrkIntoC_a%cb%c%s\n", pre, sh, bes[ial],
                     bes[ibe], sfx[is]);
             if (pre == 's' || pre == 'd')
                fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
             else
-               fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+               fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,"
+                       "const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+
+            fprintf(fp, "#ifndef ATL_%cSyrkIntoC_a%cb%c%s\n   #define "
+            "ATL_%cSyrkIntoC_a%cb%c%s ATL_%c%sSyrkIntoC_a%cb%c%s\n#endif\n",  
+               pre, bes[ial], bes[ibe], sfx[is],
+               pre, bes[ial], bes[ibe], sfx[is],
+               pre, sh, bes[ial], bes[ibe], sfx[is]);
          }
       }
    }
+   
    CloseGenHeader(fp);
 }
 
@@ -37338,6 +37687,79 @@ void GenTrsmALLT(char pre, char *outd, char sd, ATL_mmnode_t *mb)
    free(of);
 }
 
+ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
+{
+   ATL_mmnode_t *rp, *cp, *rU, *cU, *ret, *bkb=(*BKB);
+   unsigned int bv;
+   char cpr = (pre == 's') ? 'c' : 'z';
+
+   for (bv=0,ret=bkb; ret && ret->blask == ATL_KSYRK; ret = ret->next, bv++);
+   assert(bv == 2 || bv == 4);
+   for (rp=bkb; rp && (rp->mu != rp->nu); rp = rp->next);
+   assert(rp);
+   assert(rp->blask == ATL_KSYRK);
+   for (cp=rp->next; cp && (cp->mu != cp->nu); cp = cp->next);
+   assert(cp);
+   assert(cp->blask == ATL_KSYRK);
+   for (rU=bkb; rU && (rU->mu == rU->nu); rU = rU->next);
+   assert(rU);
+   if (rU)
+   {
+      for (cU=rU->next; cU && (cU->mu == cU->nu); cU = cU->next);
+      assert(cU);
+      if (FLAG_IS_SET(rU->flag, MMF_COMPLEX)) /* cplx first */
+      {
+         ATL_mmnode_t *tp;
+         assert(!FLAG_IS_SET(cU->flag, MMF_COMPLEX));
+         tp = cU;
+         cU = rU;
+         rU = tp;
+      }
+      else /* real first */
+      {
+         assert(FLAG_IS_SET(cU->flag, MMF_COMPLEX));
+      }
+   }
+   else
+      cU = NULL;
+   if (FLAG_IS_SET(rp->flag, MMF_COMPLEX)) /* cplx first */
+   {
+      ATL_mmnode_t *tp;
+      assert(!FLAG_IS_SET(cp->flag, MMF_COMPLEX));
+      tp = cp;
+      cp = rp;
+      rp = tp;
+   }
+   else /* real first */
+   {
+      assert(FLAG_IS_SET(cp->flag, MMF_COMPLEX));
+   }
+   bv = MMKernsPerfSame(rp, cp);
+   GenSyrkH(pre, outd, rp, bv);
+   GenSyrkH(cpr, outd, cp, bv);
+   GenSyrkPerfH(pre, outd, rp, rU);
+   GenSyrkPerfH(cpr, outd, cp, cU);
+   if (bv) /* if real & cplx same, take cplx out to avoid double compile */
+   {
+      bkb = RemoveMMNodeFromQ(bkb, cp);
+      KillMMNode(cp);
+   }
+   if (rU)
+   {
+      unsigned int bvU;
+      bvU = MMKernsPerfSame(rU, cU) | 2;
+      GenSyrkH(pre, outd, rU, bvU);
+      GenSyrkH(cpr, outd, cU, bvU);
+      if (bvU & 1)
+      {
+         bkb = RemoveMMNodeFromQ(bkb, cU);
+         KillMMNode(cU);
+      }
+   }
+   *BKB = bkb;
+   return(ret);
+}
+
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
                  ATL_cpnode_t *cb)
 {
@@ -37347,42 +37769,31 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
    char bes[3] = {'0', '1', 'n'};
    char fn[24];
 
-   for (mp=bkb; mp; mp = mp->next)
+   mp = bkb;
+   while (mp)
    {
+      ATL_mmnode_t *nxt = mp->next;
       char cpr = (pre == 's') ? 'c' : 'z';
       switch(mp->blask)
       {
-         ATL_mmnode_t *cp, *nxt;
+         ATL_mmnode_t *cp;
          int i;
-      case 1:
-         cp = mp->next;
-         assert(cp);
-         assert(cp->blask == mp->blask); /* expect real&cplx kerns! */
-         if (FLAG_IS_SET(mp->flag, MMF_COMPLEX)) /* cplx first */
-         {
-            ATL_mmnode_t *tmp;
-            assert(!FLAG_IS_SET(cp->flag, MMF_COMPLEX));
-            nxt = cp;
-            tmp = cp;
-            cp = mp;
-            mp = tmp;
-         }
-         else /* real first */
-         {
-            assert(FLAG_IS_SET(cp->flag, MMF_COMPLEX));
-            nxt = cp;
-         }
-         i = MMKernsPerfSame(mp, cp);
-         GenSyrkH(pre, outd, mp, i);
-         GenSyrkH(cpr, outd, cp, i);
-         if (i)  /* get rid of complex node to avoid useless compile  */
-             bkb = RemoveMMNodeFromQ(bkb, cp);
-         else
-            mp = nxt;
+/*
+ *    For SYRK, we expect 4 kernels, with each pair being the real & complex
+ *    versions of the same kernel, with the first pair being the mu=nu case
+ *    used by pure inner-product and cases ip when diagonal C block's A are
+ *    stored in different format than gemm's.  The second pair is for when
+ *    ipmenUM is used for gemm.
+ */
+      case ATL_KSYRK:
+         i = mp == bkb;
+         nxt = GenAllSyrkH(pre, outd, &mp);
+         bkb = (i) ? mp : bkb;
          break;
       default:
          assert(0);
       }
+      mp =  nxt;
    }
    fpout = OpenMMGenHeader(outd, 0, pre, "amm", NULL, "proto", mb);
    assert(fpout);
@@ -37427,13 +37838,25 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
 @ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@`
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo ATL_opsymmInfo
 #include "atlas_cache.h"
 #include "atlas_amm.h"
 @ROUT ATL_ipinfo ATL_ipmeninfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #define  ATL_DECL_ 1
+@ROUT ATL_ipmeninfo
+#ifdef MUNUMUL_
+   #include Mstr(Mjoin(ATLAS_PRE,@(vwf)UM_view.h))
+   #define ipInfo Mjoin(PATL,ipmenUMInfo)
+   #define ipPop  Mjoin(PATL,ipmenUMInfoPop)
+#else
+   #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
+   #define ipInfo Mjoin(PATL,ipmenInfo)
+   #define ipPop  Mjoin(PATL,ipmenInfoPop)
+#endif
+@ROUT ATL_ipinfo
 #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
+@ROUT ATL_ipinfo ATL_ipmeninfo
 #undef ATL_DECL_
 @ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
 #define ATL_WANT_ILCM
@@ -37442,22 +37865,29 @@ int main(int nargs, char **args)
 #ifdef TREAL
    #define  ATL_DECL_ 1
 #endif
-@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo ATL_opsymmInfo
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 @ROUT ATL_opinfo
 #ifndef TREAL
    #define  ATL_DECL_ 1
 #endif
-@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opinfo ATL_opsyrkInfo ATL_opsyr2kInfo ATL_opsymmInfo
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
 @ROUT ATL_opsyr2kInfo
 @whiledef be 0 1
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
 @endwhile
-@ROUT ATL_opsyrkInfo
+@ROUT ATL_opsyrkInfo ATL_opsymmInfo
 @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a1b@(be).h))
 @endwhile
+@ROUT ATL_opsymmInfo
+#ifdef TCPLX
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_aX.h))
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aX.h))
+#endif
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_a1.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
 @ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
 @whiledef al 1 N X
    @whiledef ta N T
@@ -37584,6 +38014,12 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->szA = kb * mb;
    out->pszB = kb*pnb;
    out->szB = kb * nb;
+   if (vlen > 1)
+   {
+      @whiledef sz pszA pszB szA szB
+      out->@(sz) = ((out->@(sz)+vlen-1)/vlen)*vlen;
+      @endwhile
+   }
    out->alpA = out->alpB = CONE;
    out->beta = beta;
    #ifdef TCPLX
@@ -37744,6 +38180,243 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
             ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
 }
 
+@ROUT ATL_opsymmInfo
+
+int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
+   (opinfo_t *op, ATL_UINT bv,
+    ATL_CSZT M, ATL_CSZT N, ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc,
+    const SCALAR alpha, const SCALAR beta)
+/*
+ * bv: 0:Left, 1:Upper, 2:HEMM
+ * RETURNS: 0 if A fits in cache for outer-product, else non-zero.
+@skip *          the transpose copy for the cross-diagonal copy of A, else NULL.
+@skip *          If NULL is returned, out may not be fully populated.
+ */
+{
+   ATL_cparr_t *cp = (ATL_cparr_t *)&op->blk2C;
+   ATL_iptr_t szSet;
+   double spmfMM;
+   #ifdef TCPLX
+      static const TYPE CONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define CONE ATL_rone
+   #endif
+   ATL_CUINT K = (bv&1) ? M:N, iv=K-3;
+   ATL_UINT MB, NB, KB, mb, nb, k, imm, icpA, icpB, icpC, mu, nu, ku, nmu, nnu;
+
+   if (iv >= ATL_VWopgen_NCASES)
+         return(1);
+   ATL_GetVWopgenInfo(iv, spmfMM, MB, NB, k, imm, icpA, icpB, icpC, k, k, k);
+   ATL_assert(imm < ATL_AMM_NCASES);
+   icpA += icpA;
+   icpB += icpB;
+   icpC += icpC;
+   #ifdef TCPLX
+      ATL_AMM_info(imm, &op->amm_b0, &op->amm_b1, &op->amm_bn, k,
+                   mu, nu, ku, op->vlen, k, k, k);
+   #else
+      ATL_AMM_info(imm, &op->amm_b0, &szSet, &szSet, k,
+                   mu, nu, ku, op->vlen, k, k, k);
+   #endif
+   op->idx = iv;
+   op->mu = mu;
+   op->nu = nu;
+   op->ku = ku;
+   op->exsz = (mu*nu)<<1;
+   op->ldc = ldc;
+   op->alpA = op->alpB = CONE;
+   cp = (ATL_cparr_t *) &op->blk2C;
+   if (SCALAR_IS_NONE(beta))
+      *cp = ATL_CpyIntoCNg_a1bN[icpC];
+   else if (SCALAR_IS_ONE(beta))
+      *cp = ATL_CpyIntoCNg_a1b1[icpC];
+   else
+      *cp = (SCALAR_IS_ZERO(beta)) ?
+         ATL_CpyIntoCNg_a1b0[icpC] : ATL_CpyIntoCNg_a1bX[icpC];
+/*
+ * If M==K ask at least A fit in LLPC
+ */
+   KB = ((K+ku-1)/ku)*ku;
+   if (bv&1)  /* Left, M=K, symmetric matrix A is gemm's A */
+   {
+      nmu = (M+mu-1)/mu;
+      mb = nmu*mu;
+      if (mb > MB) /* must shrink NB to keep working set same */
+      {
+         ATL_UINT t;
+         szSet = (MB+NB)*KB + MB*NB;
+         t = mb*KB;
+         if (szSet < t)
+            return(2);
+         nb = (szSet - t) / (KB+mb);
+         if (nb < nu)
+            return(2);
+      }
+      else
+         nb = NB;
+      nnu = nb / nu;
+      nb = nnu*nu;
+      op->lda = lda;
+      op->ldb = ldb;
+      op->kb = M;
+/*
+ *    For complex, hermitian makes it so we need worry about transpose on the
+ *    herimitian matrix, and we also cannot apply a complex alpha with an
+ *    imaginary component to A, since it won't appear in known-zero imag diag
+ */
+      cp = (ATL_cparr_t *)&op->a2blk;
+      #ifdef TCPLX
+         if (bv&4)  /* hermitian, not symmetric! */
+         {
+            *cp = ATL_CpyFromATg_a1[icpA];
+            cp = (ATL_cparr_t *)&op->b2blk;
+            if (alpha[1] == ATL_rzero)
+               *cp = ATL_CpyFromANg_a1[icpB];
+            else
+            {
+               *cp = ATL_CpyFromANg_aX[icpB];
+               op->alpB = alpha;
+            }
+         }
+         else
+      #endif
+      {
+         *cp = ATL_CpyFromANg_a1[icpA];
+         cp = (ATL_cparr_t *)&op->b2blk;
+         *cp = ATL_CpyFromANg_a1[icpB];
+      }
+   }
+   else      /* Right, N=K, symm's symmetric A is gemm's B */
+   {
+      nnu = (N+nu-1)/nu;
+      nb = nnu*nu;
+      if (nb > NB) /* must shrink MB to keep working set same */
+      {
+         ATL_CUINT t = nb*KB;
+         szSet = (MB+NB)*KB + MB*NB;
+         if (szSet < t)
+            return(2);
+         mb = (szSet - t) / (KB+nb);
+         if (mb < mu)
+            return(2);
+      }
+      else
+         mb = MB;
+      nmu = mb / mu;
+      mb = nmu*mu;
+      op->pincBn = op->incBn = 0;  /* not used for 1 blk opsymm */
+      op->lda = ldb;
+      op->ldb = lda;
+      op->kb = N;
+      cp = (ATL_cparr_t *)&op->b2blk;
+      #ifdef TCPLX
+         if (bv&4)  /* hermitian, not symmetric! */
+         {
+            *cp = ATL_CpyFromANg_a1[icpB];
+            cp = (ATL_cparr_t *)&op->a2blk;
+            if (alpha[1] == ATL_rzero)
+               *cp = ATL_CpyFromATg_a1[icpA];
+            else
+            {
+               *cp = ATL_CpyFromATg_aX[icpA];
+               op->alpA = alpha;
+            }
+         }
+         else
+      #endif
+      {
+         *cp = ATL_CpyFromANg_a1[icpB];
+         cp = (ATL_cparr_t *)&op->a2blk;
+         *cp = ATL_CpyFromATg_a1[icpA];
+      }
+   }
+   op->KB = KB;
+   op->beta = beta;
+   #ifdef TCPLX
+      op->ONE = CONE;
+   #endif
+   if (M > mb)
+   {
+      op->mb = mb;
+      op->nmu = nmu;
+      op->nfmblks = M / mb;
+      op->mF = M - mb*op->nfmblks;
+      if (op->mF)
+      {
+         op->nmuF = (op->mF+mu-1)/mu;
+         op->pmb = op->nmuF * mu;
+         op->npmblks = 1;
+      }
+      else
+         op->nmuF = op->pmb = op->npmblks = 0;
+      op->npmblks = (op->pmb) ? 1 : 0;
+      op->pnmu = op->nmuF;
+   }
+   else
+   {
+      nmu = (M+mu-1)/mu;
+      op->npmblks = 1;
+      op->nfmblks = 0;
+      op->nmuF = op->pnmu = op->nmu = nmu;
+      op->mb = op->pmb = nmu*mu;
+      op->mF = M;
+   }
+   if (N > nb)
+   {
+      op->nb = nb;
+      op->nnu = nnu;
+      op->nfnblks = N / nb;
+      op->nF = N - nb*op->nfnblks;
+      if (op->nF)
+      {
+         op->nnuF = (op->nF+nu-1)/nu;
+         op->pnb = op->nnuF * nu;
+         op->npnblks = 1;
+      }
+      else
+         op->nnuF = op->pnb = op->npnblks = 0;
+      op->npnblks = (op->pnb) ? 1 : 0;
+      op->pnnu = op->nnuF;
+   }
+   else
+   {
+      nnu = (N+nu-1)/nu;
+      op->npnblks = 1;
+      op->nfnblks = 0;
+      op->nnuF = op->pnnu = op->nnu = nnu;
+      op->nb = op->pnb = nnu*nu;
+      op->nF = N;
+   }
+   op->szA = op->mb * op->KB;
+   op->szB = op->nb * op->KB;
+   op->pszA = op->pmb * op->KB;
+   op->pszB = op->pnb * op->KB;
+   op->szC = op->mb * op->nb;
+   if (bv&1)  /* Left,  M=K, symm matrix A is gemm's A */
+   {
+      op->incBn = op->nb * (ldb SHIFT);
+      op->pincBn = op->pnb * (ldb SHIFT);
+      op->incAm = op->pincAm = 0;  /* not used for opsymm */
+   }
+   else       /* Right, N=K, symm matrix A is gemm's B */
+   {
+      op->incAm = op->mb SHIFT;
+      op->pincAm = op->pmb SHIFT;
+      op->incBn = op->pincBn = 0;  /* not used for opsymm */
+   }
+   if (op->vlen > 1)
+   {
+      ATL_CUINT vlen=op->vlen;
+      @whiledef sz pszA pszB szA szB
+      op->@(sz) = ((op->@(sz)+vlen-1)/vlen)*vlen;
+      @endwhile
+   }
+   #if 0
+   printf("symmB=(%u,%u,%u),(%u,%u,%u), OB=(%u,%u)\n", op->mb, op->nb, op->KB, 
+          op->pmb, op->pnb, op->kb, MB, NB);
+   #endif
+   return(0);
+}
 @ROUT ATL_opsyr2kInfo
 ablk2cmat_t Mjoin(PATL,opsyr2kInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA,
@@ -37896,6 +38569,12 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->pszB = pnb*kb;
    out->szB = out->szA = kb * nb;
 @ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
+   if (vlen > 1)
+   {
+      @whiledef sz pszA pszB szA szB
+      out->@(sz) = ((out->@(sz)+vlen-1)/vlen)*vlen;
+      @endwhile
+   }
    out->alpA = out->alpB = CONE;
    out->beta = beta;
    out->alpB = alpha;
@@ -37960,8 +38639,11 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    return(0);
 @ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
 }
-@ROUT ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_ipmeninfo
+void ipPop  /* populate ip wt given params */
+@ROUT ATL_ipinfo
 void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
+@ROUT ATL_ipinfo ATL_ipmeninfo
 (
    ipinfo_t *ip,        /* output */
    int idx,             /* what amm kernel index to use */
@@ -38267,11 +38949,22 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
    ip->szB = kb*nb;
    ip->pszA = pmb*kb;
    ip->pszB = kb*pnb;
+   if (vlen > 1)
+   {
+      @whiledef sz pszA pszB szA szB
+      ip->@(sz) = ((ip->@(sz)+vlen-1)/vlen)*vlen;
+      @endwhile
+   }
 }
 #ifndef TCPLX
    #undef CONE
 #endif
+@ROUT
+@ROUT ATL_ipmeninfo
+void ipInfo
+@ROUT ATL_ipinfo
 void Mjoin(PATL,@(vwf)Info)
+@ROUT ATL_ipinfo ATL_ipmeninfo
 (
    ipinfo_t *ip,        /* output */
 @ROUT ATL_ipinfo `   int flg,             /* bitvec, see below */`
@@ -38297,18 +38990,18 @@ void Mjoin(PATL,@(vwf)Info)
    size_t nfmblks, npmblks, nfnblks, npnblks;
    const ATL_iptr_t *ipp;
    ATL_UINT mb, pmb, nb, pnb, mu, nu, nmu, pnmu, nnu, pnnu;
-   ATL_UINT MB, NB, KB, k, imm, idx=ATL_VW@(vwf)_BEST_IDX;
+   ATL_UINT MB, NB, KB, k, imm, idx=ATL_VIEW_BEST_IDX;
    float spf;
 
-   #if ATL_VW@(vwf)_NCASES > 1
-   if (K < ATL_VW@(vwf)_BEST_KB)
+   #if ATL_VIEW_NCASES > 1
+   if (K < ATL_VIEW_BEST_KB)
    {
-      for (idx=0; idx < ATL_VW@(vwf)_LAST_IDX; idx++)
-         if (ATL_GetVW@(vwf)KB(idx) >= K)
+      for (idx=0; idx < ATL_VIEW_LAST_IDX; idx++)
+         if (ATL_GetViewKB(idx) >= K)
             break;
    }
    #endif
-   ATL_GetVW@(vwf)Info(idx, spf, MB, NB, KB, imm, k, k, k, k, k, k);
+   ATL_GetViewInfo(idx, spf, MB, NB, KB, imm, k, k, k, k, k, k);
    ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
    ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
 @BEGINSKIP
@@ -38320,14 +39013,14 @@ void Mjoin(PATL,@(vwf)Info)
  * Use best NB unless M or N or smaller than that, in which case we use
  * first square block that can contain them both.
  */
-   if (NB < ATL_VWipmen_BEST_NB && ATL_VW@(vwf)_BEST_IDX)
+   if (NB < ATL_VIEW_BEST_NB && ATL_VIEW_BEST_IDX)
    {
       for (idx--; idx; idx--)
-         if (ATL_GetVW@(vwf)MB(idx) < NB)
+         if (ATL_GetViewMB(idx) < NB)
             break;
       idx++;
    }
-   ATL_GetVW@(vwf)Info(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
+   ATL_GetViewInfo(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
    ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
    ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
    npnblks = npmblks = 1;
@@ -38397,9 +39090,14 @@ void Mjoin(PATL,@(vwf)Info)
       else
          npnblks = pnnu = pnb = 0;
    }
+@ROUT ATL_ipmeninfo
+   ipPop(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta, 
+         nfmblks, npmblks, mb, pmb, nfnblks, npnblks, nb, pnb);
+@ROUT ATL_ipinfo 
    Mjoin(PATL,@(vwf)InfoPop)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha,
                              beta, nfmblks, npmblks, mb, pmb, nfnblks,
                              npnblks, nb, pnb);
+@ROUT ATL_ipinfo  ATL_ipmeninfo
 }
 @ROUT ATL_ipsyrkInfo
 #include "atlas_amm.h"
@@ -38428,7 +39126,7 @@ double Mjoin(PATL,ipsyrkInfo)
 {
    size_t nfnblks;
    unsigned int npnblks, mb, nb, pnb, pmb, mu, nu;
-   unsigned int idB=ATL_VWipmen_BEST_IDX, nbB=0;
+   unsigned int idB=ATL_VIEW_BEST_IDX, nbB=0;
    int i;
    double timB=N*N*K;
    #ifdef TCPLX
@@ -38445,7 +39143,7 @@ double Mjoin(PATL,ipsyrkInfo)
           AtlasTrans : AtlasNoTrans;
       #endif
    @ENDSKIP
-   for (i=ATL_VWipmen_BEST_IDX; i >= 0; i--)
+   for (i=ATL_VIEW_BEST_IDX; i >= 0; i--)
    {
       double tim;
       float *tpf, *stpf;
