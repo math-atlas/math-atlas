@@ -405,9 +405,84 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
                          @(typ) *C, ATL_CSZT ldc)
 @endiif
 {
+@iif TRI = 0
+@SKIP ********** gemm copy *****************************************
    const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
+   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+   const size_t incC = ldc*@(nu) - m;
+   unsigned int i, j;
+@ROUT blk2C `   @declare "   @(typ) " n n ";"`
+@ROUT C2blk `   @declare "   const @(typ) " n n ";"`
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+   for (j=nf; j; j--, b += @(bs))
+   {
+@ROUT blk2C `      const @(typ) *p = b;`
+@ROUT C2blk `      @(typ) *p = b;`
+      for (i=mf; i; i--, p += pansz)
+      {
+         @callproc doBlock @(mu) @(nu)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(nu)
+      @iexp m @(m) 1 +
+         break;
+   @endiwhile
+      default:;
+      }
+   @iexp j 0
+   @iwhile j < @(nu)
+      C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+   }
+@iif nu > 1
+   switch(nr)
+   {
+@ROUT blk2C `      const @(typ) *p;`
+@ROUT C2blk `      @(typ) *p;`
+   @iexp n 1
+   @iwhile n < @(nu)
+   case @(n):
+      p = b;
+      for (i=0; i < mf; i++, p += pansz)
+      {
+         @callproc doBlock @(mu) @(n)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(n)
+      @iexp m @(m) 1 +
+         break;
+   @endiwhile
+      default:;
+      }
+      break;
+      @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+@endiif
+@SKIP ********** END of gemm copy *****************************************
+@endiif
 @iif TRI = 1
+@SKIP ******************** syrk copy real type *********************************
+   const unsigned int mf = M/@(mu), nf = N/@(nu);
+   const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
    @iif mEn = 1
    unsigned int pansz = @(bs);
    const size_t incC0 = (ldc+1)*@(nu);
@@ -429,11 +504,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    unsigned int rr; 
       @endiif
    @endiif
-@endiif
-@iif TRI = 0
-   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); 
-   const size_t incC = ldc*@(nu) - m;
-@endiif
    unsigned int i, j;
 @ROUT blk2C `   @declare "   @(typ) " n n ";"`
 @ROUT C2blk `   @declare "   const @(typ) " n n ";"`
@@ -456,7 +526,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       @endiwhile
    @enddeclare
 @endiif
-@iif TRI = 1
    @iif mEn = 1
    for (j=0; j < nf; j++)
    @endiif
@@ -469,14 +538,9 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    for (j=0; j < mnf; j++)
       @endiif
    @endiif
-@endiif
-@iif TRI = 0
-   for (j=nf; j; j--, b += @(bs))
-@endiif
    {
 @ROUT blk2C `      const @(typ) *p = b;`
 @ROUT C2blk `      @(typ) *p = b;`
-@iif TRI = 1
    @iif mEn = 1
       unsigned int psz = pansz+@(bs), incC = incC0 - (mf-j)*@(mu);
 
@@ -501,10 +565,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       for (i=j+1; i < mf; i++, p += psz )
       @endiif
    @endiif
-@endiif
-@iif TRI = 0
-      for (i=mf; i; i--, p += pansz)
-@endiif
 @iif na = 1
       {
          @callproc doBlock @(mu) @(nu)
@@ -546,7 +606,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       @iexp j @(j) 1 +
    @endiwhile
 @endiif
-@iif TRI = 1
    @iif mEn = 1
       pansz += @(bs);
       b += pansz;
@@ -562,9 +621,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       b += pansz;
       @endiif
    @endiif
-@endiif
    }
-@iif TRI = 1   
       @SKIP "Remainder of manr = nf - manf " 
    @iif mEn = 0
       @iif ma ! 1
@@ -587,8 +644,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    }
          @endiif
       @endiif
-@endiif
-
 @iif na = 1
 @iif nu > 1
    switch(nr)
@@ -599,7 +654,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @iwhile n < @(nu)
    case @(n):
       p = b;
-@iif TRI = 1
    @iif mEn = 1
          @callproc doDiBlock @(n)
    @endiif
@@ -616,25 +670,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       @endiif
    @endiif
       break;
-@endiif 
-@iif TRI = 0
-      for (i=0; i < mf; i++, p += pansz)
-      {
-         @callproc doBlock @(mu) @(n)
-      }
-      switch(mr)
-      {
-   @iexp m 1
-   @iwhile m < @(mu)
-      case @(m):
-      @callproc doBlock @(m) @(n)
-      @iexp m @(m) 1 +
-         break;
-   @endiwhile
-      default:;
-      }
-      break;
-@endiif
       @iexp n @(n) 1 +
    @endiwhile
    default:;
@@ -660,8 +695,11 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    }
 @endiif
 @endiif
+@SKIP ********** END of SYRK copy real type************************************
+@endiif
 }
 @iif TRI = 1
+@SKIP ********** SYRK L2UT copy *****************************************
 @SKIP this proc handles only one element
 @SKIP IN : alpha, beta, C, b 
 @BEGINPROC doElementT r_ c_ k_
@@ -1203,6 +1241,7 @@ void Mjoin(ATL_USERCPMM,_L2UT)
 @endiif
 }
 @ROUT C2blk `#endif`
+@SKIP ********** END of SYRK L2UT copy real type ******************************
 @endiif
 @PRE C Z
    @iexp betX 0 @(beta) ! 1 @(beta) ! & -1 @(beta) ! &
@@ -1962,9 +2001,96 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
                          @(typ) *C, ATL_CSZT ldc)
 @endiif
 {
+@iif TRI = 0 
+@SKIP *********************** gemm cpy complex type ***************************
    const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
+   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); // bs=@(bs)
+   const size_t incC = (ldc*@(nu) - m)<<1, ldc2 = ldc+ldc;
+   unsigned int i, j;
+   @iif alpX ! 0
+   const register @(typ) ra=(*alpha), ia=alpha[1];
+   @endiif
+   @iif betX ! 0
+   const register @(typ) rb=(*beta), ib=beta[1];
+   @endiif
+@ROUT blk2C `   @declare "   @(typ) " n n ";"`
+@ROUT C2blk `   @declare "   const @(typ) " n n ";"`
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc2
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+   for (j=nf; j; j--, rC += @(bs), iC += @(bs))
+   {
+@ROUT blk2C `      const @(typ) *pr = rC, *pi = iC;`
+@ROUT C2blk `      @(typ) *pr = rC, *pi = iC;`
 @iif TRI = 1
+      unsigned int psz = pansz+@(bs), incC = incC0 - (mf-j)*(@(mu)+@(mu));
+      @callproc doDiBlock @(nu)
+      pr += pansz; pi += pansz;
+      for (i=j+1; i < mf; i++, pr += psz, pi += psz, psz += @(bs))
+@endiif
+      for (i=mf; i; i--, pr += pansz, pi += pansz)
+      {
+         @callproc doBlock @(mu) @(nu)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(nu)
+      @iexp m @(m) 1 +
+         break;
+   @endiwhile
+      default:;
+      }
+   @iexp j 0
+   @iwhile j < @(nu)
+      C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+   }
+@iif nu > 1
+   switch(nr)
+   {
+@ROUT blk2C `      const @(typ) *pr, *pi;`
+@ROUT C2blk `      @(typ) *pr, *pi;`
+   @iexp n 1
+   @iwhile n < @(nu)
+   case @(n):
+      pr = rC; pi = iC;
+      for (i=0; i < mf; i++, pr += pansz, pi += pansz)
+      {
+         @callproc doBlock @(mu) @(n)
+      }
+      switch(mr)
+      {
+   @iexp m 1
+   @iwhile m < @(mu)
+      case @(m):
+      @callproc doBlock @(m) @(n)
+      @iexp m @(m) 1 +
+         break;
+   @endiwhile
+      default:;
+      }
+      break;
+      @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+@endiif
+@SKIP *********************** END of gemm cpy complex type ********************
+@endiif
+@iif TRI = 1
+@SKIP ***************** syrk cpy complex type **********************************
+   const unsigned int mf = M/@(mu), nf = N/@(nu);
+   const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
    @iif mEn = 1
    unsigned int pansz = @(bs);
    const size_t ldc2 = ldc+ldc, incC0 = (ldc2+2)*@(nu);
@@ -1986,11 +2112,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    unsigned int rr; 
       @endiif
    @endiif
-@endiif
-@iif TRI = 0
-   const unsigned int pansz = (nr) ? (nf+1)*@(bs) : nf*@(bs); 
-   const size_t incC = (ldc*@(nu) - m)<<1, ldc2 = ldc+ldc;
-@endiif
    unsigned int i, j;
    @iif alpX ! 0
    const register @(typ) ra=(*alpha), ia=alpha[1];
@@ -2019,14 +2140,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       @endiwhile
    @enddeclare
 @endiif
-@skip      @define j @1@
-@skip      @iwhile j < @(nu)
-@skip         @iexp i @(j) -1 +
-@skip         *C@(j)=C@(i)+ldc2
-@skip         @iexp j @(j) 1 +
-@skip      @endiwhile
-@skip   @enddeclare
-@iif TRI = 1
    @iif mEn = 1
    for (j=0; j < nf; j++)
    @endiif
@@ -2039,14 +2152,9 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    for (j=0; j < mnf; j++)
       @endiif
    @endiif
-@endiif
-@iif TRI = 0
-   for (j=nf; j; j--, rC += @(bs), iC += @(bs))
-@endiif
    {
 @ROUT blk2C `      const @(typ) *pr = rC, *pi = iC;`
 @ROUT C2blk `      @(typ) *pr = rC, *pi = iC;`
-@iif TRI = 1
    @iif mEn = 1
       unsigned int psz = pansz+@(bs), incC = incC0 - (mf-j)*(@(mu)+@(mu));
       @callproc doDiBlock @(nu)
@@ -2070,10 +2178,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       for (i=j+1; i < mf; i++, pr += psz, pi += psz )
       @endiif
    @endiif
-@endiif
-@iif TRI = 0
-      for (i=mf; i; i--, pr += pansz, pi += pansz)
-@endiif
 @iif na = 1
       {
          @callproc doBlock @(mu) @(nu)
@@ -2115,7 +2219,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       @iexp j @(j) 1 +
    @endiwhile
 @endiif
-@iif TRI = 1
    @iif mEn = 1
       pansz += @(bs);
       rC += pansz;
@@ -2134,10 +2237,8 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       iC += pansz;
       @endiif
    @endiif
-@endiif
    }
-@iif TRI = 1   
-      @SKIP "Remainder of manr = nf - manf " 
+   @SKIP "Remainder of manr = nf - manf " 
    @iif mEn = 0
       @iif ma ! 1
    for (j=manf; j < nf; j++)
@@ -2161,7 +2262,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    }
          @endiif
       @endiif
-@endiif
 @iif na = 1
 @iif nu > 1
    switch(nr)
@@ -2172,7 +2272,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @iwhile n < @(nu)
    case @(n):
       pr = rC; pi = iC;
-@iif TRI = 1
    @iif mEn = 1
       @callproc doDiBlock @(n)
    @endiif
@@ -2190,25 +2289,6 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       @endiif
    @endiif
       break;
-@endiif
-@iif TRI = 0
-      for (i=0; i < mf; i++, pr += pansz, pi += pansz)
-      {
-         @callproc doBlock @(mu) @(n)
-      }
-      switch(mr)
-      {
-   @iexp m 1
-   @iwhile m < @(mu)
-      case @(m):
-      @callproc doBlock @(m) @(n)
-      @iexp m @(m) 1 +
-         break;
-   @endiwhile
-      default:;
-      }
-      break;
-@endiif
       @iexp n @(n) 1 +
    @endiwhile
    default:;
@@ -2235,8 +2315,11 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    }
 @endiif
 @endiif
+@SKIP ***************** END of syrk cpy complex type ***************************
+@endiif
 }
 @iif TRI = 1
+@SKIP ***************** SYRK L2UT complex type**********************************
 @SKIP handles single element of sub-block
 @BEGINPROC doElementT c_ ir_ ii_ k_ 
          @iif alpha = 1
@@ -3046,6 +3129,7 @@ void Mjoin(ATL_USERCPMM,_L2UT)
 @endiif
 }
 @ROUT C2blk `#endif`
+@SKIP ***************** END of SYRK L2UT complex type**************************
 @endiif
 @ROUT blk2C_x87
 @BEGINPROC GetAOff i_ j_
