@@ -35248,18 +35248,72 @@ void srch_menUM(char pre, int verb)
 TIME_SYRKUM:
    while (mmb->next)                      /* get rid of all but */
       mmb = KillMMNode(mmb);              /* asymptotic case */
-   mmb->mflop[1] = mmb->mflop[0];
-   mmb->blask = ATL_KSYRK;
-   if (mmb->genstr)
-      free(mmb->genstr);
-   mmb->genstr = MMGetGenString(pre, mmb);
-   mmb->mflop[0] = TimeMMKernel(verb, 0, mmb, pre, mmb->mbB, mmb->nbB, mmb->kbB,
-                               1, 0, -1);
-   printf("SYRK/GEMM MFLOP=%.4f\n", mmb->mflop[0]/mmb->mflop[1]);
-   if (pre == 'c' || pre == 'z')
-      mmb->flag |= 1<<MMF_COMPLEX;
-   WriteMMFileWithPath(pre, "res", "ipsyrkUM.sum", mmb);
+/*
+ * Try generating with straight params from search
+ */
+   bp = MMGetNodeGEN(pre, 0, 0, mmb->mu, mmb->nu, mmb->ku, mmb->vlen, 
+                     FLAG_IS_SET(mmb->flag, MMF_KVEC), mmb->pref, mmb->pfLS, 
+                     NULL);
+   bp->flag = ((mmb->flag | (1<<MMF_KRUNTIME)) & 
+               (~((1<<MMF_X87)|(1<<MMF_KUISKB))));
+   bp->mbB = mmb->mbB;
+   bp->nbB = mmb->nbB;
+   bp->kbB = mmb->kbB;
+   if (bp->ku > 4)
+   {
+      unsigned int ku=4, kb=mmb->kbB;
+      while((kb/ku)*ku != kb)
+         ku--;
+      bp->ku = ku;
+   }
+   bp->mflop[1] = mmb->mflop[0];
+   bp->blask = ATL_KSYRK;
+   if (bp->genstr)
+      free(bp->genstr);
+   bp->genstr = NULL;
+/*
+ * Duplicate this node so we can try BREG1 & NOBCAST
+ */
    KillMMNode(mmb);
+   mmb = CloneMMNode(bp);
+   mmb->flag |= (1<<MMF_BREG1);
+   bp->mflop[0] = TimeMMKernel(verb, 0, bp, pre, bp->mbB, bp->nbB, bp->kbB,
+                               1, 0, -1);
+   printf("   SYRK/GEMM DEFAULT MFLOP=%.4f\n", bp->mflop[0]/bp->mflop[1]);
+   mmb->mflop[0] = TimeMMKernel(verb, 0, mmb, pre, bp->mbB, bp->nbB, bp->kbB,
+                                1, 0, -1);
+   printf("   SYRK/GEMM BREG1   MFLOP=%.4f\n", mmb->mflop[0]/mmb->mflop[1]);
+/*
+ * bp is best found case so far
+ */
+   if (mmb->mflop[0] >= bp->mflop[0])
+   {
+      ATL_mmnode_t *tp=mmb;
+      mmb = bp;
+      bp = tp;
+   }
+/*
+ * If nu mult of vlen, try NOBCAST
+ */
+   if (!bp->vlen || (bp->nu % bp->vlen) == 0)
+   {
+      mmb->flag = (mmb->flag | (1<<MMF_NOBCAST)) & (~(1<<MMF_BREG1));
+      mmb->mflop[0] = TimeMMKernel(verb, 0, mmb, pre, bp->mbB, bp->nbB, bp->kbB,
+                                   1, 0, -1);
+      printf("   SYRK/GEMM NOBCAST MFLOP=%.4f\n", mmb->mflop[0]/mmb->mflop[1]);
+      if (mmb->mflop[0] >= bp->mflop[0])
+      {
+         ATL_mmnode_t *tp=mmb;
+         mmb = bp;
+         bp = tp;
+      }
+   }
+   KillMMNode(mmb);
+   printf("SYRK/GEMM MFLOP=%.4f\n", bp->mflop[0]/bp->mflop[1]);
+   if (pre == 'c' || pre == 'z')
+      bp->flag |= 1<<MMF_COMPLEX;
+   WriteMMFileWithPath(pre, "res", "ipsyrkUM.sum", bp);
+   KillMMNode(bp);
 }
 
 void srch_men(char pre, int verb)
