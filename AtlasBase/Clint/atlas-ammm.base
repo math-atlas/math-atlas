@@ -825,14 +825,6 @@ int Mjoin(PATL,ammmNMK)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, 
     const SCALAR,const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,
     TYPE*,ATL_CSZT);
-void Mjoin(PATL,ipsyrk)
-   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
-    const SCALAR, const TYPE*, ATL_CSZT, const SCALAR, TYPE*,ATL_CSZT);
-#ifdef TCPLX
-void Mjoin(PATL,herk_IP)
-   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
-    const TYPE, const TYPE*, ATL_CSZT, const TYPE, TYPE*,ATL_CSZT);
-#endif
 @whiledef rt op ip
 int Mjoin(PATL,@(rt)syr2k)
    (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
@@ -845,15 +837,20 @@ int Mjoin(PATL,@(rt)her2k)
     const TYPE, TYPE*,ATL_CSZT);
 #endif
 @endwhile
-@whiledef rt OP amm
-int Mjoin(PATL,syrk_@(rt))
+@SKIP Prototypes for SYRK and HERK [op, ip, amm]
+@multidef rtsy syrk_amm opsyrk ipsyrk 
+@multidef rthk herk_amm opherk ipherk 
+@whiledef rtp int int void
+@(rtp) Mjoin(PATL,@(rtsy))
    (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
     const SCALAR, const TYPE*, ATL_CSZT, const SCALAR, TYPE*,ATL_CSZT);
 #ifdef TCPLX
-int Mjoin(PATL,herk_@(rt))
+@(rtp) Mjoin(PATL,@(rthk))
    (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
     const TYPE, const TYPE*, ATL_CSZT, const TYPE, TYPE*,ATL_CSZT);
 #endif
+   @undef rtsy
+   @undef rthk
 @endwhile
 @BEGINSKIP
 @whiledef rt op ip
@@ -36605,31 +36602,37 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    }
 /*
  * Prototype/rename all A cpy routs: ATL_<pre>cm2am_syrk<TA>
+ * UM case uses gemm's A/B copy, so no need for UM
  */
-@skip   cb = AddMMUniqueACopyFromMMNodes(pre, 'T', mb, NULL);
-   flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
-   flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
-   flg |= (pre == 'c' || pre == 's') ? (1<<CPF_SINGLE):0;
-   cb = GetCopyNodeFromMM(flg, mb, NULL);
-   cb->rout = GetCopyName(cb, 0);
-   fprintf(fp, "#define ATL_%ca2blk_syrkN %s\n",
-           pre, cb->rout);
-   free(cb->rout);
-   cb->flag |= 1<<CPF_TRANS;
-   cb->rout = GetCopyName(cb, 0);
-   fprintf(fp, "#define ATL_%ca2blk_syrkT %s\n",
-           pre, cb->rout);
-   KillAllCopyNodes(cb);
-   for (itr=0; itr < 2; itr++)
+   if (!UM)
    {
-      char tr = itr ? 'T' : 'N';
-      fprintf(fp, "void ATL_%ca2blk_syrk%c", pre, tr);
-      if (pre == 'd' || pre == 's')
-         fprintf(fp,
-         "(ATL_CSZT,ATL_CSZT,const TYPE,const TYPE*,ATL_CSZT,TYPE*);\n");
-      else
-         fprintf(fp,
-         "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,ATL_CSZT,TYPE*,TYPE*);\n");
+      flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
+      flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
+      flg |= (pre == 'c' || pre == 's') ? (1<<CPF_SINGLE):0;
+      cb = GetCopyNodeFromMM(flg, mb, NULL);
+      cb->rout = GetCopyName(cb, 0);
+      fprintf(fp, "#define ATL_%ca2blk_%ssyrkN %s\n",
+              pre, sh, cb->rout);
+      free(cb->rout);
+      cb->flag |= 1<<CPF_TRANS;
+      cb->rout = GetCopyName(cb, 0);
+      fprintf(fp, "#define ATL_%ca2blk_%ssyrkT %s\n",
+              pre, sh, cb->rout);
+      KillAllCopyNodes(cb);
+      for (itr=0; itr < 2; itr++)
+      {
+         char tr = itr ? 'T' : 'N';
+         fprintf(fp, "void ATL_%ca2blk_%ssyrk%c", pre, sh, tr);
+         if (pre == 'd' || pre == 's')
+            fprintf(fp,
+            "(ATL_CSZT,ATL_CSZT,const TYPE,const TYPE*,ATL_CSZT,TYPE*);\n");
+         else
+            fprintf(fp, "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,"
+                        "ATL_CSZT,TYPE*,TYPE*);\n");
+         fprintf(fp, "#ifndef ATL_%ca2blk_syrk%c\n   #define "
+         "ATL_%ca2blk_syrk%c ATL_%ca2blk_%ssyrk%c\n#endif\n",
+            pre, tr,  pre, tr,  pre, sh, tr);
+      }
    }
 /*
  * Prototype all C cpy routs: ATL_<pre>SyrkIntoC_a<alp>_b<bet>
@@ -37177,7 +37180,7 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
       sp = strstr(cp->rout, "SyrkIntoC");
       if (sp)
       {
-         char pre = sp[-1];
+         char pre = sp[-3];
          if (pre == 'z' || pre == 'c')
          {
             sp[0] = '\0'; 
@@ -38420,7 +38423,8 @@ void Mjoin(PATL,@(vwf)Info)
 @ROUT ATL_ipsyrkInfo
 #include "atlas_amm.h"
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
-#include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_sqsyrk.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_umsyrk.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipmen_view.h))
 #include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
