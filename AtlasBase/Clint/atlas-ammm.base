@@ -829,6 +829,16 @@ int Mjoin(PATL,ammmNMK)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, 
     const SCALAR,const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,
     TYPE*,ATL_CSZT);
+@beginskip
+void Mjoin(PATL,ipsyrk)
+   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
+    const SCALAR, const TYPE*, ATL_CSZT, const SCALAR, TYPE*,ATL_CSZT);
+#ifdef TCPLX
+void Mjoin(PATL,ipherk)
+   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
+    const TYPE, const TYPE*, ATL_CSZT, const TYPE, TYPE*,ATL_CSZT);
+#endif
+@endskip
 @whiledef rt op ip
 int Mjoin(PATL,@(rt)syr2k)
    (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
@@ -13524,6 +13534,7 @@ void DoSyrkAmmUM(char pre, int flag, int verb, int nreg)
             pT->flag &= ~(1<<MMF_BREG1);
          pT->mu = mu = (KVEC) ? i : i*VL;
          pT->nu = nu = j;
+         pT->ku = (KVEC) ? KVEC : 1;
          mb = (NB/mu)*mu;
          nb = (NB/nu)*nu;
          if (mu%nu && nu%mu)
@@ -35199,7 +35210,7 @@ void srch_menUM(char pre, int verb)
  */
 {
    ATL_mmnode_t *bp, *mmb=NULL;
-   unsigned int U, D, d, maxK;
+   unsigned int U, D, d, maxK, maxKU;
    
    bp = TimeMMFileWithPath(pre, "res", "ipmenUM.sum", 0, 1, 0, 1, 0, -1);
    if (bp)
@@ -35249,6 +35260,7 @@ void srch_menUM(char pre, int verb)
 TIME_SYRKUM:
    while (mmb->next)                      /* get rid of all but */
       mmb = KillMMNode(mmb);              /* asymptotic case */
+   maxKU = FLAG_IS_SET(mmb->flag, MMF_KVEC) ? mmb->vlen : 4;
 /*
  * Try generating with straight params from search
  */
@@ -35260,12 +35272,17 @@ TIME_SYRKUM:
    bp->mbB = mmb->mbB;
    bp->nbB = mmb->nbB;
    bp->kbB = mmb->kbB;
-   if (bp->ku > 4)
+   if (bp->ku > maxKU)
    {
-      unsigned int ku=4, kb=mmb->kbB;
-      while((kb/ku)*ku != kb)
-         ku--;
-      bp->ku = ku;
+      if (FLAG_IS_SET(bp->flag, MMF_KVEC))
+         bp->ku = maxKU;
+      else
+      {
+         unsigned int ku=maxKU, kb=mmb->kbB;
+         while((kb/ku)*ku != kb)
+            ku--;
+         bp->ku = ku;
+      }
    }
    bp->mflop[1] = mmb->mflop[0];
    bp->blask = ATL_KSYRK;
