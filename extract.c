@@ -3652,7 +3652,8 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
          while (line[i] != '\"') i--;
          line[i++] = '\n';
          line[i++] = '\0';
-         system(line);
+         if (system(line))
+            fprintf(stderr, "WARNING system FAILED '%s'\n", tline);
       }
       else if (WstrcmpN(tline, "@iwhile ", 8))
       {

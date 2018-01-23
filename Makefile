@@ -1,5 +1,5 @@
 CC = gcc
-CCFLAGS = -O3
+CCFLAGS = -ansi -O3
 mydir=`pwd`
 srcdir=./TEST
 topd = $(mydir)/AtlasBase
