@@ -1090,8 +1090,7 @@ void SYR2K
    bv |= (Uplo == AtlasUpper);
    Mjoin(PATL,syr2k_rec)(bv, N, K, alpha, A, lda, B, ldb, beta, C, ldc, vp);
 }
-
-@ROUT ATL_syrk
+@ROUT ATL_sqsyrk
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2016
 #define ATL_GLOBIDX 1
 #include "atlas_misc.h"
@@ -1100,16 +1099,7 @@ void SYR2K
 #include "atlas_level3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
-@SKIP #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sqsyrk.h))
-#include Mstr(Mjoin(ATLAS_PRE,amm_umsyrk.h))
-#ifndef Conj_
-   #define ATL_DECL_ 1
-#endif
-#include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
-#ifndef Conj_
-   #undef ATL_DECL_
-#endif
 /*
  * Service routine, particularly for parallel.  Takes its blocking from ip
  * (assuming that is what is being used below diagonal blocks
@@ -1118,38 +1108,22 @@ void SYR2K
  * 1/2: TA == AtlasNoTrans
  * 2/4: use beta=0 syrk kernel (else use beta=1)
  *
- * If (Uplo==Upper && sy2blk) 
+ * If (Uplo==Upper && sy2blk)
  *    (1) flag&1 == 1; (2) wU non-NULL; (3) sy2blk is beta=0.
  * ==> wU can be aliased wt wS if you don't need correct wS on output
  */
 #ifdef Conj_
-   #define sqsyrkBlk Mjoin(PATL,sqherkBlk)
-   #define sqsyrk_K  Mjoin(PATL,sqherk_KLoop)
-   #define syrk_amm  Mjoin(PATL,herk_amm)
-   #define opsyrk  Mjoin(PATL,opherk)
-   #define ipsyrk  Mjoin(PATL,ipherk)
-   #define SYRK Mjoin(PATL,herk)
-   #define herk_FLG 1
-   #define umsyrkBlk Mjoin(PATL,umherkBlk)
-   #define umsyrk_K  Mjoin(PATL,umherk_KLoop)
-   #define umsyrk  Mjoin(PATL,umherk)
-   #define sqsyrk  Mjoin(PATL,sqherk)
+   #define syrkBlk Mjoin(PATL,sqherkBlk)
+   #define syrk_K  Mjoin(PATL,sqherk_KLoop)
+   #define syrk  Mjoin(PATL,sqherk)
 #else
-   #define sqsyrkBlk Mjoin(PATL,sqsyrkBlk)
-   #define sqsyrk_K  Mjoin(PATL,sqsyrk_KLoop)
-   #define syrk_amm  Mjoin(PATL,syrk_amm)
-   #define opsyrk  Mjoin(PATL,opsyrk)
-   #define ipsyrk  Mjoin(PATL,ipsyrk)
-   #define SYRK Mjoin(PATL,syrk)
-   #define herk_FLG 0
-   #define umsyrkBlk Mjoin(PATL,umsyrkBlk)
-   #define umsyrk_K  Mjoin(PATL,umsyrk_KLoop)
-   #define umsyrk  Mjoin(PATL,umsyrk)
-   #define sqsyrk  Mjoin(PATL,sqsyrk)
+   #define syrkBlk Mjoin(PATL,sqsyrkBlk)
+   #define syrk_K  Mjoin(PATL,sqsyrk_KLoop)
+   #define syrk  Mjoin(PATL,sqsyrk)
 #endif
 /*#define MEM_DEBUG 1*/
 
-void sqsyrkBlk
+void syrkBlk
 (
    ipinfo_t *ip,
    int flag,      /* bitvec: 0: set means C is upper, 1: set TA==AtlasNoTrans */
@@ -1209,8 +1183,8 @@ void sqsyrkBlk
          rB = wB + ip->pszB;
       #endif
    }
-   nnu = (nb+ATL_SQSYRKK_NU-1)/ATL_SQSYRKK_NU;
-   kbS = ((kb+ATL_SQSYRKK_KU-1)/ATL_SQSYRKK_KU)*ATL_SQSYRKK_KU;
+   nnu = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
+   kbS = ((kb+ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    if (A)  /* want to copy input array */
    {
       A = IdxA_ip(ip, A, d, k);
@@ -1260,35 +1234,35 @@ void sqsyrkBlk
             TYPE *crA=(flag&2)?rS:wS, *ciA=(flag&2)?wS:rS;
             if (flag&4)
             {
-               Mjoin(PATL,sqsyrkK_b0)(nnu, nnu, kbS, wS, wS, rC, crA, ciA, wC);
-               Mjoin(PATL,sqsyrkK_b0)(nnu, nnu, kbS, crA, ciA, wC, rS, rS, rC);
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, wS, wS, rC, crA, ciA, wC);
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, crA, ciA, wC, rS, rS, rC);
             }
             else
             {
-               Mjoin(PATL,sqsyrkK_b1)(nnu, nnu, kbS, wS, wS, rC, crA, ciA, wC);
-               Mjoin(PATL,sqsyrkK_bn)(nnu, nnu, kbS, crA, ciA, wC, rS, rS, rC);
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wS, wS, rC, crA, ciA, wC);
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, crA, ciA, wC, rS, rS, rC);
             }
-            Mjoin(PATL,sqsyrkK_b1)(nnu, nnu, kbS, rS, rS, rC, ciA, crA, wC);
-            Mjoin(PATL,sqsyrkK_bn)(nnu, nnu, kbS, ciA, crA, wC, wS, wS, rC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, rS, rS, rC, ciA, crA, wC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, ciA, crA, wC, wS, wS, rC);
          #else
             if (flag&4)
             {
-               Mjoin(PATL,sqsyrkK_b0)(nnu, nnu, kbS, wS, wS, rC, rS, wS, wC);
-               Mjoin(PATL,sqsyrkK_b0)(nnu, nnu, kbS, rS, wS, wC, rS, rS, rC);
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, wS, wS, rC, rS, wS, wC);
+               Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, rS, wS, wC, rS, rS, rC);
             }
             else
             {
-               Mjoin(PATL,sqsyrkK_bn)(nnu, nnu, kbS, wS, wS, rC, rS, wS, wC);
-               Mjoin(PATL,sqsyrkK_b1)(nnu, nnu, kbS, rS, wS, wC, rS, rS, rC);
+               Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, wS, wS, rC, rS, wS, wC);
+               Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, rS, wS, wC, rS, rS, rC);
             }
-            Mjoin(PATL,sqsyrkK_bn)(nnu, nnu, kbS, rS, rS, rC, wS, rS, wC);
-            Mjoin(PATL,sqsyrkK_b1)(nnu, nnu, kbS, wS, rS, wC, wS, wS, rC);
+            Mjoin(PATL,amsyrkK_bn)(nnu, nnu, kbS, rS, rS, rC, wS, rS, wC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wS, rS, wC, wS, wS, rC);
          #endif
       #else
          if (flag&4)
-            Mjoin(PATL,sqsyrkK_b0)(nnu, nnu, kbS, wS, wS, wC, wS, wS, wC);
+            Mjoin(PATL,amsyrkK_b0)(nnu, nnu, kbS, wS, wS, wC, wS, wS, wC);
          else
-            Mjoin(PATL,sqsyrkK_b1)(nnu, nnu, kbS, wS, wS, wC, wS, wS, wC);
+            Mjoin(PATL,amsyrkK_b1)(nnu, nnu, kbS, wS, wS, wC, wS, wS, wC);
       #endif
    }
    if (blk2c)
@@ -1346,7 +1320,7 @@ void sqsyrkBlk
  * 0/1: C is upper
  * 1/2: TA == AtlasNoTrans
  */
-void sqsyrk_K  /* inner-product based syrk/herk loop over K loop */
+void syrk_K  /* inner-product based syrk/herk loop over K loop */
 (
    ipinfo_t *ip,
    int flag,      /* bitvec: 0: set means C is upper, 1: set TA==AtlasNoTrans */
@@ -1385,14 +1359,14 @@ void sqsyrk_K  /* inner-product based syrk/herk loop over K loop */
    if (nfkblks)
    {
       TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szB : NULL;
-      sqsyrkBlk(ip, flag|4, d, 0, A, sy2blk, NULL, beta, NULL, rS, wS,
+      syrkBlk(ip, flag|4, d, 0, A, sy2blk, NULL, beta, NULL, rS, wS,
               wA, wAn, wB, wBn, rC, wC, wU);
       wA = wAn;
       wB = wBn;
    }
    else /* this is first & last block! */
    {
-      sqsyrkBlk(ip, flag|4, d, 0, A, sy2blk, blk2c, beta, C, rS, wS,
+      syrkBlk(ip, flag|4, d, 0, A, sy2blk, blk2c, beta, C, rS, wS,
               wA, wA, wB, wB, rC, wC, wU);
       return;
    }
@@ -1402,7 +1376,7 @@ void sqsyrk_K  /* inner-product based syrk/herk loop over K loop */
    for (k=1; k < nfkblks; k++)
    {
       TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szB : NULL;
-      sqsyrkBlk(ip, flag, d, k, A, sy2blk, NULL, beta, NULL, rS, wS,
+      syrkBlk(ip, flag, d, k, A, sy2blk, NULL, beta, NULL, rS, wS,
               wA, wAn, wB, wBn, rC, wC, wU);
       wA = wAn;
       wB = wBn;
@@ -1410,23 +1384,30 @@ void sqsyrk_K  /* inner-product based syrk/herk loop over K loop */
 /*
  * Last block actually writes to C
  */
-   sqsyrkBlk(ip, flag, d, k, A, sy2blk, blk2c, beta, C, rS, wS,
+   syrkBlk(ip, flag, d, k, A, sy2blk, blk2c, beta, C, rS, wS,
            wA, wA, wB, wB, rC, wC, wU);
 }
 
-int sqsyrk
+int syrk
 (
-   ipinfo_t *ip,
    const enum ATLAS_UPLO  Uplo,
    const enum ATLAS_TRANS TA,
-   ATL_iptr_t  N,
-   ATL_iptr_t K,
+   ATL_CSZT  N,
+   ATL_CSZT K,
+   #ifdef Conj_
+   const TYPE ralpha,
+   #else
    const SCALAR alpha,
+   #endif
    const TYPE *A,
-   ATL_iptr_t lda,
+   ATL_CSZT lda,
+   #ifdef Conj_
+   const TYPE rbeta,
+   #else
    const SCALAR beta,
+   #endif
    TYPE *C,
-   ATL_iptr_t ldc
+   ATL_CSZT ldc
 )
 {
    size_t sz, szA, szB, szC, szS, nnblks, extra;
@@ -1437,11 +1418,14 @@ int sqsyrk
    int ierr;
    cm2am_t sy2blk;
    ablk2cmat_t blk2sy, blk2c;
+   ipinfo_t ip;
    #ifdef Conj_
+      TYPE alpha[2]={ralpha, ATL_rzero}, beta[2]={rbeta, ATL_rzero};
       const enum ATLAS_TRANS TB=(TA==AtlasNoTrans)?AtlasConjTrans:AtlasNoTrans;
    #else
       const enum ATLAS_TRANS TB = (TA==AtlasNoTrans) ? AtlasTrans:AtlasNoTrans;
    #endif
+   Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N,N,K, lda, lda, ldc, alpha, beta);
    #if 0
    printf("D=(%u,%u), B=(%u,%u,%u), b=(%u,%u,%u), nB=(%u,%u,%u)\n",
           (unsigned int)N,(unsigned int)K, ip.mb, ip.nb, ip.kb,
@@ -1454,23 +1438,23 @@ int sqsyrk
 /*
  * Need space for only one column-panel of At
  */
-   szB = ip->nfnblks ? ip->szA : ip->pszA;
-   szB *= (ip->nfkblks+1);
+   szB = ip.nfnblks ? ip.szA : ip.pszA;
+   szB *= (ip.nfkblks+1);
 /*
  * A needs entire matrix minus one row/col panel
  */
-   szA = szB * (ip->nfnblks + ip->npnblks - 1);
-   nb = (ip->nfnblks) ? ip->nb : ip->pnb;
-   nbS = (nb+ATL_SQSYRKK_NU-1)/ATL_SQSYRKK_NU;
+   szA = szB * (ip.nfnblks + ip.npnblks - 1);
+   nb = (ip.nfnblks) ? ip.nb : ip.pnb;
+   nbS = (nb+ATL_SYRKK_NU-1)/ATL_SYRKK_NU;
    szC = ((nbS+1)*nbS)>>1;  /* only need lower tri blks, not full nnu*nnu */
-   nbS *= ATL_SQSYRKK_NU;
-   szC *= ((ATL_SQSYRKK_NU*ATL_SQSYRKK_NU+ATL_SQSYRKK_VLEN-1)/ATL_SQSYRKK_VLEN)
-          * ATL_SQSYRKK_VLEN;
-   extra = ip->exsz;
-   extra = Mmax(extra, (ATL_SQSYRKK_NU+ATL_SQSYRKK_NU)*ATL_SQSYRKK_NU);
-   szS = ((ip->kb + ATL_SQSYRKK_KU-1)/ATL_SQSYRKK_KU)*ATL_SQSYRKK_KU;
+   nbS *= ATL_SYRKK_NU;
+   szC *= ((ATL_SYRKK_NU*ATL_SYRKK_NU+ATL_SYRKK_VLEN-1)/ATL_SYRKK_VLEN)
+          * ATL_SYRKK_VLEN;
+   extra = ip.exsz;
+   extra = Mmax(extra, (ATL_SYRKK_NU+ATL_SYRKK_NU)*ATL_SYRKK_NU);
+   szS = ((ip.kb + ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    szS *= nbS;
-   sz = Mmax(ip->szC,szC);
+   sz = Mmax(ip.szC,szC);
    sz = ATL_MulBySize(sz + szS + szA+szB + extra) + 5*ATL_Cachelen;
    if (sz < ATL_MaxMalloc)
       vp = malloc(sz);
@@ -1487,7 +1471,7 @@ int sqsyrk
       wA = NULL;
    wCs = wC;
    #ifdef TCPLX
-      rC = wC + ip->szC;
+      rC = wC + ip.szC;
       rCs = wC + szC;
       rS = wS + szS;
    #else
@@ -1500,41 +1484,41 @@ int sqsyrk
  * for use in computing non-diaginal blocks using inner-product amm.
  * ============================================================================
  */
-   sy2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_sqsyrkT) : Mjoin(PATL,a2blk_sqsyrkN);
+   sy2blk = IS_COLMAJ(TA) ? Mjoin(PATL,a2blk_syrkT) : Mjoin(PATL,a2blk_syrkN);
 
    if (Uplo == AtlasLower)
    {
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,sqSyrkIntoC_aNb1);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,sqSyrkIntoC_a1b1):Mjoin(PATL,sqSyrkIntoC_aXb1);
+                     Mjoin(PATL,SyrkIntoC_a1b1):Mjoin(PATL,SyrkIntoC_aXb1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,sqSyrkIntoC_aNbN);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,sqSyrkIntoC_a1bN):Mjoin(PATL,sqSyrkIntoC_aXbN);
+                     Mjoin(PATL,SyrkIntoC_a1bN):Mjoin(PATL,SyrkIntoC_aXbN);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,sqSyrkIntoC_aNb0);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,sqSyrkIntoC_a1b0):Mjoin(PATL,sqSyrkIntoC_aXb0);
+                     Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,sqSyrkIntoC_aNbX);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,sqSyrkIntoC_a1bX):Mjoin(PATL,sqSyrkIntoC_aXbX);
+                     Mjoin(PATL,SyrkIntoC_a1bX):Mjoin(PATL,SyrkIntoC_aXbX);
       }
    }
    else
@@ -1542,41 +1526,41 @@ int sqsyrk
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,sqSyrkIntoC_aNb1_L2UT);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1_L2UT);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,sqSyrkIntoC_a1b1_L2UT)
-                     :Mjoin(PATL,sqSyrkIntoC_aXb1_L2UT);
+                     Mjoin(PATL,SyrkIntoC_a1b1_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb1_L2UT);
       }
       else if (SCALAR_IS_NONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,sqSyrkIntoC_aNbN_L2UT);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN_L2UT);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,sqSyrkIntoC_a1bN_L2UT)
-                     :Mjoin(PATL,sqSyrkIntoC_aXbN_L2UT);
+                     Mjoin(PATL,SyrkIntoC_a1bN_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbN_L2UT);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,sqSyrkIntoC_aNb0_L2UT);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0_L2UT);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,sqSyrkIntoC_a1b0_L2UT)
-                     :Mjoin(PATL,sqSyrkIntoC_aXb0_L2UT);
+                     Mjoin(PATL,SyrkIntoC_a1b0_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb0_L2UT);
       }
       else
       {
          if (SCALAR_IS_NONE(alpha))
-            blk2sy = Mjoin(PATL,sqSyrkIntoC_aNbX_L2UT);
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX_L2UT);
          else
             blk2sy = SCALAR_IS_ONE(alpha) ?
-                     Mjoin(PATL,sqSyrkIntoC_a1bX_L2UT)
-                     :Mjoin(PATL,sqSyrkIntoC_aXbX_L2UT);
+                     Mjoin(PATL,SyrkIntoC_a1bX_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbX_L2UT);
       }
    }
-   nnblks = ip->nfnblks + ip->npnblks;
+   nnblks = ip.nfnblks + ip.npnblks;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
 /*
  * Upper doesn't need to copy first row panel of A or last col panel of At
@@ -1585,7 +1569,7 @@ int sqsyrk
    if (Uplo == AtlasUpper)
    {
       flg |= 1;
-      sqsyrk_K(ip, flg, 0, A, sy2blk, blk2sy, beta, C, rS, wS, wB, NULL,
+      syrk_K(&ip, flg, 0, A, sy2blk, blk2sy, beta, C, rS, wS, wB, NULL,
              rCs, wC, wCs);
       if (N > nb)
       {
@@ -1594,25 +1578,25 @@ int sqsyrk
 /*
  *       Compute all C blks within this rowpan of C, copy rest of At
  */
-         blk2c = ip->blk2c;
-         Mjoin(PATL,iploopsNK)(ip, 0, 1, NULL, A, C, 11, wB, wA, rC, wC,
+         blk2c = ip.blk2c;
+         Mjoin(PATL,iploopsNK)(&ip, 0, 1, NULL, A, C, 11, wB, wA, rC, wC,
                                beta, blk2c);
 /*
  *       Loop over all col-pans of C, excepting first & last;
- *       A already fully copied, B will be copied by sqsyrk_Kloop call.
+ *       A already fully copied, B will be copied by syrk_Kloop call.
  */
          for (i=1; i < nnblks-1; i++)
          {
-            sqsyrk_K(ip, flg, i, A, sy2blk, blk2sy, beta, C, rS, wS, wB, NULL,
+            syrk_K(&ip, flg, i, A, sy2blk, blk2sy, beta, C, rS, wS, wB, NULL,
                    rCs, wC, wCs);
             wA += szB SHIFT;
-            Mjoin(PATL,iploopsNK)(ip, i, i+1, NULL, NULL, C+i*(nb SHIFT), 11,
+            Mjoin(PATL,iploopsNK)(&ip, i, i+1, NULL, NULL, C+i*(nb SHIFT), 11,
                                   wB, wA, rC, wC, beta, blk2c);
          }
 /*
  *       Last colpan is only 1 diag blk, so don't copy A or B for gemm
  */
-         sqsyrk_K(ip, flg, i, A, sy2blk, blk2sy, beta, C, rS, wS, NULL, NULL,
+         syrk_K(&ip, flg, i, A, sy2blk, blk2sy, beta, C, rS, wS, NULL, NULL,
                 rCs, wC, wCs);
       }
    }
@@ -1629,42 +1613,74 @@ int sqsyrk
  *    Compute first diag block, copying At to wB for use by all of this colpan
  *    of C's gemm computation
  */
-      sqsyrk_K(ip, flg, 0, A, sy2blk, blk2sy, beta, C, rS, wS, NULL, wB,
+      syrk_K(&ip, flg, 0, A, sy2blk, blk2sy, beta, C, rS, wS, NULL, wB,
              rCs, wC, wCs);
       if (N > nb)
       {
 /*
  *       Compute all C blks within this colpan of C, copying rest of A
  */
-         blk2c = ip->blk2c;
-         Mjoin(PATL,iploopsMK)(ip, 1, 0, A, NULL, C, 7, wA, wB, rC, wC,
+         blk2c = ip.blk2c;
+         Mjoin(PATL,iploopsMK)(&ip, 1, 0, A, NULL, C, 7, wA, wB, rC, wC,
                                beta, blk2c);
 /*
  *       Loop over all col-pans of C, excepting first & last;
- *       A already fully copied, B will be copied by sqsyrk_Kloop call.
+ *       A already fully copied, B will be copied by syrk_Kloop call.
  */
          c = C + incC;
          for (j=1; j < nnblks-1; j++)
          {
-            sqsyrk_K(ip, flg, j, A, sy2blk, blk2sy, beta, C, rS, wS,
+            syrk_K(&ip, flg, j, A, sy2blk, blk2sy, beta, C, rS, wS,
                    NULL, wB, rCs, wC, wCs);
             wA += szB SHIFT;
-            Mjoin(PATL,iploopsMK)(ip, j+1, j, NULL, NULL, c, 7, wA, wB, rC, wC,
+            Mjoin(PATL,iploopsMK)(&ip, j+1, j, NULL, NULL, c, 7, wA, wB, rC, wC,
                                   beta, blk2c);
             c += incC;
          }
 /*
  *       Last colpan is only 1 diag blk, so don't copy A or B for gemm
  */
-         sqsyrk_K(ip, flg, j, A, sy2blk, blk2sy, beta, C, rS, wS,
+         syrk_K(&ip, flg, j, A, sy2blk, blk2sy, beta, C, rS, wS,
                 NULL, NULL, rCs, wC, wCs);
       }
    }
    free(vp);
    return(0);
 }
+@ROUT ATL_umsyrk
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#define ATL_GLOBIDX 1
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+#include "atlas_level2.h"
+#include "atlas_level3.h"
+#include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
+#include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_umsyrk.h))
+/*
+ * Service routine, particularly for parallel.  Takes its blocking from ip
+ * (assuming that is what is being used below diagonal blocks
+ * flag bits, meaning if set (opposite if unset):
+ * 0/1: C is upper
+ * 1/2: TA == AtlasNoTrans
+ * 2/4: use beta=0 syrk kernel (else use beta=1)
+ *
+ * If (Uplo==Upper && sy2blk)
+ *    (1) flag&1 == 1; (2) wU non-NULL; (3) sy2blk is beta=0.
+ * ==> wU can be aliased wt wS if you don't need correct wS on output
+ */
+#ifdef Conj_
+   #define syrkBlk Mjoin(PATL,umherkBlk)
+   #define syrk_K  Mjoin(PATL,umherk_KLoop)
+   #define syrk  Mjoin(PATL,umherk)
+#else
+   #define syrkBlk Mjoin(PATL,umsyrkBlk)
+   #define syrk_K  Mjoin(PATL,umsyrk_KLoop)
+   #define syrk  Mjoin(PATL,umsyrk)
+#endif
+/*#define MEM_DEBUG 1*/
 
-void umsyrkBlk
+void syrkBlk
 (
    ipinfo_t *ip,
    int flag,      /* bitvec: 0: set means C is upper, 1: set TA==AtlasNoTrans*/
@@ -1761,21 +1777,21 @@ void umsyrkBlk
       #ifdef TCPLX
          if (flag&4)
          {
-            Mjoin(PATL,umsyrkK_b0)(nmu, nnu, kbS, wA, wB, rC, rA, wB, wC);
-            Mjoin(PATL,umsyrkK_b0)(nmu, nnu, kbS, rA, wB, wC, rA, rB, rC);
+            Mjoin(PATL,amsyrkK_b0)(nmu, nnu, kbS, wA, wB, rC, rA, wB, wC);
+            Mjoin(PATL,amsyrkK_b0)(nmu, nnu, kbS, rA, wB, wC, rA, rB, rC);
          }
          else
          {
-            Mjoin(PATL,umsyrkK_bn)(nmu, nnu, kbS, wA, wB, rC, rA, wB, wC);
-            Mjoin(PATL,umsyrkK_b1)(nmu, nnu, kbS, rA, wB, wC, rA, rB, rC);
+            Mjoin(PATL,amsyrkK_bn)(nmu, nnu, kbS, wA, wB, rC, rA, wB, wC);
+            Mjoin(PATL,amsyrkK_b1)(nmu, nnu, kbS, rA, wB, wC, rA, rB, rC);
          }
-         Mjoin(PATL,umsyrkK_bn)(nmu, nnu, kbS, rA, rB, rC, wA, rB, wC);
-         Mjoin(PATL,umsyrkK_b1)(nmu, nnu, kbS, wA, rB, wC, wA, wB, wC);
+         Mjoin(PATL,amsyrkK_bn)(nmu, nnu, kbS, rA, rB, rC, wA, rB, wC);
+         Mjoin(PATL,amsyrkK_b1)(nmu, nnu, kbS, wA, rB, wC, wA, wB, wC);
       #else
          if (flag&4)
-            Mjoin(PATL,umsyrkK_b0)(nmu, nnu, kbS, wA, wB, wC, wA, wB, wC);
+            Mjoin(PATL,amsyrkK_b0)(nmu, nnu, kbS, wA, wB, wC, wA, wB, wC);
          else
-            Mjoin(PATL,umsyrkK_b1)(nmu, nnu, kbS, wA, wB, wC, wA, wB, wC);
+            Mjoin(PATL,amsyrkK_b1)(nmu, nnu, kbS, wA, wB, wC, wA, wB, wC);
       #endif
    }
    if (blk2c)
@@ -1803,7 +1819,7 @@ void umsyrkBlk
    }
 }
 
-void umsyrk_K  /* inner-product based syrk/herk loop over K loop */
+void syrk_K  /* inner-product based syrk/herk loop over K loop */
 (
    ipinfo_t *ip,
    int flag,      /* bitvec: 0: set means C is upper, 1: set TA==AtlasNoTrans*/
@@ -1843,14 +1859,14 @@ void umsyrk_K  /* inner-product based syrk/herk loop over K loop */
    if (nfkblks)
    {
       TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szB : NULL;
-      umsyrkBlk(ip, flag|4, d, 0, A, B, NULL, beta, NULL, wA,wAn, wB,wBn,
+      syrkBlk(ip, flag|4, d, 0, A, B, NULL, beta, NULL, wA,wAn, wB,wBn,
                  rC, wC);
       wA = wAn;
       wB = wBn;
    }
    else /* this is first & last block! */
    {
-      umsyrkBlk(ip, flag|4, d, 0, A, B, blk2c, beta, C, wA, wA, wB, wB,
+      syrkBlk(ip, flag|4, d, 0, A, B, blk2c, beta, C, wA, wA, wB, wB,
                 rC, wC);
       return;
    }
@@ -1860,7 +1876,7 @@ void umsyrk_K  /* inner-product based syrk/herk loop over K loop */
    for (k=1; k < nfkblks; k++)
    {
       TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szB : NULL;
-      umsyrkBlk(ip, flag, d, k, A, B, NULL, beta, NULL, wA, wAn, wB, wBn,
+      syrkBlk(ip, flag, d, k, A, B, NULL, beta, NULL, wA, wAn, wB, wBn,
                 rC, wC);
       wA = wAn;
       wB = wBn;
@@ -1868,22 +1884,29 @@ void umsyrk_K  /* inner-product based syrk/herk loop over K loop */
 /*
  * Last block actually writes to C
  */
-   umsyrkBlk(ip, flag, d, k, A, B, blk2c, beta, C, wA,wA, wB,wB, rC,wC);
+   syrkBlk(ip, flag, d, k, A, B, blk2c, beta, C, wA,wA, wB,wB, rC,wC);
 }
 
-int umsyrk
+int syrk
 (
-   ipinfo_t *ip,
    const enum ATLAS_UPLO  Uplo,
    const enum ATLAS_TRANS TA,
-   ATL_iptr_t  N,
-   ATL_iptr_t K,
+   ATL_CSZT  N,
+   ATL_CSZT K,
+   #ifdef Conj_
+   const TYPE ralpha,
+   #else
    const SCALAR alpha,
+   #endif
    const TYPE *A,
-   ATL_iptr_t lda,
+   ATL_CSZT lda,
+   #ifdef Conj_
+   const TYPE rbeta,
+   #else
    const SCALAR beta,
+   #endif
    TYPE *C,
-   ATL_iptr_t ldc
+   ATL_CSZT ldc
 )
 {
    size_t sz, szA, szB, szC, szS, nnblks, extra;
@@ -1893,7 +1916,9 @@ int umsyrk
    int nb, nbS, flg, idx;
    int k, ierr;
    ablk2cmat_t blk2sy, blk2c;
+   ipinfo_t ip;
    #ifdef Conj_
+      TYPE alpha[2]={ralpha, ATL_rzero}, beta[2]={rbeta, ATL_rzero};
       const enum ATLAS_TRANS TB=(TA==AtlasNoTrans)?AtlasConjTrans:AtlasNoTrans;
    #else
       const enum ATLAS_TRANS TB = (TA==AtlasNoTrans) ? AtlasTrans:AtlasNoTrans;
@@ -1901,8 +1926,9 @@ int umsyrk
 #ifdef MEM_DEBUG
    void *vA=NULL, *vB=NULL, *vC=NULL;
 #endif
-   nb = (ip->nfnblks) ? ip->nb : ip->pnb;
-   nnblks = ip->nfnblks + ip->npnblks;
+   Mjoin(PATL,ipmenUMInfo)(&ip, TA, TB, N,N,K, lda, lda, ldc, alpha, beta);
+   nb = (ip.nfnblks) ? ip.nb : ip.pnb;
+   nnblks = ip.nfnblks + ip.npnblks;
 /*
  * Main idea:
  * 1. with syrk+gemm of full blks, syrk can always reuse the workspace of gemm
@@ -1912,14 +1938,14 @@ int umsyrk
 /*
  * Need space for only one column-panel of At
  */
-   szB = ip->nfnblks ? ip->szA : ip->pszA;
-   szB *= (ip->nfkblks+1);
+   szB = ip.nfnblks ? ip.szA : ip.pszA;
+   szB *= (ip.nfkblks+1);
 /*
  * space calc for single syrk block
  */
    if (nnblks == 1)    /* single blk in n-dimension: syrk only*/
    {
-      int smnu=(ip->mu > ip->nu)?ip->mu:ip->nu; /* max of mu, nu*/
+      int smnu=(ip.mu > ip.nu)?ip.mu:ip.nu; /* max of mu, nu*/
       nbS = (nb+smnu-1)/smnu;
       szC = ((nbS+1)*nbS)>>1;
       nbS *= smnu;
@@ -1927,9 +1953,9 @@ int umsyrk
  *    considering mu and nu as one is multiple of other, the size of subblock
  *    is smnu*smnu (rounded with ku).
  */
-      szC *= ((smnu*smnu+ip->ku-1)/ip->ku)*ip->ku;
-      szS =  ((ip->kb+ip->ku-1)/ip->ku)*ip->ku;
-      szA = nbS * szS * (ip->nfkblks + 1);
+      szC *= ((smnu*smnu+ip.ku-1)/ip.ku)*ip.ku;
+      szS =  ((ip.kb+ip.ku-1)/ip.ku)*ip.ku;
+      szA = nbS * szS * (ip.nfkblks + 1);
       extra = (smnu+smnu)*smnu;  /* may not need */
    }
    else
@@ -1937,9 +1963,9 @@ int umsyrk
 /*
  *    A needs entire matrix minus one row/col panel
  */
-      szA = szB * (ip->nfnblks + ip->npnblks - 1);
-      szC = ip->szC;
-      extra = ip->exsz;
+      szA = szB * (ip.nfnblks + ip.npnblks - 1);
+      szC = ip.szC;
+      extra = ip.exsz;
    }
 #ifdef MEM_DEBUG
 /*
@@ -1993,82 +2019,82 @@ int umsyrk
  * ============================================================================
  */
    flg = (TA == AtlasNoTrans) ? 2 : 0;
-/* 
- * NOTE: alpha may be already applied on A-copy. So, use ip->alpC instead of 
+/*
+ * NOTE: alpha may be already applied on A-copy. So, use ip.alpC instead of
  * alpha to select appropriate copy routines
  */
    if (Uplo == AtlasLower)
    {
       if (SCALAR_IS_ONE(beta))
       {
-         if (SCALAR_IS_NONE(ip->alpC))
-            blk2sy = Mjoin(PATL,umSyrkIntoC_aNb1);
+         if (SCALAR_IS_NONE(ip.alpC))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1);
          else
-            blk2sy = SCALAR_IS_ONE(ip->alpC) ?
-                     Mjoin(PATL,umSyrkIntoC_a1b1):Mjoin(PATL,umSyrkIntoC_aXb1);
+            blk2sy = SCALAR_IS_ONE(ip.alpC) ?
+                     Mjoin(PATL,SyrkIntoC_a1b1):Mjoin(PATL,SyrkIntoC_aXb1);
       }
       else if (SCALAR_IS_NONE(beta))
       {
-         if (SCALAR_IS_NONE(ip->alpC))
-            blk2sy = Mjoin(PATL,umSyrkIntoC_aNbN);
+         if (SCALAR_IS_NONE(ip.alpC))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN);
          else
-            blk2sy = SCALAR_IS_ONE(ip->alpC) ?
-                     Mjoin(PATL,umSyrkIntoC_a1bN):Mjoin(PATL,umSyrkIntoC_aXbN);
+            blk2sy = SCALAR_IS_ONE(ip.alpC) ?
+                     Mjoin(PATL,SyrkIntoC_a1bN):Mjoin(PATL,SyrkIntoC_aXbN);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
-         if (SCALAR_IS_NONE(ip->alpC))
-            blk2sy = Mjoin(PATL,umSyrkIntoC_aNb0);
+         if (SCALAR_IS_NONE(ip.alpC))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0);
          else
-            blk2sy = SCALAR_IS_ONE(ip->alpC) ?
-                     Mjoin(PATL,umSyrkIntoC_a1b0):Mjoin(PATL,umSyrkIntoC_aXb0);
+            blk2sy = SCALAR_IS_ONE(ip.alpC) ?
+                     Mjoin(PATL,SyrkIntoC_a1b0):Mjoin(PATL,SyrkIntoC_aXb0);
       }
       else
       {
-         if (SCALAR_IS_NONE(ip->alpC))
-            blk2sy = Mjoin(PATL,umSyrkIntoC_aNbX);
+         if (SCALAR_IS_NONE(ip.alpC))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX);
          else
-            blk2sy = SCALAR_IS_ONE(ip->alpC) ?
-                     Mjoin(PATL,umSyrkIntoC_a1bX):Mjoin(PATL,umSyrkIntoC_aXbX);
+            blk2sy = SCALAR_IS_ONE(ip.alpC) ?
+                     Mjoin(PATL,SyrkIntoC_a1bX):Mjoin(PATL,SyrkIntoC_aXbX);
       }
    }
    else
    {
       if (SCALAR_IS_ONE(beta))
       {
-         if (SCALAR_IS_NONE(ip->alpC))
-            blk2sy = Mjoin(PATL,umSyrkIntoC_aNb1_L2UT);
+         if (SCALAR_IS_NONE(ip.alpC))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb1_L2UT);
          else
-            blk2sy = SCALAR_IS_ONE(ip->alpC) ?
-                     Mjoin(PATL,umSyrkIntoC_a1b1_L2UT)
-                     :Mjoin(PATL,umSyrkIntoC_aXb1_L2UT);
+            blk2sy = SCALAR_IS_ONE(ip.alpC) ?
+                     Mjoin(PATL,SyrkIntoC_a1b1_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb1_L2UT);
       }
       else if (SCALAR_IS_NONE(beta))
       {
-         if (SCALAR_IS_NONE(ip->alpC))
-            blk2sy = Mjoin(PATL,umSyrkIntoC_aNbN_L2UT);
+         if (SCALAR_IS_NONE(ip.alpC))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbN_L2UT);
          else
-            blk2sy = SCALAR_IS_ONE(ip->alpC) ?
-                     Mjoin(PATL,umSyrkIntoC_a1bN_L2UT)
-                     :Mjoin(PATL,umSyrkIntoC_aXbN_L2UT);
+            blk2sy = SCALAR_IS_ONE(ip.alpC) ?
+                     Mjoin(PATL,SyrkIntoC_a1bN_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbN_L2UT);
       }
       else if (SCALAR_IS_ZERO(beta))
       {
-         if (SCALAR_IS_NONE(ip->alpC))
-            blk2sy = Mjoin(PATL,umSyrkIntoC_aNb0_L2UT);
+         if (SCALAR_IS_NONE(ip.alpC))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNb0_L2UT);
          else
-            blk2sy = SCALAR_IS_ONE(ip->alpC) ?
-                     Mjoin(PATL,umSyrkIntoC_a1b0_L2UT)
-                     :Mjoin(PATL,umSyrkIntoC_aXb0_L2UT);
+            blk2sy = SCALAR_IS_ONE(ip.alpC) ?
+                     Mjoin(PATL,SyrkIntoC_a1b0_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXb0_L2UT);
       }
       else
       {
-         if (SCALAR_IS_NONE(ip->alpC))
-            blk2sy = Mjoin(PATL,umSyrkIntoC_aNbX_L2UT);
+         if (SCALAR_IS_NONE(ip.alpC))
+            blk2sy = Mjoin(PATL,SyrkIntoC_aNbX_L2UT);
          else
-            blk2sy = SCALAR_IS_ONE(ip->alpC) ?
-                     Mjoin(PATL,umSyrkIntoC_a1bX_L2UT)
-                     :Mjoin(PATL,umSyrkIntoC_aXbX_L2UT);
+            blk2sy = SCALAR_IS_ONE(ip.alpC) ?
+                     Mjoin(PATL,SyrkIntoC_a1bX_L2UT)
+                     :Mjoin(PATL,SyrkIntoC_aXbX_L2UT);
       }
    }
 /*
@@ -2080,7 +2106,7 @@ int umsyrk
 /*
  *    1st syrk: copies both formats, no reuse
  */
-      umsyrk_K(ip, flg, 0, A, A, blk2sy, beta, C, wB, wA, rC, wC);
+      syrk_K(&ip, flg, 0, A, A, blk2sy, beta, C, wB, wA, rC, wC);
       if (N > nb)
       {
          const size_t incC = nb*((ldc+1)SHIFT);
@@ -2088,8 +2114,8 @@ int umsyrk
 /*
  *       Compute all C blks within this rowpan of C, copies B (At), reuse A
  */
-         blk2c = ip->blk2c;
-         Mjoin(PATL,iploopsNK)(ip, 0, 1, NULL, A, C, 11, wB, wA, rC, wC,
+         blk2c = ip.blk2c;
+         Mjoin(PATL,iploopsNK)(&ip, 0, 1, NULL, A, C, 11, wB, wA, rC, wC,
                                beta, blk2c);
 /*
  *       Loop over all col-pans of C, excepting first & last;
@@ -2100,19 +2126,19 @@ int umsyrk
 /*
  *          syrk copies A and reuses B copy
  */
-            umsyrk_K(ip, flg, i, A, NULL, blk2sy, beta, C, wB, wA,
+            syrk_K(&ip, flg, i, A, NULL, blk2sy, beta, C, wB, wA,
                           rC, wC);
             wA += szB SHIFT;
 /*
  *          gemm can reuse both the copies
  */
-            Mjoin(PATL,iploopsNK)(ip, i, i+1, NULL, NULL, C+i*(nb SHIFT), 11,
+            Mjoin(PATL,iploopsNK)(&ip, i, i+1, NULL, NULL, C+i*(nb SHIFT), 11,
                                   wB, wA, rC, wC, beta, blk2c);
          }
 /*
  *       Last colpan is only 1 diag blk
  */
-         umsyrk_K(ip, flg, i, A, NULL, blk2sy, beta, C, wB, wA,
+         syrk_K(&ip, flg, i, A, NULL, blk2sy, beta, C, wB, wA,
                        rC, wC);
       }
    }
@@ -2128,14 +2154,14 @@ int umsyrk
 /*
  *    Compute first diag block, copies both
  */
-      umsyrk_K(ip, flg, 0, A, A, blk2sy, beta, C, wA, wB, rC, wC);
+      syrk_K(&ip, flg, 0, A, A, blk2sy, beta, C, wA, wB, rC, wC);
       if (N > nb)
       {
 /*
  *       Compute all C blks within this colpan of C, copying rest of A, reuse B
  */
-         blk2c = ip->blk2c;
-         Mjoin(PATL,iploopsMK)(ip, 1, 0, A, NULL, C, 7, wA, wB, rC, wC,
+         blk2c = ip.blk2c;
+         Mjoin(PATL,iploopsMK)(&ip, 1, 0, A, NULL, C, 7, wA, wB, rC, wC,
                                beta, blk2c);
 /*
  *       Loop over all col-pans of C, excepting first & last;
@@ -2147,20 +2173,20 @@ int umsyrk
 /*
  *          syrk reuse A and copies B
  */
-            umsyrk_K(ip, flg, j, NULL, A, blk2sy, beta, C, wA, wB,
+            syrk_K(&ip, flg, j, NULL, A, blk2sy, beta, C, wA, wB,
                           rC, wC);
             wA += szB SHIFT;
 /*
  *          gemm reuses both the copies
  */
-            Mjoin(PATL,iploopsMK)(ip, j+1, j, NULL, NULL, c, 7, wA, wB, rC, wC,
+            Mjoin(PATL,iploopsMK)(&ip, j+1, j, NULL, NULL, c, 7, wA, wB, rC, wC,
                                   beta, blk2c);
             c += incC;
          }
 /*
  *       Last colpan is only 1 diag blk, still reuses A
  */
-         umsyrk_K(ip, flg, j, NULL, A, blk2sy, beta, C, wA, wB,
+         syrk_K(&ip, flg, j, NULL, A, blk2sy, beta, C, wA, wB,
                        rC, wC);
       }
    }
@@ -2173,6 +2199,53 @@ int umsyrk
 #endif
    return(0);
 }
+@ROUT ATL_syrk
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2016
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+#include "atlas_level2.h"
+#include "atlas_level3.h"
+#include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
+#include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
+@SKIP #include Mstr(Mjoin(ATLAS_PRE,amm_syrk.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_sqsyrk.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_umsyrk.h))
+#ifndef Conj_
+   #define ATL_DECL_ 1
+#endif
+#include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
+#ifndef Conj_
+   #undef ATL_DECL_
+#endif
+/*
+ * Service routine, particularly for parallel.  Takes its blocking from ip
+ * (assuming that is what is being used below diagonal blocks
+ * flag bits, meaning if set (opposite if unset):
+ * 0/1: C is upper
+ * 1/2: TA == AtlasNoTrans
+ * 2/4: use beta=0 syrk kernel (else use beta=1)
+ *
+ * If (Uplo==Upper && sy2blk) 
+ *    (1) flag&1 == 1; (2) wU non-NULL; (3) sy2blk is beta=0.
+ * ==> wU can be aliased wt wS if you don't need correct wS on output
+ */
+#ifdef Conj_
+   #define syrk_amm  Mjoin(PATL,herk_amm)
+   #define opsyrk  Mjoin(PATL,opherk)
+   #define ipsyrk  Mjoin(PATL,ipherk)
+   #define SYRK Mjoin(PATL,herk)
+   #define herk_FLG 1
+   #define umsyrk  Mjoin(PATL,umherk)
+   #define sqsyrk  Mjoin(PATL,sqherk)
+#else
+   #define syrk_amm  Mjoin(PATL,syrk_amm)
+   #define opsyrk  Mjoin(PATL,opsyrk)
+   #define ipsyrk  Mjoin(PATL,ipsyrk)
+   #define SYRK Mjoin(PATL,syrk)
+   #define herk_FLG 0
+   #define umsyrk  Mjoin(PATL,umsyrk)
+   #define sqsyrk  Mjoin(PATL,sqsyrk)
+#endif
 
 int syrk_amm
 (
@@ -2357,53 +2430,27 @@ int syrk_amm
          return(0);
    }
    #endif
-   #if 1
-   #else
-      Mjoin(PATL,ipmenInfo)(&ip, TA, TB, N, N, K, lda, lda, ldc, alpha, beta);
-   #endif
-   #if 0
-   printf("D=(%u,%u), B=(%u,%u,%u), b=(%u,%u,%u), nB=(%u,%u,%u)\n", 
-          (unsigned int)N,(unsigned int)K, ip.mb, ip.nb, ip.kb,
-          ip.pmb, ip.pnb, ip.kb0, ip.nfmblks, ip.nfnblks, ip.nfkblks);
-   #endif
 /*
  * Will eventually need syrk timed for all square blocks to select best case.
  * For now, just pretend syrk time doesn't matter
  */
 /*
- * NOTE: Majedul: I'm using ipmenInfo for new syrk 
+ * We will decide between sqsyrk and umsyrk based on the pref data from 
+ * amm_syrkPerf.h.  
  */
-   Mjoin(PATL,ipmenInfo)(&ipmen, TA, TB, N,N,K, lda, lda, ldc, alpha, beta);
-/*
- * to apply new syrk, mu must be multiple of nu or vice versa
- */
-   k = 1;
-   if (ipmen.mu == ipmen.nu) /* want to use new syrk */
-      k = 0;
-   else if (ipmen.mu > ipmen.nu)
-   {
-      i = ipmen.mu / ipmen.nu;
-      i *= ipmen.nu;
-      if (i == ipmen.mu)
-         k = 0;
-   }
-   else  /* ipmen.nu > ipmen.mu */
-   {
-      i = ipmen.nu / ipmen.mu;
-      i *= ipmen.mu;
-      if (i == ipmen.nu)
-         k = 0;
-   }
-/*
- * mu,nu,ku  must match with amm_umsyrk.h to apply new syrk
- */
-   if (ipmen.mu != ATL_UMSYRKK_MU || ipmen.nu != ATL_UMSYRKK_NU 
-         || ipmen.ku !=ATL_UMSYRKK_KU )
-      k = 1;
-   if (!k)
-      ierr = umsyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
-   else
-      ierr = sqsyrk(&ip, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+#if 1  /* apply umsyrk*/ 
+   #ifdef Conj_
+      ierr = umsyrk(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+   #else
+      ierr = umsyrk(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+   #endif
+#else /* sqsyrk */
+   #ifdef Conj_
+      ierr = sqsyrk(Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+   #else
+      ierr = sqsyrk(Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+   #endif
+#endif
    return(ierr);
 }
 
