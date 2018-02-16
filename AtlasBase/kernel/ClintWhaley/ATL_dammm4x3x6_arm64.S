@@ -513,7 +513,7 @@ ATL_asmdecor(ATL_USERMM):
          str rC32, [pC,#8*11]
          add pC, pC, #8*12
          subs JJ, JJ, #1
-//         add pB, pB, #8*12
+/*         add pB, pB, #8*12 */
          mov pA, pA0
       b.ne NLOOP
       add pA0, pA0, K0, LSL #5

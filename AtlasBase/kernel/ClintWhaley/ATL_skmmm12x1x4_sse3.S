@@ -75,7 +75,7 @@ ATL_asmdecor(ATL_USERMM):
    
    ALIGN16
    MLOOP:
-//      NLOOP:
+/*      NLOOP: */
          movaps (pB), rC11
          movaps -128(pA), rC0
          mulps rC11, rC0
