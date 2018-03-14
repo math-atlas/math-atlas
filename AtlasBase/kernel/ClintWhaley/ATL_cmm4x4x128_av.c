@@ -273,7 +273,7 @@ ATL_USERMM:
         add     pfA, pA0, incAn         /* pfA = A + M*KB */
         srwi    M, M, 2                 /* M /= 4 */
 	addi	M, M, -1
-// pA0 = pA0 - incAn + KB4*4 = pA0 -(incAn - KB*4)
+/* pA0 = pA0 - incAn + KB4*4 = pA0 -(incAn - KB*4) */
 	mr	k1, incAn
 	addi	incAn, k1, -KB4*4
 	addi	incCn, incCn, incCm
@@ -283,7 +283,7 @@ ATL_USERMM:
 #if MB == 0
         cmpwi   cr5, M, 0
 #endif
-//	.align 5
+/*	.align 5 */
 NLOOPU:
         addi    pfB, pB0, KB4*4
         mtctr   M
@@ -2079,67 +2079,67 @@ MLOOPU:
                                         /* rC10 = {c1a, c1b, c1c, c1d} */
                                         /* rC20 = {c2a, c2b, c2c, c2d} */
                                         /* rC30 = {c3a, c3b, c3c, c3d} */
-	vmrglw  vb2, vC00, vC10		// vb2  = {c0c, c1c, c0d, c1d}
+	vmrglw  vb2, vC00, vC10		/* vb2  = {c0c, c1c, c0d, c1d} */
            lvx     vA1, pA0, k1
-	vmrghw  vC00, vC00, vC10	// vC00 = {c0a, c1a, c0b, c1b}
+	vmrghw  vC00, vC00, vC10	/* vC00 = {c0a, c1a, c0b, c1b} */
            lvx     vA2, pA0, k2
-	vaddfp  vC00, vC00, vb2         // vC00 = {c0ac, c1ac, c0bd, c1bd}
+	vaddfp  vC00, vC00, vb2         /* vC00 = {c0ac, c1ac, c0bd, c1bd} */
            lvx     vA3, pA0, k3
-	vmrglw  vb3, vC20, vC30		// vb3  = {c2c, c3c, c2d, c3d}
+	vmrglw  vb3, vC20, vC30		/* vb3  = {c2c, c3c, c2d, c3d} */
            lvx     vB1, pB0, k1
-	vmrghw  vC20, vC20, vC30	// vC20 = {c2a, c3a, c2b, c3b}
+	vmrghw  vC20, vC20, vC30	/* vC20 = {c2a, c3a, c2b, c3b} */
            lvx     vB2, pB0, k2
-	vaddfp  vC20, vC20, vb3         // vC20 = {c2ac, c3ac, c2bd, c3bd}
+	vaddfp  vC20, vC20, vb3         /* vC20 = {c2ac, c3ac, c2bd, c3bd} */
            lvx     vB3, pB0, k3
-        vperm   vb2, vC00, vC20,vb1     // vb2  = {c0ac, c1ac, c2bd, c3bd}
+        vperm   vb2, vC00, vC20,vb1     /* vb2  = {c0ac, c1ac, c2bd, c3bd} */
         #if KB > 4
            addi k0, k0, 16
            addi k1, k1, 16
            addi k2, k2, 16
            addi k3, k3, 16
         #endif
-        vsldoi  vC00, vC00, vC20,8      // vC00 = {c0bd, c1bd, c2ac, c3ac}
-	vaddfp vC00, vC00, vb2          // vC00 = {c0acbd,c1acbd,c2acbd,c3acbd}
+        vsldoi  vC00, vC00, vC20,8      /* vC00 = {c0bd, c1bd, c2ac, c3ac} */
+	vaddfp vC00, vC00, vb2          /* vC00 = {c0acbd,c1acbd,c2acbd,c3acbd} */
 
-	vmrglw  vb2, vC01, vC11		// vb2  = {c0c, c1c, c0d, c1d}
+	vmrglw  vb2, vC01, vC11		/* vb2  = {c0c, c1c, c0d, c1d} */
         #if KB > 4
            lvx     va0, pA0, k0
         #endif
-	vmrghw  vC01, vC01, vC11	// vC01 = {c0a, c1a, c0b, c1b}
-	vaddfp  vC01, vC01, vb2         // vC01 = {c0ac, c1ac, c0bd, c1bd}
-	vmrglw  vb3, vC21, vC31		// vb3  = {c2c, c3c, c2d, c3d}
-	vmrghw  vC21, vC21, vC31	// vC21 = {c2a, c3a, c2b, c3b}
-	vaddfp  vC21, vC21, vb3         // vC21 = {c2ac, c3ac, c2bd, c3bd}
-        vperm   vb2, vC01, vC21,vb1     // vb2  = {c0ac, c1ac, c2bd, c3bd}
-        vsldoi  vC01, vC01, vC21,8      // vC01 = {c0bd, c1bd, c2ac, c3ac}
-	vaddfp vC01, vC01, vb2          // vC01 = {c0acbd,c1acbd,c0acbd,c1acbd}
+	vmrghw  vC01, vC01, vC11	/* vC01 = {c0a, c1a, c0b, c1b} */
+	vaddfp  vC01, vC01, vb2         /* vC01 = {c0ac, c1ac, c0bd, c1bd} */
+	vmrglw  vb3, vC21, vC31		/* vb3  = {c2c, c3c, c2d, c3d} */
+	vmrghw  vC21, vC21, vC31	/* vC21 = {c2a, c3a, c2b, c3b} */
+	vaddfp  vC21, vC21, vb3         /* vC21 = {c2ac, c3ac, c2bd, c3bd} */
+        vperm   vb2, vC01, vC21,vb1     /* vb2  = {c0ac, c1ac, c2bd, c3bd} */
+        vsldoi  vC01, vC01, vC21,8      /* vC01 = {c0bd, c1bd, c2ac, c3ac} */
+	vaddfp vC01, vC01, vb2          /* vC01 = {c0acbd,c1acbd,c0acbd,c1acbd} */
         #if KB > 4
            lvx     vb0, pB0, k0
         #endif
 
-	vmrglw  vb2, vC02, vC12		// vb2  = {c0c, c1c, c0d, c1d}
-	vmrghw  vC02, vC02, vC12	// vC02 = {c0a, c1a, c0b, c1b}
-	vaddfp  vC02, vC02, vb2         // vC02 = {c0ac, c1ac, c0bd, c1bd}
-	vmrglw  vb3, vC22, vC32		// vb3  = {c2c, c3c, c2d, c3d}
-	vmrghw  vC22, vC22, vC32	// vC22 = {c2a, c3a, c2b, c3b}
-	vaddfp  vC22, vC22, vb3         // vC22 = {c2ac, c3ac, c2bd, c3bd}
-        vperm   vb2, vC02, vC22,vb1     // vb2  = {c0ac, c1ac, c2bd, c3bd}
-        vsldoi  vC02, vC02, vC22,8      // vC02 = {c0bd, c1bd, c2ac, c3ac}
-	vaddfp vC02, vC02, vb2          // vC02 = {c0acbd,c1acbd,c0acbd,c1acbd}
+	vmrglw  vb2, vC02, vC12		/* vb2  = {c0c, c1c, c0d, c1d} */
+	vmrghw  vC02, vC02, vC12	/* vC02 = {c0a, c1a, c0b, c1b} */
+	vaddfp  vC02, vC02, vb2         /* vC02 = {c0ac, c1ac, c0bd, c1bd} */
+	vmrglw  vb3, vC22, vC32		/* vb3  = {c2c, c3c, c2d, c3d} */
+	vmrghw  vC22, vC22, vC32	/* vC22 = {c2a, c3a, c2b, c3b} */
+	vaddfp  vC22, vC22, vb3         /* vC22 = {c2ac, c3ac, c2bd, c3bd} */
+        vperm   vb2, vC02, vC22,vb1     /* vb2  = {c0ac, c1ac, c2bd, c3bd} */
+        vsldoi  vC02, vC02, vC22,8      /* vC02 = {c0bd, c1bd, c2ac, c3ac} */
+	vaddfp vC02, vC02, vb2          /* vC02 = {c0acbd,c1acbd,c0acbd,c1acbd} */
 
-	vmrglw  vb2, vC03, vC13		// vb2  = {c0c, c1c, c0d, c1d}
-	vmrghw  vC03, vC03, vC13	// vC03 = {c0a, c1a, c0b, c1b}
-	vaddfp  vC03, vC03, vb2         // vC03 = {c0ac, c1ac, c0bd, c1bd}
-	vmrglw  vb3, vC23, vC33		// vb3  = {c2c, c3c, c2d, c3d}
-	vmrghw  vC23, vC23, vC33	// vC23 = {c2a, c3a, c2b, c3b}
+	vmrglw  vb2, vC03, vC13		/* vb2  = {c0c, c1c, c0d, c1d} */
+	vmrghw  vC03, vC03, vC13	/* vC03 = {c0a, c1a, c0b, c1b} */
+	vaddfp  vC03, vC03, vb2         /* vC03 = {c0ac, c1ac, c0bd, c1bd} */
+	vmrglw  vb3, vC23, vC33		/* vb3  = {c2c, c3c, c2d, c3d} */
+	vmrghw  vC23, vC23, vC33	/* vC23 = {c2a, c3a, c2b, c3b} */
            vxor    vC33, vC33, vC33
-	vaddfp  vC23, vC23, vb3         // vC23 = {c2ac, c3ac, c2bd, c3bd}
-        vperm   vb2, vC03, vC23,vb1     // vb2  = {c0ac, c1ac, c2bd, c3bd}
-        vsldoi  vC03, vC03, vC23,8      // vC03 = {c0bd, c1bd, c2ac, c3ac}
+	vaddfp  vC23, vC23, vb3         /* vC23 = {c2ac, c3ac, c2bd, c3bd} */
+        vperm   vb2, vC03, vC23,vb1     /* vb2  = {c0ac, c1ac, c2bd, c3bd} */
+        vsldoi  vC03, vC03, vC23,8      /* vC03 = {c0bd, c1bd, c2ac, c3ac} */
         #if KB > 4
            lvx     va1, pA0, k1
         #endif
-	vaddfp vC03, vC03, vb2          // vC03 = {c0acbd,c1acbd,c0acbd,c1acbd}
+	vaddfp vC03, vC03, vb2          /* vC03 = {c0acbd,c1acbd,c0acbd,c1acbd} */
 /*
  *      Store it back out, and add it to C if necessary
  */
@@ -4050,45 +4050,45 @@ MPEELEDU:
                                         /* rC10 = {c1a, c1b, c1c, c1d} */
                                         /* rC20 = {c2a, c2b, c2c, c2d} */
                                         /* rC30 = {c3a, c3b, c3c, c3d} */
-	vmrglw  vb2, vC00, vC10		// vb2  = {c0c, c1c, c0d, c1d}
-	vmrghw  vC00, vC00, vC10	// vC00 = {c0a, c1a, c0b, c1b}
-	vaddfp  vC00, vC00, vb2         // vC00 = {c0ac, c1ac, c0bd, c1bd}
-	vmrglw  vb3, vC20, vC30		// vb3  = {c2c, c3c, c2d, c3d}
-	vmrghw  vC20, vC20, vC30	// vC20 = {c2a, c3a, c2b, c3b}
-	vaddfp  vC20, vC20, vb3         // vC20 = {c2ac, c3ac, c2bd, c3bd}
-        vperm   vb2, vC00, vC20,vb1     // vb2  = {c0ac, c1ac, c2bd, c3bd}
-        vsldoi  vC00, vC00, vC20,8      // vC00 = {c0bd, c1bd, c2ac, c3ac}
-	vaddfp vC00, vC00, vb2          // vC00 = {c0acbd,c1acbd,c2acbd,c3acbd}
+	vmrglw  vb2, vC00, vC10		/* vb2  = {c0c, c1c, c0d, c1d} */
+	vmrghw  vC00, vC00, vC10	/* vC00 = {c0a, c1a, c0b, c1b} */
+	vaddfp  vC00, vC00, vb2         /* vC00 = {c0ac, c1ac, c0bd, c1bd} */
+	vmrglw  vb3, vC20, vC30		/* vb3  = {c2c, c3c, c2d, c3d} */
+	vmrghw  vC20, vC20, vC30	/* vC20 = {c2a, c3a, c2b, c3b} */
+	vaddfp  vC20, vC20, vb3         /* vC20 = {c2ac, c3ac, c2bd, c3bd} */
+        vperm   vb2, vC00, vC20,vb1     /* vb2  = {c0ac, c1ac, c2bd, c3bd} */
+        vsldoi  vC00, vC00, vC20,8      /* vC00 = {c0bd, c1bd, c2ac, c3ac} */
+	vaddfp vC00, vC00, vb2          /* vC00 = {c0acbd,c1acbd,c2acbd,c3acbd} */
 
-	vmrglw  vb2, vC01, vC11		// vb2  = {c0c, c1c, c0d, c1d}
-	vmrghw  vC01, vC01, vC11	// vC01 = {c0a, c1a, c0b, c1b}
-	vaddfp  vC01, vC01, vb2         // vC01 = {c0ac, c1ac, c0bd, c1bd}
-	vmrglw  vb3, vC21, vC31		// vb3  = {c2c, c3c, c2d, c3d}
-	vmrghw  vC21, vC21, vC31	// vC21 = {c2a, c3a, c2b, c3b}
-	vaddfp  vC21, vC21, vb3         // vC21 = {c2ac, c3ac, c2bd, c3bd}
-        vperm   vb2, vC01, vC21,vb1     // vb2  = {c0ac, c1ac, c2bd, c3bd}
-        vsldoi  vC01, vC01, vC21,8      // vC01 = {c0bd, c1bd, c2ac, c3ac}
-	vaddfp vC01, vC01, vb2          // vC01 = {c0acbd,c1acbd,c0acbd,c1acbd}
+	vmrglw  vb2, vC01, vC11		/* vb2  = {c0c, c1c, c0d, c1d} */
+	vmrghw  vC01, vC01, vC11	/* vC01 = {c0a, c1a, c0b, c1b} */
+	vaddfp  vC01, vC01, vb2         /* vC01 = {c0ac, c1ac, c0bd, c1bd} */
+	vmrglw  vb3, vC21, vC31		/* vb3  = {c2c, c3c, c2d, c3d} */
+	vmrghw  vC21, vC21, vC31	/* vC21 = {c2a, c3a, c2b, c3b} */
+	vaddfp  vC21, vC21, vb3         /* vC21 = {c2ac, c3ac, c2bd, c3bd} */
+        vperm   vb2, vC01, vC21,vb1     /* vb2  = {c0ac, c1ac, c2bd, c3bd} */
+        vsldoi  vC01, vC01, vC21,8      /* vC01 = {c0bd, c1bd, c2ac, c3ac} */
+	vaddfp vC01, vC01, vb2          /* vC01 = {c0acbd,c1acbd,c0acbd,c1acbd} */
 
-	vmrglw  vb2, vC02, vC12		// vb2  = {c0c, c1c, c0d, c1d}
-	vmrghw  vC02, vC02, vC12	// vC02 = {c0a, c1a, c0b, c1b}
-	vaddfp  vC02, vC02, vb2         // vC02 = {c0ac, c1ac, c0bd, c1bd}
-	vmrglw  vb3, vC22, vC32		// vb3  = {c2c, c3c, c2d, c3d}
-	vmrghw  vC22, vC22, vC32	// vC22 = {c2a, c3a, c2b, c3b}
-	vaddfp  vC22, vC22, vb3         // vC22 = {c2ac, c3ac, c2bd, c3bd}
-        vperm   vb2, vC02, vC22,vb1     // vb2  = {c0ac, c1ac, c2bd, c3bd}
-        vsldoi  vC02, vC02, vC22,8      // vC02 = {c0bd, c1bd, c2ac, c3ac}
-	vaddfp vC02, vC02, vb2          // vC02 = {c0acbd,c1acbd,c0acbd,c1acbd}
+	vmrglw  vb2, vC02, vC12		/* vb2  = {c0c, c1c, c0d, c1d} */
+	vmrghw  vC02, vC02, vC12	/* vC02 = {c0a, c1a, c0b, c1b} */
+	vaddfp  vC02, vC02, vb2         /* vC02 = {c0ac, c1ac, c0bd, c1bd} */
+	vmrglw  vb3, vC22, vC32		/* vb3  = {c2c, c3c, c2d, c3d} */
+	vmrghw  vC22, vC22, vC32	/* vC22 = {c2a, c3a, c2b, c3b} */
+	vaddfp  vC22, vC22, vb3         /* vC22 = {c2ac, c3ac, c2bd, c3bd} */
+        vperm   vb2, vC02, vC22,vb1     /* vb2  = {c0ac, c1ac, c2bd, c3bd} */
+        vsldoi  vC02, vC02, vC22,8      /* vC02 = {c0bd, c1bd, c2ac, c3ac} */
+	vaddfp vC02, vC02, vb2          /* vC02 = {c0acbd,c1acbd,c0acbd,c1acbd} */
 
-	vmrglw  vb2, vC03, vC13		// vb2  = {c0c, c1c, c0d, c1d}
-	vmrghw  vC03, vC03, vC13	// vC03 = {c0a, c1a, c0b, c1b}
-	vaddfp  vC03, vC03, vb2         // vC03 = {c0ac, c1ac, c0bd, c1bd}
-	vmrglw  vb3, vC23, vC33		// vb3  = {c2c, c3c, c2d, c3d}
-	vmrghw  vC23, vC23, vC33	// vC23 = {c2a, c3a, c2b, c3b}
-	vaddfp  vC23, vC23, vb3         // vC23 = {c2ac, c3ac, c2bd, c3bd}
-        vperm   vb2, vC03, vC23,vb1     // vb2  = {c0ac, c1ac, c2bd, c3bd}
-        vsldoi  vC03, vC03, vC23,8      // vC03 = {c0bd, c1bd, c2ac, c3ac}
-	vaddfp vC03, vC03, vb2          // vC03 = {c0acbd,c1acbd,c0acbd,c1acbd}
+	vmrglw  vb2, vC03, vC13		/* vb2  = {c0c, c1c, c0d, c1d} */
+	vmrghw  vC03, vC03, vC13	/* vC03 = {c0a, c1a, c0b, c1b} */
+	vaddfp  vC03, vC03, vb2         /* vC03 = {c0ac, c1ac, c0bd, c1bd} */
+	vmrglw  vb3, vC23, vC33		/* vb3  = {c2c, c3c, c2d, c3d} */
+	vmrghw  vC23, vC23, vC33	/* vC23 = {c2a, c3a, c2b, c3b} */
+	vaddfp  vC23, vC23, vb3         /* vC23 = {c2ac, c3ac, c2bd, c3bd} */
+        vperm   vb2, vC03, vC23,vb1     /* vb2  = {c0ac, c1ac, c2bd, c3bd} */
+        vsldoi  vC03, vC03, vC23,8      /* vC03 = {c0bd, c1bd, c2ac, c3ac} */
+	vaddfp vC03, vC03, vb2          /* vC03 = {c0acbd,c1acbd,c0acbd,c1acbd} */
 /*
  *      Store it back out, and add it to C if necessary
  */

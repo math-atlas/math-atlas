@@ -379,14 +379,14 @@ ROUTINE ATL_USERMM;
    PARAMS :: nmus, nnus, K, pA, pB, pC, pAn, pBn, pCn;
    INT :: nmus, nnus, K;
    @(typ)_PTR :: pA, pB, pC, pAn, pBn, pCn;
-//
-// Performs a GEMM with M,N,K unrolling (& jam) of (@(mu),@(nu),@(ku)).
-@VEC KDIM `// Can be vectorized (VLEN=@(vl)) along K dimension`
-@VEC MDIM `// Can be vectorized (VLEN=@(vl)) along M dimension`
+/*
+ * Performs a GEMM with M,N,K unrolling (& jam) of (@(mu),@(nu),@(ku)).
+@VEC KDIM ` * Can be vectorized (VLEN=@(vl)) along K dimension`
+@VEC MDIM ` * Can be vectorized (VLEN=@(vl)) along M dimension`
 @iif kb ! 0
-// K-loop us fully unrolled, so K must be @(kb).
+ * K-loop us fully unrolled, so K must be @(kb).
 @endiif
-//
+*/
 ROUT_LOCALS 
    INT :: i, j, k, incAm, incBn;
    @(typ)_PTR :: pB0, pA0;
@@ -442,7 +442,7 @@ ROUT_BEGIN
    @endiif
       j = nnus;
       NLOOP:
-//       Peel K=0 iteration to avoid zero of rCxx and extra add
+/*       Peel K=0 iteration to avoid zero of rCxx and extra add */
    @iexp IN_K 0 0 +
    @iexp npeel 1 0 +
    @callproc DoIter0
@@ -478,7 +478,7 @@ KDONE:
    @endiif
    @iif ku ! kb
               pA = pA0;
-//              pA = pA - incAm;
+/*              pA = pA - incAm; */
    @endiif
          j = j - 1;
       IF (j > 0) GOTO NLOOP;

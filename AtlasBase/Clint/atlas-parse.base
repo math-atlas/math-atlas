@@ -40,6 +40,9 @@
 
 #include "atlas_genparse.h"
 #include "atlas_enum.h"
+#ifndef uint
+   #define uint unsigned int
+#endif
 
 #define ATL_CPMAXGEN  6  /* maximum generated code */
 #define ATL_CPMAXACCMAJ  4  /* max access-major copy */
@@ -1062,7 +1065,13 @@ static int ATL_numBitsNeeded(int N)
 /* procedure @(ip) */
 static int GetNumVecRegs(char pre)
 {
-#ifdef ATL_SSE1
+#ifdef ATL_AVXZ
+   #ifdef ATL_USE64BITS
+      return(32);
+   #else
+      return(8);
+   #endif
+#elif defined(ATL_SSE1)
    #ifdef ATL_USE64BITS
       return(16);
    #else
@@ -3151,6 +3160,18 @@ static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 {
    const int flg0=p0->flag&MMF_DIFFMSK, flg1=p1->flag&MMF_DIFFMSK;
 /*
+ * TRSM and GEMM kernels are same thing, but other blask differences mean no
+ */
+   if (p0->blask != p1->blask)
+   {
+      unsigned int OK;
+      OK = (p0->blask == ATL_KGEMM && p1->blask == ATL_KTRSM) |
+           (p1->blask == ATL_KGEMM && p0->blask == ATL_KTRSM);
+       
+      if (!OK)
+         return(0);             
+   }
+/*
  * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
  * However, if KUISKB, generated kernels with differing KBs are not same!
  * NOTE: pref & pfLS do not affect output, and so are not checked!
@@ -3396,7 +3417,10 @@ int SprintMMName(char *name, char pre, char *nm, ATL_mmnode_t *mp, int kb)
 @skip   if (nm[0] == 's' && nm[1] == 'y' && nm[2] == 'r' && nm[3] == 'k')
    if (mp->blask == 1)
    {
-      strcpy(name, "ATL_XamsyrkK");
+      if (mp->mu == mp->nu)
+         strcpy(name, "ATL_XsqsyrkK");
+      else
+         strcpy(name, "ATL_XumsyrkK");
       name[4] = pre;
       return(12);
    }
@@ -6015,7 +6039,13 @@ char *MMGetGenString
    {
       vec = "kdim";
       if (!FLAG_IS_SET(mp->flag, MMF_KUISKB))
-         assert(mp->ku % mp->vlen == 0);
+      {
+         if (mp->ku % mp->vlen)
+         {
+            fprintf(stderr, "WTF,KVEC: KU=%d, VLEN=%d\n", mp->ku, mp->vlen);
+            assert(mp->ku % mp->vlen == 0);
+         }
+      }
    }
    else 
       assert(mp->mu % mp->vlen == 0);
@@ -6182,11 +6212,11 @@ ATL_mmnode_t *MMGetNodeGEN(char pre, int bv, int kb, int mu, int nu, int ku,
       mp->flag |= (1<<MMF_NOBCAST);
    else if (bv&2)
       mp->flag |= (1<<MMF_BREG1);
-   if (bv&4)
+   if (bv&262144) /*must be same as FKO_FLAG in gmmsearch */
       mp->flag |= (1<<MMF_FKO);
 @beginskip
-// These guys presently unused, and setting them here causes flags not to 
-// match when nodes are read in from file (type info not presently saved!)
+/* These guys presently unused, and setting them here causes flags not to */
+/* match when nodes are read in from file (type info not presently saved!) */
    if (pre == 's' || pre == 'c' || pre == 'S' || pre == 'C')
       mp->flag |= (1<<MMF_SINGLE);
    if (pre == 'c' || pre == 'C' || pre == 'z' || pre == 'Z')
@@ -6954,7 +6984,7 @@ double TimeMMKernel3F
       if (FLAG_IS_SET(mmp->flag, MMF_MVC))
       i += sprintf(ln+i, " -DATL_MOVEC");
       i += sprintf(ln+i, "\"");
-      //if (cflush > 0 || aFL > 0 || bFL > 0 || cFL > 0)
+      /*if (cflush > 0 || aFL > 0 || bFL > 0 || cFL > 0) */
       {
          if (cflush > 0)
                i+= sprintf(ln+i, " CFLUSH=\"%d ", cflush);
@@ -7950,6 +7980,8 @@ double MMExpand@(nm)
          {
             for (KU=ku; KU < 8; KU += ku);
          }
+         else if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+            KU = mp->vlen;
          else
             KU = NU;
          kbB = kb = KU;
@@ -9823,7 +9855,7 @@ void GetMMAllUniqueCopyFromMMNodes
       np->flag = flgA;
       if (np->ID) /* user-generated kerns may not go to both cases */
       {
-         assert(0); // should not happen yet
+         assert(0); /* should not happen yet */
       }
       else /* Add two nodes to ab, using [A(mu),B(nu)] */
       {    /* don't set CPF_ABLK, since A or B is same for us */

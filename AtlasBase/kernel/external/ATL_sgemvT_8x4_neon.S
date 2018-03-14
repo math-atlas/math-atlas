@@ -141,12 +141,12 @@ vpush {q4-q7}
 #################################
 /* just for a test. ommited  */
 #################################
-//fmrx lastX, FPSCR
-//push {lastX} // need to add 4 to FSIZE_X, FSIZE_Y
-//mvn II, #0xF
-//and II, II, lastX    /* zero exception bits*/
-//bic II, II, #(1<<24) /* turn off flush-to-zero*/
-//fmxr FPSCR, II
+/*fmrx lastX, FPSCR */
+/*push {lastX} */ /* need to add 4 to FSIZE_X, FSIZE_Y */
+/*mvn II, #0xF */
+/*and II, II, lastX */ /* zero exception bits*/
+/*bic II, II, #(1<<24) */ /* turn off flush-to-zero*/
+/*fmxr FPSCR, II */
 
 ##############################
 
@@ -977,7 +977,7 @@ M2_N1_Y_LOOP:
     VLD1.32 {d1},[A] 		
     VMUL.F32 d1,d1,d0 		
 
-    VPADD.F32 d3,d1,d2  // d2 garbase
+    VPADD.F32 d3,d1,d2  /* d2 garbase */
 
     VLD1.32 {d4[0]}, [Y]
     VADD.F32 d3, d3, d4 

@@ -150,7 +150,7 @@ ATL_asmdecor(ATL_USERMM):
          fmacd rC31, ra3, rb1
            fldd rb1, [pB,#104]
          fmacd rC02, ra0, rb2
-//            pld [pC,#64]
+/*            pld [pC,#64] */
          fmacd rC12, ra1, rb2
             add pB, pB, #64
          fmacd rC22, ra2, rb2
