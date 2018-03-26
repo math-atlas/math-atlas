@@ -11331,21 +11331,23 @@ static int NSAMP=1;
 #endif
 
 @ROUT l3time
+#define USE_trusted_PARSERIAL 1
 #if defined(USE_test_PARSERIAL) || defined(USE_trusted_PARSERIAL)
+#include "atlas_threads.h"
 /*
  * Structure for parallel execution of serial BLAS interface.
  * flg bit set: 0:TransA, 1:ConjA, 2:TransB, 3:ConjB, 4:Right, 5:Upper,
  *   6:UnitDiag
  */
-typedef struct psbla_t psbla;
-struct psbla_t
+typedef struct psbla psbla_t;
+struct psbla
 {
    size_t lda, ldb, ldc, M, N, K;
    const TYPE *A, *B;
    TYPE *C;
-   const SCALAR alpha, beta;
+   SCALAR alpha, beta;
    #ifdef TCPLX
-      const TYPE rscaler;
+      TYPE rscaler;
    #endif
    unsigned int flg;
 };
@@ -11357,22 +11359,23 @@ void @(ps)_psgemm_ser(void *vpp, int rank, int vrank)
    ATL_tpool_t *pp=vpp;
    psbla_t *pd=pp->PD;
    const unsigned int flg=pd->flg;
-   enum TA, TB;
+   enum ATLAS_TRANS TA, TB;
 
+/*   printf("%d: vrank=%d, nthr=%d\n", rank, vrank, pp->nworkers); */
    #ifdef TCPLX
    if (flg&2)
       TA = (flg&1) ? AtlasConjTrans : AtlasConj;
    else
    #endif
-      TA = (flg&1) ? AtlasTrans : AtlasNotrans;
+      TA = (flg&1) ? AtlasTrans : AtlasNoTrans;
    #ifdef TCPLX
 
    if (flg&8)
       TB = (flg&4) ? AtlasConjTrans : AtlasConj;
    else
    #endif
-      TB = (flg&4) ? AtlasTrans : AtlasNotrans;
-   test_gemm(TA, TB, pd->M, pd->N, pd->K, pd->alpha, pd->A, pd->lda, pd->B, 
+      TB = (flg&4) ? AtlasTrans : AtlasNoTrans;
+   @(ps)_gemm(TA, TB, pd->M, pd->N, pd->K, pd->alpha, pd->A, pd->lda, pd->B, 
              pd->ldb, pd->beta, pd->C, pd->ldc);
 }
 #undef @(ps)_gemm
@@ -11400,6 +11403,9 @@ void @(ps)_psgemm(enum CBLAS_TRANSPOSE TA, enum CBLAS_TRANSPOSE TB,
       else
    #endif
          pd.flg |= (TB == AtlasTrans) ? 4 : 0;
+   pd.M = M;
+   pd.N = N;
+   pd.K = K;
    pd.A = A;
    pd.B = B;
    pd.C = C;
