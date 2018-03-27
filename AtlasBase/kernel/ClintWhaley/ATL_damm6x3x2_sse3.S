@@ -332,7 +332,7 @@ prefetcht0 (pC)
             movddup -24(pB), rB1
          .byte 0x66
          nop 
-//         lea (pB, incB, 2), pB
+/*         lea (pB, incB, 2), pB */
          add incB, pB
          add $48, pB
          mulpd rB2, rA2
@@ -340,7 +340,7 @@ prefetcht0 (pC)
          sub $4, KK
          jz KLOOPDONE
 
-// SS0:
+/* SS0: */
          ALIGN16
          KLOOP:
             MOVAPD -128(pA), rA0
@@ -425,7 +425,7 @@ prefetcht0 (pC)
 
          sub $2, KK
          jnz KLOOP
-//SS1:
+/*SS1: */
          ALIGN16
          KLOOPDONE:
          add incPF, pfA

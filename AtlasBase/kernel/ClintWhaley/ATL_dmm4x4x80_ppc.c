@@ -264,7 +264,7 @@ ATL_USERMM:
         cmpwi   cr5, M, 0
 #endif
 
-//	.align 5
+/*	.align 5 */
 NLOOP:
         addi    pfB, pB0, KB4*8
         mtctr   M

@@ -116,36 +116,36 @@ ATL_asmdecor(ATL_USERMM):
          F1ST(  rC00, rA0, rB0)
             ldr rB1, [pB,#8]
          F1ST(  rC10, rA1, rB0)
-            //pld [pB, #PFBDIST]
+            /*pld [pB, #PFBDIST] */
          F1ST(  rC20, rA2, rB0)
-            //pld [pB, #PFBDIST1*PFAINC]
+            /*pld [pB, #PFBDIST1*PFAINC] */
          F1ST(  rC30, rA3, rB0)
-            //pld [pB, #PFBDIST2*PFAINC]
+            /*pld [pB, #PFBDIST2*PFAINC] */
          F1ST(  rC40, rA4, rB0)
          ldr rB0, [pB,#16]
 
          F1ST(  rC01, rA0, rB1)
-            //pld [pB, #PFBDIST3*PFAINC]
+            /*pld [pB, #PFBDIST3*PFAINC] */
          F1ST(  rC11, rA1, rB1)
-            //pld [pA, #PFADIST]
+            /*pld [pA, #PFADIST] */
          F1ST(  rC21, rA2, rB1)
-            //pld [pA, #PFADIST1*PFAINC]
+            /*pld [pA, #PFADIST1*PFAINC] */
          F1ST(  rC31, rA3, rB1)
-            //pld [pA, #PFADIST2*PFAINC]
+            /*pld [pA, #PFADIST2*PFAINC] */
          F1ST(  rC41, rA4, rB1)
          ldr rB1, [pB,#24]
 
          F1ST(  rC02, rA0, rB0)
-            //pld [pA, #PFADIST3*PFAINC]
+            /*pld [pA, #PFADIST3*PFAINC] */
          F1ST(  rC12, rA1, rB0)
          F1ST(  rC22, rA2, rB0)
-            //pld [pfA]
+            /*pld [pfA] */
          F1ST(  rC32, rA3, rB0)
          F1ST(  rC42, rA4, rB0)
          ldr rB0, [pB,#32]
 
          F1ST(  rC03, rA0, rB1)
-            //pld [pfB]
+            /*pld [pfB] */
          F1ST(  rC13, rA1, rB1)
          F1ST(  rC23, rA2, rB1)
          F1ST(  rC33, rA3, rB1)
@@ -169,7 +169,7 @@ ATL_asmdecor(ATL_USERMM):
          ldr rB0, [pB,#48]
          fmadd rC10,rA1,rB1,rC10
          fmadd rC20,rA2,rB1,rC20
-            //pld [pC,#128]
+            /*pld [pC,#128] */
          fmadd rC30,rA3,rB1,rC30
          fmadd rC40,rA4,rB1,rC40
          ldr rB1, [pB,#56]
@@ -193,9 +193,9 @@ ATL_asmdecor(ATL_USERMM):
          fmadd rC13,rA1,rB0,rC13
          add pA, pA, #80
          fmadd rC23,rA2,rB0,rC23
-            //add pfA, pfA, #64
+            /*add pfA, pfA, #64 */
          fmadd rC33,rA3,rB0,rC33
-            //add pfB, pfB, #64
+            /*add pfB, pfB, #64 */
          fmadd rC43,rA4,rB0,rC43
             ldr rB0, [pB]
 
@@ -219,29 +219,29 @@ ATL_asmdecor(ATL_USERMM):
             fmadd rC00,rA0,rB0,rC00
                ldr rB1, [pB,#8]
             fmadd rC10,rA1,rB0,rC10
-               //pld [pB, #PFBDIST]
+               /*pld [pB, #PFBDIST] */
             fmadd rC20,rA2,rB0,rC20
-               //pld [pB, #PFBDISTPFBINC]
+               /*pld [pB, #PFBDISTPFBINC] */
             fmadd rC30,rA3,rB0,rC30
-               //pld [pB, #PFBDIST2*PFBINC]
+               /*pld [pB, #PFBDIST2*PFBINC] */
             fmadd rC40,rA4,rB0,rC40
             ldr rB0, [pB,#16]
 
             fmadd rC01,rA0,rB1,rC01
-               //pld [pB, #PFBDIST3*PFBINC]
+               /*pld [pB, #PFBDIST3*PFBINC] */
             fmadd rC11,rA1,rB1,rC11
-               //pld [pA, #PFADIST]
+               /*pld [pA, #PFADIST] */
             fmadd rC21,rA2,rB1,rC21
-               //pld [pA, #PFADIST1*PFAINC]
+               /*pld [pA, #PFADIST1*PFAINC] */
             fmadd rC31,rA3,rB1,rC31
-               //pld [pA, #PFADIST2*PFAINC]
+               /*pld [pA, #PFADIST2*PFAINC] */
             fmadd rC41,rA4,rB1,rC41
             ldr rB1, [pB,#24]
 
             fmadd rC02,rA0,rB0,rC02
-               //pld [pA, #PFADIST3*PFAINC]
+               /*pld [pA, #PFADIST3*PFAINC] */
             fmadd rC12,rA1,rB0,rC12
-               //pld [pA, #PFADIST4*PFAINC]
+               /*pld [pA, #PFADIST4*PFAINC] */
             fmadd rC22,rA2,rB0,rC22
             fmadd rC32,rA3,rB0,rC32
             fmadd rC42,rA4,rB0,rC42

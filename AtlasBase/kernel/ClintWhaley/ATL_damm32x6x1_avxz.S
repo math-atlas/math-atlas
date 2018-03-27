@@ -119,7 +119,7 @@ ATL_asmdecor(ATL_USERMM):
    mov KK, KK0
    sub $-128, pC
    sub $-128, pA
-//   sub $-128, pfA
+/*   sub $-128, pfA */
    mov $256, r256
       prefA(192-128(pA))
    mov $192, r192

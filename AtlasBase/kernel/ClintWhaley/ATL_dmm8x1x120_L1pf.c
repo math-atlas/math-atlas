@@ -323,7 +323,7 @@ nop
 
 #if KB > 10
 	movapd	80-128(pB0), rB0
-                                        prefB(320(pB0,ldb)) // 9 bytes
+                                        prefB(320(pB0,ldb)) /* 9 bytes */
 	movapd	80-128(pA0), rA0
 	mulpd	rB0,rA0
 	addpd	rA0,rC00

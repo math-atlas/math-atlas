@@ -2453,10 +2453,11 @@ MLOOP:
 	madd.d	rC23, rC23, ra2, rb3
 	madd.d	rC33, rC33, ra3, rb3
 #endif
-/*       daddiu  K, K, 8
+#if 0
+         daddiu  K, K, 8
          bne K, K0, KLOOP 
-         madd.d  rC33, rC33, ra3, rb3    // in delay slot!
-*/
+         madd.d  rC33, rC33, ra3, rb3    /* in delay slot!  */
+#endif
 /*
  *      Drain ld/use pipe
  */

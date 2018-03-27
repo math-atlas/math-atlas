@@ -283,7 +283,7 @@ ATL_asmdecor(ATL_USERMM):
          jnz KLOOP
       KDONE:
          #define MOVC vmovapd
-//         #define MOVC vmovntpd
+/*         #define MOVC vmovntpd */
          MOVC rC00, -128(pC)
          #ifndef BETA0
             vmovapd -128(pC,incC), rC00

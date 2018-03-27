@@ -1232,27 +1232,27 @@ MLOOP:
 					ldc1	rA1, 160(pA1)
 	#endif
 	madd.d	rC00, rC00, re0, rb0
-//					prefB(416+KB*8*4(pB0))
+/*					prefB(416+KB*8*4(pB0)) */
 	madd.d	rC10, rC10, ra1, rb0
 	#if KB > 22
 					ldc1	rE0, 176(pA0)
 	#endif
 	madd.d	rC20, rC20, ra2, rb0
-//					prefB(416+KB*8*4(pB1))
+/*					prefB(416+KB*8*4(pB1)) */
 	madd.d	rC30, rC30, ra3, rb0
 	#if KB > 20
 					ldc1	rB0, 160(pB0)
 	#endif
 	madd.d	rC01, rC01, re0, rB1
 	madd.d	rC11, rC11, ra1, rB1
-//					prefB(416+KB*8*4(pB2))
+/*					prefB(416+KB*8*4(pB2)) */
 	madd.d	rC21, rC21, ra2, rB1
 	madd.d	rC31, rC31, ra3, rB1
 	#if KB > 20
 					ldc1	rB1, 160(pB1)
 	#endif
 	madd.d	rC02, rC02, re0, rB2
-//					prefB(416+KB*8*4(pB3))
+/*					prefB(416+KB*8*4(pB3)) */
 	madd.d	rC12, rC12, ra1, rB2
 	#if KB > 21
 					ldc1	rA2, 168(pA2)
