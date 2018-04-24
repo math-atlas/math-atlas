@@ -42469,9 +42469,38 @@ double getMflop(char pre, int isa, int vlenb, int nacc, int nmul, double mf)
    return(mf);
 }
 
-int findISA(int *VLENB)
+int findISA(char pre, int *VLENB)
 {
-   #ifdef ATL_AVXMAC
+   #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
+   int i, vl;
+   printf("\nPROBING FOR ISA:\n");
+   for (i=NISA-1; i >= 0; i--)
+   {
+      if (getMflop(pre, i, 16, 4, i==AVXFMA?0:1, 0.0) > 0.0)
+      {
+         printf("   %s : yes!\n", isas[i]);
+         break;
+      }
+      else
+         printf("   %s : no.\n", isas[i]);
+   }
+   printf("\nPROBING FOR VLEN (bytes):\n");
+   for (vl=64; vl >= 32; vl >>= 1)
+   {
+      if (getMflop(pre, i, vl, 4, 1, 0.0) > 0.0)
+      {
+         printf("   VLEN=%u: yes!\n", vl);
+         break;
+      }
+      else
+         printf("   VLEN=%u: no.\n", vl);
+   }
+   *VLENB = vl;
+   return(i);
+   #elif defined(ATL_AVXZ)
+      *VLENB = 64;
+      return(AVXFMA);
+   #elif defined(ATL_AVXMAC)
       *VLENB = 32;
       return(AVXFMA);
    #elif defined(ATL_AVX)
@@ -42534,7 +42563,7 @@ int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL, double *PEAK)
    int nmulB, naccB, nacc, nmul;
    double mfB=0.0, mf, mfF=(*PEAK);
 
-   printf("PROBING FOR EFFECTIVE FMA LATENCY:\n");
+   printf("PROBING FOR EFFECTIVE FMA LATENCY, VLEN=%u:\n", vlenb);
 /*
  * If no FMA, then try maximum NMUL setting that will fit in nreg:
  *    nmul+nacc+1 <= nreg, nmul=nacc = (nreg-1)/2;
@@ -42688,7 +42717,7 @@ int main(int nargs, char **args)
 
    pre = getFlags(nargs, args);
 
-   isa = findISA(&vlenb);
+   isa = findISA(pre, &vlenb);
    #if GAS_X86
       FMA = (isa == AVXFMA);
    #endif
