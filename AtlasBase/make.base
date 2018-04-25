@@ -354,6 +354,7 @@ tar cvf atlas.tar \
      ATLAS/tune/blas/gemm/gmmsearch.c ATLAS/tune/blas/gemm/prefparse.c \
      ATLAS/tune/blas/gemm/ammk1srch.c ATLAS/tune/blas/gemm/ammkgen.c \
      ATLAS/tune/blas/gemm/addKClean.c ATLAS/tune/blas/gemm/trsmgen.c \
+     ATLAS/tune/blas/gemm/trmmgen.c ATLAS/tune/blas/gemm/trmm-micro-cpg.base \
      ATLAS/tune/blas/gemm/bfisrch.c ATLAS/tune/blas/gemm/cp*.c \
      ATLAS/tune/blas/gemm/opsrch.c ATLAS/tune/blas/gemm/ipsrch.c \
      ATLAS/tune/blas/gemm/fko_atlas-mmkg.base \
@@ -1605,9 +1606,11 @@ basfn = $(basdRCW)/atlas-lvl2.base
 @ROUT ATLAS/tune/blas/trsm ATLAS/src/blas/ulevel3
 bu3fn = $(basdRCW)/l3micro.base
 basfn = $(basdRCW)/trsm-micro.base
+batfn = $(basdRCW)/trmm-micro.base
 @ROUT ATLAS/tune/blas/trsm `@multidef rt trsmsrch`
 @ROUT ATLAS/src/blas/ulevel3 
 @multidef u3 ipsyr2k opsyr2k syr2k syrk sqsyrk umsyrk opsyrk ipsyrk symmL symmR
+@multidef tm ATL_trmm ATL_trmm_ST ATL_utrmmL ATL_utrmmR
 @multidef rt 
    ATL_utrsmL_LT_UN ATL_utrsmL_LN_UT ATL_utrsmR_LT_UN ATL_utrsmR_LN_UT
    ATL_utrsmL_alloc ATL_utrsmR_alloc
@@ -1619,6 +1622,10 @@ basfn = $(basdRCW)/trsm-micro.base
    @whiledef u3
       ATL_@(u3).c
       @define u3b @ATL_@(u3)@
+   @endwhile
+   @whiledef tm
+   @(tm).c
+      @define tm2 @@(tm)@
    @endwhile
    @whiledef rt
    @(rt).c
@@ -1634,6 +1641,10 @@ kill :
 @whiledef rt2
 @(rt2).c : $(basfn)
 	$(extC) -b $(basfn) -o $@ rout=$*
+@endwhile
+@whiledef tm2
+@(tm2).c : $(batfn)
+	$(extC) -b $(batfn) -o $@ rout=$*
 @endwhile
 @whiledef u3b
 @(u3b).c : $(bu3fn)
@@ -1688,7 +1699,7 @@ all : $(files)
       ATLAS/tune/threads
 
 @declare "files = " y y
-@ROUT ATLAS/tune/blas/gemm `   atlas-mmg.base fko_atlas-mmkg.base micro-kg.base micro-cpg.base micro-trmmcpg.base trsm-nano.base`
+@ROUT ATLAS/tune/blas/gemm `   atlas-mmg.base fko_atlas-mmkg.base micro-kg.base micro-cpg.base trmm-micro-cpg.base trsm-nano.base`
 @ROUT ATLaS/tune/threads `DoFlops_amd64.S`
    @whiledef rt
       @(rt).c
@@ -1698,7 +1709,7 @@ all : $(files)
 @skip @ROUT ATLAS/tune/blas/gemv `emit_head.c emit_rmvT.c mvgen_sse.c atlas-l2g.base`
 @ROUT ATLAS/tune/blas/gemv `atlas-l2g.base`
 @skip @ROUT ATLAS/tune/blas/gemm `emit_mm.c vnbmmsearch.c emit_vKB.c mm_old2new.c vmmf_gccsub.c`
-@ROUT ATLAS/tune/blas/gemm `emit_mm.c mmflagsearch.c uammsrch.c uammsearch.c gmmsearch.c trsmsrch.c bfisrch.c ipsrch.c opsrch.c ammk1srch.c ammsearch.c emit_uamm.c emit_amm.c uammgen.c cphgen.c cpygen.c trsmgen.c ammkgen.c ammgen.c cm2amtst.c peaktim.c cnbtune.c prefparse.c szblk.c cpysearch.c cpydrv.c cpyfvw.c addKClean.c cpytest.c ucpytest.c`
+@ROUT ATLAS/tune/blas/gemm `emit_mm.c mmflagsearch.c uammsrch.c uammsearch.c gmmsearch.c trsmsrch.c bfisrch.c ipsrch.c opsrch.c ammk1srch.c ammsearch.c emit_uamm.c emit_amm.c uammgen.c cphgen.c cpygen.c trsmgen.c trmmgen.c ammkgen.c ammgen.c cm2amtst.c peaktim.c cnbtune.c prefparse.c szblk.c cpysearch.c cpydrv.c cpyfvw.c addKClean.c cpytest.c ucpytest.c`
 @ROUT ATLAS/tune/sysinfo `emit_typ.c emit_lamch.c cachesrch.c tmemwalk.c cacheInfo_x86.c fpuStress.base probeFPU.c try_fpu.c `
 @enddeclare
 
@@ -1751,8 +1762,8 @@ micro-kg.base : $(basd)/micro-kg.base
 	cp $(basd)/micro-kg.base .
 micro-cpg.base : $(basd)/micro-cpg.base
 	cp $(basd)/micro-cpg.base .
-micro-trmmcpg.base : $(basd)/micro-trmmcpg.base
-	cp $(basd)/micro-trmmcpg.base .
+trmm-micro-cpg.base : $(basdSTU)/trmm-micro-cpg.base
+	cp $(basdSTU)/trmm-micro-cpg.base .
 trsm-nano.base : $(basdSTU)/trsm-nano.base
 	cp $(basdSTU)/trsm-nano.base .
 @whiledef rt emit_vKB vnbmmsearch mm_old2new
@@ -1788,6 +1799,10 @@ mmflagsearch.c : $(basfn) $(incf)
 @whiledef rt trsmsrch trsmgen
 @(rt).c : $(basdRCW)/trsm-micro.base $(incf)
 	$(extC) -b $(basdRCW)/trsm-micro.base -o $@ rout=@(rt)
+@endwhile
+@whiledef rt trmmgen
+@(rt).c : $(basdRCW)/trmm-micro.base $(incf)
+	$(extC) -b $(basdRCW)/trmm-micro.base -o $@ rout=@(rt)
 @endwhile
 mmsearch.c : $(basfn) $(incf)
 	$(extC) -b $(basfn) -o $@ rout=mmsearchN
