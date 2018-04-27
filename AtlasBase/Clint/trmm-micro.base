@@ -469,7 +469,7 @@ int ATL_trmm_ST
       #endif
       int (*utrmm)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
-   #if 0
+   #if 1
    #ifdef Right_
       int Mjoin(PATL,utrmmR_LN)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
@@ -479,10 +479,12 @@ int ATL_trmm_ST
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
       int Mjoin(PATL,utrmmR_UN)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
+      #ifdef TCPLX
       int Mjoin(PATL,utrmmR_UC)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
       int Mjoin(PATL,utrmmR_LC)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
+      #endif
    #else
       int Mjoin(PATL,utrmmL_LN)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
@@ -492,10 +494,12 @@ int ATL_trmm_ST
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
       int Mjoin(PATL,utrmmL_UN)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
+      #ifdef TCPLX
       int Mjoin(PATL,utrmmL_UC)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
       int Mjoin(PATL,utrmmL_LC)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
+      #endif
    #endif
    #endif
 /*
@@ -513,35 +517,51 @@ int ATL_trmm_ST
    {  
       int ctu = (bv >> 1) & 7;
    #ifdef Right_
-      if (!ctu) 
-           utrmm = Mjoin(PATL,utrmmR_LN);
+      if (!ctu)
+         utrmm = Mjoin(PATL,utrmmR_LN);
       else if (ctu == 2)
-           utrmm = Mjoin(PATL,utrmmR_LT);
-      else if (ctu == 6)
-           utrmm = Mjoin(PATL,utrmmR_LC);
+         utrmm = Mjoin(PATL,utrmmR_LT);
+      #ifdef TCPLX
+         else if (ctu == 6)
+            utrmm = Mjoin(PATL,utrmmR_LC);
+      #endif
       else if (ctu == 1)
-           utrmm = Mjoin(PATL,utrmmR_UN);
+         utrmm = Mjoin(PATL,utrmmR_UN);
       else if (ctu == 3)
-           utrmm = Mjoin(PATL,utrmmR_UT);
+         utrmm = Mjoin(PATL,utrmmR_UT);
+      #ifdef TCPLX
       else if (ctu == 7)
-           utrmm = Mjoin(PATL,utrmmR_UC);
+         utrmm = Mjoin(PATL,utrmmR_UC);
+      #endif
       else
-           printf("**** Unknown case!!\n");
+      {
+           fprintf(stderr,"**** Unknown TRMM Right case!!\n");
+           /*assert(0);*/
+           return(1);
+      }
    #else
-      if (!ctu) 
-           utrmm = Mjoin(PATL,utrmmL_LN);
+      if (!ctu)
+         utrmm = Mjoin(PATL,utrmmL_LN);
       else if (ctu == 2)
-           utrmm = Mjoin(PATL,utrmmL_LT);
-      else if (ctu == 6)
+         utrmm = Mjoin(PATL,utrmmL_LT);
+      #ifdef TCPLX
+         else if (ctu == 6)
            utrmm = Mjoin(PATL,utrmmL_LC);
+      #endif
       else if (ctu == 1)
-           utrmm = Mjoin(PATL,utrmmL_UN);
+         utrmm = Mjoin(PATL,utrmmL_UN);
       else if (ctu == 3)
-           utrmm = Mjoin(PATL,utrmmL_UT);
-      else if (ctu == 7)
-           utrmm = Mjoin(PATL,utrmmL_UC);
+         utrmm = Mjoin(PATL,utrmmL_UT);
+      #ifdef TCPLX
+         else if (ctu == 7)
+            utrmm = Mjoin(PATL,utrmmL_UC);
+      #endif
       else
-           printf("**** Unknown case!!\n");
+      {
+           fprintf(stderr, "**** Unknown TRMM Left case!!\n");
+           /*assert(0);*/
+           return(1);
+      }
    #endif
    }
    if (bv & 1)
@@ -792,39 +812,32 @@ void Mjoin(PATL,trmm)
 #include "atlas_mmgen.h"
 #include "atlas_type.h"
 
-void GenTrCopyHeader(FILE *fp, char pre, char sd, char up0, char ta0, char up, 
+void GenTrCopyHeader(FILE *fp, char pre, char sd, char up0, char ta0, char up,
       char ta, ATL_mmnode_t *mp)
 {
 /*
  * Acopy always TRMM copy
  * LN: TT2blk-Lo
  * UT: TN2blk-Up
- * two additional cases: unit-diagonal, conjugate 
+ * two additional cases: unit-diagonal, conjugate
  *
  * NOTE:
  *
- * format: 
- *    ATL_da2blk_trmm_LLN_Lo_a1               ATL_dcpFromATtL_a1_1x24_0 
- *    ATL_(PRE)a2blk_trmm_XXX_Lo_a1           ATL_dcpFromATtL_a1_1x24_0
- *
- *    Assumption: 
- *    there is only one kernel for each of the options (LLN, LLT, RLN, RLT)
- *    Current mmparse doesn't support special copies like trmm. So, I'm going 
- *    to hard-code these copies with from the mu,nu,ku values
- *    Later as a longtime goal, I'll update mmparse to support such copies 
+ * format:
+ *    ATL_da2blk_trmm_LLN_Lo_a1               ATL_dcpFromATt_Lo_a1_1x24_0
  */
 /*
  * selecting correct copies from table:
- *    S  U  T  kernels   cpyA    cpB 
+ *    S  U  T  kernels   cpyA    cpB
  *    ---------------------------------
- *    L  L  N    TRMM=1   tAT,L   AN      
- *    L  L  T    TRMM=2   tAN,L   AN      
- *    L  U  N    TRMM=2   tAT,U   AN      
- *    L  U  T    TRMM=1   tAN,U   AN      
- *    R  L  N    TRMM=3    AT    tAN,L      
- *    R  L  T    TRMM=4    AT    tAT,L      
- *    R  U  N    TRMM=4    AT    tAN,U      
- *    R  U  T    TRMM=3    AT    tAT,U      
+ *    L  L  N    TRMM=1   tAT,L   AN
+ *    L  L  T    TRMM=2   tAN,L   AN
+ *    L  U  N    TRMM=2   tAT,U   AN
+ *    L  U  T    TRMM=1   tAN,U   AN
+ *    R  L  N    TRMM=3    AT    tAN,L
+ *    R  L  T    TRMM=4    AT    tAT,L
+ *    R  U  N    TRMM=4    AT    tAN,U
+ *    R  U  T    TRMM=3    AT    tAT,U
  *
  */
    int i, j;
@@ -861,44 +874,44 @@ void GenTrCopyHeader(FILE *fp, char pre, char sd, char up0, char ta0, char up,
       for (i=0; i < 3; i++)
       {
 /*
- *       copy name format 
- *       ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_aX_<ku>x<nu>_<kvec> 
- *       FIXME: use GetCopyName to generate all names 
+ *       copy name format
+ *       ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s]_aX_<ku>x<nu>_<kvec>
+ *       FIXME: use GetCopyName to generate all names
  */
          if (pre == 'c' || pre == 'z')
          {
             tta = (at == 'N')? 'C' : 'H';
             fprintf(fp, "#ifdef Conj_\n");
-            fprintf(fp, 
+            fprintf(fp,
       "#define ATL_%ca2blk_trmm_%c%c%c_%s_%sa%c ATL_%ccpFromA%ct_%s_%sa%c_%ux%u_%u\n",
-                  pre, sd, up0, ta0, uplo, uld, al[i], 
+                  pre, sd, up0, ta0, uplo, uld, al[i],
                   pre, tta, uplo, uld, al[i], mp->ku, UR, kvec);
             fprintf(fp, "#else\n");
          }
-         fprintf(fp, 
+         fprintf(fp,
       "#define ATL_%ca2blk_trmm_%c%c%c_%s_%sa%c ATL_%ccpFromA%ct_%s_%sa%c_%ux%u_%u\n",
-                 pre, sd, up0, ta0, uplo, uld, al[i], 
+                 pre, sd, up0, ta0, uplo, uld, al[i],
                  pre, at, uplo, uld, al[i], mp->ku, UR, kvec);
          if (pre == 'c' || pre == 'z')
             fprintf(fp, "#endif\n");
-      
-         fprintf(fp, "void ATL_%ca2blk_trmm_%c%c%c_%s_%sa%c", pre, sd, up0, ta0, 
-                 uplo, uld, al[i]); 
+
+         fprintf(fp, "void ATL_%ca2blk_trmm_%c%c%c_%s_%sa%c", pre, sd, up0, ta0,
+                 uplo, uld, al[i]);
          if (pre == 'd' || pre == 's')
             fprintf(fp, "(ATL_CSZT,const TYPE,const TYPE*,ATL_CSZT,TYPE*);\n");
          else
             fprintf(fp, "(ATL_CSZT,const TYPE*,const TYPE*, ATL_CSZT,TYPE*,TYPE*);\n");
-      
+
          fprintf(fp, "#ifndef ATL_%ctrmm_a2blk_%s_%sa%c\n   #define "
             "ATL_%ctrmm_a2blk_%s_%sa%c ATL_%ca2blk_trmm_%c%c%c_%s_%sa%c\n#endif\n",
-                 pre, uplo, uld, al[i],  pre, uplo, uld, al[i],  pre, sd, up0, 
+                 pre, uplo, uld, al[i],  pre, uplo, uld, al[i],  pre, sd, up0,
                  ta0, uplo, uld, al[i]);
       }
    }
 
 }
 
-void GenTrmmHead(char pre, char *outd, char sd, char up, char ta, 
+void GenTrmmHead(char pre, char *outd, char sd, char up, char ta,
       ATL_mmnode_t *mp)
 {
    char *of;
@@ -919,23 +932,24 @@ void GenTrmmHead(char pre, char *outd, char sd, char up, char ta,
    of = malloc(L);
    assert(of);
 /*
- * inclusion guard 
+ * inclusion guard
  */
    k = sprintf(of, "%s/atlas_%cutrmm%c_%c%c.h", outd, pre, sd, up, ta);
    assert(k<L);
    fp = fopen(of, "w");
    assert(fp);
+   free(of);
    fprintf(fp, "#ifndef ATLAS_%cTRMM%c_%c%c_H\n",
            toupper(pre), toupper(sd), toupper(up), toupper(ta));
    fprintf(fp, "   #define ATLAS_%cTRMM%c_%c%c_H 1\n\n",
            toupper(pre), toupper(sd), toupper(up), toupper(ta));
-   
+
    fprintf(fp, "#include \"atlas_amm.h\"\n");
 /*
- * data  
+ * data
  */
    assert(mp);
-   fprintf(fp, "#define ATL_TRMM%c%c%c_KB %d\n", sd, up, ta, mp->kbB);
+   fprintf(fp, "#define ATL_TRMM_%c%c%c_KB %d\n", sd, up, ta, mp->kbB);
    fprintf(fp, "#define ATL_TRMMK_%c%c%c_VLEN %d\n", sd, up, ta, mp->vlen);
    kvec = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen:0;
    fprintf(fp, "#define ATL_TRMMK_%c%c%c_KVEC %u\n", sd, up, ta, kvec);
@@ -946,28 +960,31 @@ void GenTrmmHead(char pre, char *outd, char sd, char up, char ta,
    for (i=0; i<5; i++)
    {
       fprintf(fp, "#ifndef ATL_TRMMK_%s\n", st[i]);
-      fprintf(fp, "   #define ATL_TRMMK_%s ATL_TRMM_%c%c%c_%s\n", st[i], sd, up, 
+      fprintf(fp, "   #define ATL_TRMMK_%s ATL_TRMMK_%c%c%c_%s\n", st[i], sd, up,
               ta, st[i]);
       fprintf(fp, "#endif\n");
    }
+   fprintf(fp, "#ifndef ATL_TRMM_KB\n");
+   fprintf(fp, "   #define ATL_TRMM_KB ATL_TRMM_%c%c%c_KB\n", sd, up, ta);
+   fprintf(fp, "#endif\n");
 /*
- * kernel info 
+ * kernel info
  */
    fprintf(fp, "/*\n* TRMM KERNEL INFO\n*/\n");
    for (i=0; i < 3; i++)
    {
-      fprintf(fp, 
-"void ATL_%ctrmmK_%c%c%c_b%c(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*, \n", 
-              pre, sd, up, ta, be[i]); 
-      fprintf(fp, 
+      fprintf(fp,
+"void ATL_%ctrmmK_%c%c%c_b%c(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*, \n",
+              pre, sd, up, ta, be[i]);
+      fprintf(fp,
 "                            TYPE*, const TYPE*, const TYPE*, const TYPE*);\n");
       fprintf(fp, "#ifndef ATL_%ctrmmK_b%c\n", pre, be[i]);
-      fprintf(fp, "   #define ATL_%ctrmmK_b%c ATL_%ctrmmK_%c%c%c_b%c\n", pre, 
+      fprintf(fp, "   #define ATL_%ctrmmK_b%c ATL_%ctrmmK_%c%c%c_b%c\n", pre,
               be[i], pre, sd, up, ta, be[i]);
       fprintf(fp, "#endif\n");
    }
 /*
- * blk2C 
+ * blk2C
  */
    fprintf(fp, "/*\n* BLK2C COPY\n*/\n");
    flg = (1<<CPF_CBLK);
@@ -997,7 +1014,6 @@ void GenTrmmHead(char pre, char *outd, char sd, char up, char ta,
    fprintf(fp, "#ifndef ATL_%ctrmm_blk2c_a1b0\n   #define "
          "ATL_%ctrmm_blk2c_a1b0 ATL_%cblk2c_trmm_%c%c%c_a1b0\n#endif\n",
             pre, pre, pre, sd, up, ta);
-   //free(cb->rout);
    KillAllCopyNodes(cb);
 /*
  * NOTE: depending on the side, Acopy and Bcopy changes
@@ -1020,7 +1036,7 @@ void GenTrmmHead(char pre, char *outd, char sd, char up, char ta,
    assert(cb);
    for (i=0; i < 3; i++)
    {
-      if (al[i] == '1') 
+      if (al[i] == '1')
       {
          cb->flag &= ~((1<<CPF_ALN)|(1<<CPF_ALX));
          cb->flag |= (1<<CPF_AL1);
@@ -1067,6 +1083,7 @@ void GenTrmmHead(char pre, char *outd, char sd, char up, char ta,
       GenTrCopyHeader(fp, pre, sd, 'L', 'T', 'L', 'T', mp);
       GenTrCopyHeader(fp, pre, sd, 'L', 'T', 'U', 'N', mp);
    }
+   fprintf(fp, "#endif\n");
 }
 
 
@@ -1076,7 +1093,7 @@ void GenMicroTrmm(char pre, char *outd, char sd, char up, char ta,
    int i, L;
    int trmmid=0;
    int mu=mb->mu, nu=mb->nu;
-   char *ln, *mk; 
+   char *ln, *mk;
    char rt[256];
 
    L = strlen(outd) + 256;
@@ -1084,8 +1101,8 @@ void GenMicroTrmm(char pre, char *outd, char sd, char up, char ta,
    assert(ln);
 /*
  * TRMM=1 (left lower), 2 (left upper), 3 (right lower), 4 (right upper).
- * Transform: 
- *    LLN : 1           RLN : 3 
+ * Transform:
+ *    LLN : 1           RLN : 3
  *    LLT : 2           RLT : 4
  *    LUN : 2           RUN : 4
  *    LUT : 1           RUT:  3
@@ -1099,15 +1116,15 @@ void GenMicroTrmm(char pre, char *outd, char sd, char up, char ta,
    else
       trmmid += (up=='L')? 2 : 1;
 
-   i = sprintf(rt, "%s/ATL_%ctrmmK_%c%c%c_%ux%ux%u.c", outd, pre, sd, up, ta, 
+   i = sprintf(rt, "%s/ATL_%ctrmmK_%c%c%c_%ux%ux%u.c", outd, pre, sd, up, ta,
                mb->mu, mb->nu, mb->ku);
    assert(i<256);
    if (mb->rout) free(mb->rout);
    mb->rout = DupString(rt);
-   
+
    mk = MMGetGenString(pre, mb);
    i = sprintf(ln, "%s TRMM=%d", mk, trmmid);
-   printf("genstr = %s\n", ln);
+   /*printf("genstr = %s\n", ln);*/
    free(mk);
    assert(i < L);
    assert(!Sys2File(ln, NULL));
@@ -1117,34 +1134,46 @@ void GenMicroTrmm(char pre, char *outd, char sd, char up, char ta,
 void AddCopyDirective(FILE *fp, char *nam, char pre, char alc, unsigned int UR)
 {
    int i, k;
-   int sz; 
-   char *ln; 
+   int sz;
+   char *cpn, *ccpn;
 
    sz = strlen(nam);
    sz += 10; /* might be added: diagU_, [up,lo]_*/
-   ln = malloc(sz);
-   assert(ln);
+   cpn = malloc(sz);
+   assert(cpn);
 /*
- * split the string at a1/aX/aN 
+ * split the string at a1/aX/aN
  */
    assert(nam);
    k = strlen(nam);
-   for (i=0; i < k; i++)
+   for (i=0; i < k; i++, nam++)
    {
       if (*nam == 'a')
       {
          assert(*(nam+1)!='\0'); /* assumption: must consists of a[1,N,X] */
          if ( *(nam+1) == '1' || *(nam+1) == 'N' || *(nam+1) == 'X')
-         {
-            i++;
             break;
-         }
       }
-      ln[i] = *(nam++);
+      cpn[i] = *nam;
    }
-   ln[i] = '\0';
-
-   printf("str1=%s, str2=%s\n", ln, nam);
+   cpn[i] = '\0';
+/*
+ * for conj: convert AT to AH, AN to AC
+ */
+   if (pre == 'z' || pre == 'c')
+   {
+      ccpn = malloc(sz);
+      assert(ccpn);
+      strcpy(ccpn, cpn);
+      k = strlen(ccpn);
+      for (i=0; i < k-1; i++)
+      {
+         if (ccpn[i] == 'A' && ccpn[i+1] == 'N')
+            ccpn[i+1] = 'C';
+         else if (ccpn[i] == 'A' && ccpn[i+1] == 'T')
+            ccpn[i+1] = 'H';
+      }
+   }
 
    fprintf(fp, "#ifdef SCALAR\n  #undef SCALAR\n#endif\n");
    fprintf(fp, "#ifdef TYPE\n  #undef TYPE\n#endif\n");
@@ -1205,28 +1234,63 @@ void AddCopyDirective(FILE *fp, char *nam, char pre, char alc, unsigned int UR)
       fprintf(fp, "#define ALPHAN1 1\n");
    }
 /*
- * UR & 
+ * UR &
  */
    fprintf(fp, "#define ATL_NU %u\n", UR);
    fprintf(fp, "\n#ifdef UnitDiag_\n");
    fprintf(fp, "   #ifdef Upper_\n");
-   fprintf(fp, "      #define ATL_USERCPMM %sUp_diagU_%s\n", ln, nam);
+   if (pre == 'z' || pre == 'c')
+   {
+      fprintf(fp, "      #ifdef Conj_\n");
+      fprintf(fp, "         #define ATL_USERCPMM %sUp_diagU_%s\n", ccpn, nam);
+      fprintf(fp, "      #else\n");
+   }
+   fprintf(fp, "         #define ATL_USERCPMM %sUp_diagU_%s\n", cpn, nam);
+   if (pre == 'z' || pre == 'c') fprintf(fp, "      #endif\n");
    fprintf(fp, "   #else\n");
-   fprintf(fp, "      #define ATL_USERCPMM %sLo_diagU_%s\n", ln, nam);
+   if (pre == 'z' || pre == 'c')
+   {
+      fprintf(fp, "      #ifdef Conj_\n");
+      fprintf(fp, "         #define ATL_USERCPMM %sLo_diagU_%s\n", ccpn, nam);
+      fprintf(fp, "      #else\n");
+   }
+   fprintf(fp, "         #define ATL_USERCPMM %sLo_diagU_%s\n", cpn, nam);
+   if (pre == 'z' || pre == 'c') 
+      fprintf(fp, "      #endif\n");
    fprintf(fp, "   #endif\n");
    fprintf(fp, "#else\n");
    fprintf(fp, "   #ifdef Upper_\n");
-   fprintf(fp, "      #define ATL_USERCPMM %sUp_%s\n", ln, nam);
+   if (pre == 'z' || pre == 'c')
+   {
+      fprintf(fp, "      #ifdef Conj_\n");
+      fprintf(fp, "         #define ATL_USERCPMM %sUp_%s\n", ccpn, nam);
+      fprintf(fp, "      #else\n");
+   }
+   fprintf(fp, "         #define ATL_USERCPMM %sUp_%s\n", cpn, nam);
+   if (pre == 'z' || pre == 'c') 
+      fprintf(fp, "      #endif\n");
    fprintf(fp, "   #else\n");
-   fprintf(fp, "      #define ATL_USERCPMM %sLo_%s\n", ln, nam);
+   if (pre == 'z' || pre == 'c')
+   {
+      fprintf(fp, "      #ifdef Conj_\n");
+      fprintf(fp, "         #define ATL_USERCPMM %sLo_%s\n", ccpn, nam);
+      fprintf(fp, "      #else\n");
+   }
+   fprintf(fp, "         #define ATL_USERCPMM %sLo_%s\n", cpn, nam);
+   if (pre == 'z' || pre == 'c') 
+      fprintf(fp, "      #endif\n");
    fprintf(fp, "   #endif\n");
    fprintf(fp, "#endif\n\n");
+   
+   if (pre == 'z' || pre == 'c') 
+      free(ccpn);
+   free(cpn);
 }
 
 void GenTrCopy(ATL_cpnode_t *cb, char *outd, char pre, char sd, char up, char ta)
 {
    int i, k, L;
-   char *ln, *cpg; 
+   char *ln, *cpg;
    char rt[256];
    const char al[3] = {'1', 'N', 'X'};
    FILE *fp;
@@ -1234,22 +1298,22 @@ void GenTrCopy(ATL_cpnode_t *cb, char *outd, char pre, char sd, char up, char ta
    L = strlen(outd) + 256;
    ln = malloc(L);
    assert(ln);
-   
+
    cb->flag &= ~(1<<CPF_TRANS);
    if (sd == 'L')
       cb->flag |= (ta=='N') ? (1<<CPF_TRANS) : 0;
    else
       cb->flag |= (ta=='T') ? (1<<CPF_TRANS) : 0;
-   
-   /*if (up == 'L')  
+
+   /*if (up == 'L')
       cb->flag |= (1<<CPF_LOWER);
    else
       cb->flag &= ~(1<<CPF_LOWER);
    */
-   
+
    for (i=0; i < 3; i++)
    {
-      if (al[i] == '1') 
+      if (al[i] == '1')
       {
          cb->flag &= ~((1<<CPF_ALN)|(1<<CPF_ALX));
          cb->flag |= (1<<CPF_AL1);
@@ -1264,9 +1328,6 @@ void GenTrCopy(ATL_cpnode_t *cb, char *outd, char pre, char sd, char up, char ta
          cb->flag &= ~((1<<CPF_ALN)|(1<<CPF_AL1));
          cb->flag |= (1<<CPF_ALX);
       }
-/*
- *    FIXME: fixed memory leak, but need to streamline the code 
- */
       cpg = GetCopyName(cb, 0);
       k = sprintf(rt, "%s/%s.c", outd, cpg);
       assert(k<256);
@@ -1277,15 +1338,14 @@ void GenTrCopy(ATL_cpnode_t *cb, char *outd, char pre, char sd, char up, char ta
       assert(fp);
       AddCopyDirective(fp, cpg, pre, al[i], cb->nu); /*always nu if not CPF_CBLK*/
       fclose(fp);
-      
+
       free(cpg);
-      printf("%s\n", rt);
-      
+
       if (cb->rout) free(cb->rout);
       cb->rout = DupString("ATL_tmp.c");
       cpg = GetCopyGenStr(cb);
       k = sprintf(ln, "%s", cpg);
-      free(cpg); 
+      free(cpg);
       assert(k < L);
       assert(!Sys2File(ln, NULL));
 /*
@@ -1313,12 +1373,9 @@ void GenCopyTrmm(char pre, char *outd, char sd, char up, char ta,
    char *ln, *rt;
    ATL_cpnode_t *cb;
 
-   L = strlen(outd) + 256;
-   ln = malloc(L);
-   assert(ln);
 /*
- * copy name format 
- *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s,t]_aX_<ku>x<nu>_<kvec>  
+ * copy name format
+ *    ATL_<pre>cp[Into,From]A[N,T][g,k,y,r,s,t]_aX_<ku>x<nu>_<kvec>
  */
    flg = (1<<CPF_TOBLK);
    flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
@@ -1330,21 +1387,21 @@ void GenCopyTrmm(char pre, char *outd, char sd, char up, char ta,
    assert(cb);
 /*
  * up is always 'L'... ta can be 'N' or 'T'
- * 
+ *
  * LN/UT: tAT-L, tAN-U
  * LT/UN: tAN-L, tAT-U
  */
-   printf("Case: %c%c%c\n", sd, up, ta);
+   /*printf("Case: %c%c%c\n", sd, up, ta);*/
    if (ta == 'N')
    {
-      GenTrCopy(cb, outd, pre, sd, 'L', 'N'); 
-      GenTrCopy(cb, outd, pre, sd, 'U', 'T'); 
+      GenTrCopy(cb, outd, pre, sd, 'L', 'N');
+      GenTrCopy(cb, outd, pre, sd, 'U', 'T');
    }
    else
    {
-      GenTrCopy(cb, outd, pre, sd, 'L', 'T'); 
-      GenTrCopy(cb, outd, pre, sd, 'U', 'N'); 
-   } 
+      GenTrCopy(cb, outd, pre, sd, 'L', 'T');
+      GenTrCopy(cb, outd, pre, sd, 'U', 'N');
+   }
    KillAllCopyNodes(cb);
 }
 
@@ -1359,7 +1416,7 @@ void GenMakeTrmm(char pre, char *outd, char up, char *sds, char *tas,
    int bi, ai, kvec;
    char tta;
 
-   k = strlen(outd) + 10;
+   k = strlen(outd) + 24;
    fn = malloc(k);
    assert(fn);
    i = sprintf(fn, "%s/Makefile", outd);
@@ -1396,7 +1453,7 @@ void GenMakeTrmm(char pre, char *outd, char up, char *sds, char *tas,
    for (k=0; k < 2; k++)  /* 0: objname, 1: target*/
    {
 /*
- *    kernels 
+ *    kernels
  */
       for (int s=i=0; s < 2; s++)
       {
@@ -1410,15 +1467,15 @@ void GenMakeTrmm(char pre, char *outd, char up, char *sds, char *tas,
                for (bi=0; bi < 3; bi++)
                {
                   if (!k)
-                     fprintf(fp, "\\\n      ATL_%ctrmmK_%c%c%c_%ux%ux%u_b%c.o ",
-                             pre, sd, up, ta, mp->mu, mp->nu, mp->ku, be[bi]);
+                     fprintf(fp, "\\\n      ATL_%ctrmmK_%c%c%c_b%c.o ",
+                             pre, sd, up, ta, be[bi]);
                   else /* target phase */
                   {
-                     fprintf(fp, "ATL_%ctrmmK_%c%c%c_%ux%ux%u_b%c.o :" 
+                     fprintf(fp, "ATL_%ctrmmK_%c%c%c_b%c.o :"
                              " ATL_%ctrmmK_%c%c%c_%ux%ux%u.c $(deps)\n",
-                              pre, sd, up, ta, mp->mu, mp->nu, mp->ku, be[bi],
+                              pre, sd, up, ta, be[bi],
                               pre, sd, up, ta, mp->mu, mp->nu, mp->ku);
-                     fprintf(fp, "\t%s $(CDEFS2) -D%s=1 -DBETA%c=1 \\\n", comp, 
+                     fprintf(fp, "\t%s $(CDEFS2) -D%s=1 -DBETA%c=1 \\\n", comp,
                            typ, (be[bi]=='n')?'N':be[bi]);
                      sp = "        ";
                      if (FLAG_IS_SET(mp->flag, MMF_MVA))
@@ -1438,11 +1495,11 @@ void GenMakeTrmm(char pre, char *outd, char up, char *sds, char *tas,
                      }
                      fprintf(fp, " \\\n        %s \\\n", flgs);
                      fprintf(fp,
-                     "        -DATL_USERMM=ATL_%ctrmmK_%c%c%c_%ux%ux%u_b%c \\\n"
-                     "        -c -o ATL_%ctrmmK_%c%c%c_%ux%ux%u_b%c.o \\\n",
-                             pre, sd, up, ta, mp->mu, mp->nu, mp->ku, be[bi], 
-                             pre, sd, up, ta, mp->mu, mp->nu, mp->ku, be[bi]);
-                     fprintf(fp, "        ATL_%ctrmmK_%c%c%c_%ux%ux%u.c \n", 
+                     "        -DATL_USERMM=ATL_%ctrmmK_%c%c%c_b%c \\\n"
+                     "        -c -o ATL_%ctrmmK_%c%c%c_b%c.o \\\n",
+                             pre, sd, up, ta, be[bi],
+                             pre, sd, up, ta, be[bi]);
+                     fprintf(fp, "        ATL_%ctrmmK_%c%c%c_%ux%ux%u.c \n",
                              pre, sd, up, ta, mp->mu, mp->nu, mp->ku);
                   }
                }
@@ -1451,8 +1508,7 @@ void GenMakeTrmm(char pre, char *outd, char up, char *sds, char *tas,
       }
 /*
  *    copies
- *    FIXME: for complex, need to add conj_ 
- *    ATL_zcpFromACt_Up_diagU_a1_1x4_0 
+ *    e.g., ATL_zcpFromACt_Up_diagU_a1_1x4_0
  */
       for (int di=0; di < 2; di++)
       {
@@ -1464,7 +1520,7 @@ void GenMakeTrmm(char pre, char *outd, char up, char *sds, char *tas,
             {
                ATL_mmnode_t *mp;
                char ta = tas[it];
-               /*const int NCNJ = 
+               /*const int NCNJ =
                   (ta == 'T' && (pre == 'c' || pre == 'z')) ? 2:1; */
                for (mp=MBs[i++]; mp; mp=mp->next)
                {
@@ -1478,23 +1534,23 @@ void GenMakeTrmm(char pre, char *outd, char up, char *sds, char *tas,
                         {
                            if (c)
                               tta = (ta == 'N')? 'C' : 'H';
-                           else 
+                           else
                               tta = ta;
                            if (!k)
                            {
-                              fprintf(fp, 
-                              "\\\n      ATL_%ccpFromA%ct_%s%s_a%c_%ux%u_%u.o ", 
-                                   pre, tta, (ul?"Up":"Lo"), dia, al[ai], mp->ku, 
+                              fprintf(fp,
+                              "\\\n      ATL_%ccpFromA%ct_%s%s_a%c_%ux%u_%u.o ",
+                                   pre, tta, (ul?"Up":"Lo"), dia, al[ai], mp->ku,
                                    UR, kvec);
                            }
                            else
                            {
-                              fprintf(fp, "ATL_%ccpFromA%ct_%s%s_a%c_%ux%u_%u.o :" 
+                              fprintf(fp, "ATL_%ccpFromA%ct_%s%s_a%c_%ux%u_%u.o :"
                                        " ATL_%ccpFromA%ct_a%c_%ux%u_%u.c\n",
-                                       pre, tta, (ul?"Up":"Lo"), dia, al[ai], 
+                                       pre, tta, (ul?"Up":"Lo"), dia, al[ai],
                                        mp->ku, UR, kvec,
                                        pre, ta, al[ai], mp->ku, UR, kvec);
-                     
+
                               fprintf(fp, "\t%s $(CDEFS2) %s", comp, flgs);
                               if (di)
                                  fprintf(fp, " -DUnitDiag_=1");
@@ -1504,12 +1560,12 @@ void GenMakeTrmm(char pre, char *outd, char up, char *sds, char *tas,
                                  fprintf(fp, " -DLower_=1");
                               if (c)
                                  fprintf(fp, " -DConj_=1");
-                              fprintf(fp, 
+                              fprintf(fp,
                                  " \\\n\t-c ATL_%ccpFromA%ct_a%c_%ux%u_%u.c \\\n",
                                    pre, ta, al[ai], mp->ku, UR, kvec);
-                              fprintf(fp, 
+                              fprintf(fp,
                                  "\t-o ATL_%ccpFromA%ct_%s%s_a%c_%ux%u_%u.o\n",
-                                   pre, tta, (ul?"Up":"Lo"), dia, al[ai], mp->ku, 
+                                   pre, tta, (ul?"Up":"Lo"), dia, al[ai], mp->ku,
                                    UR, kvec);
                            }
                         }
