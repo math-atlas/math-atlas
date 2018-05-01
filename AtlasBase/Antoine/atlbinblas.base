@@ -11152,7 +11152,6 @@ static int NSAMP=1;
    #define  TP3      PATL
 #endif
 
-
 #define trusted_gemm(TA, TB, M, N, K, al, A, lA, B, lB, be, C, lC) \
    Mjoin(TP3, gemm)(TA, TB, M, N, K, al, A, lA, B, lB, be, C, lC)
 #ifdef APR
@@ -11331,6 +11330,98 @@ static int NSAMP=1;
    #endif
 #endif
 
+@ROUT l3time
+#ifdef USE_PARSERIAL
+   #define USE_trusted_PARSERIAL 1
+/*   #define USE_test_PARSERIAL 1 */
+#endif
+#if defined(USE_test_PARSERIAL) || defined(USE_trusted_PARSERIAL)
+#include "atlas_threads.h"
+/*
+ * Structure for parallel execution of serial BLAS interface.
+ * flg bit set: 0:TransA, 1:ConjA, 2:TransB, 3:ConjB, 4:Right, 5:Upper,
+ *   6:UnitDiag
+ */
+typedef struct psbla psbla_t;
+struct psbla
+{
+   size_t lda, ldb, ldc, M, N, K;
+   const TYPE *A, *B;
+   TYPE *C;
+   SCALAR alpha, beta;
+   #ifdef TCPLX
+      TYPE rscaler;
+   #endif
+   unsigned int flg;
+};
+#endif
+@whiledef ps test trusted
+#ifdef USE_@(ps)_PARSERIAL
+void @(ps)_psgemm_ser(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   psbla_t *pd=pp->PD;
+   const unsigned int flg=pd->flg;
+   enum ATLAS_TRANS TA, TB;
+
+/*   printf("%d: vrank=%d, nthr=%d\n", rank, vrank, pp->nworkers); */
+   #ifdef TCPLX
+   if (flg&2)
+      TA = (flg&1) ? AtlasConjTrans : AtlasConj;
+   else
+   #endif
+      TA = (flg&1) ? AtlasTrans : AtlasNoTrans;
+   #ifdef TCPLX
+
+   if (flg&8)
+      TB = (flg&4) ? AtlasConjTrans : AtlasConj;
+   else
+   #endif
+      TB = (flg&4) ? AtlasTrans : AtlasNoTrans;
+   @(ps)_gemm(TA, TB, pd->M, pd->N, pd->K, pd->alpha, pd->A, pd->lda, pd->B, 
+             pd->ldb, pd->beta, pd->C, pd->ldc);
+}
+#undef @(ps)_gemm
+#define @(ps)_gemm @(ps)_psgemm
+void @(ps)_psgemm(enum CBLAS_TRANSPOSE TA, enum CBLAS_TRANSPOSE TB,
+                  size_t M, size_t N, size_t K, const SCALAR alpha,
+                  const TYPE *A, size_t lda, const TYPE *B, size_t ldb,
+                  const SCALAR beta, TYPE *C, size_t ldc)
+{
+   psbla_t pd;
+   #ifdef TCPLX
+      if (TA == AtlasConj)
+         pd.flg = 2;
+      else if (TA == AtlasConjTrans)
+         pd.flg = 1+2;
+      else
+   #endif
+         pd.flg = TA == AtlasTrans ? 1 : 0;
+
+   #ifdef TCPLX
+      if (TB == AtlasConj)
+         pd.flg |= 8;
+      else if (TA == AtlasConjTrans)
+         pd.flg = 4+8;
+      else
+   #endif
+         pd.flg |= (TB == AtlasTrans) ? 4 : 0;
+   pd.M = M;
+   pd.N = N;
+   pd.K = K;
+   pd.A = A;
+   pd.B = B;
+   pd.C = C;
+   pd.alpha = alpha;
+   pd.beta  = beta ;
+   pd.lda = lda;
+   pd.ldb = ldb;
+   pd.ldc = ldc;
+   ATL_goParallel(ATL_NTHREADS, @(ps)_psgemm_ser, NULL, &pd, NULL);
+}
+#endif
+@endwhile
+@ROUT l3blastst l3time
 /*
  * =====================================================================
  * macro functions
