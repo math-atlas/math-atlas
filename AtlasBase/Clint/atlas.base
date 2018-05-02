@@ -37060,7 +37060,7 @@ int main(int nargs, char **args)
       return(nmu*nnu*blksz);
    }
 #endif
-#ifdef TIME_TRMVK
+#if defined(TIME_TRMVK) || defined(TIME_TRMM)
    #include "atlas_misc.h"
 #else
    double ATL_walltime(void);
@@ -37159,6 +37159,40 @@ int main(int nargs, char **args)
          #endif
       #endif
    #endif
+#elif defined(TIME_TRMM)
+      #include "atlas_amm.h"
+      #ifdef TCPLX
+         #if SD_Right == 1
+         void B2BLK(const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
+         void A2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
+         #else
+         void A2BLK(const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
+         void B2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
+         #endif
+         void AMM_bn(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                     TYPE*, const TYPE*, const TYPE*, const TYPE*);
+      #else
+         #if SD_Right == 1
+         void A2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         void B2BLK(const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         #else
+         void A2BLK(const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         void B2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+         #endif
+      #endif
+         void AMM_b0(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                     TYPE*, const TYPE*, const TYPE*, const TYPE*);
+         void AMM_b1(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                     TYPE*, const TYPE*, const TYPE*, const TYPE*);
+         #define KMM AMM_b0
 #elif defined(TIME_COPY)
    #ifndef TO_BLK
       #define TO_BLK 0
@@ -37414,7 +37448,7 @@ double GetKmmMflop
  * Returns MFLOP rate of matmul kernel KMM
  */
 {
-   #if defined(TIME_AMM_SM)
+   #if defined(TIME_AMM_SM) || defined(TIME_TRMM)
       #ifdef TCPLX
          TYPE one[2] = {ATL_rone, ATL_rzero};
       #else
@@ -37449,7 +37483,7 @@ double GetKmmMflop
    const int NOMOVE = !(movA|movB|movC);
    unsigned int seed = mb*kb + (nb<<14);
 
-#ifdef TIME_TRMVK
+#if defined(TIME_TRMVK) || defined(TIME_TRMM)
    size_t lda, ldc;
    #ifdef TIME_AMM_SM
       void *wp;
@@ -37659,6 +37693,15 @@ double GetKmmMflop
                       diag, L, R, w);
          #else
             my_trsmk(mb, nb, 1.0, a, c, mb, B);
+         #endif
+      #elif defined(TIME_TRMM)
+         #ifdef TCPLX
+            AMM_b0(mblks, nblks, kb, a+szA, b+szB, c, a, b+szB, c+szC);
+            AMM_b0(mblks, nblks, kb, a, b+szB, c+szC, a, b, c);
+            AMM_bn(mblks, nblks, kb, a, b, c, a+szA, b, c+szC);
+            AMM_b1(mblks, nblks, kb, a+szA, b, c+szC, a+szA, b+szB, c);
+         #else
+            KMM(mblks, nblks, kb, a, b, c, an, bn, cn);
          #endif
       #elif defined(TIME_SYRKK)
          KMM(mblks, nblks, kb, a, a, c, an, an, cn);
