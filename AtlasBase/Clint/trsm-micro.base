@@ -401,13 +401,13 @@ void Mjoin(PATL,trsm)
 /*
  * LEFT: op(A) * X = alpha * B, A is MxM, X is MxN, B is MxN
  */
-//   if ((SD == AtlasLeft && UL == AtlasLower && TA == AtlasNoTrans) ||
-//       (SD == AtlasLeft && UL == AtlasUpper && TA == AtlasTrans))
    if (SD == AtlasLeft)
       r = trsm_recL(bv, M, N, alpha, A, lda, incR, incC, B, ldb);
    else
       r = trsm_recR(bv, N, M, alpha, A, lda, incR, incC, B, ldb);
-//   printf("Solved with %u recursive calls.\n", r);
+#ifdef DEBUG
+   printf("Solved with %u recursive calls.\n", r);
+#endif
 @skip   Mjoin(PATL,trsm_APR)(SD, UL, TA, DI, M, N, alpha, A, lda, B, ldb);
 }
 @ROUT ATL_trsm_IP
@@ -1353,6 +1353,7 @@ ATL_mmnode_t *forceTrsmCases(char pre, int flag)
 /*
  * Now, force these generated kernels to satisfy TRSM requirements
  */
+#if 0
    for (mp=gb; mp; mp = mp->next)
    {
       int U, ku=mp->ku;
@@ -1361,6 +1362,39 @@ ATL_mmnode_t *forceTrsmCases(char pre, int flag)
       U = (flag&(1<<TSM_RIGHT)) ? mp->nu : mp->mu;
       while ((U/ku)*ku != U)
          ku--;
+      mp->ku = ku;
+   }
+#endif
+/*
+ * FIXED for kvec kernels
+ */
+   for (mp=gb; mp; mp = mp->next)
+   {
+      int U, ku=mp->ku;
+      mp->flag |= 1<<MMF_KRUNTIME;
+      mp->flag &= ~(1<<MMF_KUISKB);
+      U = (flag&(1<<TSM_RIGHT)) ? mp->nu : mp->mu;
+      if (mp->flag & (1<<MMF_KVEC))
+      {
+         unsigned int VL=mp->vlen;
+         if (ku > VL)
+         {
+            assert(ku%VL == 0);
+            ku = (ku/VL)*VL;
+            if ((U/VL)*VL != U)
+               ku = VL;
+            else
+               while ((U/ku)*ku != U)
+                  ku -= VL;
+         }
+         else
+            ku = VL;
+      }
+      else
+      {
+         while ((U/ku)*ku != U)
+            ku--;
+      }
       mp->ku = ku;
    }
 /* 

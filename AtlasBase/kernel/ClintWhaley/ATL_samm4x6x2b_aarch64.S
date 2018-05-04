@@ -63,7 +63,7 @@ ATL_asmdecor(ATL_USERMM):
         ubfiz   x2,x2,0,31
 
    MLOOP:
-      mov pB, pB0  // point the pB pointer back to the start of B
+      mov pB, pB0  /* point the pB pointer back to the start of B */
       mov NNU, NNU0
          ld1 {rB0.2s},[pB],#8
          ld1 {rB2.2s},[pB],#8
@@ -74,7 +74,7 @@ ATL_asmdecor(ATL_USERMM):
             #endif
          #endif
       NLOOP:
-         mov pA, pA0  // point pA to the next group of Rows
+         mov pA, pA0  /* point pA to the next group of Rows */
 /*
  *       1st peeled K iteration handles BETA & load of C
  */

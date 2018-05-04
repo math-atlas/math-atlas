@@ -136,7 +136,7 @@ ATL_asmdecor(ATL_USERMM):
    #endif
    mov M0, M
    mov K0, K
-//   mov pA00, pA0
+/*   mov pA00, pA0 */
    str pA0, [SP, #8]
 
    NLOOP:
@@ -337,7 +337,7 @@ ATL_asmdecor(ATL_USERMM):
       bne MLOOP
       subs N, N, #4                     /* N -= 4; set cond codes */
       add pB0, pB0, ldb, LSL #2         /* pB0 += ldb*4 */
-//      mov pA0, pA00
+/*      mov pA0, pA00 */
       ldr pA0, [SP, #8]
       add pC0, pC0, ldc, LSL #2         /* pC0 += 4*ldc */
       #ifdef SCPLX

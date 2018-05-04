@@ -79,7 +79,7 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
  */
 #define PFDISTB 256
 #define PFDISTA0 768
-#define PFDISTA 1920 // 1536
+#define PFDISTA 1920 /* 1536 */
 #define prefA(m_) vprefetch0 m_
 #define prefB(m_) vprefetch0 m_
 #define prefC(m_) vprefetche0 m_
@@ -284,8 +284,8 @@ ATL_asmdecor(ATL_USERMM):
             vmovapd 896-1152(pA), rA4
          FMAC rA5, rB1, rC53
             vmovapd 960-1152(pA), rA5
-//            vprefetche0 1280(pC)
-//            vprefetche0 1344(pC)
+/*            vprefetche0 1280(pC) */
+/*            vprefetche0 1344(pC) */
          jz KDONE
 
          KLOOP:

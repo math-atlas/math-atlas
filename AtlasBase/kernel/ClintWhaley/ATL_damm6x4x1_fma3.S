@@ -119,16 +119,16 @@ ATL_asmdecor(ATL_USERMM):
                prefA((pfA))
                add $64, pfA
             vmulpd rA1, rB0, rC11
-//               prefB((pfB))
+/*               prefB((pfB)) */
                add $64, pfB
             vmulpd rA2, rB0, rC21
                prefC((pC))
 
             movddup      16(pB), rB0
             vmulpd rA0, rB0, rC02
-//                prefetcht0 128(pB)
+/*                prefetcht0 128(pB) */
             vmulpd rA1, rB0, rC12
-//                prefetcht0 128(pA)
+/*                prefetcht0 128(pA) */
             vmulpd rA2, rB0, rC22
 
             movddup      24(pB), rB0

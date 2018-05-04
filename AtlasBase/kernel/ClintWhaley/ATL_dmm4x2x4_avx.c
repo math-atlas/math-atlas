@@ -1,6 +1,8 @@
 #include <atlas_misc.h>
-// #include <wmmintrin.h>
-// #include <bmmintrin.h>
+#if 0
+   #include <wmmintrin.h>
+   #include <bmmintrin.h>
+#endif
 #include <immintrin.h>
 
 #ifndef ATL_RESTRICT

@@ -40,7 +40,7 @@
 
 #define M       $4
 #define N       $5
-// #define K0      $6
+/* #define K0      $6 */
 #define pA0     $8
 #define incAm   $9
 #define pB0     $10
@@ -164,7 +164,7 @@ ATL_USERMM:
         sll     incBn, incBn, 2         /* incBn = ldb*sizeof */
         dmul    stBn, incBn, N          /* stBn = ldb*N */
         .set    nomacro
-//        sll     K0, K0, 3
+/*        sll     K0, K0, 3 */
         daddu   pA1, pA0, incAm
         daddu   pA2, pA1, incAm
         daddu   pA3, pA2, incAm
@@ -187,7 +187,7 @@ ATL_USERMM:
 	dsubu	incCn, incCn, pfA	/* incCn = ldc*4 - M */
         or     pfA, stAm, $0 
 /*        or     pfB, stBn, $0 */
-//	daddiu	K0, K0, -8
+/*	daddiu	K0, K0, -8 */
 NLOOP:
 	daddiu	pfB, pB0, 4*4*KB
 MLOOP:
