@@ -428,7 +428,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                if (args[i+1][0] == 'b')
                   PFCHUNK = -PFCHUNK;
                PFISKIP = atoi(args[i+3]);
-//               assert(PFISKIP >= 0);
+               /*assert(PFISKIP >= 0);*/
                PFINST = args[i+2][0];
                i += 4;
             }
@@ -2054,7 +2054,7 @@ int CheckPreheaderPosttails(BLIST *scope)
  */
       if (bp->usucc && !BitVecCheck(blkvec, bp->usucc->bnum-1))/*not in scope*/
       {
-         if (bp->usucc->preds->next) // bp->usucc->preds->blk != bp 
+         if (bp->usucc->preds->next) /* bp->usucc->preds->blk != bp */
          {
             nerr++;
             fko_warn(__LINE__, "Posttail blk-%d has pred other than blk-%d\n",
@@ -2064,7 +2064,7 @@ int CheckPreheaderPosttails(BLIST *scope)
       
       if (bp->csucc && !BitVecCheck(blkvec, bp->csucc->bnum-1)) /*not in scope*/
       {
-         if (bp->csucc->preds->next) // bp->csucc->preds->blk != bp 
+         if (bp->csucc->preds->next) /* bp->csucc->preds->blk != bp */
          {
             nerr++;
             fko_warn(__LINE__, "Posttail blk-%d has pred other than blk-%d\n",
@@ -2179,7 +2179,7 @@ void FixPreheaderPosttails(BLIST *scope)
  */
       if (bp->usucc && !BitVecCheck(blkvec, bp->usucc->bnum-1))/*not in scope*/
       {
-         if (bp->usucc->preds->next) // bp->usucc->preds->blk != bp 
+         if (bp->usucc->preds->next) /* bp->usucc->preds->blk != bp */
          {
             /*fprintf(stderr, "adding blk after %d before %d\n", bp->bnum, 
                   bp->usucc->bnum);*/
@@ -2204,7 +2204,7 @@ void FixPreheaderPosttails(BLIST *scope)
  */
       if (bp->csucc && !BitVecCheck(blkvec, bp->csucc->bnum-1))/*not in scope*/
       {
-         if (bp->csucc->preds->next) // bp->usucc->preds->blk != bp 
+         if (bp->csucc->preds->next) /* bp->usucc->preds->blk != bp */
          {
             fko_error(__LINE__, 
                   "Posttail error: need to create posttail for this case");
@@ -3642,7 +3642,7 @@ int IsAlignLoopSpecNeeded(LOOPQ *lp)
    {
       if (!spa[i] && spb[i]) /* ALIGNED() :: *; */
       {
-         if (spb[i][1] >= type2len(lp->vflag)) // ALIGNED(VB) :: *;
+         if (spb[i][1] >= type2len(lp->vflag)) /* ALIGNED(VB) :: *;*/
          {
             fko_warn(__LINE__, "NO SPECIALIZATION FOR ALIGNMENT: "
                      "all are aligned to vlen or greater");

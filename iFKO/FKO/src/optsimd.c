@@ -239,8 +239,8 @@ PACK *NewPack(ILIST *sil, int len)
    new->depil = NULL;
    new->uses = NewBitVec(TNREG+32);
    new->defs = NewBitVec(TNREG+32);
-   //new->scal = NULL;
-   //new->vscal = NULL;
+   /*new->scal = NULL; */
+   /*new->vscal = NULL; */
    new->scdef = NULL;
    new->vsc = NULL;
    new->scuse = NULL;
@@ -294,10 +294,10 @@ void KillPack(PACK *pack)
       KillBitVec(pack->uses);
    if (pack->defs) 
       KillBitVec(pack->defs);
-   //if (pack->scal)
-   //   free(pack->scal);
-   //if (pack->vscal)
-   //   free(pack->vscal);
+   /*if (pack->scal)
+      free(pack->scal);
+   if (pack->vscal)
+      free(pack->vscal);*/
    if (pack->scdef)
       free(pack->scdef);
    if (pack->scuse)
@@ -1632,7 +1632,7 @@ int IsSIMDalignLoopPeelable(LOOPQ *lp)
  * 3. optloop must be in simple format: [N,-1,0] or [0,1,N]
  * NoTE: N can be variable or const, but make sure it has sufficient iterations
  */
-   if (flag & L_NINC_BIT) // should be [N,-1,0]
+   if (flag & L_NINC_BIT) /* should be [N,-1,0] */
    {
       if (!IS_CONST(STflag[end-1]) || SToff[end-1].i != 0 || 
             !IS_CONST(STflag[inc-1]) || SToff[inc-1].i != -1)
@@ -1641,7 +1641,7 @@ int IsSIMDalignLoopPeelable(LOOPQ *lp)
          return 0;
       }
    }
-   else if (flag & L_PINC_BIT) // should be [0,1,N]
+   else if (flag & L_PINC_BIT) /* should be [0,1,N] */
    {
       if (!IS_CONST(STflag[beg-1]) || SToff[beg-1].i != 0 || 
             !IS_CONST(STflag[inc-1]) || SToff[inc-1].i != 1 )
@@ -1664,7 +1664,7 @@ int IsSIMDalignLoopPeelable(LOOPQ *lp)
    if (!lp->aaligned && lp->abalign)  
    {
 
-      if (lp->abalign[1] >= type2len(lp->vflag)) // ALIGNED(VB) :: *;
+      if (lp->abalign[1] >= type2len(lp->vflag)) /* ALIGNED(VB) :: *; */
       {
          fko_warn(__LINE__, "NO PEELING: all are aligned to vlen or greater");
          return 0;
@@ -3426,7 +3426,7 @@ int SpeculativeVectorAnalysis()
       /*
        * Save fko
        */
-      //SaveFKOState(1);
+      /*SaveFKOState(1);*/
       return(0);
    }
    else
@@ -4126,9 +4126,9 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
  *    add blks in list
  */
       dupblks = AddBlockToList(dupblks, bp);
-      //KillBlockList(bl);
-      //KillAllInst(bp);
-      //KillAllBasicBlocks(bp);
+      /*KillBlockList(bl);
+      KillAllInst(bp);
+      KillAllBasicBlocks(bp);*/
    }
 /*
  * update the main loop blk
@@ -8187,14 +8187,14 @@ int isUpByInduction(LOOPQ *lp, BLIST *scope, short var)
    BLIST *bl;
    INSTQ *ip, *ip0;
    
-   //check =1;
+   /*check =1;*/
    for (bl = scope; bl; bl = bl->next)
    {
       for (ip = bl->blk->ainst1; ip; ip = ip->next)
       {
          if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == var)
          {
-            //PrintThisInst(stderr, 0, ip);
+            /*PrintThisInst(stderr, 0, ip);*/
             ip0 = ip->prev;
             while(!IS_STORE(ip0->inst[0]) && !IS_BRANCH(ip0->inst[0]))
             {
@@ -8227,14 +8227,14 @@ int isUpByInduction(LOOPQ *lp, BLIST *scope, short var)
 
 #endif
                      {
-                        //fprintf(stderr, "INDUCTION!!!\n");
-                        //check = 1
+                        /*fprintf(stderr, "INDUCTION!!!\n");
+                        check = 1 */
                      }
                      else
                      {
-                        //fprintf(stderr, "NOT INDUCTION\n!!!");
-                        //check = 0;
-                        //break;
+                        /*fprintf(stderr, "NOT INDUCTION\n!!!");
+                        check = 0;
+                        break;*/
                         fko_warn(__LINE__, "Shadow VRC not possible: "
                                  "use of %s to update %s\n", 
                                  STname[STpts2[ip0->inst[2]-1]-1], STname[var-1]);
@@ -9066,7 +9066,7 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
               SToff[mvar-1].sa[2], -r0, 0);
       #endif
       }
-      //GetReg(-1);
+      /*GetReg(-1);*/
 /*    step : 2   Vmask2 = Vamax == [amax, amax, amax,....] ---floating point */
 /*    3. Vimax = CMOV(Vimax, VmaxInt, Vmask2)  ==> based on amax ..max/min -vint
  */
@@ -9154,11 +9154,11 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
                  -vireg1,-vireg1,-vireg2);
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vishuf,
-                 -vireg2, -vireg1, STiconstlookup(0x7654BABA)); //0x 7654 32BA
+                 -vireg2, -vireg1, STiconstlookup(0x7654BABA)); /*0x 765432BA */
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
                  -vireg1,-vireg1,-vireg2);
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vishuf,
-                 -vireg2, -vireg1, STiconstlookup(0x7654BA99)); // 0x 76CD 3289
+                 -vireg2, -vireg1, STiconstlookup(0x7654BA99)); /* 0x 76CD3289*/
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
                  -vireg1,-vireg1,-vireg2);
          #ifdef X86_64
@@ -9735,7 +9735,7 @@ int RcVecTransform(LOOPQ *lp)
 
                      if (!FindInShortList(lp->varrs[0], lp->varrs+1, k))
                      { 
-                        //fprintf(stderr, "Not arr = %s\n", STname[k-1]);
+                        /*fprintf(stderr, "Not arr = %s\n", STname[k-1]);*/
 #if 0                        
                         if (inst == LD)
                            ip->inst[0] = VLD;
@@ -10016,7 +10016,7 @@ int RcVecTransform(LOOPQ *lp)
             else if ( IS_BRANCH(inst) || inst == LABEL || inst == PREFR 
                       || inst == PREFW)
             {
-               // do nothing !
+               /* do nothing ! */
             }
             else 
             {
@@ -10060,7 +10060,6 @@ int RcVecTransform(LOOPQ *lp)
                k = STpts2[ip->inst[2]-1]; 
                if (!FindInShortList(lp->varrs[0], lp->varrs+1, k))
                {
-                  //fprintf(stderr, "Not arr = %s\n", STname[k-1]);
                   if (inst == LD)
                      ip->inst[0] = VLD;
                   else
@@ -10070,7 +10069,7 @@ int RcVecTransform(LOOPQ *lp)
                   {
                      op = ip->inst[j];
                      if (!op) continue;
-                     else if (op < 0) // register
+                     else if (op < 0) /* register */
                      {
                         op = -op;
                         k = FindInShortList(nir, siregs, op);
@@ -10082,7 +10081,7 @@ int RcVecTransform(LOOPQ *lp)
                         }
                         ip->inst[j] = -viregs[k-1];
                      }
-                     else // scalars 
+                     else /* scalars */
                      {
                         op = STpts2[op-1];
                         k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
@@ -10184,7 +10183,6 @@ int RcVecTransform(LOOPQ *lp)
                            }
                         }
                      }
-                     //PrintThisInst(stderr, 0, ip);
                      break;
                   }
                }
@@ -10349,7 +10347,7 @@ static void ConvertAlign2Unalign(short *aptrs, BLIST *scope)
                   else /* 1D */
                   {
                      if (!FindInShortList(aptrs[0], aptrs+1, k) 
-                           || SToff[op-1].sa[1] ) // index var?  
+                           || SToff[op-1].sa[1] ) /* index var?  */
                         ip->inst[0] = vualign[j];
                   }
 
@@ -10425,7 +10423,7 @@ void UnalignLoopSpecialization(LOOPQ *lp)
       aptrs[1] = faptr;
    }
 #else
-   s = malloc(sizeof(short)*(lp->varrs[0]+1)); // max moving ptr
+   s = malloc(sizeof(short)*(lp->varrs[0]+1)); /* max moving ptr*/
    assert(s);
    aptrs = NULL;
 /*
@@ -12968,8 +12966,8 @@ SLP_VECTOR *AddVectorInList(SLP_VECTOR *vlist, SLP_VECTOR *vec, int islivein,
 /*
  * copy the vector
  */
-   /*vl->islive = 1; */ // need to test ???  
-   vl->islive = islive; // need to test ???  
+   /*vl->islive = 1; */ /* need to test ???  */
+   vl->islive = islive; /* need to test ???  */
    vl->islivein = islivein; /* livein at the entry of blk */
    vl->isused = 0; /* only set from scheduling in slp  */
    
@@ -13030,7 +13028,7 @@ SLP_VECTOR *FindVectorFromScalars(short *scalars, SLP_VECTOR *vlist)
             if (scalars[i] != vl->svars[i])
                break;
          }
-         if (i == n+1 ) //&& vl->islive) /* matched all and live */
+         if (i == n+1 ) /*&& vl->islive)*/ /* matched all and live */
          {
             found = 1;
             vec = vl;
@@ -14202,7 +14200,7 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
                   }
                }
             }
-            if (IS_STORE(ip->inst[0]) //|| ip->inst[0] == LABEL 
+            if (IS_STORE(ip->inst[0]) /*|| ip->inst[0] == LABEL */
                   || IS_BRANCH(ip->inst[0]) || IS_PREF(ip->inst[0]))
             {
                isstore = 1;
@@ -17321,7 +17319,7 @@ INSTQ *InstUnordVVRSUMscatter(SLP_VECTOR *rv)
             assert(rvar[i+1]);
          }
       }
-      rvar[0] = vlen; // i
+      rvar[0] = vlen; /* i */
       vli = CreateVector(vli, vl0->flag, vlen, rvar, 0, 0); 
       /*ipv = InstVVRSUM(rvec, vlen, vli); */
       ip = InstVVRSUM(rvec, nvrs, vli); 
@@ -18792,7 +18790,7 @@ SLP_VECTOR *DoSingleBlkSLP(BBLOCK *blk, INT_BVI ivin, SLP_VECTOR *vi,
       if (vli) KillVlist(vli);
       if (vs) KillVlist(vs);
       if (vr) KillVlist(vr);
-   } // end of hasredcode if
+   } /* end of hasredcode if */
 
    return(vo);
 }
@@ -19093,7 +19091,7 @@ SLP_VECTOR *DoLoopNestVec(LPLIST *lpl, short *ptrs, int *err, int *vres)
    {
       if (VECT_FLAG & VECT_SLP)
       {
-         assert(lpl->loop->blocks && !lpl->loop->blocks->next); //single blk
+         assert(lpl->loop->blocks && !lpl->loop->blocks->next); /*single blk*/
          if (PreSLPchecking(lpl->loop)) /* needed for other optimizations */
          {
             fko_warn(__LINE__, "Prechecking failed for SLP\n");
@@ -19405,7 +19403,7 @@ int LoopNestVec(short *ptrs, int *bvlpl)
       if (lp->preheader)
          lp = lp->preheader->loop;
       else lp = NULL;
-      if (lp) // preheader is the header of upper loop
+      if (lp) /* preheader is the header of upper loop */
       {
          if (!lp0->posttails || lp0->posttails->next   
                || lp0->posttails->blk != lp->tails->blk ) 
@@ -19704,7 +19702,7 @@ int VecInfo(int bvec_only)
    char *cVecMethod[] = {"NONE", "LoopLvl", "SpecVec", "SLP"};
    enum eVecMethod {NONE, LOOPLVL, SPECVEC, SLP};
    int iVecMethod[] = {0, 0, 0, 0};
-   //int iVecLoopNest[] = {0, 0, 0, 0};
+   /*int iVecLoopNest[] = {0, 0, 0, 0};*/
    int VmaxminR, Vrc, Vspec, Vn, Vslp;
    extern LOOPQ *optloop;
    extern FILE *fpVECINFO;
