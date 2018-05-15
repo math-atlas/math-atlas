@@ -1,6 +1,6 @@
 #include "atlas_asm.h"
 
-#ifdef SREAL
+#if defined(SREAL) || defined(SCPLX)
    #define SZ 4
    #define movapd movaps
    #define vmulpd vmulps
@@ -9,10 +9,18 @@
    #define vfmadd231pd vfmadd231ps
    #define vbroadcastsd vbroadcastss
    #define vmovapd vmovaps
-   #define MOVC vmovnraps
+   #ifdef ATL_ARCH_XeonPHI
+      #define MOVC vmovnraps
+   #else
+      #define MOVC vmovaps
+   #endif
    #define vbroadcastf64x4 vbroadcastf32x4
 #else
-   #define MOVC vmovnrapd
+   #ifdef ATL_ARCH_XeonPHI
+      #define MOVC vmovnrapd
+   #else
+      #define MOVC vmovapd
+   #endif
    #define SZ 8
 #endif
 

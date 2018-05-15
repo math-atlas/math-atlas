@@ -12,7 +12,7 @@
       #define KB 48
    #endif
 #endif
-#ifdef SREAL
+#if defined(SREAL) || defined(SCPLX)
    #define SZ 4
    #define movapd movaps
    #define vmulpd vmulps
@@ -20,7 +20,7 @@
    #define vaddpd vaddps
    #define vfmadd231pd vfmadd231ps
    #define vbroadcastsd vbroadcastss
-   #if KB > 48
+   #if KB > 48 && defined(ATL_ARCH_XeonPHI)
       #define MOVC vmovnraps
    #else
       #define MOVC vmovaps
@@ -28,7 +28,7 @@
    #define vbroadcastf64x4 vbroadcastf32x4
 #else
    #define SZ 8
-   #if KB > 48
+   #if KB > 48 && defined(ATL_ARCH_XeonPHI)
       #define MOVC vmovnrapd
    #else
       #define MOVC vmovapd
@@ -43,12 +43,17 @@
 #else
    #define VCOP vaddpd
 #endif
-#ifdef BETA0
-   #define prefC(m_) vprefetche0 m_
+#ifdef ATL_ARCH_XeonPHI
+   #ifdef BETA0
+      #define prefC(m_) vprefetche0 m_
+   #else
+      #define prefC(m_) vprefetche0 m_
+   #endif
+   #define prefN(m_) vprefetch2 m_
 #else
-   #define prefC(m_) vprefetche0 m_
+   #define prefC(m_) vprefetchw m_
+   #define prefN(m_) prefetcht2 m_
 #endif
-#define prefN(m_) vprefetch2 m_
 
 #define rB0     %zmm0
 #define rB1     %zmm1
@@ -152,7 +157,7 @@ ATL_asmdecor(ATL_USERMM):
  */
    mov KK, incBn
       vprefetch0 704(pB)
-   #ifdef SREAL
+   #if defined(SREAL) || defined(SCPLX)
       shl $5, incBn
    #else
       shl $6, incBn

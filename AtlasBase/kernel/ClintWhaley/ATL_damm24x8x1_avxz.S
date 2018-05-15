@@ -1,6 +1,6 @@
 #include "atlas_asm.h"
 
-#ifdef SREAL
+#if defined(SREAL) || defined(SCPLX)
    #define SZ 4
    #define movapd movaps
    #define vmulpd vmulps
@@ -33,10 +33,14 @@
 #else
    #define VCOP vaddpd
 #endif
-#ifdef BETA0
-   #define prefC(m_) vprefetche1 m_
+#ifdef ATL_ARCH_XeonPHI
+   #ifdef BETA0
+      #define prefC(m_) vprefetche1 m_
+   #else
+      #define prefC(m_) vprefetche0 m_
+   #endif
 #else
-   #define prefC(m_) vprefetche0 m_
+   #define prefC(m_) vprefetchw m_
 #endif
 
 #define rB0     %zmm0
@@ -138,7 +142,7 @@ ATL_asmdecor(ATL_USERMM):
  */
    mov KK, incBn
       vprefetch0 704(pB)
-   #ifdef SREAL
+   #if defined(SREAL) || defined(SCPLX)
       shl $5, incBn
    #else
       shl $6, incBn

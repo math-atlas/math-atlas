@@ -1,6 +1,6 @@
 #include "atlas_asm.h"
 
-#ifdef SREAL
+#if defined(SREAL) || defined(SCPLX)
    #define SZ 4
    #define movapd movaps
    #define vmulpd vmulps
@@ -79,9 +79,15 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
  */
 #define PFDISTA 448
 #define PFDISTB 320
-#define prefA(m_) vprefetch0 m_
-#define prefB(m_) vprefetch0 m_
-#define prefC(m_) vprefetche0 m_
+#ifdef ATL_ARCH_XeonPHI
+   #define prefA(m_) vprefetch0 m_
+   #define prefB(m_) vprefetch0 m_
+   #define prefC(m_) vprefetche0 m_
+#else
+   #define prefA(m_) prefetcht0 m_
+   #define prefB(m_) prefetcht0 m_
+   #define prefC(m_) prefetchw m_
+#endif
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
    #define BETAN1
