@@ -1,6 +1,6 @@
 #include "atlas_asm.h"
 
-#ifdef SREAL
+#if defined(SREAL) || defined(SCPLX)
    #define SZ 4
    #define movapd movaps
    #define vmulpd vmulps
@@ -9,10 +9,18 @@
    #define vfmadd231pd vfmadd231ps
    #define vbroadcastsd vbroadcastss
    #define vmovapd vmovaps
-   #define MOVC vmovnraps
+   #ifdef ATL_ARCH_XeonPHI
+      #define MOVC vmovnraps
+   #else
+      #define MOVC vmovaps
+   #endif
    #define vbroadcastf64x4 vbroadcastf32x4
 #else
-   #define MOVC vmovnrapd
+   #ifdef ATL_ARCH_XeonPHI
+      #define MOVC vmovnrapd
+   #else
+      #define MOVC vmovapd
+   #endif
    #define SZ 8
 #endif
 
@@ -85,9 +93,15 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #define PFDA3 4*PFDA2
 #define PFDB0 1*(4*8*SZ)
 #define PFDB2 8*PFDB0
-#define prefA(m_) vprefetch0 m_
-#define prefB(m_) vprefetch0 m_
-#define prefC(m_) vprefetche0 m_
+#ifdef ATL_ARCH_XeonPHI
+   #define prefA(m_) vprefetch0 m_
+   #define prefB(m_) vprefetch0 m_
+   #define prefC(m_) vprefetche0 m_
+#else
+   #define prefA(m_) prefetcht0 m_
+   #define prefB(m_) prefetcht0 m_
+   #define prefC(m_) prefetchw m_
+#endif
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
    #define BETAN1
@@ -132,7 +146,7 @@ ATL_asmdecor(ATL_USERMM):
  */
    shl $7, incAm           /* incAm = 128*K */
    mov KK, incB
-   #ifdef SREAL
+   #if defined(SREAL) || defined(SCPLX)
       shl $5, incB
    #else
       shl $6, incB

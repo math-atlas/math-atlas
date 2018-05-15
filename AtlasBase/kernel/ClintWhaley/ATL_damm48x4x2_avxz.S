@@ -1,6 +1,6 @@
 #include "atlas_asm.h"
 
-#ifdef SREAL
+#if defined(SREAL) || defined(SCPLX)
    #define SZ 4
    #define movapd movaps
    #define vmulpd vmulps
@@ -80,9 +80,15 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #define PFDISTB 256
 #define PFDISTA0 768
 #define PFDISTA 1920 /* 1536 */
-#define prefA(m_) vprefetch0 m_
-#define prefB(m_) vprefetch0 m_
-#define prefC(m_) vprefetche0 m_
+#ifdef ATL_ARCH_XeonPHI
+   #define prefA(m_) vprefetch0 m_
+   #define prefB(m_) vprefetch0 m_
+   #define prefC(m_) vprefetche0 m_
+#else
+   #define prefA(m_) prefetcht0 m_
+   #define prefB(m_) prefetcht0 m_
+   #define prefC(m_) prefetchw m_
+#endif
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
    #define BETAN1
@@ -143,7 +149,7 @@ ATL_asmdecor(ATL_USERMM):
    lea (KK,KK,2), incAm       /* incAm = 3*K */
       vprefetch0 960(pA)
    shl $7, incAm              /* incAm = 128*3*K */
-   #ifdef SREAL
+   #if defined(SREAL) || defined(SCPLX)
       shl $4, incB            /* incB = 16*K */
    #else
       shl $5, incB            /* incB = 32*K */
