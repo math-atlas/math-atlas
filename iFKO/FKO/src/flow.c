@@ -2470,13 +2470,13 @@ INSTQ *RemoveBlkCondBranch(BBLOCK *blk)
    ip = blk->ainstN;
    assert(IS_COND_BRANCH(ip->inst[0]));
 
-   ip0 = ip->prev; //cmp, neg, negs, cvtsi 
+   ip0 = ip->prev; /*cmp, neg, negs, cvtsi */
    iprm = NewInst(NULL, NULL, NULL, ip->inst[0], ip->inst[1], ip->inst[2], 
                    ip->inst[3]);
-   DelInst(ip);    // cond jump
+   DelInst(ip);    /* cond jump */
 
    ip = ip0;      
-   ip0 = ip->prev; // load..
+   ip0 = ip->prev; /* load..*/
    iprm = NewInst(NULL, NULL, iprm, ip->inst[0], ip->inst[1], ip->inst[2], 
                    ip->inst[3]);
    DelInst(ip);

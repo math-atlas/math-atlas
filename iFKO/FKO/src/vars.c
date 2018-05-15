@@ -506,6 +506,6 @@ INT_BVI FilterOutRegs(INT_BVI iv)
    for (i=0; i < TNREG; i++)
       SetVecBit(iv, i, 0);
    SetVecBit(iv, STderef+TNREG-1, 0);
-   /*SetVecBit(iv, TNREG-1, 0);*/ // skip STderef... which is used for mem
+   /*SetVecBit(iv, TNREG-1, 0);*/ /* skip STderef... which is used for mem */
    return(iv);
 }

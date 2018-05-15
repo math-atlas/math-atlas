@@ -1258,7 +1258,7 @@ void HandleVecBroadcast(short vid, short ptrderef)
    
    if ( (IS_VFLOAT(vtype) && !IS_FLOAT(ptype)) 
        || (IS_VDOUBLE(vtype) && !IS_DOUBLE(ptype)) )
-       //yyerror("type mismatch!");
+       /*yyerror("type mismatch!");*/
        fko_error(__LINE__,"type mismatch[%d,%d] !", vtype, ptype);
    
    DoArrayBroadcast(vid, ptrderef);
