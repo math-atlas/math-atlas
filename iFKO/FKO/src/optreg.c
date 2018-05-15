@@ -1404,7 +1404,7 @@ void KeepVarTogether(int N, IGNODE **igarr)
 /*
  *       because of previous condition, no need to check the nref
  */
-         else if (igarr[j]->var == var) // && nref == igarr[j]->nread + ig...
+         else if (igarr[j]->var == var) /* && nref == igarr[j]->nread + ig...*/
          {
 /*
  *          swap with next node if not the same
@@ -3523,13 +3523,13 @@ int DoOptArchSpecInst(BLIST *scope)
                {
                   switch(i)
                   {
-                     case 1:  // 2
+                     case 1:  /* 2 */
                         ip->inst[0] = LEA2;
                         break;
-                     case 2:  // 4
+                     case 2:  /* 4 */
                         ip->inst[0] = LEA4;
                         break;
-                     case 3:  // 8
+                     case 3:  /* 8 */
                         ip->inst[0] = LEA8;
                         break;
                   }

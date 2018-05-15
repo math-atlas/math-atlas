@@ -427,17 +427,23 @@ int ATL_trmm_ST
           (bv&1)?'R':'L', (bv&2)?'U':'L', (bv&4)?'T':'N', (bv&16)?'N':'U',
           SVAL alpha);
    #endif
-/*
- * FIXME: handle degenerate cases specially... no need to call micro-kernel 
- */
- #if 0
    if (NT == 1)
    {
       if (bv&16)   /* if non-unit, work to do, else nothing to do at M=1! */
       #ifdef TCPLX
       {
-         /* Here Here. need to findout correct operations !*/
-         Mjoin(PATL,scal)(NR, inv, B, INCR);
+         TYPE scl[2], tmp;
+         *scl = *A; 
+         tmp = A[1];
+         scl[1] = (bv&8) ? -tmp : tmp;
+         if (!SCALAR_IS_ONE(alpha))
+         {
+            TYPE ra, ia;
+            ra = scl[0] * alpha[0] - scl[1] * alpha[1];
+            ia = scl[1] * alpha[0] + scl[0] * alpha[1];
+            scl[0] = ra; scl[1] = ia;
+         }
+         Mjoin(PATL,scal)(NR, scl, B, INCR);
       }
       #else
          Mjoin(PATL,scal)(NR, alpha * *A, B, INCR);
@@ -448,7 +454,6 @@ int ATL_trmm_ST
    else if (RECUR)  /* if told to */
       return(1);    /* do pure recursion */
    else
-#endif
 #if 1     /* default case uses utrmm */
    {
       ATL_UINT LN;
@@ -564,7 +569,6 @@ int ATL_trmm_ST
    return(res);
    }
 #else
-   else
    {
       enum ATLAS_TRANS TA;
       #ifdef Right_
