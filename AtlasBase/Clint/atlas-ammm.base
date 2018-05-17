@@ -14297,14 +14297,162 @@ int DoTrmmRight(char pre, int flag, int verb, int nrg)
    return(1);
 }
 
+static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
+/*
+ * Takes an amm kernel, and adjusts it for use as a TRMM.  We will do following:
+ * Adjust ku: KVEC must use VLEN, otherwise number between 1-4 where U%ku==0
+ * or ku%U == 0.  KRUNTIME is also forced.
+ * if gd non-null, we also change mp's block factors to roughly match its.
+ * RETURNS: old U (mu if flag&1, else nu)
+ */
+{
+   const double mfR = mp->mflop[0];
+   const unsigned int UU=(flag&1)?mp->mu:mp->nu;
+   unsigned int U=UU, B;
+/*
+ * Make K-loop runtime
+ */
+   mp->flag &= ~(1<<MMF_KUISKB);
+   mp->flag |= 1<<MMF_KRUNTIME;
+/*
+ * For kvec kernel, KU is fixed, so we must adjust U
+ */
+   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   {
+      const unsigned int ku = mp->vlen;
+      unsigned int u, nreg=mp->mu*(mp->nu+1);
+
+      mp->ku = ku;
+      nreg += (mp->flag & (1<<MMF_BREG1)) ? 1 : mp->nu;
+/*
+ *    If U not multiple of ku, or vice versa, must adjust U
+ */
+      if ((U/ku)*ku != U && (ku/U)*U != ku)
+      {
+         if (U > ku) 
+            U = (U/ku)*ku;
+         else
+            U = ku;
+         if (flag&1) /* U == mu */
+            mp->mu = U;
+         else        /* U == nu */
+            mp->nu = U;
+      }
+   }
+   else  /* MVEC kernel can adjust both U and ku, but we just reduce ku */
+   {
+      unsigned int ku = Mmax(mp->ku,4);
+      while ((U/ku)*ku != U)
+         ku--;
+      mp->ku = ku;
+   }
+   U = mp->mu;
+   B = gd ? gd->mbB : mp->mbB;
+   mp->mbB = (B >= U) ? ((B/U)*U) : U;
+   U = mp->nu;
+   B = gd ? gd->nbB : mp->nbB;
+   mp->nbB = (B >= U) ? ((B/U)*U) : U;
+   mp->kbB = (flag&1) ? mp->mbB : mp->kbB;
+   mp->genstr = MMGetGenString(pre, mp);
+
+   return(UU);
+}
+
+void DoTrmmS(char pre, int flag, int verb, int nreg)
+{
+   ATL_mmnode_t *bp, *mmB;
+   int U, ku, SRCH=1;
+   double mfB;
+
+   bp = ReadMMFileWithPath(pre, "res", (flag&1)?"ipmek.sum":"ipnek.sum");
+   if (!bp)
+      return;
+   mmB = FindMaxMflopMMQ(bp, 0);
+   KillAllMMNodes(RemoveMMNodeFromQ(bp, mmB));
+   U = (flag&1) ? mmB->mu : mmB->nu;
+   ku = mmB->ku;
+   mfB = mmB->mflop[0];
+/*
+ * If reg blk matches required TRMM criteria, convert it to generated kernel
+ * and try it for performance.
+ */
+   if ((mmB->flag & (1<<MMF_KVEC)) == 0 || (U/ku)*ku == U || ((ku/U)*U == ku))
+   {
+      double mf;
+      if (!(mmB->flag & (1<<MMF_KVEC)))
+      {
+         while((U/ku)*ku == U)
+            ku--;
+         mmB->ku = ku;
+      }
+      else
+         mmB->ku = mmB->vlen;
+      mmB->flag = ((~(1<<MMF_KUISKB))&(mmB->flag))|(1<<MMF_KRUNTIME);
+/*
+ *    User-provided kern params not always good for generator (where gcc often
+ *    has unnecessary register spills), so confirm performance in this case.
+ */
+      if (mmB->ID)
+      {
+         mmB->ID = 0;
+         if (mmB->rout)
+            free(mmB->rout);
+         mmB->rout = DupString("ATL_tmp.c");
+      }
+      mmB->genstr = MMGetGenString(pre, mmB);
+      mf = TimeMMKernel(0, 0, mmB, pre, mmB->mbB, mmB->nbB, mmB->kbB, 1, 0,-1);
+      SRCH = mf*1.035 < mfB;
+      mfB = mmB->mflop[0] = mf;
+   }
+   else
+      mfB = 0.0;
+/*
+ * If performance drops 3% due to generation or ku change, search from scratch
+ */
+   if (mfB*1.03 < mmB->mflop[0])
+   {
+      ATL_mmnode_t *mp;
+      unsigned int B;
+
+      mmB->mflop[0] = mfB;
+      bp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+      assert(bp);
+      mp = FindMaxMflopMMQ(bp, 0);
+      KillAllMMNodes(RemoveMMNodeFromQ(bp, mp));
+      mp->flag &= ~((1<<MMF_KVEC)|(1<<MMF_KUISKB));
+/*
+ *    HERE: need to make this into a routine so I can call it for any generate
+ *    adjustment, and finish the logic, then call from both places.
+ */
+   mfB = TimeMMKernel(0, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1, 0,-1);
+      if (mfB > mmB->mflop[0])
+      {
+         KillMMNode(mmB);
+         mmB = mp;
+      }
+      else
+         KillMMNode(mp);
+   }
+   else
+      mmB->mflop[0] = mfB;
+   WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LN.sum":"trmmL_LN.sum",mmB);
+   WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LT.sum":"trmmL_LT.sum",mmB);
+   KillMMNode(mmB);
+}
+
 void DoTrmm(char pre, int flag, int verb, int nreg)
 {
+#if 0
+   DoTrmmS(pre, 0, verb, nreg);
+   DoTrmmS(pre, 1, verb, nreg);
+#else
 /*
  * FIXME: add make target to time trmm to record 
  * correct perf data
  */
    assert(!DoTrmmLeft(pre,flag,verb,nreg));
    assert(!DoTrmmRight(pre,flag,verb,nreg));
+#endif
 }
 int main(int nargs, char **args)
 {
