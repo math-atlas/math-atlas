@@ -14312,6 +14312,13 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
 /*
  * Make K-loop runtime
  */
+   if (mp->ID)
+   {
+      mp->ID = 0;
+      if (mp->rout)
+         free(mp->rout);
+      mp->rout = DupString("ATL_tmp.c");
+   }
    mp->flag &= ~(1<<MMF_KUISKB);
    mp->flag |= 1<<MMF_KRUNTIME;
 /*
@@ -14361,80 +14368,93 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
 void DoTrmmS(char pre, int flag, int verb, int nreg)
 {
    ATL_mmnode_t *bp, *mmB;
-   int U, ku, SRCH=1;
-   double mfB;
+   unsigned int U, ku, MB, NB, KB;
+   double mf0, mfB, mf;
 
    bp = ReadMMFileWithPath(pre, "res", (flag&1)?"ipmek.sum":"ipnek.sum");
    if (!bp)
       return;
+   printf("\nSEARCHING FOR TRMM KERNEL, SIDE=%c\n", (flag&1) ? 'L':'R');
    mmB = FindMaxMflopMMQ(bp, 0);
    KillAllMMNodes(RemoveMMNodeFromQ(bp, mmB));
+   MB = mmB->mbB;
+   NB = mmB->nbB;
+   KB = mmB->kbB;
    U = (flag&1) ? mmB->mu : mmB->nu;
    ku = mmB->ku;
-   mfB = mmB->mflop[0];
+   mf0 = mmB->mflop[0];
+   AdjustForTRMM(pre, flag, mmB, NULL);
 /*
- * If reg blk matches required TRMM criteria, convert it to generated kernel
- * and try it for performance.
+ * Adjust given kernel to allow it to use with TRMM, and see what perf we get
  */
-   if ((mmB->flag & (1<<MMF_KVEC)) == 0 || (U/ku)*ku == U || ((ku/U)*U == ku))
-   {
-      double mf;
-      if (!(mmB->flag & (1<<MMF_KVEC)))
-      {
-         while((U/ku)*ku == U)
-            ku--;
-         mmB->ku = ku;
-      }
-      else
-         mmB->ku = mmB->vlen;
-      mmB->flag = ((~(1<<MMF_KUISKB))&(mmB->flag))|(1<<MMF_KRUNTIME);
+   mf = TimeMMKernel(0, 0, mmB, pre, mmB->mbB, mmB->nbB, mmB->kbB, 1, 0,-1);
+   printf("   AMM=%.2f, TRM=%.2f\n", mf0, mf);
+   mfB = mmB->mflop[0] = mf;
 /*
- *    User-provided kern params not always good for generator (where gcc often
- *    has unnecessary register spills), so confirm performance in this case.
+ * If performance drops significantly, try tuning a kernel specifically for TRMM
  */
-      if (mmB->ID)
-      {
-         mmB->ID = 0;
-         if (mmB->rout)
-            free(mmB->rout);
-         mmB->rout = DupString("ATL_tmp.c");
-      }
-      mmB->genstr = MMGetGenString(pre, mmB);
-      mf = TimeMMKernel(0, 0, mmB, pre, mmB->mbB, mmB->nbB, mmB->kbB, 1, 0,-1);
-      SRCH = mf*1.035 < mfB;
-      mfB = mmB->mflop[0] = mf;
-   }
-   else
-      mfB = 0.0;
-/*
- * If performance drops 3% due to generation or ku change, search from scratch
- */
-   if (mfB*1.03 < mmB->mflop[0])
+   if (mf*1.035 < mf0)
    {
       ATL_mmnode_t *mp;
-      unsigned int B;
+      unsigned int B, Ug;
 
       mmB->mflop[0] = mfB;
       bp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
       assert(bp);
       mp = FindMaxMflopMMQ(bp, 0);
       KillAllMMNodes(RemoveMMNodeFromQ(bp, mp));
-      mp->flag &= ~((1<<MMF_KVEC)|(1<<MMF_KUISKB));
+      Ug = (flag&1) ? mp->mu : mp->nu;
 /*
- *    HERE: need to make this into a routine so I can call it for any generate
- *    adjustment, and finish the logic, then call from both places.
+ *    Set blocking factor to one found by [m,n]eqk
  */
-   mfB = TimeMMKernel(0, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1, 0,-1);
-      if (mfB > mmB->mflop[0])
+      if (flag&1)  /* MB = KB */
+      {
+         Ug = Mylcm(mp->mu, mp->ku);
+         assert(MB == KB);  /* sanity check for expected case */
+         mp->kbB = (KB > Ug) ? ((KB)/Ug)*Ug : Ug;
+         mp->mbB = mp->kbB;
+         mp->nbB = (NB/mp->nu)*mp->nu;
+      }
+      else         /* NB = KB */
+      {
+         Ug = Mylcm(mp->nu, mp->ku);
+         assert(NB == KB);  /* sanity check for expected case */
+         mp->kbB = (KB > Ug) ? ((KB)/Ug)*Ug : Ug;
+         mp->nbB = mp->kbB;
+         mp->mbB = (MB > mp->mu) ? (MB/mp->mu)*mp->mu : mp->mu;
+      }
+/*
+ *    If best generated kernel works w/o modification, simply use it
+ */
+      if ((mp->flag&(1<<MMF_KRUNTIME)) && 
+          ((Ug/ku)*ku == Ug || (ku/Ug)*Ug == ku))
       {
          KillMMNode(mmB);
          mmB = mp;
+         mf = TimeMMKernel(0, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1, 0,-1);
+         printf("   Using best generated case,\n      AMM=(%u,%u,%u) %.2f, "
+                "TRM=(%u,%u,%u) %.2f\n", 
+                MB, NB, KB, mf0, mp->mbB, mp->nbB, mp->kbB, mf);
+         mp->mflop[0] = mfB = mf;
       }
       else
-         KillMMNode(mp);
+      {
+         ATL_mmnode_t *gp;
+         gp = CloneMMNode(mp);
+         AdjustForTRMM(pre, flag, gp, NULL);
+         mf = TimeMMKernel(0, 0, gp, pre, gp->mbB, gp->nbB, gp->kbB, 1, 0,-1);
+         printf("   Using adapted generated case,\n      AMM=(%u,%u,%u) %.2f, "
+                "TRM=(%u,%u,%u) %.2f\n", 
+                MB, NB, KB, mf0, mp->mbB, mp->nbB, mp->kbB, mf);
+         if (mf*1.035 >= mf0)
+         {
+            KillMMNode(mmB);
+            mmB = gp;
+         }
+         else
+            assert(0);  /* need to search for case later */
+      }
    }
-   else
-      mmB->mflop[0] = mfB;
    WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LN.sum":"trmmL_LN.sum",mmB);
    WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LT.sum":"trmmL_LT.sum",mmB);
    KillMMNode(mmB);
@@ -14442,7 +14462,7 @@ void DoTrmmS(char pre, int flag, int verb, int nreg)
 
 void DoTrmm(char pre, int flag, int verb, int nreg)
 {
-#if 0
+#if 1
    DoTrmmS(pre, 0, verb, nreg);
    DoTrmmS(pre, 1, verb, nreg);
 #else
