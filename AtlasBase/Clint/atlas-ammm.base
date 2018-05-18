@@ -14360,9 +14360,137 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
    B = gd ? gd->nbB : mp->nbB;
    mp->nbB = (B >= U) ? ((B/U)*U) : U;
    mp->kbB = (flag&1) ? mp->mbB : mp->kbB;
+   if (mp->genstr)
+      free(mp->genstr);
    mp->genstr = MMGetGenString(pre, mp);
 
    return(UU);
+}
+
+ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg, 
+                       int MB, int NB, ATL_mmnode_t *mmB)
+/*
+ * Assumes mmB is best-performing case found so far, MB, NB block factors of
+ * original (unadapted) TRMM case.  Searches for all U that match ku.
+ * RETURNS: (possibly new) mmB case (kills original mmB in this case).
+ */
+{
+   ATL_mmnode_t *pM, *pK;
+   const char *frm="    %c %4d %4d %3d %3d %9.0f\n";
+   unsigned int MU, KU=mmB->ku, bf=mmB->flag;
+
+   pM = MMGetNodeGEN(pre, bf&(~(1<<MMF_KVEC)), 0, 0, 0, 1, mmB->vlen,
+                     0, 0, 0, DupString("ATL_tmp.c"));
+   pM->ku = 1;
+   pK = MMGetNodeGEN(pre, bf|(1<<MMF_KVEC), 0, 0, 0, mmB->vlen, mmB->vlen, 
+                     mmB->vlen, 0, 0, DupString("ATL_tmp.c"));
+   free(pM->genstr);
+   free(pK->genstr);
+   pK->ku = mmB->vlen;
+   printf("Search for TRMM kernel for SD=%c, B=(%u,%u), NREG=%d, VLEN=%d\n",
+          (flag&1) ? 'L':'R', MB, NB, nreg, mmB->vlen);
+   printf("   VD   MB   NB  MU  NU     MFLOP\n");
+   printf("   ==  ===  ===  ==  ==  =========\n");
+   for (MU=1; MU < nreg; MU++)
+   {
+      unsigned int NU, mb, nb, kb;
+      double mf;
+      for (NU=1; NU < nreg; NU++)
+      {
+         if (MU*(NU+1)+1 > nreg)
+            continue;
+         if (MU*(NU+1)+NU > nreg)
+         {
+            pM->flag |= 1<<MMF_BREG1;
+            pK->flag |= 1<<MMF_BREG1;
+         }
+         else
+         {
+            pM->flag &= ~(1<<MMF_BREG1);
+            pK->flag &= ~(1<<MMF_BREG1);
+         }
+         pK->mu = MU;
+         pM->mu = MU * pM->vlen;
+         pK->nu = pM->nu = NU;
+         pM->genstr = MMGetGenString(pre, pM);
+         mb = (MB > MU) ? (MB/MU)*MU : MU;
+         nb = (NB > NU) ? (NB/NU)*NU : NU;
+         kb = (flag&1) ? mb:nb;
+         assert(!MMKernelFailsTest(pre, mb, nb, kb, 1, pM));
+         mf = TimeMMKernel(0, 0, pM, pre, mb, nb, kb, 1, 0, -1);
+         printf(frm, 'M', mb, nb, MU, NU, mf);
+         if (mf > mmB->mflop[0])
+         {
+            CopyMMNode(mmB, pM);
+            mmB->mflop[0] = mf;
+         }
+         free(pM->genstr);
+         if (KU%MU == 0 || MU%KU == 0)
+         {
+            unsigned int U;
+            if (flag&1)
+            {
+               U = Mylcm(MU, KU);
+               mb = (MB > U) ? (MB/U)*U : U;
+            }
+            else
+            {
+               U = Mylcm(NU, KU);
+               nb = (NB > U) ? (NB/U)*U : U;
+            }
+            kb = (flag&1) ? mb:nb;
+            pK->genstr = MMGetGenString(pre, pK);
+            mf = TimeMMKernel(0, 0, pK, pre, mb, nb, kb, 1, 0, -1);
+            printf(frm, 'K', mb, nb, MU, NU, mf);
+            if (mf > mmB->mflop[0])
+            {
+               CopyMMNode(mmB, pK);
+               mmB->mflop[0] = mf;
+            }
+            free(pK->genstr);
+         }
+      }
+   }
+   printf("BEST TRMM CASE:\n");
+   PrintMMLine(stdout, mmB);
+/*
+ * If best case was M-vectorized, try ku=2,3,4
+ */
+   if (!(mmB->flag & (1<<MMF_KVEC)))
+   {
+      const unsigned U = (flag&1) ? mmB->mu : mmB->nu;
+      const unsigned B = (flag&1) ? mmB->mbB : mmB->nbB;
+      unsigned int mb, nb;
+      unsigned int ku;
+
+      pK->genstr = NULL;
+      printf("\nTUNING TRMM's KU:\n");
+      CopyMMNode(pK, mmB);
+      free(pK->genstr);
+      for (ku=2; ku < 4; ku++)
+      {
+         double mf;
+         if (U%ku || B%ku)
+            continue;
+         pK->ku = ku;
+         pK->genstr = MMGetGenString(pre, pK);
+         mf = TimeMMKernel(0, 0, pK, pre, pK->mbB, pK->nbB, pK->kbB, 1, 0, -1);
+         printf("   KU=%d, mf=%.2f\n", ku, mf);
+         if (mf > mmB->mflop[0])
+         {
+            CopyMMNode(mmB, pK);
+            mmB->mflop[0] = mf;
+         }
+         free(pK->genstr);
+      }
+   }
+   pK->genstr = pM->genstr = NULL;
+   KillMMNode(pK);
+   KillMMNode(pM);
+   printf("BEST TRMM CASE:\n");
+   PrintMMLine(stdout, mmB);
+   printf("\n");
+   return(mmB);
 }
 
 void DoTrmmS(char pre, int flag, int verb, int nreg)
@@ -14371,6 +14499,14 @@ void DoTrmmS(char pre, int flag, int verb, int nreg)
    unsigned int U, ku, MB, NB, KB;
    double mf0, mfB, mf;
 
+   bp = TimeMMFileWithPath(pre,"res",(flag&1)?"trmmR_LN.sum":"trmmL_LN.sum", 
+                           0, 0, 0, 1, 0, -1);
+   if (bp)
+   {
+      WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LT.sum":"trmmL_LT.sum", bp);
+      KillAllMMNodes(bp);
+      return;
+   }
    bp = ReadMMFileWithPath(pre, "res", (flag&1)?"ipmek.sum":"ipnek.sum");
    if (!bp)
       return;
@@ -14424,35 +14560,51 @@ void DoTrmmS(char pre, int flag, int verb, int nreg)
          mp->mbB = (MB > mp->mu) ? (MB/mp->mu)*mp->mu : mp->mu;
       }
 /*
- *    If best generated kernel works w/o modification, simply use it
+ *    If best generated kernel works w/o modification, simply use it unless
+ *    its performance worse than adapted main kernel
  */
       if ((mp->flag&(1<<MMF_KRUNTIME)) && 
           ((Ug/ku)*ku == Ug || (ku/Ug)*Ug == ku))
       {
-         KillMMNode(mmB);
-         mmB = mp;
          mf = TimeMMKernel(0, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 1, 0,-1);
          printf("   Using best generated case,\n      AMM=(%u,%u,%u) %.2f, "
                 "TRM=(%u,%u,%u) %.2f\n", 
                 MB, NB, KB, mf0, mp->mbB, mp->nbB, mp->kbB, mf);
-         mp->mflop[0] = mfB = mf;
+         if (mf > mmB->mflop[0])
+         {
+            KillMMNode(mmB);
+            mmB = mp;
+            mp->mflop[0] = mfB = mf;
+         }
+         else
+            KillMMNode(mp);
       }
       else
       {
          ATL_mmnode_t *gp;
+         unsigned int NOSRCH;
+
          gp = CloneMMNode(mp);
          AdjustForTRMM(pre, flag, gp, NULL);
          mf = TimeMMKernel(0, 0, gp, pre, gp->mbB, gp->nbB, gp->kbB, 1, 0,-1);
-         printf("   Using adapted generated case,\n      AMM=(%u,%u,%u) %.2f, "
-                "TRM=(%u,%u,%u) %.2f\n", 
-                MB, NB, KB, mf0, mp->mbB, mp->nbB, mp->kbB, mf);
-         if (mf*1.035 >= mf0)
+         gp->mflop[0] = mf;
+         if (mmB->mflop[0] >= mf)
+            KillMMNode(gp);
+         else
          {
             KillMMNode(mmB);
             mmB = gp;
          }
-         else
-            assert(0);  /* need to search for case later */
+         printf("   Using adapted generated case,\n      AMM=(%u,%u,%u) %.2f, "
+                "TRM=(%u,%u,%u) %.2f\n", 
+                MB, NB, KB, mf0, mp->mbB, mp->nbB, mp->kbB, mf);
+/*
+ *       If we didn't change register blocking, just go with gAMMRES
+ */
+         NOSRCH = (flag&1) ? (mp->mu == gp->mu) : (mp->nu == gp->nu);
+         KillMMNode(mp);
+         if (!NOSRCH || mf*1.035 < mf0)
+            mmB = srchTrmm(pre, flag, verb, nreg, MB, NB, mmB);
       }
    }
    WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LN.sum":"trmmL_LN.sum",mmB);
