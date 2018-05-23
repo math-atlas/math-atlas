@@ -1401,7 +1401,7 @@ void ATL_USERMM
          @iif TRMMR = 0 /* For Left TRMM or GEMM */
       for (j=0; j < nnus; j++)
          @endiif
-         @iif TRMMR ! 0 /* For Right TRMM or GEMM */
+         @iif TRMMR ! 0 /* For Right TRMM */
       for (j=0, J=0; j < nnus; j++, J+=@(nu))
          @endiif
       @endiif
@@ -1418,9 +1418,8 @@ void ATL_USERMM
             @endiif
          @endiif
       @endiif
-      {
+      {         
    @endiif
-         /* Peel K=0 iteration to avoid zero of rCxx and extra add  */
    @iif NOKLOOP ! 0
       @iexp IN_K 0 0 +
          @CALLPROC DoIter0_k
@@ -1440,6 +1439,20 @@ void ATL_USERMM
       @endiwhile
    @endiif
    @iif NOKLOOP = 0
+   @SKIP *********** to manage loop bound of TRMM ********
+      @iif TRMM = 1 /* Left-lower */
+         @iif mu < @(ku)
+         KK = I-off+@(ku) ; 
+         @endiif
+         @iif mu } @(ku)
+         KK = K < (I+@(mu)) ? K : (I+@(mu));
+         @endiif
+      @endiif
+      @iif TRMM = 4 /* Left-lower */
+         KK = K < (J+@(nu)) ? K : (J+@(nu));
+      @endiif
+   @SKIP *******************
+         /* Peel K=0 iteration to avoid zero of rCxx and extra add  */
       @iexp IN_K 0 0 +
       @iexp npeel 1 0 +
       @VEC KDIM `@iexp kmul @(vl)`
@@ -1450,7 +1463,31 @@ void ATL_USERMM
  *       Peel K=@(npeel) iter to allow prefetch of C or next blocks of A&B
  */
          @iexp kk @(kmul) @(npeel) *
+         @iif TRMM = 0  
          if (K == @(kk))
+         @endiif
+         @iif TRMM = 1
+         if (KK <= @(kk))
+         @endiif
+         @iif TRMM = 2
+            @iif mu < @(ku)
+         if ((I-off+@(kk)) >= K)
+            @endiif
+            @iif mu } @(ku)
+         if ((I+@(kk)) >= K)
+            @endiif
+         @endiif
+         @iif TRMM = 3
+            @iif nu < @(ku)
+         if ((J-off+@(kk)) >= K)
+            @endiif
+            @iif nu } @(ku)
+         if ((J+@(kk)) >= K)
+            @endiif
+         @endiif
+         @iif TRMM = 4
+         if (KK <= @(kk))
+         @endiif
             goto KDONE;
             @CALLPROC DoIter
          @iexp npeel @(npeel) 1 +
@@ -1465,7 +1502,31 @@ void ATL_USERMM
          @iwhile ii < nep
          /* ku mulpeel @(ii) of @(nep) */
          @iexp kk @(kmul) @(npeel) *
+         @iif TRMM = 0
          if (K == @(kk))
+         @endiif
+         @iif TRMM = 1
+         if (KK <= @(kk))
+         @endiif
+         @iif TRMM = 2
+            @iif mu < @(ku)
+         if ((I-off+@(kk)) >= K)
+            @endiif
+            @iif mu } @(ku)
+         if ((I+@(kk)) >= K)
+            @endiif
+         @endiif
+         @iif TRMM = 3
+            @iif nu < @(ku)
+         if ((J-off+@(kk)) >= K)
+            @endiif
+            @iif nu } @(ku)
+         if ((J+@(kk)) >= K)
+            @endiif
+         @endiif
+         @iif TRMM = 4
+         if (KK >= @(kk))
+         @endiif
             goto KDONE;
             @CALLPROC DoIter
             @iexp npeel @(npeel) 1 +
@@ -1474,13 +1535,7 @@ void ATL_USERMM
       @endiif
          @iexp kk @(kmul) @(npeel) *
       @iif TRMM = 1 /* Left-lower */
-            @iif mu < @(ku)
-         for (k=@(kk); k < (I-off+@(ku)); k += @(ku))
-            @endiif
-            @iif mu } @(ku)
-         KK = K < (I+@(mu)) ? K : (I+@(mu));
          for (k=@(kk); k < KK; k += @(ku))
-            @endiif
       @endiif
       @iif TRMM = 2 /* Left-upper */
             @iif mu < @(ku)
@@ -1499,7 +1554,6 @@ void ATL_USERMM
             @endiif
       @endiif
       @iif TRMM = 4 /* Right-upper */
-         KK = K < (J+@(nu)) ? K : (J+@(nu));
          for (k=@(kk); k < KK; k += @(ku))
       @endiif
          @iif TRMM = 0
