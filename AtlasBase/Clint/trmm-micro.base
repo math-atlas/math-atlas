@@ -369,7 +369,7 @@ int ATL_utrmmL
 #endif
    szR = nb*K;
    szC = (((MU*NU+VLEN-1)/VLEN)*VLEN)*nmu*nnu; 
-   sz = ATL_MulBySize(szT + MU*KU, szR + NU*KU + szC + (MU+MU)*NU + 
+   sz = ATL_MulBySize(szT + MU*KU + szR + NU*KU + szC + (MU+MU)*NU + 
                       3*ATL_Cachelen);
    if (sz < ATL_MaxMalloc)
       vp = malloc(sz);
@@ -1302,23 +1302,30 @@ void GenTrCopy(ATL_mmnode_t *mp, ATL_cpnode_t *cb, char *outd, char pre, char sd
    assert(ln);
 
    cb->flag &= ~(1<<CPF_TRANS);
+/*
+ * for Left TRMM: we need tAT when ta=N and tAN when ta=T
+ * since we generate the copyname by our own, tta needs to reflect that
+ */
+   #if 0
    if (sd == 'L')
       cb->flag |= (ta=='N') ? (1<<CPF_TRANS) : 0;
    else
       cb->flag |= (ta=='T') ? (1<<CPF_TRANS) : 0;
-
+   #else 
+   if (sd == 'L') 
+      tta = (ta=='N')? 'T' : 'N';
+   else
+      tta = ta;
+      cb->flag |= (tta=='T') ? (1<<CPF_TRANS) : 0;
+   #endif
+/*
+ * NOTE: we don't need up/lo as the parameter for TRMM-copy anymore
+ */
    /*if (up == 'L')
       cb->flag |= (1<<CPF_LOWER);
    else
       cb->flag &= ~(1<<CPF_LOWER);
    */
-   #if 0
-   if (pre == 'c' || pre == 'z')
-      tta = (ta == 'N')? 'C' : 'H';
-   else tta = ta;
-   #else
-      tta = ta;
-   #endif
    UR = (sd=='L')? mp->mu : mp->nu;
    kvec = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen:0;
 
@@ -1644,6 +1651,7 @@ void GenAllTrmm(char pre, char *outd)
          fn[7] = ta;
          mb = ReadMMFileWithPath(pre, "res", fn);
          assert(mb);
+         mb->blask = ATL_KTRMM; /* forced to TRMM */
          MBs[i] = mb;
          GenMicroTrmm(pre, od+7, sd, up, ta, mb);
          GenCopyTrmm(pre, od+7, sd, up, ta, mb);
