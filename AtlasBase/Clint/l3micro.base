@@ -4580,6 +4580,72 @@ void Mjoin(PATL,symmR_rec)
        const SCALAR, const TYPE*, ATL_CSZT, const TYPE*, ATL_CSZT,
        const SCALAR, TYPE*, ATL_CSZT);
 #endif
+@ROUT ATL_ipsymm
+/*
+ * SYMM involves a symmetric matrix (S) and dense matrix (D).
+ * This routine uses normal GEMM to do a SYMM by reflecting the symmetric matrix
+ * into dense access-major storage.  The recursive symm divides S
+ * which means eventually the shape is dominated by D, and
+ * so the double copy of D inherent in recursion becomes a dominant cost.
+ * This routine avoids this problem by copying S up front, and then putting
+ * the dense S as inner matrix, so that D is copied only once, 1 panel at 
+ * a time.
+ */
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_level1.h"
+#include "atlas_level2.h"
+#include "atlas_level3.h"
+@skip #include "atlas_kernel3.h"
+#include "atlas_reflevel3.h"
+#include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
+#include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
+
+/*
+ * BV: 0:Left, 1:Conj
+ */
+void reflectL(ipinfo_t *ip, unsigned int FLG, size_t N, TYPE *A, size_t lda)
+{
+   cm2am_t *cpT, *cpN;
+   size_t nfmblks, npmblks, nfnblks, npnblks;
+   unsigned int MB, mb, NB, nb, j;
+   const SCALAR alp = (FLG&1) ? ip->alpA : ip->alpB;
+
+/*
+ * ipinfo should have the no-transpose copy, so get trans copy for reflection
+ */
+   cpN = (BV&1) ? ip->a2blk : ip->b2blk;
+   if (FLG&1)
+   {
+      MB = ip->mb;
+      mb = ip->pmb;
+      nfmblks = ip->nfmblks;
+      npmblks = ip->npmblks;
+      j = ATL_GetVWipgenA2BLK(ip->idx);
+   }
+   else
+      j = ATL_GetVWipgenB2BLK(ip->idx);
+   j += j;
+   #ifdef TCPLX
+      if (alp[1] == ATL_rzero) /* real number */
+      {
+         TYPE v=alp[0];
+         if (v == ATL_rone)
+            cpT = (FLG&2) ? ATL_CpyFromACg_a1[j] : ATL_CpyFromATg_a1[j];
+         else if (v == ATL_rnone)
+            cpT = (FLG&2) ? ATL_CpyFromACg_aN[j] : ATL_CpyFromATg_aN[j];
+         else
+            cpT = (FLG&2) ? ATL_CpyFromACg_aX[j] : ATL_CpyFromATg_aX[j];
+      }
+      else
+         cpT = (FLG&2) ? ATL_CpyFromACg_aX[j] : ATL_CpyFromATg_aX[j];
+   #else
+      if (alp == ATL_rone)
+          cpT = ATL_CpyFromATg_a1[j];
+      else
+         cpT = (alp == ATL_rnone) ? ATL_CpyFromATg_aN[j]:ATL_CpyFromATg_aX[j];
+   #endif
+}
 @ROUT ATL_symmL
 #include "atlas_misc.h"
 #include "atlas_amm.h"
