@@ -11347,7 +11347,8 @@ struct psbla
    size_t lda, ldb, ldc, M, N, K;
    const TYPE *A, *B;
    TYPE *C;
-   SCALAR alpha, beta;
+   SCALAR alpha; 
+   SCALAR beta;
    #ifdef TCPLX
       TYPE rscaler;
    #endif
@@ -11363,7 +11364,9 @@ void @(ps)_psgemm_ser(void *vpp, int rank, int vrank)
    const unsigned int flg=pd->flg;
    enum ATLAS_TRANS TA, TB;
 
-/*   printf("%d: vrank=%d, nthr=%d\n", rank, vrank, pp->nworkers); */
+   #ifdef DEBUG
+   fprintf(stderr, "%d: vrank=%d, nthr=%d START\n", rank, vrank, pp->nworkers); 
+   #endif
    #ifdef TCPLX
    if (flg&2)
       TA = (flg&1) ? AtlasConjTrans : AtlasConj;
@@ -11377,8 +11380,33 @@ void @(ps)_psgemm_ser(void *vpp, int rank, int vrank)
    else
    #endif
       TB = (flg&4) ? AtlasTrans : AtlasNoTrans;
-   @(ps)_gemm(TA, TB, pd->M, pd->N, pd->K, pd->alpha, pd->A, pd->lda, pd->B, 
-             pd->ldb, pd->beta, pd->C, pd->ldc);
+#define ulng unsigned long
+   fprintf(stderr, "T=(%u,%u), D=(%lu,%lu,%lu) LD=(%lu,%lu,%lu)\n"
+           "   sc=(%g,%g), p=(%p,%p,%p)\n",
+           TA, TB,(ulng)pd->M,(ulng)pd->N,(ulng)pd->K,
+           (ulng)pd->lda,(ulng)pd->ldb,(ulng)pd->ldc,
+           pd->alpha, pd->beta, pd->A, pd->B, pd->C);
+
+   if (!vrank)
+      @(ps)_gemm(TA, TB, pd->M, pd->N, pd->K, pd->alpha, pd->A, pd->lda, pd->B, 
+                pd->ldb, pd->beta, pd->C, pd->ldc);
+   else
+   {
+      TYPE *C;
+      #ifdef TCPLX
+         TYPE BETA[2]={ATL_rzero, ATL_rzero};
+      #else
+         TYPE BETA = ATL_rzero;
+      #endif
+      C = malloc(ATL_MulBySize(pd->M)*pd->N);
+      assert(C);
+      @(ps)_gemm(TA, TB, pd->M, pd->N, pd->K, pd->alpha, pd->A, pd->lda, pd->B, 
+                pd->ldb, BETA, C, pd->M);
+      free(C);
+   }
+   #ifdef DEBUG
+   fprintf(stderr, "%d: vrank=%d, nthr=%d DONE\n", rank, vrank, pp->nworkers); 
+   #endif
 }
 #undef @(ps)_gemm
 #define @(ps)_gemm @(ps)_psgemm
@@ -15337,7 +15365,7 @@ void DoTiming(int nreps, int flszKB, int MFF, int ldaG, int ldbG, int ldcG,
    switch(ibl)
    {
       double dtmp;
-      int lda, ldb, ldc, ib=0;
+      int lda, ldb, ldc, ib;
    case Bgemm:
       lda = ldaG + (TA == AtlasNoTrans) ? M : K;
       ldb = ldbG + (TB == AtlasNoTrans) ? K : N;
