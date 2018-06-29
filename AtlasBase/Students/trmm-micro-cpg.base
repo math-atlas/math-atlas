@@ -166,7 +166,44 @@
       #endif
    @endiif
 @endproc
-@beginproc proc_cm2am_kvec_diag k n
+@SKIP ******* up/lo version of proproc_cm2am_diag1
+@beginproc proc_cm2am_diag1_up bi
+   @iif i < @(j)
+@ROUT ATL_cm2am `         b[@(bi)] = @(malp)A@(j)[i+@(i)];`
+@ROUT ATL_am2cm `         A@(j)[i+@(i)] = @(malp)b[@(bi)];`
+   @endiif
+   @iif i = @(j)
+      #ifdef UnitDiag_
+@ROUT ATL_cm2am `         b[@(bi)] = @(malp)ATL_rone;`
+      #else
+@ROUT ATL_cm2am `         b[@(bi)] = @(malp)A@(j)[i+@(i)];`
+@ROUT ATL_am2cm `         A@(j)[i+@(i)] = @(malp)b[@(bi)];`
+      #endif
+   @endiif
+   @iif i > @(j)
+@ROUT ATL_cm2am `         b[@(bi)] = ATL_rzero;`
+   @endiif
+@endproc
+
+@beginproc proc_cm2am_diag1_lo bi
+   @iif i < @(j)
+@ROUT ATL_cm2am `         b[@(bi)] = ATL_rzero;`
+   @endiif
+   @iif i = @(j)
+      #ifdef UnitDiag_
+@ROUT ATL_cm2am `         b[@(bi)] = @(malp)ATL_rone;`
+      #else
+@ROUT ATL_cm2am `         b[@(bi)] = @(malp)A@(j)[i+@(i)];`
+@ROUT ATL_am2cm `         A@(j)[i+@(i)] = @(malp)b[@(bi)];`
+      #endif
+   @endiif
+   @iif i > @(j)
+@ROUT ATL_cm2am `         b[@(bi)] = @(malp)A@(j)[i+@(i)];`
+@ROUT ATL_am2cm `         A@(j)[i+@(i)] = @(malp)b[@(bi)];`
+   @endiif
+@endproc
+@SKIP ********************************************
+@beginproc proc_cm2am_kvec_diag k n isup
    @iexp j 0
    @iwhile j < @(n)
       @iexp i 0
@@ -174,7 +211,12 @@
          @iexp ib @(j) @(ku) *
          @iexp ib @(ib) @(i) +
          @iif i < @(k)
-            @callproc proc_cm2am_diag1 @(ib)
+            @iif isup = 1
+            @callproc proc_cm2am_diag1_up @(ib)
+            @endiif
+            @iif isup = 0
+            @callproc proc_cm2am_diag1_lo @(ib)
+            @endiif
          @endiif
          @iif i } @(k)
 @ROUT ATL_cm2am `      b[@(ib)] = ATL_rzero;`
@@ -379,7 +421,7 @@ void ATL_USERCPMM       /* column- to access-major */
          @callproc proc_cm2am_kvec_blk @(ku) @(nu)
       }
       /* copy (off+@(nu))x@(nu) diag block */
-      @callproc proc_cm2am_kvec_diagR @(ku) @(nu)
+      @callproc proc_cm2am_kvec_diagR_up @(ku) @(nu)
       off += @(nu); if (off >= @(ku)) off -= @(ku);
          @endiif
          @iif nu } @(ku)
@@ -389,18 +431,18 @@ void ATL_USERCPMM       /* column- to access-major */
          @callproc proc_cm2am_kvec_blk @(ku) @(nu)
       }
       /* copy @(nu)x@(nu) diag block */
-      @callproc proc_cm2am_kvec_diag @(nu) @(nu)
+      @callproc proc_cm2am_kvec_diag @(nu) @(nu) 1
          @endiif
    #else
       /* copy @(koff)x@(nu) diag block */
          @iif nu < @(ku)
       i = j - off;
-      @callproc proc_cm2am_kvec_diagR @(ku) @(nu)
+      @callproc proc_cm2am_kvec_diagR_lo @(ku) @(nu)
       off += @(nu); if (off >= @(ku)) off -= @(ku);
          @endiif
          @iif nu } @(ku)
       i = j;
-      @callproc proc_cm2am_kvec_diag @(nu) @(nu)
+      @callproc proc_cm2am_kvec_diag @(nu) @(nu) 0
          @endiif
 
       for (i+=@(koff); i < (K-Kr); i += @(ku), b += @(binc))
@@ -435,7 +477,7 @@ void ATL_USERCPMM       /* column- to access-major */
          @callproc proc_cm2am_kvec_blk @(ku) @(nu)
       }
       /* copy (off+@(nu))x@(nu) diag blk */
-      @callproc proc_cm2am_kvec_diagR @(ku) @(nu)
+      @callproc proc_cm2am_kvec_diagR_up @(ku) @(nu)
       off += @(nu); if (off >= @(ku)) off -= @(ku);
       @iexp j 0
       @iwhile j < @(nu)
@@ -463,7 +505,7 @@ void ATL_USERCPMM       /* column- to access-major */
          @callproc proc_cm2am_kvec_blk @(ku) @(nr)
       }
       /* copy @(nr)x@(nr) blk */
-      @callproc proc_cm2am_kvec_diag @(nr) @(nr)
+      @callproc proc_cm2am_kvec_diag @(nr) @(nr) 1 
          @endiif
       @endiif
    #else
@@ -492,7 +534,7 @@ void ATL_USERCPMM       /* column- to access-major */
          @endiif
          @iif nu } @(ku)
       i = j;
-      @callproc proc_cm2am_kvec_diag @(nr) @(nr)
+      @callproc proc_cm2am_kvec_diag @(nr) @(nr) 0
          @endiif
       @endiif
    #endif
@@ -549,12 +591,17 @@ void ATL_USERCPMM       /* column- to access-major */
       }
    @endiif
 @endproc
-@beginproc proc_cm2am_mvec_diag k n
+@beginproc proc_cm2am_mvec_diag k n isup
    @iexp i 0
    @iwhile i < @(k)
       @iexp j 0
       @iwhile j < @(n)
-         @callproc proc_cm2am_diag1 @(j)
+         @iif isup = 1
+         @callproc proc_cm2am_diag1_up @(j)
+         @endiif
+         @iif isup = 0
+         @callproc proc_cm2am_diag1_lo @(j)
+         @endiif
          @iexp j @(j) 1 +
       @endiwhile
 @ROUT ATL_cm2am 
@@ -635,6 +682,7 @@ void ATL_USERCPMM       /* column- to access-major */
          b += @(incdup)*@(ku);
       }
 @endproc
+@SKIP **************up/lo version of proc_cm2am_mvec_diagR_up 
 @beginproc proc_cm2am_mvec_diagR_up k n
       {
          int di, dj;
@@ -691,6 +739,7 @@ void ATL_USERCPMM       /* column- to access-major */
          b += @(incdup)*@(ku);
       }
 @endproc
+@SKIP ************************************************
 @iif kmaj = 0
 @ROUT ATL_am2cm
 /*
@@ -772,7 +821,7 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
          @callproc proc_cm2am_mvec_blk @(nu)
       }
       /* copy @(nu)x@(nu) diag block */
-      @callproc proc_cm2am_mvec_diag @(nu) @(nu)
+      @callproc proc_cm2am_mvec_diag @(nu) @(nu) 1
          @endiif
    #else
       /* copy @(koff)x@(nu) diag block */
@@ -783,7 +832,7 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
          @endiif
          @iif nu } @(ku)
       i = j;
-      @callproc proc_cm2am_mvec_diag @(nu) @(nu)
+      @callproc proc_cm2am_mvec_diag @(nu) @(nu) 0
          @endiif
 
       for (i+=@(koff); i < K; i++, b += @(incdup))
@@ -845,7 +894,7 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
          @callproc proc_cm2am_mvec_blk @(nr)
       }
       /* copy @(nr)x@(nr) diag blk */
-      @callproc proc_cm2am_mvec_diag @(nr) @(nr)
+      @callproc proc_cm2am_mvec_diag @(nr) @(nr) 1
          @endiif
       @endiif
    #else
@@ -874,7 +923,7 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
          @endiif
          @iif nu } @(ku)
       i = j;
-      @callproc proc_cm2am_mvec_diag @(nr) @(nr)
+      @callproc proc_cm2am_mvec_diag @(nr) @(nr) 0
          @endiif
       @endiif
    #endif
@@ -1047,7 +1096,39 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
       #endif
    @endiif
 @endproc
-@beginproc proc_ccm2am_kvec_diag k n
+@SKIP *********** up/lo version of proc_ccm2am_kvec_diag1
+@beginproc proc_ccm2am_kvec_diag1_up bi
+   @iif i < @(j)
+         @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
+   @endiif
+   @iif i = @(j)
+      #ifdef UnitDiag_
+         @callproc proc_ccm2am_elem_U @(bi)
+      #else
+         @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
+      #endif
+   @endiif
+   @iif i > @(j)
+         rA[@(bi)] = iA[@(bi)] = ATL_rzero;
+   @endiif
+@endproc
+@beginproc proc_ccm2am_kvec_diag1_lo bi
+   @iif i < @(j)
+         rA[@(bi)] = iA[@(bi)] = ATL_rzero;
+   @endiif
+   @iif i = @(j)
+      #ifdef UnitDiag_
+         @callproc proc_ccm2am_elem_U @(bi)
+      #else
+         @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
+      #endif
+   @endiif
+   @iif i > @(j)
+         @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
+   @endiif
+@endproc
+@SKIP **************************************************
+@beginproc proc_ccm2am_kvec_diag k n isup
    @iexp j 0
    @iwhile j < @(n)
       @iexp i 0
@@ -1055,7 +1136,12 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
          @iexp ib @(j) @(ku) *
          @iexp ib @(ib) @(i) +
          @iif i < @(k)
-            @callproc proc_ccm2am_kvec_diag1 @(ib)
+            @iif isup = 1
+            @callproc proc_ccm2am_kvec_diag1_up @(ib)
+            @endiif
+            @iif isup = 0
+            @callproc proc_ccm2am_kvec_diag1_lo @(ib)
+            @endiif
          @endiif
          @iif i } @(k)
             rA[@(ib)] = iA[@(ib)] = ATL_rzero;
@@ -1270,7 +1356,7 @@ void ATL_USERCPMM
          @callproc proc_ccm2am_kvec_blk @(ku) @(nu)
       }
       /* copy @(nu)x@(nu) diag block */
-      @callproc proc_ccm2am_kvec_diag @(nu) @(nu)
+      @callproc proc_ccm2am_kvec_diag @(nu) @(nu) 1
          @endiif
    #else
       /* copy @(koff)x@(nu) diag block */
@@ -1281,7 +1367,7 @@ void ATL_USERCPMM
          @endiif
          @iif nu } @(ku)
       i = j;
-      @callproc proc_ccm2am_kvec_diag @(nu) @(nu)
+      @callproc proc_ccm2am_kvec_diag @(nu) @(nu) 0
          @endiif
 
       for (i+=@(koff); i < (K-Kr); i += @(ku), rA += @(binc), iA += @(binc))
@@ -1343,7 +1429,7 @@ void ATL_USERCPMM
          @callproc proc_ccm2am_kvec_blk @(ku) @(nr)
       }
       /* copy @(nr)x@(nr) block */
-      @callproc proc_ccm2am_kvec_diag @(nr) @(nr)
+      @callproc proc_ccm2am_kvec_diag @(nr) @(nr) 1
          @endiif
       @endiif
    #else
@@ -1372,7 +1458,7 @@ void ATL_USERCPMM
          @endiif
          @iif nu } @(ku)
       i = j;
-      @callproc proc_ccm2am_kvec_diag @(nr) @(nr)
+      @callproc proc_ccm2am_kvec_diag @(nr) @(nr) 0
          @endiif
       @endiif
    #endif
@@ -1439,12 +1525,49 @@ void ATL_USERCPMM
          #endif
    @endiif
 @endproc
-@beginproc proc_ccm2am_mvec_diag k n
+@SKIP *********************up/lo version of proc_ccm2am_diag1 
+@beginproc proc_ccm2am_diag1_up bi
+   @iif i < @(j)
+            @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
+   @endiif
+   @iif i = @(j)
+         #ifdef UnitDiag_
+            @callproc proc_ccm2am_elem_U @(bi)
+         #else
+            @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
+         #endif
+   @endiif
+   @iif i > @(j)
+            rA[@(bi)] = iA[@(bi)] = ATL_rzero;
+   @endiif
+@endproc
+@beginproc proc_ccm2am_diag1_lo bi
+   @iif i < @(j)
+            rA[@(bi)] = iA[@(bi)] = ATL_rzero;
+   @endiif
+   @iif i = @(j)
+         #ifdef UnitDiag_
+            @callproc proc_ccm2am_elem_U @(bi)
+         #else
+            @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
+         #endif
+   @endiif
+   @iif i > @(j)
+            @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
+   @endiif
+@endproc
+@SKIP *****************************************************
+@beginproc proc_ccm2am_mvec_diag k n isup
    @iexp i 0
    @iwhile i < @(k)
       @iexp j 0
       @iwhile j < @(n)
-         @callproc proc_ccm2am_diag1 @(j)
+         @iif isup = 1
+         @callproc proc_ccm2am_diag1_up @(j)
+         @endiif
+         @iif isup = 0
+         @callproc proc_ccm2am_diag1_lo @(j)
+         @endiif
          @iexp j @(j) 1 +
       @endiwhile
 @ROUT ATL_ccm2am 
@@ -1678,7 +1801,7 @@ void ATL_USERCPMM       /* col-major matx to access-major blk */
          @callproc proc_ccm2am_mvec_blk @(nu)
       }
       /* copy @(nu)x@(nu) diag block */
-      @callproc proc_ccm2am_mvec_diag @(nu) @(nu)
+      @callproc proc_ccm2am_mvec_diag @(nu) @(nu) 1
          @endiif
    #else
       /* copy @(koff)x@(nu) diag block */
@@ -1689,7 +1812,7 @@ void ATL_USERCPMM       /* col-major matx to access-major blk */
          @endiif
          @iif nu } @(ku)
       i = j;
-      @callproc proc_ccm2am_mvec_diag @(nu) @(nu)
+      @callproc proc_ccm2am_mvec_diag @(nu) @(nu) 0
          @endiif
 
       for (i+=@(koff); i < K; i++, rA += @(incdup), iA += @(incdup))
@@ -1751,7 +1874,7 @@ void ATL_USERCPMM       /* col-major matx to access-major blk */
          @callproc proc_ccm2am_mvec_blk @(nr)
       }
       /* copy @(nr)x@(nr) diag blk */
-      @callproc proc_ccm2am_mvec_diag @(nr) @(nr)
+      @callproc proc_ccm2am_mvec_diag @(nr) @(nr) 1
          @endiif
       @endiif
    #else
@@ -1780,7 +1903,7 @@ void ATL_USERCPMM       /* col-major matx to access-major blk */
          @endiif
          @iif nu } @(ku)
       i = j;
-      @callproc proc_ccm2am_mvec_diag @(nr) @(nr)
+      @callproc proc_ccm2am_mvec_diag @(nr) @(nr) 0
          @endiif
       @endiif
    #endif
