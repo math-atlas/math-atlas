@@ -14299,7 +14299,7 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
 /*
  * Takes an amm kernel, and adjusts it for use as a TRMM.  We will do following:
  * Adjust ku: KVEC must use VLEN, otherwise number between 1-4 where U%ku==0
- * or ku%U == 0.  KRUNTIME is also forced.
+ * or ku%U == 0.  KRUNTIME is also forced, and it doesn't need KCLEAN.
  * if gd non-null, we also change mp's block factors to roughly match its.
  * RETURNS: old U (mu if flag&1, else nu)
  */
@@ -14317,7 +14317,7 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
          free(mp->rout);
       mp->rout = DupString("ATL_tmp.c");
    }
-   mp->flag &= ~(1<<MMF_KUISKB);
+   mp->flag &= ~((1<<MMF_KUISKB)|(1<<MMF_KCLN));
    mp->flag |= 1<<MMF_KRUNTIME;
 /*
  * For kvec kernel, KU is fixed, so we must adjust U
@@ -14351,13 +14351,30 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
          ku--;
       mp->ku = ku;
    }
-   U = mp->mu;
-   B = gd ? gd->mbB : mp->mbB;
-   mp->mbB = (B >= U) ? ((B/U)*U) : U;
-   U = mp->nu;
-   B = gd ? gd->nbB : mp->nbB;
-   mp->nbB = (B >= U) ? ((B/U)*U) : U;
-   mp->kbB = (flag&1) ? mp->mbB : mp->kbB;
+   if (flag & 1)  /* Left, MB == KB */
+   {
+      unsigned int sz = mp->mbB * mp->kbB;
+      U = Mylcm(mp->mu, mp->ku);
+      for (B=U; B*B < sz; B += U) ;
+      if (B*B > sz && B > U)
+         B -= U;
+      mp->mbB = mp->kbB = B;
+      U = mp->nu;
+      B = mp->nbB;
+      mp->nbB = (B >= U) ? ((B/U)*U) : U;
+   }
+   else           /* Right, NB == KB */
+   {
+      unsigned int sz = mp->nbB * mp->kbB;
+      U = Mylcm(mp->nu, mp->ku);
+      for (B=U; B*B < sz; B += U) ;
+      if (B*B > sz && B > U)
+         B -= U;
+      mp->nbB = mp->kbB = B;
+      U = mp->mu;
+      B = mp->mbB;
+      mp->mbB = (B >= U) ? ((B/U)*U) : U;
+   }
    if (mp->genstr)
       free(mp->genstr);
    mp->genstr = MMGetGenString(pre, mp);
@@ -14386,7 +14403,7 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
    free(pK->genstr);
    pK->ku = mmB->vlen;
    printf("Search for TRMM kernel for SD=%c, B=(%u,%u), NREG=%d, VLEN=%d\n",
-          (flag&1) ? 'L':'R', MB, NB, nreg, mmB->vlen);
+          (flag&1) ? 'R':'L', MB, NB, nreg, mmB->vlen);
    printf("   VD   MB   NB  MU  NU     MFLOP\n");
    printf("   ==  ===  ===  ==  ==  =========\n");
    for (MU=1; MU < nreg; MU++)
@@ -14414,12 +14431,16 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
          mb = (MB > MU) ? (MB/MU)*MU : MU;
          nb = (NB > NU) ? (NB/NU)*NU : NU;
          kb = (flag&1) ? mb:nb;
-         assert(!MMKernelFailsTest(pre, mb, nb, kb, 1, pM));
+         /* assert(!MMKernelFailsTest(pre, mb, nb, kb, 1, pM)); */
          mf = TimeMMKernel(0, 0, pM, pre, mb, nb, kb, 1, 0, -1);
          printf(frm, 'M', mb, nb, MU, NU, mf);
          if (mf > mmB->mflop[0])
          {
             CopyMMNode(mmB, pM);
+            mmB->mbB = mb;
+            mmB->nbB = nb;
+            mmB->kbB = kb;
+            /* assert(!MMKernelFailsTest(pre, mb, nb, kb, 1, mmB)); */
             mmB->mflop[0] = mf;
          }
          free(pM->genstr);
@@ -14443,6 +14464,10 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
             if (mf > mmB->mflop[0])
             {
                CopyMMNode(mmB, pK);
+               mmB->mbB = mb;
+               mmB->nbB = nb;
+               mmB->kbB = kb;
+               /* assert(!MMKernelFailsTest(pre, mb, nb, kb, 1, mmB)); */
                mmB->mflop[0] = mf;
             }
             free(pK->genstr);
@@ -14451,6 +14476,7 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
    }
    printf("BEST TRMM CASE:\n");
    PrintMMLine(stdout, mmB);
+   assert(!MMKernelFailsTest(pre, mmB->mbB, mmB->nbB, mmB->kbB, 1, mmB));
 /*
  * If best case was M-vectorized, try ku=2,3,4
  */
@@ -14497,11 +14523,12 @@ void DoTrmmS(char pre, int flag, int verb, int nreg)
    unsigned int U, ku, MB, NB, KB;
    double mf0, mfB, mf;
 
-   bp = TimeMMFileWithPath(pre,"res",(flag&1)?"trmmR_LN.sum":"trmmL_LN.sum", 
+   bp = TimeMMFileWithPath(pre,"res",(flag&1)?"trmmKLL.sum":"trmmKRL.sum", 
                            0, 0, 0, 1, 0, -1);
    if (bp)
    {
-      WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LT.sum":"trmmL_LT.sum", bp);
+      WriteMMFileWithPath(pre,"res",(flag&1)?"trmmKLU.sum":"trmmKRU.sum", bp);
+      WriteMMFileWithPath(pre,"res",(flag&1)?"trmmKLL.sum":"trmmKRL.sum", bp);
       KillAllMMNodes(bp);
       return;
    }
@@ -14602,11 +14629,13 @@ void DoTrmmS(char pre, int flag, int verb, int nreg)
          NOSRCH = (flag&1) ? (mp->mu == gp->mu) : (mp->nu == gp->nu);
          KillMMNode(mp);
          if (!NOSRCH || mf*1.035 < mf0)
-            mmB = srchTrmm(pre, flag, verb, nreg, MB, NB, mmB);
+            mmB = srchTrmm(pre, flag, verb, nreg, mmB->mbB, mmB->nbB, mmB);
       }
    }
-   WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LN.sum":"trmmL_LN.sum",mmB);
-   WriteMMFileWithPath(pre,"res",(flag&1)?"trmmR_LT.sum":"trmmL_LT.sum",mmB);
+   if (!(flag&1))
+      mmB->flag |= 1<<MMF_RIGHT;
+   WriteMMFileWithPath(pre,"res",(flag&1)?"trmmKLL.sum":"trmmKRL.sum",mmB);
+   WriteMMFileWithPath(pre,"res",(flag&1)?"trmmKLU.sum":"trmmKRU.sum",mmB);
    KillMMNode(mmB);
 }
 
@@ -34541,10 +34570,15 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **FOUT)
    assert(cb);
    for (cp=cb; cp; cp = cp->next)
    {
-      if (cp->blask == ATL_KTRSM)  /* TRSM kernels */
-      {
-         cp->blask = ATL_KGEMM;    /* are the just GEMM kerns */
-         cp->ivar = 0;             /* w/o K cleanup */
+/*
+ *    TRSM kernels are just TRMM kernels w/o K cleanup.
+ *    TRMM kernels aren't, but we put a matching gemm kernel in anyway, so
+ *    call them GEMM to avoid problems with copies.
+ */
+      if (cp->blask == ATL_KTRSM || cp->blask == ATL_KTRMM)
+      {                            
+         cp->blask = ATL_KGEMM;
+         cp->ivar = 0;
       }
       else
          cp->ivar = FLAG_IS_SET(cp->flag, MMF_KCLN) ? -1 : 0;

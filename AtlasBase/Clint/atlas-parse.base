@@ -152,12 +152,17 @@ struct CPNode
 #define MMF_BREG1      19  /* 1: use only 1 reg for B, else use NU */
 #define MMF_KCLN       20  /* 1: cleaner for K dim is required */
 #define MMF_ALLTRANS   21  /* 1: do C^T = B^T * A^T, not C=A*B */
-#define MMF_MAXBIT     21
+/*
+ * Some definitions for triangular kernels
+ */
+#define MMF_RIGHT      22  /* 1: Right, else Left */
+#define MMF_UPPER      23  /* 1: Upper, else Lower */
+#define MMF_MAXBIT     23
 #define MMF_ALLPF ( (1<<MMF_PFACOLS)|(1<<MMF_PFABLK)|(1<<MMF_PFBCOLS) \
                     |(1<<MMF_PFCELTS) )
 #define MMF_MVSET  ( (1<<MMF_MVA) | (1<<MMF_MVB) | (1<<MMF_MVC) | (1<<MMF_CPC) )
 #define MMF_MVDEF  ( (1<<MMF_MVA) | (1<<MMF_MVB) )
-#define MMF_DIFFMSK (~((1<<MMF_KCLN)|MMF_MVSET))
+#define MMF_DIFFMSK (~((1<<MMF_KCLN)|MMF_MVSET|(1<<MMF_RIGHT)|(1<<MMF_UPPER)))
 #define MMF_STKBTS (1<<MMF_KCLN)
 #define MMF_DEFAULT ( (1<<MMF_LDCTOP) | (1<<MMF_AOUTER) | MMF_MVDEF )
 #ifndef  FLAG_IS_SET
@@ -2226,7 +2231,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
    }
 @multidef fl 
    X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
-   KUISKB NOBCAST BREG1 KCLN FKO COMPLEX
+   KUISKB NOBCAST BREG1 KCLN FKO COMPLEX RIGHT UPPER
 @endmultidef
 
 @ROUT cpread
@@ -2404,7 +2409,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    @define kwd @@
    @multidef kw
       X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
-      KUISKB NOBCAST FKO KCLN BREG1 COMPLEX
+      KUISKB NOBCAST FKO KCLN BREG1 COMPLEX RIGHT UPPER
    @endmultidef
 @ROUT cpread
 @multidef kw SYRK SYMM TRMM TRSM
@@ -4340,12 +4345,16 @@ void CopyApplyBlasRules(ATL_cpnode_t *cb)
 {
    ATL_cpnode_t *cp;
 /*
- * SYRK A/B copies are same as GEMM A/B copies
+ * SYRK A/B copies are same as GEMM A/B copies.
+ * TRMM is treated totally like GEMM; don't need one of A or B for TRMM,
+ * but may want to use same gemm to avoid extra copy.
  */
    for (cp=cb; cp; cp = cp->next)
    {
       if ((cp->flag & (1<<CPF_SYRK)) && !(cp->flag & (1<<CPF_CBLK)))
          cp->flag ^= 1<<CPF_SYRK;
+      if (cp->flag & (1<<CPF_TRMM))
+         cp->flag ^= 1<<CPF_TRMM;
    }
 }
 
@@ -6029,7 +6038,7 @@ char *MMGetGenString
    char *gs, *sp;
    int len;
    int ku=mp->ku;
-   int kb, bc;
+   int kb, bc, i;
 
    if (FLAG_IS_SET(mp->flag, MMF_FKO))
       return(MMGetFkoGenString(pre, mp));
@@ -6043,6 +6052,8 @@ char *MMGetGenString
          ku = mp->kbB;
    }
    len = strlen(frm) + strlen(mp->rout) + 4;
+   if (mp->blask == ATL_KTRMM)
+      len += 7;
    gs = malloc(len);
    assert(gs);
    if (mp->vlen < 2)
@@ -6121,8 +6132,17 @@ char *MMGetGenString
       kb = ((mp->kbB+mp->vlen-1)/mp->vlen)*mp->vlen;
    else
       kb = mp->kbB;
-   sprintf(gs, frm, sp, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, ku, kb,
-           bc, mp->pref, mp->pfLS);
+   i = sprintf(gs, frm, sp, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, ku, 
+               kb, bc, mp->pref, mp->pfLS);
+   if (mp->blask == ATL_KTRMM)
+   {
+      int itr;
+      if (FLAG_IS_SET(mp->flag, MMF_RIGHT))
+         itr = FLAG_IS_SET(mp->flag, MMF_UPPER) ? 4 : 3;
+      else /* Left */
+         itr = FLAG_IS_SET(mp->flag, MMF_UPPER) ? 2 : 1;
+      sprintf(gs+i, " TRMM=%1.1u", itr);
+   }
    return(gs);
 }
 
@@ -7120,11 +7140,12 @@ double TimeMMKernel
  * and then compute the percent of useless flops. mfmul can just be multiplied
  * by the return value to compute the useful flop rate.
  */
-   if (mmp->blask == ATL_KTRSM)
+   if (mmp->blask == ATL_KTRSM || mmp->blask == ATL_KTRMM)
    {
       int uk, un;
-      assert(mb == nb);
       const int TR = (RIGHT) ? !TRANS : TRANS;
+@skip      if ((mmp->blask == ATL_KTRSM)
+@skip         assert(mb == nb);
       if (!TR)
       {
          uk = mu;
@@ -7331,6 +7352,11 @@ double TimeMMKernel
          if (mmp->blask == ATL_KTRSM)
             i = sprintf(ln, 
                         "make %ctrsmcase kb=%d rb=%d sd=%c up=%c ta=%c tALL=%c",
+                        pre, KB, NB, RIGHT?'R':'L', UPPER?'U':'L', 
+                        TRANSA?'T':'N', TRANS?'T':'N');
+         else if (mmp->blask == ATL_KTRMM)
+            i = sprintf(ln, 
+                        "make %ctrmmcase kb=%d rb=%d sd=%c up=%c ta=%c tALL=%c",
                         pre, KB, NB, RIGHT?'R':'L', UPPER?'U':'L', 
                         TRANSA?'T':'N', TRANS?'T':'N');
          else
@@ -9337,7 +9363,7 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp, ATL_mmnode_t *ML)
       cp->kvec = (mp->vlen > 1) ? mp->vlen : 0;
    if (mp->blask == ATL_KSYRK && (flag&(1<<CPF_CBLK)))
       cp->flag |= (1<<CPF_SYRK);
-   @whiledef rt SYMM TRMM
+   @whiledef rt SYMM
    else if (mp->blask == ATL_K@(rt))
       cp->flag |= (1<<CPF_@(rt));
    @endwhile
