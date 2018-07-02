@@ -2029,6 +2029,82 @@ void Mjoin(PATL,geswapT)(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda,
    for (i=0; i < M; i++)
       Mjoin(PATL,swap)(N, A+(i SHIFT), lda, B+(i SHIFT)*ldb, 1);
 }
+@ROUT ATL_sy2ge
+@extract -b @(topd)/cw.inc lang=C -def -def cwdate 2018
+/*
+ * This routine performs:
+ *   G = alpha * reflect( op(T) ) where:
+ *      G is a general square matrix of order N
+ *      T is a symmetric matrix of order N
+ *      op = No Trans, Trans, or ConjTrans
+ *      reflect changes triangular matrix to general, handling transpose
+ *
+ * It is blocked to prevent transposition row-access causing TLB problems.
+ */
+#include "atlas_misc.h"
+#include "atlas_cache.h"
+/*
+ * Block by minimum of TLB entries or half of L1 cache
+ */
+#if defined(TOTTLB) && TOTTLB >= 24
+   #if defined(L1C_ELTS) && L1C_ELTS < TOTTLB*TOTTLB
+      #if 128*128*2 <= L1C_ELTS
+         #define NB 128
+      #elif 64*64*2 <= L1C_ELTS
+         #define NB 64
+      #elif 32*32*2 <= L1C_ELTS
+         #define NB 32
+      #else
+         #define NB 24
+      #endif
+   #else
+      #define NB TOTTLB
+   #endif
+/*
+ * If L1 cache size is set, block by half of it assuming TLBs can span that
+ * value since the smallest one we try is 64.
+ */
+#elif defined(L1C_ELTS)
+   #if 64*64*2 <= L1C_ELTS
+      #define NB 64
+   #elif 32*32*2 <= L1C_ELTS
+      #define NB 32
+   #else
+      #define NB 24
+   #endif
+#else
+   #define NB 24  /* every machine should have at least 24 TLB entries */
+#endif
+void Mjoin(PATL,sy2ge) 
+   (const enum ATLAS_UPLO Uplo, const ATLAS_TRANS TT, ATL_iptr_t N, 
+    const SCALAR alpha, const TYPE *T, ATL_iptr_t ldt, TYPE *G, ATL_iptr_t ldg)
+{
+   #ifdef TCPLX
+      const int ALPREAL = alpha[1] == ATL_rzero;
+   #else
+      #define ALPREAL 1
+   #endif
+   void (*ATL_moveN)(ATL_CINT N, ATL_CINT M, const SCALAR alpha,
+                     const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc);
+   void (*ATL_moveT)(ATL_CINT N, ATL_CINT M, const SCALAR alpha,
+                     const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc);
+   if (SCALAR_IS_ONE(alpha))
+   {
+      if (TT == AtlasNoTrans)
+      {
+         ATL_moveN = Mjoin(ATL_gemove_a1);
+         ATL_moveT = Mjoin(ATL_gemoveT_a1);
+      }
+      #ifdef TCPLX
+      else if (TT == AtlasConjTrans)
+      else if (TT == AtlasConj)
+      #endif
+      else /* TT = AtlasTrans */
+   }
+   else if (SCALAR_IS_ZERO(alpha))
+   else if (SCALAR_IS_NONE(alpha))
+   else  /* alpha=X */
+}
 @ROUT ATL_sqtrans
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2009
 #include "atlas_misc.h"
