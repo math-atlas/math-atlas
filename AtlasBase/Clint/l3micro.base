@@ -4580,72 +4580,223 @@ void Mjoin(PATL,symmR_rec)
        const SCALAR, const TYPE*, ATL_CSZT, const TYPE*, ATL_CSZT,
        const SCALAR, TYPE*, ATL_CSZT);
 #endif
-@ROUT ATL_ipsymm
+@ROUT ATL_ipsymmL
 /*
- * SYMM involves a symmetric matrix (S) and dense matrix (D).
+ * SYMM involves a symmetric matrix (A) and dense matrix (B).
  * This routine uses normal GEMM to do a SYMM by reflecting the symmetric matrix
- * into dense access-major storage.  The recursive symm divides S
- * which means eventually the shape is dominated by D, and
- * so the double copy of D inherent in recursion becomes a dominant cost.
- * This routine avoids this problem by copying S up front, and then putting
- * the dense S as inner matrix, so that D is copied only once, 1 panel at 
+ * into dense access-major storage.  The recursive symm divides A
+ * which means eventually the shape is dominated by B, and
+ * so the double copy of B inherent in recursion becomes a dominant cost.
+ * This routine avoids this problem by copying A up front, and then putting
+ * the dense A as inner matrix, so that B is copied only once, 1 panel at 
  * a time.
  */
 #include "atlas_misc.h"
 #include "atlas_amm.h"
+#define ATL_WANT_ILCM 1
+#include "atlas_iopt.h"
+#undef ATL_WANT_ILCM
 #include "atlas_level1.h"
 #include "atlas_level2.h"
 #include "atlas_level3.h"
 @skip #include "atlas_kernel3.h"
-#include "atlas_reflevel3.h"
+@skip #include "atlas_reflevel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
-
-/*
- * BV: 0:Left, 1:Conj
- */
-void reflectL(ipinfo_t *ip, unsigned int FLG, size_t N, TYPE *A, size_t lda)
+static void syblkcp(ipinfo_t *ip, ATL_ptr_t I, ATL_iptr_t K, 
+                    ATL_UINT nlm, ATL_UINT nln, cm2am_t cpN, cm2am_t cpT,
+                    const TYPE *A, ATL_ptr_t lda, TYPE *w);
 {
-   cm2am_t *cpT, *cpN;
-   size_t nfmblks, npmblks, nfnblks, npnblks;
-   unsigned int MB, mb, NB, nb, j;
-   const SCALAR alp = (FLG&1) ? ip->alpA : ip->alpB;
-
+   const ATL_iptr_t nfmblks = ip->mfmblks, nfkblks = ip->nfkblks;
+   ATL_CUINT MB=ip->mb, PMB=ip->pmb;
+   const ATL_iptr_t incAn = lda*ip->kb;
+   const alpha = ip->alpA;
+   ATL_UINT i, j;
 /*
- * ipinfo should have the no-transpose copy, so get trans copy for reflection
+ * First copy this block into Lower, NoTrans part of matrix
  */
-   cpN = (BV&1) ? ip->a2blk : ip->b2blk;
-   if (FLG&1)
+   for (j=0; j < nln; j++)
    {
-      MB = ip->mb;
-      mb = ip->pmb;
-      nfmblks = ip->nfmblks;
-      npmblks = ip->npmblks;
-      j = ATL_GetVWipgenA2BLK(ip->idx);
-   }
-   else
-      j = ATL_GetVWipgenB2BLK(ip->idx);
-   j += j;
-   #ifdef TCPLX
-      if (alp[1] == ATL_rzero) /* real number */
+      ATL_CUINT kb = (j+K < nfkblks) ? ip->kb0 : ip->kb;
+      for (i=0; i < nlm; i++)
       {
-         TYPE v=alp[0];
-         if (v == ATL_rone)
-            cpT = (FLG&2) ? ATL_CpyFromACg_a1[j] : ATL_CpyFromATg_a1[j];
-         else if (v == ATL_rnone)
-            cpT = (FLG&2) ? ATL_CpyFromACg_aN[j] : ATL_CpyFromATg_aN[j];
-         else
-            cpT = (FLG&2) ? ATL_CpyFromACg_aX[j] : ATL_CpyFromATg_aX[j];
+         ATL_CUINT mb = ((i+I) < nfmblks) ? MB : PMB;
+         cpN(kb, mb, alpha, IdxA_ip(ip, A, i+I, j+K), lda, 
+             IdxAw_ip(ip, w, i+I, j+K));
+      }
+   }
+/*
+ * Now copy into Upper, Trans part of matrix
+ */
+   A = IdxA_ip(ip, A, i, j);  /* start of superblock */
+   for (j=0; j < nlm; j++, A += incAn)
+   {
+      ATL_CUINT kb = (j+K < nfkblks) ? ip->kb0 : ip->kb;
+      const TYPE *a=A;
+      for (i=0; i < nln; i++)
+      {
+         ATL_CUINT mb = ((i+I) < nfmblks) ? MB : PMB;
+         cpT(kb, mb, alpha, a, lda, IdxAw_ip(ip, w, j+K, i+I));
+      }
+   }
+}
+
+static void ATL_cpsyL2amm
+(
+   ipinfo_t *ip,
+   ATL_iptr_t N                          /* order of A */
+   unsigned int B,                       /* LCM(MB,KB) */
+   const SCALAR alpha,                   /* scale factor for S */
+   TYPE *S, ATL_iptr_t lds,              /* symmetric in lower storage */
+   TYPE *W,                              /* BxB workspace */
+   TYPE *w,                              /* spc for entire S in block storage */
+)
+/*
+ * b = alpha * S, b is in access-major storage, S is upper or lower col-major
+ * NOTE: this is most general routine, where the LxL workspace W is used
+ *       to copy square superblocks from the original matrix.  This allows
+ *       us to reflect symmetric matrices to make full, and follow the diagonal
+ *       easily even if MB & NB are not multiples.  For the case where MB & NB
+ *       are multiples (or equal), we can use less workspace & copies.
+ */
+{
+   ATL_iptr_t j;
+   cm2am_t cpN, cpT;
+   const unsigned int mb=ip->mbB, kb = ip->kbB;
+   const ATL_iptr_t incS=(B SHIFT)*(lds+1), nB=N/B, NN=N-nB*B;
+   const ATL_iptr_t nfmblks = ip->nfmblks;
+   const unsigned int b = N-NN, nlm=B/mb, nlk=B/kb;
+   #ifdef TCPLX
+      #define ONE ip->ONE
+   #else
+      #define ONE ATL_rone
+   #endif
+   void (*sycp)(ATL_CSZT N, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
+                TYPE *C, ATL_CSZT ldc);
+   sycp = Mjoin(PATL,sycpyL_a1);
+   @beginskip
+   #if TCPLX
+      if (alpha[1] == ATL_rzero)
+      {
+         const register TYPE ra = *alpha;
+         if (ra == ATL_rone)
+            sycp = Mjoin(PATL,sycpyLNB_a1);
+         else 
+            sycp = (ra == ATL_rnone) ? 
+                   Mjoin(PATL,sycpyLNB_an): Mjoin(PATL,sycpyLNB_ar);
       }
       else
-         cpT = (FLG&2) ? ATL_CpyFromACg_aX[j] : ATL_CpyFromATg_aX[j];
+         sycp = Mjoin(PATL,sycpyLNB_aX)
    #else
-      if (alp == ATL_rone)
-          cpT = ATL_CpyFromATg_a1[j];
-      else
-         cpT = (alp == ATL_rnone) ? ATL_CpyFromATg_aN[j]:ATL_CpyFromATg_aX[j];
+      if (alpha == ATL_rone)
+         sycp = Mjoin(PATL,sycpyLNB_a1);
+      else 
+         sycp = (ra == ATL_rnone) ? 
+                Mjoin(PATL,sycpyLNB_an): Mjoin(PATL,sycpyLNB_aX);
    #endif
+   if (SCALAR_IS_ONE(alpha))
+      sycp = Mjoin(PATL,sycpyL_a1);
+   else if (SCALAR_IS_NONE(alpha))
+      sycp = Mjoin(PATL,sycpyL_an1);
+   @endskip
+/*
+ * Loop over full panels of B
+ */
+   for (j=0; j < Nb; j++)
+   {
+      ATL_iptr_t i=j*nlm, k=j*nlk, incW=B*kb - nlm*mb;
+      ATL_INT kk;
+      TYPE Wc=W;
+/*
+ *    Top block is triangular, so reflect it into W to get full
+ */
+      sycp(B, ONE, IdxA_ip(ip, S, i, k), lds, W, B);
+      for (kk=0; kk < nln; k++, Wc += incW)
+      {
+         ATL_INT ii;
+         for (ii=0; ii < nlm; ii++, Wc += mb)
+            cpN(kb, mb, alpha, Wc, B, IdxAw_ip(ip, w, ii+J, jj+J));
+      }
+   }
+/*
+ * Copy column panels from last to first, so 1st panel warm in cache.
+ * If there is a partial last col panel, its just a partial block for lower
+ */
+   i = NN / ip->mbB;
+   k = NN / ip->kbB;
+   S += (lds+1)*N;  /* S at end of matrix */
+   if (b)
+   {
+      unsigned int kk=b/kb, ii=b/mb, M, K;
+      ATL_assert(0);  /* for now, assume N multiple of LCM(mb,kb) */
+      sycp(b, alpha, IdxA_ip(ip, S, i, k), lds, W);
+      if (kk*kb == b)
+         kk -= kb;
+      if (ii*mb == b)
+         ii -= mb;
+      M = b - ii;
+      K = b - kk;
+      do
+      {
+      }
+      while (kk);
+      for (kk=b/kb; kk >= 0; kk--)
+      {
+         unsigned int ii;
+         for (ii=b / mb; ii >= 0; 
+      }
+   }
 }
+#ifdef Conj_
+int Mjoin(PATL,iphemmL)
+#else
+int Mjoin(PATL,ipsymmL)
+#endif
+(
+   const enum ATLAS_UPLO  Uplo,
+   ATL_CSZT  M,
+   ATL_CSZT N,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   ipinfo_t ip;
+   ATL_iptr_t sz, szA, szB, tkblks;
+   unsigned int B, extra;
+   void *vp=NULL;
+   Mjoin(PATL,ipgenInfo)(&ip, 3, AtlasNoTrans, AtlasNoTrans, M, N, M, lda, ldb,
+                         ldc, alpha, beta);
+/*
+ * This routine attempts to malloc space for 1 block of C, 1 column panel of B,
+ * and entire matrix A.  Also needs space for B*B workspace, which is overlapped
+ * with all non-A workspace.
+ */
+   ATL_assert(ip.npmblks < 2);
+   B = ATL_iLCM(ip.mb, ip.kb);
+   extra = Mmax(B, ip.exsz);
+   tkblks = ip.nkblks+1;
+   szA = tkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
+   szB = (ip.nfnblks) ? ip.szB : ip.pszB;
+   szB *= tkblks;
+   extra = ip.szC+ip.exsz;
+   sz = B*B;               /* workspc for temporary square B copy */
+   if (sz > extra+szB)
+      extra += sz - extra - szB;
+   sz = ATL_MulBySize(extra + szA + szB) + 3*ATL_Cachelen;
+   if (sz <= ATL_MaxMalloc)
+      vp = malloc(sz);
+   if (!vp)
+      return(1);
+
+   free(vp);
+}
+#undef ONE
 @ROUT ATL_symmL
 #include "atlas_misc.h"
 #include "atlas_amm.h"
@@ -4656,6 +4807,11 @@ void reflectL(ipinfo_t *ip, unsigned int FLG, size_t N, TYPE *A, size_t lda)
 #include "atlas_reflevel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
+#if 0
+   #define USEREF 1
+   #include "atlas_reflevel3.h"
+#endif
+
 /*
  * On the left, symmetrix matrix is GEMM's A, with K=M
  */
@@ -4928,6 +5084,18 @@ void Mjoin(PATL,symm)
    opinfo_t oi;
    ATL_UINT bv;
 
+   #ifdef USEREF
+   {
+      #ifdef Conj_
+         Mjoin(PATL,refhemm)(Side, Uplo, M, N, alpha, A, lda, B, ldb, 
+                             beta, C, ldc);
+      #else
+         Mjoin(PATL,refsymm)(Side, Uplo, M, N, alpha, A, lda, B, ldb, 
+                             beta, C, ldc);
+      #endif
+      return;
+   }
+   #endif
    if (!M || !N)
       return;
    if (SCALAR_IS_ZERO(alpha))  /* doing nothing but scaling C */
