@@ -589,6 +589,7 @@ struct ipinfo
    uint pszA, szA;          /* size of real portion of part & full blks of A */
    uint pszB, szB;          /* size of real portion of part & full blks of B */
    uint idx;                /* index in view of this amm case */
+   uint idxK;               /* index in atlas_?amm_kern.h */
    ushort exsz;             /* extra bytes to alloc past end */
    ushort mF, nF;           /* size of final part of mat before copy */
    ushort mb, pmb, nb, pnb; /* full & partial blk factors for M & N */
@@ -902,6 +903,21 @@ int Mjoin(PATL,@(rt)herk)
 /*
  * Helper functions we'd like to inline
  */
+#ifdef ATL_GLOBELT
+   #ifdef SCPLX
+      #include "atlas_camm_kern.h"
+   #elif DCPLX
+      #include "atlas_zamm_kern.h"
+   #elif SREAL
+      #include "atlas_samm_kern.h"
+   #else
+      #ifndef DREAL
+         #error "TYPE must be defined for GLOBELT!"
+      #endif
+      #include "atlas_damm_kern.h"
+   #endif
+   #define ATL_GLOBIDX 1
+#endif
 #ifdef ATL_GLOBIDX
 static TYPE INLINE *IdxAw_rkK(opinfo_t *op, TYPE *A, size_t i)
 {  /* index A workspace for ith block for rank-K (only 1 kb) */
@@ -925,6 +941,70 @@ static TYPE INLINE *IdxAw_ip(ipinfo_t *ip, TYPE *A, size_t i, size_t k)
    m = (m+k*szA)SHIFT;
    return(A+m);
 }
+
+#ifdef ATL_GLOBELT
+/*
+ * Get (i,j) elt out of block-major A storage.  Used for debugging,
+ * so not optimized
+ */
+#ifdef TCPLX
+static TYPE *IdxAwElt_ip(ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k)
+#else
+static TYPE IdxAwElt_ip(ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k)
+#endif
+{ /* get element (i,k) out of block storage */
+   ATL_iptr_t iblk = i / ip->mb, kblk = k / ip->kb;
+   ATL_UINT flg;
+   const TYPE *a;
+
+/*
+ * Compute block number we are on (iblk), and i within block (i)
+ */
+   if (iblk > ip->nfmblks)
+   {
+      ATL_iptr_t ii;
+      i -= ip->mb * ip->nfmblks;
+      ii = i / ip->pmb;
+      iblk = ip->nfmblks + ii;
+      i -= ii* ip->pmb;
+   }
+   else
+      i -= ip->mb * iblk;
+   k -= kblk*ip->kb;           /* k now K index within block */
+   a = IdxAw_ip(ip, (TYPE*)A, iblk, kblk); /* a pts to kb*mb block */
+   flg = ATL_AMM_GetFLAG(ip->idxK);
+/* 
+ * blk has is ku-major: mu kvec length blocks
+ */
+   if (ATL_AMM_KMAJOR(flg))
+   {
+      unsigned int ks = k/ip->vlen, is = i/ip->mu;
+      unsigned int bl=ip->vlen*ip->mu, pl = ((ip->kb+ip->vlen-1)/ip->vlen)*bl;
+
+      a += is*pl;        /* a pts to correct K-panel */
+      i -= is*ip->mu;
+      a += ks*bl;        /* a pts to correct sub-block */
+      k -= ks*ip->vlen;
+      a += i*ip->vlen+k; /* a pts at correct element */
+   }
+/*
+ * blk has standard mu-entry blks, repeated K times (vectorized along M)
+ */
+   else
+   {
+      unsigned int is = i / ip->mu;
+      unsigned int pl=ip->kb*ip->mu, is=i/ip->mu;
+      a += is*pl;     /* go to correct kpanel */
+      i -= is*ip->mu;
+      a += i;
+   }
+   #ifdef TCPLX
+      return(a);
+   #else
+      return(*a);
+   #endif
+}
+#endif
 
 static TYPE INLINE *IdxBw_ip(ipinfo_t *ip, TYPE *B, size_t k, size_t j)
 {  /* index B workspace for inner-product gemm */
@@ -37745,6 +37825,19 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n\n");
 
 
+   if (nbits[0] == 0)
+      fprintf(fpout, "#define ATL_AMM_GetFLAG(idx_) ATL_AMM_MIN_FLAG\n");
+   else
+   {
+      fprintf(fpout, "#define ATL_AMM_GetFLAG(idx_) \\\n");
+      fprintf(fpout, 
+              "   (((ATL_AMM_ML[ATL_AMM_Idx2Entry(idx_)+3])&0x%x)",
+              (1<<(nbits[0]))-1);
+      if (nbits[0+NIVAR])
+         fprintf(fpout, "+ATL_AMM_MIN_FLAG)\n");
+      else
+         fprintf(fpout, ")\n");
+   }
    if (nbits[3] == 0)
       fprintf(fpout, "#define ATL_AMM_GetKU(idx_) ATL_AMM_MIN_KU\n");
    else
@@ -39200,6 +39293,7 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
    ip->idx = idx;
    ATL_GetVW@(vwf)Info(idx, spmf, k, k, kb, imm, icpA, icpB, icpC, k, 
                       kbmin, k);
+   ip->idxK = imm;
    icpA += icpA;
    icpB += icpB;
    icpC += icpC;

@@ -5909,6 +5909,116 @@ void *Mjoin(PATL,gecmpBV)
    }
    return(bv);
 }
+@ROUT ATL_amsycmpBV
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2018
+#include "atlas_misc.h"
+#include "atlas_bitvec.h"
+#define ATL_GLOBELT 1
+#include "atlas_amm.h"
+#undef ATL_GLOBELT
+/*
+ * Returns a bitvec where set bits are errors above tolerance tol.
+ * Entries are ordered row-major for ease of printing
+ * Combine with ATL_print2dBV for pictoral error report.
+ * flg is bitvec:
+ *  0 : if set, a is matrix A, else B or C
+ *  1 : if set, a is matrix B, else A or C
+ *  2 : if set, A is Upper-, else Lower-symmetric/hermitian
+ *  3 : if set, A Hermitian, else symmetric
+ */
+void ATL_amsycmpBV(verb, double tol, ipinfo_t *ip, int flg, const TYPE *a, 
+                   ATL_iptr_t N, const TYPE *A)
+{
+   ATL_BV_t *bv;
+   ATL_iptr_t ib, jb;
+   
+
+   bv = ATL_NewBV(N*N);
+   if (tol < 0.0)
+      tol = -tol;
+   if (flg & 1) /* a points to gemm's A matrix in ip */
+   {
+      ATL_iptr_t i, k;  /* block ctr along K dim */
+      const ATL_iptr_t lda2 = ip->lda SHIFT, kb=ip->kb, nfmblks=ip->nfmblks;
+      const ATL_iptr_t nkblks = ip->nfkblks, nmblks=nfmblks+ip->npmblks;
+      for (k=0; k < N; k++)
+      {
+         for (i=0; i < N; i++)
+         {
+         #ifdef TCPLX
+            const TYPE *aa;
+            aa = AwGetElt_ip(ip, a, i, k);
+            double diff, idiff;
+            if (flg&4) /* Upper matrix */
+            {
+               if (i <= k) /* In upper portion */
+               {
+                  diff = A[i+i+k*lda2];
+                  idiff= A[1+i+i+k*lda2];
+               }
+               else
+               {
+                  diff = A[k+k+i*lda2];
+                  if (flg&8) /* Hermitian, not symmetric! */
+                     idiff = -A[1+k+k+i*lda2];
+                  else
+                     idiff = A[1+k+k+i*lda2];
+               }
+            }
+            else /* Lower matrix */
+            {
+               if (i >= k) /* In Lower portion */
+               {
+                  diff = A[i+i+k*lda2];
+                  idiff= A[1+i+i+k*lda2];
+               }
+               else
+               {
+                  diff = A[k+k+i*lda2];
+                  if (flg&8) /* Hermitian, not symmetric! */
+                     idiff = -A[1+k+k+i*lda2];
+                  else
+                     idiff = A[1+k+k+i*lda2];
+               }
+            }
+            diff -= *aa;
+            idiff -= aa[1];
+            if (diff < 0.0)
+               diff = -diff;
+            if (idiff < 0.0)
+               idiff = 0.0;
+            if (diff > tol || idiff > tol)
+            {
+               if (verb > 1)
+                  printf("A(%d,%d)=[%e,%e];  expected=[%e,%e]\n", i, j, 
+                         B[I], B[I+1], A[I], A[I+1]);
+               ATL_SetBitBV(bv, i*N+j);
+            }
+         #else
+            double diff;
+            ATL_iptr_t idx;
+            if (flg&4) /* Upper */
+               idx = (i <= k) ? i+i+k*lda2 : k+k+i*lda2;
+            else
+               idx = (i >= k) ? i+i+k*lda2 : k+k+i*lda2
+            diff = IdxAwElt_ip(ip, a, i, k);
+            diff -= A[idx];
+            if (diff < 0.0)
+               diff = -diff;
+
+            if (diff > tol)
+            {
+               if (verb > 1)
+                  printf("A(%d,%d)=%e;  expected=%e, diff=%e\n", 
+                         i, j, B[i], A[i], diff);
+               ATL_SetBitBV(bv, i*N+j);
+            }
+         #endif
+
+      }
+   }
+   return(bv);
+}
 @rout ATL_getIpiv
 #include <stdlib.h>
 #include "atlas_misc.h"

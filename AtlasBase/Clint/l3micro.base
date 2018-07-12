@@ -4592,7 +4592,9 @@ void Mjoin(PATL,symmR_rec)
  * a time.
  */
 #include "atlas_misc.h"
+#define ATL_GLOBIDX 1
 #include "atlas_amm.h"
+#undef ATL_GLOBIDX
 #define ATL_WANT_ILCM 1
 #include "atlas_iopt.h"
 #undef ATL_WANT_ILCM
@@ -4603,11 +4605,11 @@ void Mjoin(PATL,symmR_rec)
 @skip #include "atlas_reflevel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
-static void syblkcp(ipinfo_t *ip, ATL_ptr_t I, ATL_iptr_t K, 
+static void syblkcp(ipinfo_t *ip, ATL_iptr_t I, ATL_iptr_t K, 
                     ATL_UINT nlm, ATL_UINT nln, cm2am_t cpN, cm2am_t cpT,
-                    const TYPE *A, ATL_ptr_t lda, TYPE *w);
+                    const TYPE *A, ATL_iptr_t lda, TYPE *w)
 {
-   const ATL_iptr_t nfmblks = ip->mfmblks, nfkblks = ip->nfkblks;
+   const ATL_iptr_t nfmblks = ip->nfmblks, nfkblks = ip->nfkblks;
    ATL_CUINT MB=ip->mb, PMB=ip->pmb;
    const ATL_iptr_t incAn = lda*ip->kb;
    const alpha = ip->alpA;
@@ -4621,7 +4623,7 @@ static void syblkcp(ipinfo_t *ip, ATL_ptr_t I, ATL_iptr_t K,
       for (i=0; i < nlm; i++)
       {
          ATL_CUINT mb = ((i+I) < nfmblks) ? MB : PMB;
-         cpN(kb, mb, alpha, IdxA_ip(ip, A, i+I, j+K), lda, 
+         cpN(kb, mb, alpha, IdxA_ip(ip, A, I+i, K+j), lda, 
              IdxAw_ip(ip, w, i+I, j+K));
       }
    }
@@ -4644,12 +4646,12 @@ static void syblkcp(ipinfo_t *ip, ATL_ptr_t I, ATL_iptr_t K,
 static void ATL_cpsyL2amm
 (
    ipinfo_t *ip,
-   ATL_iptr_t N                          /* order of A */
+   ATL_iptr_t N,                         /* order of A */
    unsigned int B,                       /* LCM(MB,KB) */
    const SCALAR alpha,                   /* scale factor for S */
    TYPE *S, ATL_iptr_t lds,              /* symmetric in lower storage */
    TYPE *W,                              /* BxB workspace */
-   TYPE *w,                              /* spc for entire S in block storage */
+   TYPE *w                               /* spc for entire S in block storage */
 )
 /*
  * b = alpha * S, b is in access-major storage, S is upper or lower col-major
@@ -4662,7 +4664,7 @@ static void ATL_cpsyL2amm
 {
    ATL_iptr_t j;
    cm2am_t cpN, cpT;
-   const unsigned int mb=ip->mbB, kb = ip->kbB;
+   const unsigned int mb=ip->mb, kb = ip->kb;
    const ATL_iptr_t incS=(B SHIFT)*(lds+1), nB=N/B, NN=N-nB*B;
    const ATL_iptr_t nfmblks = ip->nfmblks;
    const unsigned int b = N-NN, nlm=B/mb, nlk=B/kb;
@@ -4673,7 +4675,7 @@ static void ATL_cpsyL2amm
    #endif
    void (*sycp)(ATL_CSZT N, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
                 TYPE *C, ATL_CSZT ldc);
-   sycp = Mjoin(PATL,sycpyL_a1);
+   sycp = Mjoin(PATL,sycpyLNB_a1);
    @beginskip
    #if TCPLX
       if (alpha[1] == ATL_rzero)
@@ -4702,26 +4704,27 @@ static void ATL_cpsyL2amm
 /*
  * Loop over full panels of B
  */
-   for (j=0; j < Nb; j++)
+   for (j=0; j < nB; j++)
    {
       ATL_iptr_t i=j*nlm, k=j*nlk, incW=B*kb - nlm*mb;
       ATL_INT kk;
-      TYPE Wc=W;
+      TYPE *Wc=W;
 /*
  *    Top block is triangular, so reflect it into W to get full
  */
       sycp(B, ONE, IdxA_ip(ip, S, i, k), lds, W, B);
-      for (kk=0; kk < nln; k++, Wc += incW)
+      for (kk=0; kk < nlk; k++, Wc += incW)
       {
          ATL_INT ii;
          for (ii=0; ii < nlm; ii++, Wc += mb)
-            cpN(kb, mb, alpha, Wc, B, IdxAw_ip(ip, w, ii+J, jj+J));
+            cpN(kb, mb, alpha, Wc, B, IdxAw_ip(ip, w, ii+i, kk+k));
       }
    }
 /*
  * Copy column panels from last to first, so 1st panel warm in cache.
  * If there is a partial last col panel, its just a partial block for lower
  */
+   #if 0
    i = NN / ip->mbB;
    k = NN / ip->kbB;
    S += (lds+1)*N;  /* S at end of matrix */
@@ -4746,6 +4749,7 @@ static void ATL_cpsyL2amm
          for (ii=b / mb; ii >= 0; 
       }
    }
+   #endif
 }
 #ifdef Conj_
 int Mjoin(PATL,iphemmL)
@@ -4757,10 +4761,10 @@ int Mjoin(PATL,ipsymmL)
    ATL_CSZT  M,
    ATL_CSZT N,
    const SCALAR alpha,
-   const TYPE *A,
-   ATL_CSZT lda,
-   const TYPE *B,
-   ATL_CSZT ldb,
+   const TYPE *S,
+   ATL_CSZT lds,
+   const TYPE *G,
+   ATL_CSZT ldg,
    const SCALAR beta,
    TYPE *C,
    ATL_CSZT ldc
@@ -4770,7 +4774,8 @@ int Mjoin(PATL,ipsymmL)
    ATL_iptr_t sz, szA, szB, tkblks;
    unsigned int B, extra;
    void *vp=NULL;
-   Mjoin(PATL,ipgenInfo)(&ip, 3, AtlasNoTrans, AtlasNoTrans, M, N, M, lda, ldb,
+   TYPE *ws, *wg, *wd, *wC;
+   Mjoin(PATL,ipgenInfo)(&ip, 3, AtlasNoTrans, AtlasNoTrans, M, N, M, lds, ldg,
                          ldc, alpha, beta);
 /*
  * This routine attempts to malloc space for 1 block of C, 1 column panel of B,
@@ -4780,7 +4785,7 @@ int Mjoin(PATL,ipsymmL)
    ATL_assert(ip.npmblks < 2);
    B = ATL_iLCM(ip.mb, ip.kb);
    extra = Mmax(B, ip.exsz);
-   tkblks = ip.nkblks+1;
+   tkblks = ip.nfkblks+1;
    szA = tkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
    szB = (ip.nfnblks) ? ip.szB : ip.pszB;
    szB *= tkblks;
@@ -4793,6 +4798,13 @@ int Mjoin(PATL,ipsymmL)
       vp = malloc(sz);
    if (!vp)
       return(1);
+    ws = ATL_AlignPtr(vp);
+    wg = ws + szA;
+    wg = ATL_AlignPtr(wg);
+    wC = wg + szB;
+    wC = ATL_AlignPtr(wC);
+
+    ATL_cpsyL2amm(ip, N, B, ip.alpA, S, lds, wg, ws);
 
    free(vp);
 }
