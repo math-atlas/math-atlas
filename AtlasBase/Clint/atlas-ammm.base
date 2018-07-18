@@ -551,6 +551,23 @@ struct sminfo
    uchar mu, nu, ku;             /* unrollings of underlying amm */
    uchar bv;/*0:Right?, 1:Upper?, 2:TransA?, 3:Conj?, 4:NonUnit? 5: ALLT? */
 };
+typedef struct tminfo tminfo_t;  /* struct for trmm microkernel */
+struct tminfo
+{
+   ushort flg;                   /* 0:same kernel as gemm? */
+   tcm2am_t t2blk;               /* copy routine for triangular matrix */
+   cm2am_t r2blk;                /* copy routines for regular matrix */
+   ablk2cmat_t blk2c;            /* cpy from acc-maj blk to col-maj C */
+   ammkern_t amm_b0, amm_b1;     /* func ptrs for beta=0,1 trmm */
+   #ifdef TCPLX
+      ammkern_t amm_bn;          /* func ptr for beta=-1 trmm */
+   #endif
+   size_t incA;                  /* (1|lda) */
+   ushort kb;                    /* triangular blocking */
+   ushort mu, nu, ku;            /* unrollings of underlying amm */
+   ushort vlen;                  /* vector len for the kernels */
+   /*ushort kvec;*/              /* is kvec kernel */
+};
 
 typedef struct amminfo amminfo_t;
 struct amminfo
@@ -663,6 +680,14 @@ void Mjoin(PATL,ipmenUMInfo)
    (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
+void Mjoin(PATL,ipmekInfo)
+   (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta);
+void Mjoin(PATL,ipnekInfo)
+   (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
+    const SCALAR alpha, const SCALAR beta);
 double Mjoin(PATL,ipsyrkInfo) /* returns predicted time */
    (ipinfo_t*, int, enum ATLAS_TRANS,size_t,size_t,size_t,size_t, 
     const SCALAR alpha, const SCALAR beta);
@@ -673,7 +698,7 @@ ablk2cmat_t Mjoin(PATL,opsyr2kInfo)
    (opinfo_t *out, int flag, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K, 
     ATL_CSZT lda, ATL_CSZT ldb, ATL_CSZT ldc, 
     const SCALAR alpha, const SCALAR beta);
-@whiledef vw ipgen ipmen
+@whiledef vw ipgen ipmen ipmek ipnek
 void Mjoin(PATL,@(vw)InfoPop)
    (ipinfo_t *ip, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
@@ -948,14 +973,19 @@ static TYPE INLINE *IdxAw_ip(ipinfo_t *ip, TYPE *A, size_t i, size_t k)
  * so not optimized
  */
 #ifdef TCPLX
-static TYPE *IdxAwElt_ip(ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k)
+   void IdxAwElt_ip
+      (ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k, TYPE *elt)
 #else
-static TYPE IdxAwElt_ip(ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k)
+   static const TYPE IdxAwElt_ip
+      (ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k)
 #endif
 { /* get element (i,k) out of block storage */
    ATL_iptr_t iblk = i / ip->mb, kblk = k / ip->kb;
    ATL_UINT flg;
    const TYPE *a;
+   #ifdef TCPLX
+      ATL_iptr_t szA=ip->szA;
+   #endif
 
 /*
  * Compute block number we are on (iblk), and i within block (i)
@@ -967,6 +997,9 @@ static TYPE IdxAwElt_ip(ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k)
       ii = i / ip->pmb;
       iblk = ip->nfmblks + ii;
       i -= ii* ip->pmb;
+      #ifdef TCPLX
+         szA = ip->pszA;
+      #endif
    }
    else
       i -= ip->mb * iblk;
@@ -998,7 +1031,8 @@ static TYPE IdxAwElt_ip(ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k)
       a += i;
    }
    #ifdef TCPLX
-      return(a);
+      elt[0] = *a;
+      elt[1] = a[szA];
    #else
       return(*a);
    #endif
@@ -38447,11 +38481,13 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT ATL_ipinfo `@define vwf @ipgen@`
-@ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@`
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo ATL_opsymmInfo
+@ROUT ATL_ipsyrkinfo ATL_ipmeninfo `@define vwf @ipmen@` 
+@ROUT ATL_ipmekinfo `@define vwf @ipmek@` 
+@ROUT ATL_ipnekinfo `@define vwf @ipnek@`
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo ATL_opsyrkInfo ATL_opsyr2kInfo ATL_opsymmInfo
 #include "atlas_cache.h"
 #include "atlas_amm.h"
-@ROUT ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo 
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #define  ATL_DECL_ 1
 @ROUT ATL_ipmeninfo
@@ -38465,9 +38501,9 @@ int main(int nargs, char **args)
    #define ipInfo Mjoin(PATL,ipmenInfo)
    #define ipPop  Mjoin(PATL,ipmenInfoPop)
 #endif
-@ROUT ATL_ipinfo
+@ROUT ATL_ipinfo ATL_ipmekinfo ATL_ipnekinfo 
 #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
-@ROUT ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo
 #undef ATL_DECL_
 @ROUT ATL_opsyrkInfo ATL_opsyr2kInfo
 #define ATL_WANT_ILCM
@@ -38499,7 +38535,7 @@ int main(int nargs, char **args)
 #endif
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_a1.h))
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo ATL_opsyrkInfo ATL_opsyr2kInfo
 @whiledef al 1 N X
    @whiledef ta N T
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
@@ -38509,11 +38545,11 @@ int main(int nargs, char **args)
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromA@(ta)g_a@(al).h))
    @endwhile
 #endif
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo 
    @whiledef be 0 1 N X
 #include Mstr(COPY/Mjoin(ATLAS_PRE,IntoCNg_a@(al)b@(be).h))
    @endwhile
-@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_opsyrkInfo ATL_opsyr2kInfo
+@ROUT ATL_opinfo ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo ATL_opsyrkInfo ATL_opsyr2kInfo
 
 @endwhile
 @ROUT ATL_opinfo
@@ -39252,9 +39288,9 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
 }
 @ROUT ATL_ipmeninfo
 void ipPop  /* populate ip wt given params */
-@ROUT ATL_ipinfo
+@ROUT ATL_ipinfo ATL_ipmekinfo ATL_ipnekinfo 
 void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
-@ROUT ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo 
 (
    ipinfo_t *ip,        /* output */
    int idx,             /* what amm kernel index to use */
@@ -39575,9 +39611,9 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
 @ROUT
 @ROUT ATL_ipmeninfo
 void ipInfo
-@ROUT ATL_ipinfo
+@ROUT ATL_ipinfo ATL_ipmekinfo ATL_ipnekinfo 
 void Mjoin(PATL,@(vwf)Info)
-@ROUT ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo 
 (
    ipinfo_t *ip,        /* output */
 @ROUT ATL_ipinfo `   int flg,             /* bitvec, see below */`
@@ -39598,7 +39634,7 @@ void Mjoin(PATL,@(vwf)Info)
  *   0: Force mb=M
  *   1: Force nb=N
  */
-@ROUT ATL_ipinfo ATL_ipmeninfo
+@ROUT ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo 
 {
    size_t nfmblks, npmblks, nfnblks, npnblks;
    const ATL_iptr_t *ipp;
@@ -39655,10 +39691,15 @@ void Mjoin(PATL,@(vwf)Info)
       {
          MB = mb;
          NB = nb;
+@ROUT ATL_ipmekinfo `         KB = MB; /* KB must be equal to MB for mek */`
+@ROUT ATL_ipnekinfo `         KB = NB; /* KB must be equal to NB for nek */`
       }
    }
-@ROUT ATL_ipmeninfo `   if (MB >= M)`
-@ROUT ATL_ipinfo `   if ((flg&1) || MB >= M)`
+@ROUT ATL_ipinfo 
+   if ((flg&1) || MB >= M)
+@ROUT ATL_ipmeninfo ATL_ipmekinfo @ROUT ATL_ipnekinfo 
+   if (MB >= M)
+@ROUT ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo 
    {
       npmblks = 1;
       nfmblks = 0;
@@ -39680,8 +39721,11 @@ void Mjoin(PATL,@(vwf)Info)
       else
          npmblks = pnmu = pmb = 0;
    }
-@ROUT ATL_ipinfo    `   if ((flg&2) || NB >= N)`
-@ROUT ATL_ipmeninfo `   if (NB >= N)`
+@ROUT ATL_ipinfo    
+   if ((flg&2) || NB >= N)
+@ROUT ATL_ipmeninfo @ROUT ATL_ipmekinfo @ROUT ATL_ipnekinfo 
+   if (NB >= N)
+@ROUT ATL_ipinfo ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo 
    {
       npnblks = 1;
       nfnblks = 0;
@@ -39706,11 +39750,11 @@ void Mjoin(PATL,@(vwf)Info)
 @ROUT ATL_ipmeninfo
    ipPop(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta, 
          nfmblks, npmblks, mb, pmb, nfnblks, npnblks, nb, pnb);
-@ROUT ATL_ipinfo 
+@ROUT ATL_ipinfo ATL_ipmekinfo ATL_ipnekinfo 
    Mjoin(PATL,@(vwf)InfoPop)(ip, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha,
                              beta, nfmblks, npmblks, mb, pmb, nfnblks,
                              npnblks, nb, pnb);
-@ROUT ATL_ipinfo  ATL_ipmeninfo
+@ROUT ATL_ipinfo  ATL_ipmeninfo ATL_ipmekinfo ATL_ipnekinfo 
 }
 @ROUT ATL_ipsyrkInfo
 #include "atlas_amm.h"

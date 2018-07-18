@@ -3120,6 +3120,7 @@ void Mjoin(PATL,gediff)
    #define ATLAS_TST_H
 
 #include "atlas_enum.h"
+#include "atlas_amm.h"
 
 double time00();
 #ifndef UseCRand
@@ -3145,7 +3146,7 @@ void ATL_print1dBV(int COL, int N, void *bv);
    @addkeys ptyp=@(pre)
    @PTYP d s 
 void *ATL_ipsycmpBV(int verb, double tol, ipinfo_t *ip, int flg, const TYPE *a, 
-                    ATL_iptr_t N, const TYPE *A)
+                    ATL_iptr_t N, const TYPE *A);
    @PTYP !
 void *ATL_@(pre)gecmpBV(int,double,int,int,const @(typ)*,int,const @(typ)*,int);
 void *ATL_@(pre)trcmpBV
@@ -5953,42 +5954,44 @@ void *ATL_ipsycmpBV(int verb, double tol, ipinfo_t *ip, int flg, const TYPE *a,
          {
          #ifdef TCPLX
             const TYPE *aa;
-            aa = AwGetElt_ip(ip, a, i, k);
-            double diff, idiff;
+            double diff, idiff, rc, ic;
+            TYPE da[2];
+
+            IdxAwElt_ip(ip, a, i, k, da);
             if (flg&4) /* Upper matrix */
             {
                if (i <= k) /* In upper portion */
                {
-                  diff = A[i+i+k*lda2];
-                  idiff= A[1+i+i+k*lda2];
+                  rc = A[i+i+k*lda2];
+                  ic = A[1+i+i+k*lda2];
                }
                else
                {
-                  diff = A[k+k+i*lda2];
+                  rc -= A[k+k+i*lda2];
                   if (flg&8) /* Hermitian, not symmetric! */
-                     idiff = -A[1+k+k+i*lda2];
+                     ic = -A[1+k+k+i*lda2];
                   else
-                     idiff = A[1+k+k+i*lda2];
+                     ic = A[1+k+k+i*lda2];
                }
             }
             else /* Lower matrix */
             {
                if (i >= k) /* In Lower portion */
                {
-                  diff = A[i+i+k*lda2];
-                  idiff= A[1+i+i+k*lda2];
+                  rc = A[i+i+k*lda2];
+                  ic = A[1+i+i+k*lda2];
                }
                else
                {
-                  diff = A[k+k+i*lda2];
+                  rc = A[k+k+i*lda2];
                   if (flg&8) /* Hermitian, not symmetric! */
-                     idiff = -A[1+k+k+i*lda2];
+                     ic = -A[1+k+k+i*lda2];
                   else
-                     idiff = A[1+k+k+i*lda2];
+                     ic = A[1+k+k+i*lda2];
                }
             }
-            diff -= *aa;
-            idiff -= aa[1];
+            diff = *da - rc;
+            idiff = da[1] - ic;
             if (diff < 0.0)
                diff = -diff;
             if (idiff < 0.0)
@@ -5996,9 +5999,9 @@ void *ATL_ipsycmpBV(int verb, double tol, ipinfo_t *ip, int flg, const TYPE *a,
             if (diff > tol || idiff > tol)
             {
                if (verb > 1)
-                  printf("A(%d,%d)=[%e,%e];  expected=[%e,%e]\n", i, j, 
-                         B[I], B[I+1], A[I], A[I+1]);
-               ATL_SetBitBV(bv, i*N+j);
+                  printf("A(%d,%d)=[%e,%e];  expected=[%e,%e]\n", i, k, 
+                         *da, da[1], rc, ic);
+               ATL_SetBitBV(bv, i*N+k);
             }
          #else
             double tst, diff;
