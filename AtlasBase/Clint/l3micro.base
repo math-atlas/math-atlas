@@ -4605,6 +4605,7 @@ void Mjoin(PATL,symmR_rec)
 @skip #include "atlas_reflevel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
+#ifdef TREAL
 static void syblkcp(ipinfo_t *ip, ATL_iptr_t I, ATL_iptr_t K, 
                     ATL_UINT nlm, ATL_UINT nln, cm2am_t cpN, cm2am_t cpT,
                     const TYPE *A, ATL_iptr_t lda, TYPE *w)
@@ -4649,7 +4650,7 @@ static void ATL_cpsyL2amm
    ATL_iptr_t N,                         /* order of A */
    unsigned int B,                       /* LCM(MB,KB) */
    const SCALAR alpha,                   /* scale factor for S */
-   TYPE *S, ATL_iptr_t lds,              /* symmetric in lower storage */
+   const TYPE *S, ATL_iptr_t lds,        /* symmetric in lower storage */
    TYPE *W,                              /* BxB workspace */
    TYPE *w                               /* spc for entire S in block storage */
 )
@@ -4751,7 +4752,10 @@ static void ATL_cpsyL2amm
    }
    #endif
 }
+#endif
+
 #include "atlas_bitvec.h"
+#include "atlas_tst.h"
 #ifdef Conj_
 int Mjoin(PATL,iphemmL)
 #else
@@ -4771,12 +4775,15 @@ int Mjoin(PATL,ipsymmL)
    ATL_CSZT ldc
 )
 {
+#ifdef TCPLX
+   return(1);
+#else
    ipinfo_t ip;
    ATL_iptr_t sz, szA, szB, tkblks;
    unsigned int B, extra;
    void *vp=NULL;
    TYPE *ws, *wg, *wd, *wC;
-   ATL_BV_t bv;
+   ATL_BV_t *bv;
    Mjoin(PATL,ipgenInfo)(&ip, 3, AtlasNoTrans, AtlasNoTrans, M, N, M, lds, ldg,
                          ldc, alpha, beta);
 /*
@@ -4806,10 +4813,16 @@ int Mjoin(PATL,ipsymmL)
     wC = wg + szB;
     wC = ATL_AlignPtr(wC);
 
-    ATL_cpsyL2amm(ip, N, B, ip.alpA, S, lds, wg, ws);
-    bv = ATL_ipsycmpBV(1, 0.0, ip, 1, wg, N, S);
-
+    ATL_cpsyL2amm(&ip, N, B, ip.alpA, S, lds, wg, ws);
+    bv = Mjoin(PATL,ipsycmpBV)(1, 0.0, &ip, 1, wg, N, S);
+    if (bv)
+    {
+       ATL_print2dBV(N, N, bv);
+       free(bv);
+    }
    free(vp);
+   return(1);
+#endif
 }
 #undef ONE
 @ROUT ATL_symmL
@@ -4986,7 +4999,7 @@ void Mjoin(PATL,symmL_rec)
    ATL_CSZT ldc
 )
 {
-   if (M <= ATL_VWopgen_LAST_KB)
+   if (0 && M <= ATL_VWopgen_LAST_KB)
    {
       #ifdef TCPLX
          if (TA == AtlasConjTrans)
@@ -5006,10 +5019,15 @@ void Mjoin(PATL,symmL_rec)
       #endif
    }
 /*
- * C0 = A00 * B0 + beta*C0 (symm)
- * C0 = A10^T * B1 + C0    (gemm)
- * C1 = A10 * B0 + beta*C1 (gemm)
- * C1 = A11 * B1 + C1      (symm)
+ * For large problems, try copying entire matrix to dense, and calling gemm
+ */
+   else if (Mjoin(PATL,ipsymmL)(Uplo, M, N, alpha, A, lda, B, ldb, beta,C,ldc))
+/*
+ * If neither of those work, split along M using recursive steps:
+ *    C0 = A00 * B0 + beta*C0 (symm)
+ *    C0 = A10^T * B1 + C0    (gemm)
+ *    C1 = A10 * B0 + beta*C1 (gemm)
+ *    C1 = A11 * B1 + C1      (symm)
  */
    {
       #ifdef TCPLX
