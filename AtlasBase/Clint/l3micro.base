@@ -4605,6 +4605,18 @@ void Mjoin(PATL,symmR_rec)
 @skip #include "atlas_reflevel3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_aN.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_aX.h))
+#ifdef Conj_
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_a1.h))
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_aN.h))
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_aX.h))
+#else
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_a1.h))
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aN.h))
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aX.h))
+#endif
 #ifdef TREAL
 static void syblkcp(ipinfo_t *ip, ATL_iptr_t I, ATL_iptr_t K, 
                     ATL_UINT nlm, ATL_UINT nln, cm2am_t cpN, cm2am_t cpT,
@@ -4614,7 +4626,7 @@ static void syblkcp(ipinfo_t *ip, ATL_iptr_t I, ATL_iptr_t K,
    ATL_CUINT MB=ip->mb, PMB=ip->pmb;
    const ATL_iptr_t incAn = lda*ip->kb;
    const alpha = ip->alpA;
-   ATL_UINT i, j;
+   ATL_UINT i, j, icpA;
 /*
  * First copy this block into Lower, NoTrans part of matrix
  */
@@ -4669,6 +4681,7 @@ static void ATL_cpsyL2amm
    const ATL_iptr_t incS=(B SHIFT)*(lds+1), nB=N/B, NN=N-nB*B;
    const ATL_iptr_t nfmblks = ip->nfmblks;
    const unsigned int b = N-NN, nlm=B/mb, nlk=B/kb;
+   ATL_UINT icpA;
    #ifdef TCPLX
       #define ONE ip->ONE
    #else
@@ -4676,7 +4689,10 @@ static void ATL_cpsyL2amm
    #endif
    void (*sycp)(ATL_CSZT N, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
                 TYPE *C, ATL_CSZT ldc);
+
    sycp = Mjoin(PATL,sycpyLNB_a1);
+   icpA = ATL_GetViewA2BLK(ip->idx);
+   icpA += icpA;
    @beginskip
    #if TCPLX
       if (alpha[1] == ATL_rzero)
@@ -4702,6 +4718,64 @@ static void ATL_cpsyL2amm
    else if (SCALAR_IS_NONE(alpha))
       sycp = Mjoin(PATL,sycpyL_an1);
    @endskip
+   #ifdef TCPLX
+      if (ip->alpA[1] == ATL_rzero)
+      {
+         const TYPE ralp = *(ip->alpA);
+         if (ralp == ATL_rone)
+         {
+            cpN = (cm2am_t) ATL_CpyFromANg_a1[icpA];
+            #ifdef Conj_
+               cpT = (cm2am_t) ATL_CpyFromAHg_a1[icpA];
+            #else
+               cpT = (cm2am_t) ATL_CpyFromATg_a1[icpA];
+            #endif
+         }
+         else if (ralp = ATL_rnone)
+         {
+            cpN = (cm2am_t) ATL_CpyFromANg_aN[icpA];
+            #ifdef Conj_
+               cpT = (cm2am_t) ATL_CpyFromAHg_aN[icpA];
+            #else
+               cpT = (cm2am_t) ATL_CpyFromATg_aN[icpA];
+            #endif
+         }
+         else
+         {
+            cpN = (cm2am_t) ATL_CpyFromANg_aX[icpA];
+            #ifdef Conj_
+               cpT = (cm2am_t) ATL_CpyFromAHg_aX[icpA];
+            #else
+               cpT = (cm2am_t) ATL_CpyFromATg_aX[icpA];
+            #endif
+         }
+      }
+      else
+      {
+         cpN = (cm2am_t) ATL_CpyFromANg_aX[icpA];
+         #ifdef Conj_
+            cpT = (cm2am_t) ATL_CpyFromAHg_aX[icpA];
+         #else
+            cpT = (cm2am_t) ATL_CpyFromATg_aX[icpA];
+         #endif
+      }
+   #else
+      if (ip->alpA == ATL_rone)
+      {
+         cpN = (cm2am_t) ATL_CpyFromANg_a1[icpA];
+         cpT = (cm2am_t) ATL_CpyFromATg_a1[icpA];
+      }
+      else if (ip->alpA == ATL_rnone)
+      {
+         cpN = (cm2am_t) ATL_CpyFromANg_aN[icpA];
+         cpT = (cm2am_t) ATL_CpyFromATg_aN[icpA];
+      }
+      else
+      {
+         cpN = (cm2am_t) ATL_CpyFromANg_aX[icpA];
+         cpT = (cm2am_t) ATL_CpyFromATg_aX[icpA];
+      }
+   #endif
 /*
  * Loop over full panels of B
  */
@@ -4792,7 +4866,11 @@ int Mjoin(PATL,ipsymmL)
  * with all non-A workspace.
  */
    ATL_assert(ip.npmblks < 2);
+   #if 0
    B = ATL_iLCM(ip.mb, ip.kb);
+   #else
+      B = ATL_iLCM(ip.mu, ip.ku);
+   #endif
    extra = Mmax(B, ip.exsz);
    tkblks = ip.nfkblks+1;
    szA = tkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
@@ -4814,7 +4892,7 @@ int Mjoin(PATL,ipsymmL)
     wC = ATL_AlignPtr(wC);
 
     ATL_cpsyL2amm(&ip, N, B, ip.alpA, S, lds, wg, ws);
-    bv = Mjoin(PATL,ipsycmpBV)(1, 0.0, &ip, 1, wg, N, S);
+    bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1, wg, N, S);
     if (bv)
     {
        ATL_print2dBV(N, N, bv);
@@ -4999,7 +5077,8 @@ void Mjoin(PATL,symmL_rec)
    ATL_CSZT ldc
 )
 {
-   if (0 && M <= ATL_VWopgen_LAST_KB)
+   /* if (M <= ATL_VWopgen_LAST_KB) */
+   if (M < 2)
    {
       #ifdef TCPLX
          if (TA == AtlasConjTrans)
