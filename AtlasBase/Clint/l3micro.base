@@ -4678,7 +4678,7 @@ static void ATL_cpsyL2amm
    ATL_iptr_t j;
    cm2am_t cpN, cpT;
    const unsigned int mb=ip->mb, kb = ip->kb;
-   const ATL_iptr_t incS=(B SHIFT)*(lds+1), nB=N/B, NN=N-nB*B;
+   const ATL_iptr_t incS=(B SHIFT)*(lds+1), nB=N/B, NN=nB*B;
    const ATL_iptr_t nfmblks = ip->nfmblks;
    const unsigned int b = N-NN, nlm=B/mb, nlk=B/kb;
    ATL_UINT icpA;
@@ -4799,32 +4799,37 @@ static void ATL_cpsyL2amm
  * Copy column panels from last to first, so 1st panel warm in cache.
  * If there is a partial last col panel, its just a partial block for lower
  */
-   #if 0
-   i = NN / ip->mbB;
-   k = NN / ip->kbB;
-   S += (lds+1)*N;  /* S at end of matrix */
    if (b)
    {
-      unsigned int kk=b/kb, ii=b/mb, M, K;
-      ATL_assert(0);  /* for now, assume N multiple of LCM(mb,kb) */
-      sycp(b, alpha, IdxA_ip(ip, S, i, k), lds, W);
-      if (kk*kb == b)
-         kk -= kb;
-      if (ii*mb == b)
-         ii -= mb;
-      M = b - ii;
-      K = b - kk;
-      do
+      unsigned int kblks=b/kb, mblks=b/mb, mbF=b-mblks*mb, kb0=b-kblks*kb;
+      const ATL_iptr_t incK = kb*(b SHIFT);
+      ATL_iptr_t i, k;
+
+      i = NN / ip->mb;
+      k = NN / ip->kb;
+      sycp(b, ONE, S+NN*((lds+1)SHIFT), lds, W, b);
+      for (j=0; j < kblks; j++, W += incK)
       {
+          unsigned int ii;
+          const TYPE *s=W;
+          for (ii=0; ii < mblks; ii++, s += mb)
+             cpN(kb, mb, ip->alpA, s, b, IdxAw_ip(ip, w, i+ii, k+j));
+          if (mbF)
+             cpN(kb, mbF, ip->alpA, s, b, IdxAw_ip(ip, w, i+ii, k+j));
       }
-      while (kk);
-      for (kk=b/kb; kk >= 0; kk--)
+/*
+ *    Last kb0-wide col panel
+ */
+      if (kb0)
       {
-         unsigned int ii;
-         for (ii=b / mb; ii >= 0; 
+          unsigned int ii;
+          j += kblks;
+          for (ii=0; ii < mblks; ii++, W += mb)
+             cpN(kb0, mb, ip->alpA, W, b, IdxAw_ip(ip, w, i+ii, j));
+          if (mbF)
+             cpN(kb0, mbF, ip->alpA, W, b, IdxAw_ip(ip, w, i+ii, j));
       }
    }
-   #endif
 }
 #endif
 
@@ -4897,6 +4902,7 @@ int Mjoin(PATL,ipsymmL)
     {
        ATL_print2dBV(N, N, bv);
        free(bv);
+       exit(-1);
     }
    free(vp);
    return(1);
