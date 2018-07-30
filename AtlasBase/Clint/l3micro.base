@@ -4663,7 +4663,7 @@ static void ATL_cpsyL2amm
    unsigned int B,                       /* LCM(MB,KB) */
    const SCALAR alpha,                   /* scale factor for S */
    const TYPE *S, ATL_iptr_t lds,        /* symmetric in lower storage */
-   TYPE *W,                              /* BxB workspace */
+   TYPE *W, ATL_iptr_t ldW,              /* BxB workspace */
    TYPE *w                               /* spc for entire S in block storage */
 )
 /*
@@ -4787,7 +4787,7 @@ static void ATL_cpsyL2amm
 /*
  *    Top block is triangular, so reflect it into W to get full
  */
-      sycp(B, ONE, IdxA_ip(ip, S, i, k), lds, W, B);
+      sycp(B, ONE, IdxA_ip(ip, S, i, k), lds, W, ldW);
       for (kk=0; kk < nlk; k++, Wc += incW)
       {
          ATL_INT ii;
@@ -4813,9 +4813,9 @@ static void ATL_cpsyL2amm
           unsigned int ii;
           const TYPE *s=W;
           for (ii=0; ii < mblks; ii++, s += mb)
-             cpN(kb, mb, ip->alpA, s, b, IdxAw_ip(ip, w, i+ii, k+j));
+             cpN(kb, mb, ip->alpA, s, ldW, IdxAw_ip(ip, w, i+ii, k+j));
           if (mbF)
-             cpN(kb, mbF, ip->alpA, s, b, IdxAw_ip(ip, w, i+ii, k+j));
+             cpN(kb, mbF, ip->alpA, s, ldW, IdxAw_ip(ip, w, i+ii, k+j));
       }
 /*
  *    Last kb0-wide col panel
@@ -4825,9 +4825,9 @@ static void ATL_cpsyL2amm
           unsigned int ii;
           j += kblks;
           for (ii=0; ii < mblks; ii++, W += mb)
-             cpN(kb0, mb, ip->alpA, W, b, IdxAw_ip(ip, w, i+ii, j));
+             cpN(kb0, mb, ip->alpA, W, ldW, IdxAw_ip(ip, w, i+ii, j));
           if (mbF)
-             cpN(kb0, mbF, ip->alpA, W, b, IdxAw_ip(ip, w, i+ii, j));
+             cpN(kb0, mbF, ip->alpA, W, ldW, IdxAw_ip(ip, w, i+ii, j));
       }
    }
 }
@@ -4857,11 +4857,13 @@ int Mjoin(PATL,ipsymmL)
 #ifdef TCPLX
    return(1);
 #else
+   #define iC wC
    ipinfo_t ip;
-   ATL_iptr_t sz, szA, szB, tkblks;
+   ATL_iptr_t sz, szA, szB, ldd, tkblks;
    unsigned int B, extra;
    void *vp=NULL;
-   TYPE *ws, *wg, *wd, *wC;
+   TYPE *wd, *wA; /* work for diagonal blks, work for copied A */
+   TYPE *wB, *wC; /* work for B & C matrices; both aliased with wd */
    ATL_BV_t *bv;
    Mjoin(PATL,ipgenInfo)(&ip, 3, AtlasNoTrans, AtlasNoTrans, M, N, M, lds, ldg,
                          ldc, alpha, beta);
@@ -4876,24 +4878,24 @@ int Mjoin(PATL,ipsymmL)
    #else
       B = ATL_iLCM(ip.mu, ip.ku);
    #endif
-   extra = Mmax(B, ip.exsz);
+   ldd = (B <= N) ? B : N;
    tkblks = ip.nfkblks+1;
    szA = tkblks*(ip.nfmblks*ip.szA + ip.npmblks*ip.pszA);
    szB = (ip.nfnblks) ? ip.szB : ip.pszB;
    szB *= tkblks;
-   extra = ip.szC+ip.exsz;
-   sz = B*B;               /* workspc for temporary square B copy */
-   if (sz > extra+szB)
-      extra += sz - extra - szB;
-   sz = ATL_MulBySize(extra + szA + szB) + 3*ATL_Cachelen;
+   extra = ip.exsz;
+   sz = ldd*ldd;
+   if (sz > extra+szB+ip.szC)
+      extra += sz - extra - szB - ip.szC;
+   sz = ATL_MulBySize(extra + szA + szB + ip.szC) + 3*ATL_Cachelen;
    if (sz <= ATL_MaxMalloc)
       vp = malloc(sz);
    if (!vp)
       return(1);
-    ws = ATL_AlignPtr(vp);
-    wg = ws + szA;
-    wg = ATL_AlignPtr(wg);
-    wC = wg + szB;
+    wA = ATL_AlignPtr(vp);
+    wB = wA + szA;
+    wd = wB = ATL_AlignPtr(wB);
+    wC = wB + szB;
     wC = ATL_AlignPtr(wC);
 /*
  *  Write known pattern so we can test elt test
@@ -4909,15 +4911,30 @@ int Mjoin(PATL,ipsymmL)
       }
    }
    #endif
-   ATL_cpsyL2amm(&ip, N, B, ip.alpA, S, lds, wg, ws);
-   bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1, wg, N, S);
+   ATL_cpsyL2amm(&ip, N, B, ip.alpA, S, lds, wd, ldd, wA);
+/* 
+ * Uncomment to get 1.cnt sequential numbering
+ */
+   #if 0
+   {
+      int k;
+      double mul = 10.0;
+      while (szA > mul)
+         mul *= 10;
+      printf("mul=%f\n", mul);
+      mul = 1 / mul;
+      for (k=0; k < szA; k++)
+         wA[k] = 1.0+k*mul;
+   }
+   #endif
+   bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1, wA, N, S);
    if (bv)
    {
       ATL_print2dBV(N, N, bv);
       free(bv);
       exit(-1);
    }
-   Mjoin(PATL,iploopsNMK)(&ip, 0, 0, NULL, G, C, 1+2+4, ws, wg, wC, iC, beta,
+   Mjoin(PATL,iploopsNMK)(&ip, 0, 0, NULL, G, C, 1+2+4, wA, wB, wC, iC, beta,
                           ip.blk2c);
    free(vp);
    return(0);
