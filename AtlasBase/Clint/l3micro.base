@@ -4617,18 +4617,6 @@ void Mjoin(PATL,symmR_rec)
    #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aN.h))
    #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aX.h))
 #endif
-#ifdef TREAL
-/*
- * This function copies 1 or more block that contain diagonals.
- * The block begins on the diagonal at (K,K), K=KBLK*kb.  For rows, K may
- * begin in the middle of an MB block, and may continue for multiple blocks,
- * and only write a partial last block
- */
-static void sycpDiag
-   (ipinfo_t *ip, cm2am_t cpL, cm2am_t cpU, ATL_iptr_t KBLK, 
-    const TYPE *A, ATL_iptr_t lda, TYPE *w)
-{
-}
 /*
  * D is ldd*kb workspace, ldd >= mb
  * This guy will copy a block from col-major symmetric storage (A) to 
@@ -4647,10 +4635,18 @@ static void sycpyBlk
    unsigned int mb, kb;
    const ATL_iptr_t nfmblks = ip->nfmblks, lda=ip->lda;
    ATL_iptr_t I, K=KBLK*ip->kb, szA;
-   TYPE *w, *a;
+   #ifdef TCPLX
+      ATL_iptr_t ldd2=ldd+ldd;
+      TYPE *rw, *iw;
 
+      iw = IdxAw_ip(ip, W, IBLK, KBLK);
+   #else
+      #define ldd2 ldd
+      TYPE *w;
+
+      w = IdxAw_ip(ip, W, IBLK, KBLK);
+   #endif
    kb = (KBLK < ip->nfkblks) ? ip->kb : ip->kb0;
-   w = IdxAw_ip(ip, W, IBLK, KBLK);
    if (IBLK < nfmblks)
    {
       mb = ip->mb;
@@ -4663,10 +4659,17 @@ static void sycpyBlk
       szA = ip->pszA;
       I = nfmblks*ip->mb + (IBLK-nfmblks)*ip->pmb;
    }
+   #ifdef TCPLX
+      rw = iw + szA;
+   #endif
    if (I >= K) /* block is in lower part, K may extend to upper */
    {
       if (I >= K+kb) /* block is all lower */
+      #ifdef TCPLX
+         cpL(kb, mb, ip->alpA, A+I+lda*K, lda, rw, iw);
+      #else
          cpL(kb, mb, ip->alpA, A+I+lda*K, lda, w);
+      #endif
       else           /* block has diagonal in it! */
       {
          ATL_iptr_t i, k;
@@ -4675,20 +4678,31 @@ static void sycpyBlk
 /*
  *       Copy block to D, getting upper elts through reflection
  */
-         for (k=0; k < kb; k++, d += ldd)
+         for (k=0; k < kb; k++, d += ldd2)
          {
             const ATL_iptr_t KK=K+k;
             for (i=0; i < mb; i++)
             {
-               const ATL_iptr_t II=I+i, IA = (II >= KK) ? II+lda*KK:KK+lda*II;
-               d[i] = A[IA];
+               const ATL_iptr_t II=I+i;
+               const ATL_iptr_t IA = ((II >= KK) ? II+lda*KK:KK+lda*II)SHIFT;
+               #ifdef TCPLX
+                  const ATL_iptr_t ii=i+i;
+                  d[ii] = A[IA];
+                  d[ii+1] = A[IA+1];
+               #else
+                  d[i] = A[IA];
+               #endif
             }
          }
          #if 0
-         Mjoin(PATL,geprint)("Al", mb, kb, A+I+K*lda, lda);
-         Mjoin(PATL,geprint)("Dn", mb, kb, D, ldd);
+            Mjoin(PATL,geprint)("Al", mb, kb, A+I+K*lda, lda);
+            Mjoin(PATL,geprint)("Dn", mb, kb, D, ldd);
          #endif
-         cpL(kb, mb, ip->alpA, D, ldd, w);
+         #ifdef TCPLX
+            cpL(kb, mb, ip->alpA, D, ldd, rw, iw);
+         #else
+            cpL(kb, mb, ip->alpA, D, ldd, w);
+         #endif
       }
    }
 /*
@@ -4697,51 +4711,45 @@ static void sycpyBlk
  * section from Lower.  Therefore, D is kbxmb in this case.
  */
    else if (I+mb <= K) /* logical block is wholly contained in upper portion */
+   #ifdef TCPLX
+      cpU(kb, mb, ip->alpA, A+((K+lda*I)<<1), lda, rw, iw);
+   #else
       cpU(kb, mb, ip->alpA, A+K+lda*I, lda, w);
+   #endif
    else        /* block is in upper part, but some elements go below diag */
    {
       ATL_iptr_t i, k;
       TYPE *d = D;
+      #ifdef TCPLX
+         ATL_CUINT kb2=kb+kb;
+      #else
+         #define kb2 kb
+      #endif
 /*
  *    Copy block to D, getting lower elts through reflection
  */
-      #if 1
-      for (k=0; k < mb; k++, d += kb)
+      for (k=0; k < mb; k++, d += kb2)
       {
          for (i=0; i < kb; i++)
          {
             const ATL_iptr_t KK=K+i, II=I+k;
             const ATL_iptr_t IA = (II >= KK) ? II+lda*KK:KK+lda*II;
-            d[i] = A[IA];
+            #ifdef TCPLX
+               ATL_CUINT ii=i+i;
+               d[ii] = A[IA];
+               d[ii+1] = A[IA+1];
+            #else
+               d[i] = A[IA];
+            #endif
          }
       }
       #if 0
-      Mjoin(PATL,geprint)("AU", kb, mb, A+K+I*lda, lda);
-      Mjoin(PATL,geprint)("Dt", kb, mb, D, kb);
+         Mjoin(PATL,geprint)("AU", kb, mb, A+K+I*lda, lda);
+         Mjoin(PATL,geprint)("Dt", kb, mb, D, kb);
       #endif
-      cpU(kb, mb, ip->alpA, D, kb, w);
-      #elif 1
+      #ifdef TCPLX
+         cpU(kb, mb, ip->alpA, D, kb, rw, iw);
       #else
-         for (k=0; k < kb; k++)
-         {
-            const ATL_iptr_t KK=K+k;
-            for (i=0; i < mb; i++)
-            {
-               const ATL_iptr_t II=I+i;
-               ATL_iptr_t IA, ID;
-               if (II >= KK)
-               {
-                  IA = II+lda*KK;
-                  ID = i+kb*k;
-               }
-               else
-               {
-                  IA = KK+lda*II;
-                  ID = k+kb*i;
-               }
-               D[ID] = A[IA];
-            }
-         }
          cpU(kb, mb, ip->alpA, D, kb, w);
       #endif
    }
@@ -4771,17 +4779,7 @@ static void ATL_cpsyL2amm
    ATL_iptr_t iB, kB; /* block counters */
    const SCALAR alpha = ip->alpA;
    ATL_UINT icpA;
-   #ifdef TCPLX
-      #define ONE ip->ONE
-   #else
-      #define ONE ATL_rone
-   #endif
-   @BEGINSKIP
-   void (*sycp)(ATL_CSZT N, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
-                TYPE *C, ATL_CSZT ldc);
 
-   sycp = Mjoin(PATL,sycpyLNB_a1);
-   @ENDSKIP
    icpA = ATL_GetViewA2BLK(ip->idx);
    icpA += icpA;
    #ifdef TCPLX
@@ -4797,7 +4795,7 @@ static void ATL_cpsyL2amm
                cpU = (cm2am_t) ATL_CpyFromANg_a1[icpA];
             #endif
          }
-         else if (ralp = ATL_rnone)
+         else if (ralp == ATL_rnone)
          {
             cpL = (cm2am_t) ATL_CpyFromATg_aN[icpA];
             #ifdef Conj_
@@ -4845,13 +4843,7 @@ static void ATL_cpsyL2amm
    for (kB=0; kB < nkblks; kB++)
       for (iB=0; iB < nmblks; iB++)
          sycpyBlk(ip, cpL, cpU, iB, kB, S, w, W, ldW);
-      @beginskip
-      {
-         printf("blk(%u,%u)\n", iB, kB);
-      }
-      @endskip
 }
-#endif
 
 #include "atlas_bitvec.h"
 #include "atlas_tst.h"
@@ -4874,10 +4866,11 @@ int Mjoin(PATL,ipsymmL)
    ATL_CSZT ldc
 )
 {
-#ifdef TCPLX
-   return(1);
-#else
-   #define iC wC
+   #ifdef TCPLX
+      TYPE *rC;
+   #else
+      #define rC wC
+   #endif
    ipinfo_t ip;
    ATL_iptr_t sz, szA, szB, ldd, tkblks;
    unsigned int mb, extra;
@@ -4917,10 +4910,13 @@ int Mjoin(PATL,ipsymmL)
    if (!vp)
       return(1);
     wA = ATL_AlignPtr(vp);
-    wB = wA + szA;
+    wB = wA + (szA SHIFT);
     wd = wB = ATL_AlignPtr(wB);
-    wC = wB + szB;
+    wC = wB + (szB SHIFT);
     wC = ATL_AlignPtr(wC);
+    #ifdef TCPLX
+       rC = wC + ip.szC;
+    #endif
 /*
  *  Write known pattern so we can test elt test
  */
@@ -4941,11 +4937,13 @@ int Mjoin(PATL,ipsymmL)
    #endif
    #if 0
    {
-      ATL_iptr_t i;
-      for (i=0; i < szA; i++)
-      {
-         wA[i] = (-4.0 - i/10000.0)*1000000.0;
-      }
+      ATL_iptr_t i, len=szA SHIFT;
+      double mul=10;
+      while (mul < len)
+         mul *= 10;
+      mul = 1.0 / mul;
+      for (i=0; i < len; i++)
+         wA[i] = (-4.0 - i*mul)*1.0e6;
    }
    #endif
    ATL_cpsyL2amm(&ip, N, S, lds, wd, ldd, wA);
@@ -4979,11 +4977,10 @@ int Mjoin(PATL,ipsymmL)
    else
       printf("\nNO ERRORS FOUND IN SYCP!\n\n");
    #endif
-   Mjoin(PATL,iploopsNMK)(&ip, 0, 0, NULL, G, C, 1+2+4, wA, wB, wC, iC, beta,
+   Mjoin(PATL,iploopsNMK)(&ip, 0, 0, NULL, G, C, 1+2+4, wA, wB, rC, wC, beta,
                           ip.blk2c);
    free(vp);
    return(0);
-#endif
 }
 #undef ONE
 @ROUT ATL_symmL
