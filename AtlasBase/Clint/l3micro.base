@@ -4878,6 +4878,22 @@ int Mjoin(PATL,ipsymmL)
    TYPE *wd, *wA; /* work for diagonal blks, work for copied A */
    TYPE *wB, *wC; /* work for B & C matrices; both aliased with wd */
    ATL_BV_t *bv;
+/*
+ * Uncomment to do with gemm via reflection
+ */
+   #if 0
+   {
+      TYPE *A;
+      A = malloc(M*ATL_MulBySize(M));
+      ATL_assert(A);
+      Mjoin(PATL,gecopy)(M, M, S, lds, A, M);
+      Mjoin(PATL,syreflect)(AtlasLower, M, A, M);
+      Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, M, N, M, alpha, A, M, 
+                       G, ldg, beta, C, ldc);
+      free(A);
+      return(0);
+   }
+   #endif
    Mjoin(PATL,ipgenInfo)(&ip, 0, AtlasNoTrans, AtlasNoTrans, M, N, M, lds, ldg,
                          ldc, alpha, beta);
 /*
@@ -4962,7 +4978,7 @@ int Mjoin(PATL,ipsymmL)
          wA[k] = 1.0+k*mul;
    }
    #endif
-   #if 0
+   #if 1
    bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1, wA, M, S);
    if (bv)
    {
@@ -4977,8 +4993,29 @@ int Mjoin(PATL,ipsymmL)
    else
       printf("\nNO ERRORS FOUND IN SYCP!\n\n");
    #endif
-   Mjoin(PATL,iploopsNMK)(&ip, 0, 0, NULL, G, C, 1+2+4, wA, wB, rC, wC, beta,
+/*
+ * Uncomment this code to make sure problem isn't in iploopsNMK!
+ */
+   #if 0
+   {
+      TYPE *A;
+      #ifdef TCPLX
+         #define ONE ip.ONE
+      #else
+         #define ONE ATL_rone
+      #endif
+      A = malloc(M*ATL_MulBySize(M));
+      ATL_assert(A);
+      Mjoin(PATL,gecopy)(M, M, S, lds, A, M);
+      Mjoin(PATL,syreflect)(AtlasLower, M, A, M);
+      Mjoin(PATL,iploopsNMK)(&ip, 0, 0, A, G, C, 1|2|4, wA, wB, rC, wC, beta,
+                             ip.blk2c);
+      free(A);
+   }
+   #else
+   Mjoin(PATL,iploopsNMK)(&ip, 0, 0, NULL, G, C, 1|2|4, wA, wB, rC, wC, beta,
                           ip.blk2c);
+   #endif
    free(vp);
    return(0);
 }
