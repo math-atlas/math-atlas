@@ -4608,15 +4608,12 @@ void Mjoin(PATL,symmR_rec)
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_aN.h))
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_aX.h))
-#ifdef Conj_
-   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_a1.h))
-   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_aN.h))
-   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_aX.h))
-#else
-   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_a1.h))
-   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aN.h))
-   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aX.h))
-#endif
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_a1.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aN.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aX.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_a1.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_aN.h))
+#include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_aX.h))
 /*
  * D is ldd*kb workspace, ldd >= mb
  * This guy will copy a block from col-major symmetric storage (A) to 
@@ -4628,7 +4625,7 @@ void Mjoin(PATL,symmR_rec)
  * If (I,J) is in the upper triangle, we need to copy transposed block from
  * Lower.  The upper bock is of size mbxkb, so in lower storage it is kbxmb.
  */
-static void sycpyBlk
+static void sycpyBlkL
    (ipinfo_t *ip, cm2am_t cpL, cm2am_t cpU, ATL_iptr_t IBLK, ATL_iptr_t KBLK, 
     const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd)
 {
@@ -4758,6 +4755,9 @@ static void sycpyBlk
 static void ATL_cpsyL2amm
 (
    ipinfo_t *ip,
+   #ifdef TCPLX
+   const enum ATLAS_TRANS TA,  /* AtlasConjTrans for HEMM, else AtlasTrans */
+   #endif
    ATL_iptr_t N,                         /* order of A */
    const TYPE *S, ATL_iptr_t lds,        /* symmetric in lower storage */
    TYPE *W, ATL_iptr_t ldW,              /* ldWxkb workspace */
@@ -4789,39 +4789,27 @@ static void ATL_cpsyL2amm
          if (ralp == ATL_rone)
          {
             cpL = (cm2am_t) ATL_CpyFromATg_a1[icpA];
-            #ifdef Conj_
-               cpU = (cm2am_t) ATL_CpyFromAHg_a1[icpA];
-            #else
-               cpU = (cm2am_t) ATL_CpyFromANg_a1[icpA];
-            #endif
+            cpU = (cm2am_t) ((TA == AtlasTrans) ? 
+                             ATL_CpyFromANg_a1[icpA]:ATL_CpyFromACg_a1[icpA]);
          }
          else if (ralp == ATL_rnone)
          {
             cpL = (cm2am_t) ATL_CpyFromATg_aN[icpA];
-            #ifdef Conj_
-               cpU = (cm2am_t) ATL_CpyFromAHg_aN[icpA];
-            #else
-               cpU = (cm2am_t) ATL_CpyFromANg_aN[icpA];
-            #endif
+            cpU = (cm2am_t) ((TA == AtlasTrans) ? 
+                             ATL_CpyFromANg_aN[icpA]:ATL_CpyFromACg_aN[icpA]);
          }
          else
          {
             cpL = (cm2am_t) ATL_CpyFromATg_aX[icpA];
-            #ifdef Conj_
-               cpU = (cm2am_t) ATL_CpyFromAHg_aX[icpA];
-            #else
-               cpU = (cm2am_t) ATL_CpyFromANg_aX[icpA];
-            #endif
+            cpU = (cm2am_t) ((TA == AtlasTrans) ? 
+                             ATL_CpyFromANg_aX[icpA]:ATL_CpyFromACg_aX[icpA]);
          }
       }
       else
       {
          cpL = (cm2am_t) ATL_CpyFromATg_aX[icpA];
-         #ifdef Conj_
-            cpU = (cm2am_t) ATL_CpyFromAHg_aX[icpA];
-         #else
-            cpU = (cm2am_t) ATL_CpyFromANg_aX[icpA];
-         #endif
+         cpU = (cm2am_t) ((TA == AtlasTrans) ? 
+                          ATL_CpyFromANg_aX[icpA]:ATL_CpyFromACg_aX[icpA]);
       }
    #else
       if (ip->alpA == ATL_rone)
@@ -4842,17 +4830,16 @@ static void ATL_cpsyL2amm
    #endif
    for (kB=0; kB < nkblks; kB++)
       for (iB=0; iB < nmblks; iB++)
-         sycpyBlk(ip, cpL, cpU, iB, kB, S, w, W, ldW);
+         sycpyBlkL(ip, cpL, cpU, iB, kB, S, w, W, ldW);
 }
 
 #include "atlas_bitvec.h"
 #include "atlas_tst.h"
-#ifdef Conj_
-int Mjoin(PATL,iphemmL)
-#else
 int Mjoin(PATL,ipsymmL)
-#endif
 (
+   #ifdef TCPLX
+   const enum ATLAS_TRANS TA,  /* AtlasConjTrans for HEMM, else AtlasTrans */
+   #endif
    const enum ATLAS_UPLO  Uplo,
    ATL_CSZT  M,
    ATL_CSZT N,
@@ -4964,7 +4951,11 @@ int Mjoin(PATL,ipsymmL)
          wA[i] = (-4.0 - i*mul)*1.0e6;
    }
    #endif
-   ATL_cpsyL2amm(&ip, N, S, lds, wd, ldd, wA);
+   #ifdef TCPLX
+      ATL_cpsyL2amm(&ip, TA, N, S, lds, wd, ldd, wA);
+   #else
+      ATL_cpsyL2amm(&ip, N, S, lds, wd, ldd, wA);
+   #endif
 /* 
  * Uncomment to get 1.cnt sequential numbering
  */
@@ -4980,8 +4971,13 @@ int Mjoin(PATL,ipsymmL)
          wA[k] = 1.0+k*mul;
    }
    #endif
-   #if 0
-   bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1, wA, M, S);
+   #if 1
+   #ifdef TCPLX
+      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((TA==AtlasTrans)?0:8), 
+                                 wA, M, S);
+   #else
+      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1, wA, M, S);
+   #endif
    if (bv)
    {
       ATL_print2dBV(M, M, bv);
@@ -5219,7 +5215,7 @@ void Mjoin(PATL,symmL_rec)
 /*
  * For large problems, try copying entire matrix to dense, and calling gemm
  */
-   else if (Mjoin(PATL,ipsymmL)(Uplo, M, N, alpha, A, lda, B, ldb, beta,C,ldc))
+   else if (Mjoin(PATL,ipsymmL)(MY_ENUM, M, N, alpha,A,lda,B,ldb,beta,C,ldc))
 /*
  * If neither of those work, split along M using recursive steps:
  *    C0 = A00 * B0 + beta*C0 (symm)
