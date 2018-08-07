@@ -4485,19 +4485,13 @@ int Mjoin(PATL,opsymmInfo)
 }
 
 #ifndef Conj_
-   #ifdef TCPLX
-      #define MY_ENUM TA, Uplo
-   #else
+   #ifndef TCPLX
       #define ONE ATL_rone
-      #define MY_ENUM Uplo
       #define TA AtlasTrans
    #endif
 void Mjoin(PATL,symmR_rec)
 (
-   #ifdef TCPLX
-   const enum ATLAS_TRANS TA,  /* AtlasConjTrans for HEMM, else AtlasTrans */
-   #endif
-   const enum ATLAS_UPLO  Uplo,
+   ATL_CUINT flg, /* bitvec 0:Upper? 1:HEMM? */
    ATL_CSZT  M,
    ATL_CSZT N,
    const SCALAR alpha,
@@ -4512,8 +4506,9 @@ void Mjoin(PATL,symmR_rec)
 {
    if (N <= ATL_VWopgen_LAST_KB)
    {
+      const enum ATLAS_UPLO Uplo = (flg&1) ? AtlasUpper:AtlasLower;
       #ifdef TCPLX
-         if (TA == AtlasConjTrans)
+         if (flg&2) /* really a HEMM */
          {
             if (!Mjoin(PATL,ophemmR)(Uplo, M, N, alpha, A, lda, B, ldb, 
                                      beta, C, ldc))
@@ -4538,23 +4533,16 @@ void Mjoin(PATL,symmR_rec)
    {
       #ifdef TCPLX
          const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+         const enum ATLAS_TRANS TA = (flg&2) ? AtlasConjTrans : AtlasTrans;
       #endif
       const int NL=(N>>1), NR = N-NL;
       const TYPE *B1 = B + ldb*(NL SHIFT);
       TYPE *C1 = C + ldc*(NL SHIFT);
 
       ATL_assert(NL);  /* debugging, remove later */
-      Mjoin(PATL,symmR_rec)(MY_ENUM, M, NL, alpha, A, lda, B, ldb, 
+      Mjoin(PATL,symmR_rec)(flg, M, NL, alpha, A, lda, B, ldb, 
                             beta, C, ldc);
-      if (Uplo == AtlasLower)
-      {
-         const TYPE *A10 = A + (NL SHIFT);
-         Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, M, NL, NR, alpha, 
-                          B1, ldb, A10, lda, ONE, C, ldc);
-         Mjoin(PATL,ammm)(AtlasNoTrans, TA, M, NR, NL, alpha, 
-                          B, ldb, A10, lda, beta, C1, ldc);
-      }
-      else /* Upper matrix */
+      if (flg&1)  /* Upper matrix */
       {
          const TYPE *A01 = A + NL*(lda SHIFT);
          Mjoin(PATL,ammm)(AtlasNoTrans, TA, M, NL, NR, alpha, 
@@ -4562,23 +4550,26 @@ void Mjoin(PATL,symmR_rec)
          Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, M, NR, NL, alpha, 
                           B, ldb, A01, lda, beta, C1, ldc);
       }
-      Mjoin(PATL,symmR_rec)(MY_ENUM, M, NR, alpha, A+(NL SHIFT)*(lda+1), lda, 
+      else         /* Lower matrix */
+      {
+         const TYPE *A10 = A + (NL SHIFT);
+         Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, M, NL, NR, alpha, 
+                          B1, ldb, A10, lda, ONE, C, ldc);
+         Mjoin(PATL,ammm)(AtlasNoTrans, TA, M, NR, NL, alpha, 
+                          B, ldb, A10, lda, beta, C1, ldc);
+      }
+      Mjoin(PATL,symmR_rec)(flg, M, NR, alpha, A+(NL SHIFT)*(lda+1), lda, 
                             B1, ldb, ONE, C1, ldc);
    }
 }
-   #undef MY_ENUM
    #ifdef TCPLX
-      #define MY_TRAN AtlasTrans,
    #else
       #undef TA
-      #define MY_TRAN
    #endif
 #else
-   #define MY_TRAN AtlasConjTrans,
    void Mjoin(PATL,symmL_rec)
-      (const enum ATLAS_TRANS, const enum ATLAS_UPLO, ATL_CSZT, ATL_CSZT,
-       const SCALAR, const TYPE*, ATL_CSZT, const TYPE*, ATL_CSZT,
-       const SCALAR, TYPE*, ATL_CSZT);
+      (ATL_CUINT, ATL_CSZT, ATL_CSZT, const SCALAR, const TYPE*, ATL_CSZT, 
+       const TYPE*, ATL_CSZT, const SCALAR, TYPE*, ATL_CSZT);
 #endif
 @ROUT ATL_ipsymmL
 /*
@@ -4611,9 +4602,11 @@ void Mjoin(PATL,symmR_rec)
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_a1.h))
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aN.h))
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromATg_aX.h))
-#include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_a1.h))
-#include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_aN.h))
-#include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_aX.h))
+#ifdef TCPLX
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_a1.h))
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_aN.h))
+   #include Mstr(COPY/Mjoin(ATLAS_PRE,FromACg_aX.h))
+#endif
 /*
  * D is ldd*kb workspace, ldd >= mb
  * This guy will copy a block from col-major symmetric storage (A) to 
@@ -4625,8 +4618,13 @@ void Mjoin(PATL,symmR_rec)
  * If (I,J) is in the upper triangle, we need to copy transposed block from
  * Lower.  The upper bock is of size mbxkb, so in lower storage it is kbxmb.
  */
-static void sycpyBlkL
-   (ipinfo_t *ip, cm2am_t cpL, cm2am_t cpU, ATL_iptr_t IBLK, ATL_iptr_t KBLK, 
+@whiledef up L U
+   @whiledef rt sy he
+      @MIF rt = "he
+#ifdef TCPLX
+      @ENDMIF
+static void @(rt)cpyBlk@(up)
+   (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK, 
     const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd)
 {
    unsigned int mb, kb;
@@ -4659,13 +4657,20 @@ static void sycpyBlkL
    #ifdef TCPLX
       rw = iw + szA;
    #endif
-   if (I >= K) /* block is in lower part, K may extend to upper */
+      @MIF up = "L
+   if (I >= K) /* block is in lower part, kb may extend to upper */
    {
       if (I >= K+kb) /* block is all lower */
+      @ENDMIF
+      @MIF up = "U
+   if (I <= K) /* block is in upper part, mb may extend to lower */
+   {
+      if (I+mb <= K) /* block is all upper */
+      @ENDMIF
       #ifdef TCPLX
-         cpL(kb, mb, ip->alpA, A+I+lda*K, lda, rw, iw);
+         cpN(kb, mb, ip->alpA, A+I+lda*K, lda, rw, iw);
       #else
-         cpL(kb, mb, ip->alpA, A+I+lda*K, lda, w);
+         cpN(kb, mb, ip->alpA, A+I+lda*K, lda, w);
       #endif
       else           /* block has diagonal in it! */
       {
@@ -4681,6 +4686,7 @@ static void sycpyBlkL
             for (i=0; i < mb; i++)
             {
                const ATL_iptr_t II=I+i;
+      @MIF rt = "sy
                const ATL_iptr_t IA = ((II >= KK) ? II+lda*KK:KK+lda*II)SHIFT;
                #ifdef TCPLX
                   const ATL_iptr_t ii=i+i;
@@ -4689,6 +4695,30 @@ static void sycpyBlkL
                #else
                   d[i] = A[IA];
                #endif
+      @ENDMIF
+      @MIF rt = "he
+               if (II > KK)  /* Still lower, so no need to negate imag */
+               {
+                  const ATL_iptr_t IA=(II+lda*KK)SHIFT;
+                  ATL_CUINT ii = i+i;
+                  d[ii] = A[IA];
+                  d[ii+1] = A[IA+1];
+               }
+               else if (II < KK) /* Upper, must negate imag */
+               {
+                  const ATL_iptr_t IA=(KK+lda*II)SHIFT;
+                  ATL_CUINT ii = i+i;
+                  d[ii] = A[IA];
+                  d[ii+1] = -A[IA+1];
+               }
+               else /* II==JJ, diagonal, must zero imag */
+               {
+                  const ATL_iptr_t IA=II*((1+lda)SHIFT);
+                  ATL_CUINT ii = i+i;
+                  d[ii] = A[IA];
+                  d[ii+1] = ATL_rzero;
+               }
+      @ENDMIF
             }
          }
          #if 0
@@ -4696,24 +4726,34 @@ static void sycpyBlkL
             Mjoin(PATL,geprint)("Dn", mb, kb, D, ldd);
          #endif
          #ifdef TCPLX
-            cpL(kb, mb, ip->alpA, D, ldd, rw, iw);
+            cpN(kb, mb, ip->alpA, D, ldd, rw, iw);
          #else
-            cpL(kb, mb, ip->alpA, D, ldd, w);
+            cpN(kb, mb, ip->alpA, D, ldd, w);
          #endif
       }
    }
+      @MIF up = "L
 /*
  * If block is logically in upper array, it is stored transposed in lower.
  * The block is logically mb x kb, so we need to copy kb x mb non-transposed
  * section from Lower.  Therefore, D is kbxmb in this case.
  */
    else if (I+mb <= K) /* logical block is wholly contained in upper portion */
+      @ENDMIF
+      @MIF up = "U
+/*
+ * If block is logically in lower array, it is stored transposed in upper.
+ * The block is logically mb x kb, so we need to copy kb x mb non-transposed
+ * section from Lower.  Therefore, D is kbxmb in this case.
+ */
+   else if (K+mb >= I) /* logical block is wholly contained in upper portion */
+      @ENDMIF
    #ifdef TCPLX
-      cpU(kb, mb, ip->alpA, A+((K+lda*I)<<1), lda, rw, iw);
+      cpT(kb, mb, ip->alpA, A+((K+lda*I)<<1), lda, rw, iw);
    #else
-      cpU(kb, mb, ip->alpA, A+K+lda*I, lda, w);
+      cpT(kb, mb, ip->alpA, A+K+lda*I, lda, w);
    #endif
-   else        /* block is in upper part, but some elements go below diag */
+   else        /* block is reflected across diagonal! */
    {
       ATL_iptr_t i, k;
       TYPE *d = D;
@@ -4730,6 +4770,7 @@ static void sycpyBlkL
          for (i=0; i < kb; i++)
          {
             const ATL_iptr_t KK=K+i, II=I+k;
+      @MIF rt = "sy
             const ATL_iptr_t IA = ((II >= KK) ? II+lda*KK:KK+lda*II)SHIFT;
             #ifdef TCPLX
                ATL_CUINT ii=i+i;
@@ -4738,6 +4779,30 @@ static void sycpyBlkL
             #else
                d[i] = A[IA];
             #endif
+      @ENDMIF
+      @MIF rt = "he
+            if (II > KK)
+            {
+               const ATL_iptr_t IA = (II+lda*KK)SHIFT;
+               ATL_CUINT ii=i+i;
+               d[ii] = A[IA];
+               d[ii+1] = -A[IA+1]; /* because cpT will negate! */
+            }
+            else if (II < KK)
+            {
+               const ATL_iptr_t IA = (KK+lda*II)SHIFT;
+               ATL_CUINT ii=i+i;
+               d[ii] = A[IA];
+               d[ii+1] = A[IA+1]; /* cpT will negate as needed for U */
+            }
+            else /* diagonal, zero imag */
+            {
+               const ATL_iptr_t IA = ((lda+1)SHIFT)*II;
+               ATL_CUINT ii=i+i;
+               d[ii] = A[IA];
+               d[ii+1] = ATL_rzero;
+            }
+      @ENDMIF
          }
       }
       #if 0
@@ -4745,19 +4810,22 @@ static void sycpyBlkL
          Mjoin(PATL,geprint)("Dt", kb, mb, D, kb);
       #endif
       #ifdef TCPLX
-         cpU(kb, mb, ip->alpA, D, kb, rw, iw);
+         cpT(kb, mb, ip->alpA, D, kb, rw, iw);
       #else
-         cpU(kb, mb, ip->alpA, D, kb, w);
+         cpT(kb, mb, ip->alpA, D, kb, w);
       #endif
    }
 }
+      @MIF rt = "he
+#endif
+      @ENDMIF
+   @endwhile
+@endwhile
 
-static void ATL_cpsyL2amm
+static void ATL_cpsy2amm
 (
    ipinfo_t *ip,
-   #ifdef TCPLX
-   const enum ATLAS_TRANS TA,  /* AtlasConjTrans for HEMM, else AtlasTrans */
-   #endif
+   ATL_CUINT flg, /* bitvec: 0:Upper?; 1:HEMM? */
    ATL_iptr_t N,                         /* order of A */
    const TYPE *S, ATL_iptr_t lds,        /* symmetric in lower storage */
    TYPE *W, ATL_iptr_t ldW,              /* ldWxkb workspace */
@@ -4779,39 +4847,47 @@ static void ATL_cpsyL2amm
    ATL_iptr_t iB, kB; /* block counters */
    const SCALAR alpha = ip->alpA;
    ATL_UINT icpA;
+   void (*cpyBlk)
+      (ipinfo_t *ip, cm2am_t cpL, cm2am_t cpU, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
+       const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
 
    icpA = ATL_GetViewA2BLK(ip->idx);
    icpA += icpA;
    #ifdef TCPLX
+      if (flg&1)
+         cpyBlk = (flg&2) ? hecpyBlkU : sycpyBlkU;
+      else
+         cpyBlk = (flg&2) ? hecpyBlkL : sycpyBlkL;
       if (alpha[1] == ATL_rzero)
       {
          const TYPE ralp = *alpha;
          if (ralp == ATL_rone)
          {
             cpL = (cm2am_t) ATL_CpyFromATg_a1[icpA];
-            cpU = (cm2am_t) ((TA == AtlasTrans) ? 
-                             ATL_CpyFromANg_a1[icpA]:ATL_CpyFromACg_a1[icpA]);
+            cpU = (cm2am_t) ((flg&2) ? 
+                             ATL_CpyFromACg_a1[icpA]:ATL_CpyFromANg_a1[icpA]);
          }
          else if (ralp == ATL_rnone)
          {
             cpL = (cm2am_t) ATL_CpyFromATg_aN[icpA];
-            cpU = (cm2am_t) ((TA == AtlasTrans) ? 
-                             ATL_CpyFromANg_aN[icpA]:ATL_CpyFromACg_aN[icpA]);
+            cpU = (cm2am_t) ((flg&2) ? 
+                             ATL_CpyFromACg_aN[icpA]:ATL_CpyFromANg_aN[icpA]);
          }
          else
          {
             cpL = (cm2am_t) ATL_CpyFromATg_aX[icpA];
-            cpU = (cm2am_t) ((TA == AtlasTrans) ? 
-                             ATL_CpyFromANg_aX[icpA]:ATL_CpyFromACg_aX[icpA]);
+            cpU = (cm2am_t) ((flg&2) ? 
+                             ATL_CpyFromACg_aX[icpA]:ATL_CpyFromANg_aX[icpA]);
          }
       }
       else
       {
          cpL = (cm2am_t) ATL_CpyFromATg_aX[icpA];
-         cpU = (cm2am_t) ((TA == AtlasTrans) ? 
-                          ATL_CpyFromANg_aX[icpA]:ATL_CpyFromACg_aX[icpA]);
+         cpU = (cm2am_t) ((flg&2) ? 
+                          ATL_CpyFromACg_aX[icpA]:ATL_CpyFromANg_aX[icpA]);
       }
    #else
+      cpyBlk = (flg&1) ? sycpyBlkU:sycpyBlkL;
       if (ip->alpA == ATL_rone)
       {
          cpL = (cm2am_t) ATL_CpyFromATg_a1[icpA];
@@ -4830,17 +4906,14 @@ static void ATL_cpsyL2amm
    #endif
    for (kB=0; kB < nkblks; kB++)
       for (iB=0; iB < nmblks; iB++)
-         sycpyBlkL(ip, cpL, cpU, iB, kB, S, w, W, ldW);
+         cpyBlk(ip, cpL, cpU, iB, kB, S, w, W, ldW);
 }
 
 #include "atlas_bitvec.h"
 #include "atlas_tst.h"
 int Mjoin(PATL,ipsymmL)
 (
-   #ifdef TCPLX
-   const enum ATLAS_TRANS TA,  /* AtlasConjTrans for HEMM, else AtlasTrans */
-   #endif
-   const enum ATLAS_UPLO  Uplo,
+   ATL_CUINT flg, /* bitvec 0:Upper? 1:HEMM? */
    ATL_CSZT  M,
    ATL_CSZT N,
    const SCALAR alpha,
@@ -4865,7 +4938,7 @@ int Mjoin(PATL,ipsymmL)
    TYPE *wd, *wA; /* work for diagonal blks, work for copied A */
    TYPE *wB, *wC; /* work for B & C matrices; both aliased with wd */
    ATL_BV_t *bv;
-   if (Uplo != AtlasLower)
+   if (flg&1)
       return(1);
 /*
  * Uncomment to do with gemm via reflection
@@ -4951,11 +5024,7 @@ int Mjoin(PATL,ipsymmL)
          wA[i] = (-4.0 - i*mul)*1.0e6;
    }
    #endif
-   #ifdef TCPLX
-      ATL_cpsyL2amm(&ip, TA, N, S, lds, wd, ldd, wA);
-   #else
-      ATL_cpsyL2amm(&ip, N, S, lds, wd, ldd, wA);
-   #endif
+   ATL_cpsy2amm(&ip, flg, N, S, lds, wd, ldd, wA);
 /* 
  * Uncomment to get 1.cnt sequential numbering
  */
@@ -4973,10 +5042,10 @@ int Mjoin(PATL,ipsymmL)
    #endif
    #if 1
    #ifdef TCPLX
-      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((TA==AtlasTrans)?0:8), 
+      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)<<2)|((flg&2)<<2),
                                  wA, M, S);
    #else
-      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1, wA, M, S);
+      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)<<2), wA, M, S);
    #endif
    if (bv)
    {
@@ -4991,6 +5060,9 @@ int Mjoin(PATL,ipsymmL)
    else
       printf("\nNO ERRORS FOUND IN SYCP!\n\n");
    #endif
+   #if 1
+      Mjoin(PATL,ipprint)(stdout, &ip, 1, "SY", M, M, wA);
+   #endif
 /*
  * Uncomment this code to make sure problem isn't in iploopsNMK!
  */
@@ -5002,10 +5074,15 @@ int Mjoin(PATL,ipsymmL)
       #else
          #define ONE ATL_rone
       #endif
-      A = malloc(M*ATL_MulBySize(M));
+      A = malloc(lds*ATL_MulBySize(M));
       ATL_assert(A);
-      Mjoin(PATL,gecopy)(M, M, S, lds, A, M);
-      Mjoin(PATL,syreflect)(AtlasLower, M, A, M);
+      Mjoin(PATL,gecopy)(M, M, S, lds, A, lds);
+      #ifdef TCPLX
+      if (flg&2)
+         Mjoin(PATL,hereflect)(AtlasLower, M, A, lds);
+      else
+      #endif
+      Mjoin(PATL,syreflect)(AtlasLower, M, A, lds);
       Mjoin(PATL,iploopsNMK)(&ip, 0, 0, A, G, C, 1|2|4, wA, wB, rC, wC, beta,
                              ip.blk2c);
       free(A);
@@ -5168,18 +5245,13 @@ int Mjoin(PATL,opsymmInfo)
 
 #ifndef Conj_
    #ifdef TCPLX
-      #define MY_ENUM TA, Uplo
    #else
       #define ONE ATL_rone
-      #define MY_ENUM Uplo
       #define TA AtlasTrans
    #endif
 void Mjoin(PATL,symmL_rec)
 (
-   #ifdef TCPLX
-   const enum ATLAS_TRANS TA,  /* AtlasConjTrans for HEMM, else AtlasTrans */
-   #endif
-   const enum ATLAS_UPLO  Uplo,
+   ATL_CUINT flg, /* bitvec 0:Upper? 1:HEMM? */
    ATL_CSZT  M,
    ATL_CSZT N,
    const SCALAR alpha,
@@ -5192,10 +5264,15 @@ void Mjoin(PATL,symmL_rec)
    ATL_CSZT ldc
 )
 {
+   #if 1
    if (M <= ATL_VWopgen_LAST_KB)
+   #else
+   if (M < 2)
+   #endif
    {
+      const enum ATLAS_UPLO Uplo = (flg&1) ? AtlasUpper : AtlasLower;
       #ifdef TCPLX
-         if (TA == AtlasConjTrans)
+         if (flg&2) /* really HEMM */
          {
             if (!Mjoin(PATL,ophemmL)(Uplo, M, N, alpha, A, lda, B, ldb, 
                                      beta, C, ldc))
@@ -5215,7 +5292,7 @@ void Mjoin(PATL,symmL_rec)
  * For large problems, try copying entire matrix to dense, and calling gemm
  */
    #if 0
-   else if (Mjoin(PATL,ipsymmL)(MY_ENUM, M, N, alpha,A,lda,B,ldb,beta,C,ldc))
+   else if (Mjoin(PATL,ipsymmL)(flg, M, N, alpha,A,lda,B,ldb,beta,C,ldc))
    #endif
 /*
  * If neither of those work, split along M using recursive steps:
@@ -5227,23 +5304,16 @@ void Mjoin(PATL,symmL_rec)
    {
       #ifdef TCPLX
          const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+         const enum ATLAS_TRANS TA = (flg&2) ? AtlasConjTrans : AtlasTrans;
       #endif
       const int ML=(M>>1), MR = M-ML;
       const TYPE *B1 = B + (ML SHIFT);
       TYPE *C1 = C + (ML SHIFT);
 
       ATL_assert(ML);  /* debugging, remove later */
-      Mjoin(PATL,symmL_rec)(MY_ENUM, ML, N, alpha, A, lda, B, ldb, 
+      Mjoin(PATL,symmL_rec)(flg, ML, N, alpha, A, lda, B, ldb, 
                             beta, C, ldc);
-      if (Uplo == AtlasLower)
-      {
-         const TYPE *A10 = A + (ML SHIFT);
-         Mjoin(PATL,ammm)(TA, AtlasNoTrans, ML, N, MR, alpha, A10, lda,
-                          B1, ldb, ONE, C, ldc);
-         Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, MR, N, ML, alpha, 
-                          A10, lda, B, ldb, beta, C1, ldc);
-      }
-      else /* Upper matrix */
+      if ((flg&1))  /* Upper Matrix */
       {
          const TYPE *A01 = A + ML*(lda SHIFT);
          Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, ML, N, MR, alpha, 
@@ -5251,30 +5321,29 @@ void Mjoin(PATL,symmL_rec)
          Mjoin(PATL,ammm)(TA, AtlasNoTrans, MR, N, ML, alpha, 
                           A01, lda, B, ldb, beta, C1, ldc);
       }
-      Mjoin(PATL,symmL_rec)(MY_ENUM, MR, N, alpha, A+(ML SHIFT)*(lda+1), 
+      else          /* Lower matrix */
+      {
+         const TYPE *A10 = A + (ML SHIFT);
+         Mjoin(PATL,ammm)(TA, AtlasNoTrans, ML, N, MR, alpha, A10, lda,
+                          B1, ldb, ONE, C, ldc);
+         Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, MR, N, ML, alpha, 
+                          A10, lda, B, ldb, beta, C1, ldc);
+      }
+      Mjoin(PATL,symmL_rec)(flg, MR, N, alpha, A+(ML SHIFT)*(lda+1), 
                             lda, B1, ldb, ONE, C1, ldc);
    }
 }
-   #undef MY_ENUM
-   #ifdef TCPLX
-      #define MY_TRAN AtlasTrans,
-   #else
+   #ifndef TCPLX
       #undef TA
-      #define MY_TRAN
    #endif
 #else
-   #define MY_TRAN AtlasConjTrans,
    void Mjoin(PATL,symmL_rec)
-      (const enum ATLAS_TRANS, const enum ATLAS_UPLO, ATL_CSZT, ATL_CSZT,
-       const SCALAR, const TYPE*, ATL_CSZT, const TYPE*, ATL_CSZT,
-       const SCALAR, TYPE*, ATL_CSZT);
+      (ATL_CUINT, ATL_CSZT, ATL_CSZT, const SCALAR, const TYPE*, ATL_CSZT, 
+       const TYPE*, ATL_CSZT, const SCALAR, TYPE*, ATL_CSZT);
 #endif
 void Mjoin(PATL,symmR_rec)
 (
-   #ifdef TCPLX
-   const enum ATLAS_TRANS TA,  /* AtlasConjTrans for HEMM, else AtlasTrans */
-   #endif
-   const enum ATLAS_UPLO  Uplo,
+   ATL_CUINT flg, /* bitvec 0:Upper? 1:HEMM? */
    ATL_CSZT  M,
    ATL_CSZT N,
    const SCALAR alpha,
@@ -5310,7 +5379,11 @@ void Mjoin(PATL,symm)
    void *vp=NULL;
    TYPE *aA, *aB, *aC, *bA;
    opinfo_t oi;
-   ATL_UINT bv;
+   #ifdef Conj_
+      ATL_UINT bv = (Uplo == AtlasUpper)|2;
+   #else
+      ATL_UINT bv = (Uplo == AtlasUpper);
+   #endif
 
    #ifdef USEREF
    {
@@ -5347,23 +5420,10 @@ void Mjoin(PATL,symm)
          return;
       }
       #endif
-      Mjoin(PATL,symmL_rec)(MY_TRAN Uplo, M, N, alpha, A, lda, B, ldb, 
-                            beta, C, ldc);
+      Mjoin(PATL,symmL_rec)(bv, M, N, alpha, A, lda, B, ldb, beta, C, ldc);
    }
    else                   /* Right: K=N, A is GEMM's B */
-   {
-      Mjoin(PATL,symmR_rec)(MY_TRAN Uplo, M, N, alpha, A, lda, B, ldb, 
-                            beta, C, ldc);
-      @BEGINSKIP
-      #ifdef Conj_
-      Mjoin(PATL,hemm_APR)(Side, Uplo, M, N, alpha, A, lda, B, ldb, 
-                           beta, C, ldc);
-      #else
-      Mjoin(PATL,symm_APR)(Side, Uplo, M, N, alpha, A, lda, B, ldb, 
-                           beta, C, ldc);
-      #endif
-      @ENDSKIP
-   }
+      Mjoin(PATL,symmR_rec)(bv, M, N, alpha, A, lda, B, ldb, beta, C, ldc);
 }
 @ROUT trmmview
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2018
