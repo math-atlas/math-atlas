@@ -4697,19 +4697,26 @@ static void @(rt)cpyBlk@(up)
                #endif
       @ENDMIF
       @MIF rt = "he
-               if (II >= KK)  /* Still lower, so no need to negate imag */
+               if (II > KK)  /* Still lower, so no need to negate imag */
                {
                   const ATL_iptr_t IA=(II+lda*KK)SHIFT;
                   ATL_CUINT ii = i+i;
                   d[ii] = A[IA];
                   d[ii+1] = A[IA+1];
                }
-               else
+               else if (II < KK) /* Upper, must negate imag */
                {
                   const ATL_iptr_t IA=(KK+lda*II)SHIFT;
                   ATL_CUINT ii = i+i;
                   d[ii] = A[IA];
                   d[ii+1] = -A[IA+1];
+               }
+               else /* II==JJ, diagonal, must zero imag */
+               {
+                  const ATL_iptr_t IA=II*((1+lda)SHIFT);
+                  ATL_CUINT ii = i+i;
+                  d[ii] = A[IA];
+                  d[ii+1] = ATL_rzero;
                }
       @ENDMIF
             }
@@ -4774,19 +4781,26 @@ static void @(rt)cpyBlk@(up)
             #endif
       @ENDMIF
       @MIF rt = "he
-            if (II >= KK)
+            if (II > KK)
             {
                const ATL_iptr_t IA = (II+lda*KK)SHIFT;
                ATL_CUINT ii=i+i;
                d[ii] = A[IA];
                d[ii+1] = -A[IA+1]; /* because cpT will negate! */
             }
-            else
+            else if (II < KK)
             {
                const ATL_iptr_t IA = (KK+lda*II)SHIFT;
                ATL_CUINT ii=i+i;
                d[ii] = A[IA];
                d[ii+1] = A[IA+1]; /* cpT will negate as needed for U */
+            }
+            else /* diagonal, zero imag */
+            {
+               const ATL_iptr_t IA = ((lda+1)SHIFT)*II;
+               ATL_CUINT ii=i+i;
+               d[ii] = A[IA];
+               d[ii+1] = ATL_rzero;
             }
       @ENDMIF
          }
@@ -5046,6 +5060,9 @@ int Mjoin(PATL,ipsymmL)
    else
       printf("\nNO ERRORS FOUND IN SYCP!\n\n");
    #endif
+   #if 1
+      Mjoin(PATL,ipprint)(stdout, &ip, 1, "SY", M, M, wA);
+   #endif
 /*
  * Uncomment this code to make sure problem isn't in iploopsNMK!
  */
@@ -5247,8 +5264,11 @@ void Mjoin(PATL,symmL_rec)
    ATL_CSZT ldc
 )
 {
-   /* if (M <= ATL_VWopgen_LAST_KB) */
+   #if 1
+   if (M <= ATL_VWopgen_LAST_KB)
+   #else
    if (M < 2)
+   #endif
    {
       const enum ATLAS_UPLO Uplo = (flg&1) ? AtlasUpper : AtlasLower;
       #ifdef TCPLX
@@ -5271,7 +5291,9 @@ void Mjoin(PATL,symmL_rec)
 /*
  * For large problems, try copying entire matrix to dense, and calling gemm
  */
+   #if 0
    else if (Mjoin(PATL,ipsymmL)(flg, M, N, alpha,A,lda,B,ldb,beta,C,ldc))
+   #endif
 /*
  * If neither of those work, split along M using recursive steps:
  *    C0 = A00 * B0 + beta*C0 (symm)
