@@ -4699,14 +4699,14 @@ static void @(rt)cpyBlk@(up)
       @MIF rt = "he
                if (II >= KK)  /* Still lower, so no need to negate imag */
                {
-                  const ATL_iptr_t IA=II+lda*KK;
+                  const ATL_iptr_t IA=(II+lda*KK)SHIFT;
                   ATL_CUINT ii = i+i;
                   d[ii] = A[IA];
                   d[ii+1] = A[IA+1];
                }
                else
                {
-                  const ATL_iptr_t IA=KK+lda*II;
+                  const ATL_iptr_t IA=(KK+lda*II)SHIFT;
                   ATL_CUINT ii = i+i;
                   d[ii] = A[IA];
                   d[ii+1] = -A[IA+1];
@@ -4776,14 +4776,14 @@ static void @(rt)cpyBlk@(up)
       @MIF rt = "he
             if (II >= KK)
             {
-               const ATL_iptr_t IA = II+lda*KK;
+               const ATL_iptr_t IA = (II+lda*KK)SHIFT;
                ATL_CUINT ii=i+i;
                d[ii] = A[IA];
                d[ii+1] = -A[IA+1]; /* because cpT will negate! */
             }
             else
             {
-               const ATL_iptr_t IA = KK+lda*II;
+               const ATL_iptr_t IA = (KK+lda*II)SHIFT;
                ATL_CUINT ii=i+i;
                d[ii] = A[IA];
                d[ii+1] = A[IA+1]; /* cpT will negate as needed for U */
@@ -5028,10 +5028,10 @@ int Mjoin(PATL,ipsymmL)
    #endif
    #if 1
    #ifdef TCPLX
-      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)>>2)|((flg&2)>>1),
+      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)<<2)|((flg&2)<<2),
                                  wA, M, S);
    #else
-      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)>>2), wA, M, S);
+      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)<<2), wA, M, S);
    #endif
    if (bv)
    {
@@ -5057,10 +5057,15 @@ int Mjoin(PATL,ipsymmL)
       #else
          #define ONE ATL_rone
       #endif
-      A = malloc(M*ATL_MulBySize(M));
+      A = malloc(lds*ATL_MulBySize(M));
       ATL_assert(A);
-      Mjoin(PATL,gecopy)(M, M, S, lds, A, M);
-      Mjoin(PATL,syreflect)(AtlasLower, M, A, M);
+      Mjoin(PATL,gecopy)(M, M, S, lds, A, lds);
+      #ifdef TCPLX
+      if (flg&2)
+         Mjoin(PATL,hereflect)(AtlasLower, M, A, lds);
+      else
+      #endif
+      Mjoin(PATL,syreflect)(AtlasLower, M, A, lds);
       Mjoin(PATL,iploopsNMK)(&ip, 0, 0, A, G, C, 1|2|4, wA, wB, rC, wC, beta,
                              ip.blk2c);
       free(A);
@@ -5306,8 +5311,7 @@ void Mjoin(PATL,symmL_rec)
                             lda, B1, ldb, ONE, C1, ldc);
    }
 }
-   #ifdef TCPLX
-   #else
+   #ifndef TCPLX
       #undef TA
    #endif
 #else
