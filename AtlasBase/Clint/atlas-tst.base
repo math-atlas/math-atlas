@@ -6110,6 +6110,139 @@ void *Mjoin(PATL,ipsycmpBV)(int verb, double tol, ipinfo_t *ip, int flg,
          }
       }
    }
+   else if (flg & 2) /* a points to gemm's B matrix in ip */
+   {
+      ATL_iptr_t k, j;  /* block ctr along K dim */
+      const ATL_iptr_t ldb2 = ip->ldb SHIFT, kb=ip->kb, nfmblks=ip->nfmblks;
+      const ATL_iptr_t nkblks = ip->nfkblks, nmblks=nfmblks+ip->npmblks;
+      for (j=0; j < N; j++)
+      {
+         for (j=0; j < N; j++)
+         {
+         #ifdef TCPLX
+            const TYPE *aa;
+            double diff, idiff, rc, ic;
+            TYPE da[2];
+
+            IdxBwElt_ip(ip, a, k, j, da);
+            if (flg&4) /* Upper matrix */
+            {
+               if (k <= j) /* In upper portion */
+               {
+                  const ATL_iptr_t IA=k+k+j*ldb2;
+                  rc = A[IA];
+                  if (j == k && (flg&8))  /* herm diag imag is zero */
+                     ic = ATL_rzero;
+                  else
+                     ic = A[IA+1];
+               }
+               else
+               {
+                  const ATL_iptr_t IA=j+j+k*ldb2;
+                  rc = A[IA];
+                  if (flg&8) /* Hermitian, not symmetric! */
+                     ic = -A[IA+1];
+                  else
+                     ic = A[IA+1];
+               }
+            }
+            else /* Lower matrix */
+            {
+               if (k >= j) /* In Lower portion */
+               {
+                  const ATL_iptr_t IA=k+k+j*ldb2;
+                  rc = A[IA];
+                  if (j == k && (flg&8))  /* herm diag imag is zero */
+                     ic = ATL_rzero;
+                  else 
+                     ic = A[IA+1];
+               }
+               else
+               {
+                  const ATL_iptr_t IA=j+j+k*ldb2;
+                  rc = A[IA];
+                  if (flg&8) /* Hermitian, not symmetric! */
+                     ic = -A[IA+1];
+                  else
+                     ic = A[IA+1];
+               }
+            }
+            if (k == j && (flg&8)) /* hermitian matrix has diag imag zero */
+               ic = ATL_rzero;
+            diff = *da - rc;
+            idiff = da[1] - ic;
+            if (diff < 0.0)
+               diff = -diff;
+            if (idiff < 0.0)
+               idiff = 0.0;
+            if (diff > tol || idiff > tol)
+            {
+               if (!bv)
+                  bv = ATL_NewBV(N*N);
+               if (verb > 1)
+                  printf("B(%d,%d)=[%e,%e];  expected=[%e,%e]\n", k, j, 
+                         *da, da[1], rc, ic);
+               ATL_SetBitBV(bv, k*N+j);
+            }
+         #else
+            double tst, diff;
+            ATL_iptr_t idx, ldb=ip->ldb;
+            if (flg&4) /* Upper */
+               idx = (j >= k) ? k+j*ldb : j+k*ldb;
+            else
+               idx = (j <= k) ? k+j*ldb : j+k*ldb;
+            tst = diff = IdxBwElt_ip(ip, a, k, j);
+            diff -= A[idx];
+            if (diff < 0.0)
+               diff = -diff;
+
+            if (diff > tol)
+            {
+               if (!bv)
+                  bv = ATL_NewBV(N*N);
+               if (verb > 1)
+                  printf("A(%lu,%lu)=%e;  expected=%e, diff=%e\n", 
+                         (unsigned long)k, (unsigned long)j, tst, A[idx], diff);
+               ATL_SetBitBV(bv, k*N+j);
+            }
+         #endif
+         }
+      }
+/*
+ *    Check zero padding around whole matrix
+ */
+      j = ip->nnuF*ip->nu - ip->nF;  /* num of extra rows that must be zero */
+      if (j) /* we've got i zeros to padd to mul of mu */
+      {
+         ATL_iptr_t KK = ip->nfkblks*ip->kb + ip->KB0;
+         const ATL_iptr_t NN = ip->nfnblks*ip->nb + ip->npnblks*ip->pnb;
+         const ATL_iptr_t N = NN - j;
+         for (j=N; j < NN; j++)
+         {
+            for (k=0; k < KK; k++)
+            {
+            #ifdef TCPLX
+               TYPE da[2];
+               IdxAwElt_ip(ip, a, k, j, da);
+               if (*da != ATL_rzero || da[1] != ATL_rzero)
+               {
+                  fprintf(stderr, "MU PAD VIOLATION at (%lu,%lu)=(%g,%g), "
+                          "not 0!\n", (unsigned long)k, (unsigned long)j, 
+                          *da, da[1]);
+               }
+            #else
+               TYPE tst;
+               tst = IdxAwElt_ip(ip, a, k, j);
+               if (tst != ATL_rzero)
+               {
+                  fprintf(stderr, "MU PAD VIOLATION at (%lu,%lu)=%g, not 0!\n",
+                          (unsigned long)k, (unsigned long)j, tst);
+               }
+            #endif
+            }
+         }
+      }
+   }
    return(bv);
 }
 @rout ATL_getIpiv

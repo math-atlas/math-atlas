@@ -884,12 +884,18 @@ void Mjoin(PATL,ipherk)
 @endskip
 #ifdef TCPLX
 @whiledef up U L
+void Mjoin(PATL,heR@(up)2ipBlk)
+   (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
+    const TYPE *A, TYPE *W, TYPE *D);
 void Mjoin(PATL,heL@(up)2ipBlk)
    (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
     const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
 @endwhile
 #endif
 @whiledef up U L
+void Mjoin(PATL,syR@(up)2ipBlk)
+   (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
+    const TYPE *A, TYPE *W, TYPE *D);
 void Mjoin(PATL,syL@(up)2ipBlk)
    (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
     const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
@@ -978,10 +984,22 @@ static TYPE INLINE *IdxAw_ip(ipinfo_t *ip, TYPE *A, size_t i, size_t k)
    return(A+m);
 }
 
+static TYPE INLINE *IdxBw_ip(ipinfo_t *ip, TYPE *B, size_t k, size_t j)
+{  /* index B workspace for inner-product gemm */
+   const size_t nfnblks = ip->nfnblks, szB = (j < nfnblks) ? ip->szB:ip->pszB;
+   size_t n;
+
+   n = Mmin(nfnblks, j);
+   j -= n;
+   n = (n * ip->szB + j * szB) * (ip->nfkblks+1);  /* offset to kpan */
+   n = (n+k*szB)SHIFT;
+   return(B+n);
+}
+
 #ifdef ATL_GLOBELT
 /*
  * Get (i,j) elt out of block-major A storage.  Used for debugging,
- * so not optimized.  This code presently does not always work
+ * so not optimized.  This code presently not debugged for KVEC.
  */
 #ifdef TCPLX
    static void IdxAwElt_ip
@@ -1030,7 +1048,7 @@ static TYPE INLINE *IdxAw_ip(ipinfo_t *ip, TYPE *A, size_t i, size_t k)
       i -= is*mu;
       a += ks*bl;        /* a pts to correct sub-block */
       k -= ks*ip->vlen;
-      a += i*ip->vlen+k; /* a pts at correct element */
+      a += k*ip->vlen+i; /* a pts at correct element */
    }
 /*
  * blk has standard mu-entry blks, repeated K times (vectorized along M)
@@ -1050,19 +1068,79 @@ static TYPE INLINE *IdxAw_ip(ipinfo_t *ip, TYPE *A, size_t i, size_t k)
       return(*a);
    #endif
 }
+
+/*
+ * Get (k,j) elt out of block-major B storage.  Used for debugging,
+ * so not optimized.  This code presently not debugged for KVEC.
+ */
+#ifdef TCPLX
+   static void IdxBwElt_ip
+      (ipinfo_t *ip, const TYPE *B, ATL_iptr_t k, ATL_iptr_t j, TYPE *elt)
+#else
+   static const TYPE IdxBwElt_ip
+      (ipinfo_t *ip, const TYPE *B, ATL_iptr_t k, ATL_iptr_t j)
 #endif
+{ /* get element (k,j) out of access-major block storage */
+   ATL_iptr_t jblk = j / ip->nb, kblk = k / ip->kb;
+   ATL_UINT flg;
+   const TYPE *b;
+   #ifdef TCPLX
+      ATL_iptr_t szB=ip->szB;
+   #endif
+   const unsigned int nu = ip->nu;
 
-static TYPE INLINE *IdxBw_ip(ipinfo_t *ip, TYPE *B, size_t k, size_t j)
-{  /* index B workspace for inner-product gemm */
-   const size_t nfnblks = ip->nfnblks, szB = (j < nfnblks) ? ip->szB:ip->pszB;
-   size_t n;
+/*
+ * Compute block number we are on (jblk), and j within block (j)
+ */
+   if (jblk >= ip->nfnblks)
+   {
+      ATL_iptr_t jj;
+      j -= ip->nb * ip->nfnblks;
+      jj = j / ip->pnb;
+      jblk = ip->nfnblks + jj;
+      j -= jj* ip->pnb;
+      #ifdef TCPLX
+         szB = ip->pszB;
+      #endif
+   }
+   else
+      j -= ip->nb * jblk;
+   k -= kblk*ip->kb;           /* k now K index within block */
+   b = IdxBw_ip(ip, (TYPE*)B, kblk, jblk); /* b pts to kb*mb block */
+   flg = ATL_AMM_GetFLAG(ip->idxK);
+/* 
+ * blk has is ku-major: nu kvec length blocks
+ */
+   if (ATL_AMM_KMAJOR(flg))
+   {
+      unsigned int ks = k/ip->vlen, js = j/nu;
+      unsigned int bl=ip->vlen*nu, pl = ((ip->kb+ip->vlen-1)/ip->vlen)*bl;
 
-   n = Mmin(nfnblks, j);
-   j -= n;
-   n = (n * ip->szB + j * szB) * (ip->nfkblks+1);  /* offset to kpan */
-   n = (n+k*szB)SHIFT;
-   return(B+n);
+      b += js*pl;        /* b pts to correct K-panel */
+      j -= js*nu;
+      b += ks*bl;        /* b pts to correct sub-block */
+      k -= ks*ip->vlen;
+      b += k*ip->vlen+j; /* b pts at correct element */
+   }
+/*
+ * blk has standard nu-entry blks, repeated K times (vectorized along M)
+ */
+   else
+   {
+      ATL_CUINT js=j/nu, kb=(kblk < ip->nfkblks)?ip->kb:ip->KB0, pl=kb*nu;
+      b += js*pl;         /* go to correct kpanel */
+      j -= js*nu;         /* leave only i%nu remainder */
+      b += k*nu;          /* go to correct nu block */
+      b += j;             /* go to corect elt within nu blk */
+   }
+   #ifdef TCPLX
+      elt[1] = *b;
+      elt[0] = b[szB];
+   #else
+      return(*b);
+   #endif
 }
+#endif
 
 static const TYPE INLINE *IdxA_ip
    (ipinfo_t *ip, const TYPE *A, size_t i, size_t k)
