@@ -5933,7 +5933,13 @@ void Mjoin(PATL,ipprint)(FILE *fp, ipinfo_t *ip, int flg, char *nm,
                          ATL_iptr_t M, ATL_iptr_t N, const TYPE *w)
 {
    ATL_iptr_t i, j;
-   ATL_assert(flg&1);  /* only printing A right now */
+   #ifdef TCPLX
+      void (*getElt)(ipinfo_t*, const TYPE*, ATL_iptr_t,ATL_iptr_t, TYPE*);
+   #else
+      TYPE (*getElt)(ipinfo_t*, const TYPE*, ATL_iptr_t,ATL_iptr_t);
+   #endif
+   ATL_assert(flg&3);  /* only printing A & B right now */
+   getElt = (flg&1) ? IdxAwElt_ip : IdxBwElt_ip;
    fprintf(fp, "\n%s :\n", nm);
    if (!N)
       return;
@@ -5941,20 +5947,20 @@ void Mjoin(PATL,ipprint)(FILE *fp, ipinfo_t *ip, int flg, char *nm,
    {
       #ifdef TCPLX
          TYPE da[2];
-         IdxAwElt_ip(ip, w, i, 0, da);
+         getElt(ip, w, i, 0, da);
          fprintf(fp, "%+.2e,%+.2e", *da, da[1]);
       #else
          TYPE d;
-         d = IdxAwElt_ip(ip, w, i, 0);
+         d = getElt(ip, w, i, 0);
          fprintf(fp, "%+.2e", d);
       #endif
       for (j=1; j < N; j++)
       {
          #ifdef TCPLX
-            IdxAwElt_ip(ip, w, i, j, da);
+            getElt(ip, w, i, j, da);
             fprintf(fp, " %+.2e,%+.2e", *da, da[1]);
          #else
-            d = IdxAwElt_ip(ip, w, i, j);
+            d = getElt(ip, w, i, j);
             fprintf(fp, " %+.2e", d);
          #endif
       }
@@ -6117,7 +6123,7 @@ void *Mjoin(PATL,ipsycmpBV)(int verb, double tol, ipinfo_t *ip, int flg,
       const ATL_iptr_t nkblks = ip->nfkblks, nmblks=nfmblks+ip->npmblks;
       for (j=0; j < N; j++)
       {
-         for (j=0; j < N; j++)
+         for (k=0; k < N; k++)
          {
          #ifdef TCPLX
             const TYPE *aa;
@@ -6212,7 +6218,7 @@ void *Mjoin(PATL,ipsycmpBV)(int verb, double tol, ipinfo_t *ip, int flg,
  *    Check zero padding around whole matrix
  */
       j = ip->nnuF*ip->nu - ip->nF;  /* num of extra rows that must be zero */
-      if (j) /* we've got i zeros to padd to mul of mu */
+      if (j) /* we've got i zeros to padd to mul of nu */
       {
          ATL_iptr_t KK = ip->nfkblks*ip->kb + ip->KB0;
          const ATL_iptr_t NN = ip->nfnblks*ip->nb + ip->npnblks*ip->pnb;
@@ -6223,16 +6229,16 @@ void *Mjoin(PATL,ipsycmpBV)(int verb, double tol, ipinfo_t *ip, int flg,
             {
             #ifdef TCPLX
                TYPE da[2];
-               IdxAwElt_ip(ip, a, k, j, da);
+               IdxBwElt_ip(ip, a, k, j, da);
                if (*da != ATL_rzero || da[1] != ATL_rzero)
                {
-                  fprintf(stderr, "MU PAD VIOLATION at (%lu,%lu)=(%g,%g), "
+                  fprintf(stderr, "NU PAD VIOLATION at (%lu,%lu)=(%g,%g), "
                           "not 0!\n", (unsigned long)k, (unsigned long)j, 
                           *da, da[1]);
                }
             #else
                TYPE tst;
-               tst = IdxAwElt_ip(ip, a, k, j);
+               tst = IdxBwElt_ip(ip, a, k, j);
                if (tst != ATL_rzero)
                {
                   fprintf(stderr, "MU PAD VIOLATION at (%lu,%lu)=%g, not 0!\n",
