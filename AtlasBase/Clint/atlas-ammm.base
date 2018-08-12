@@ -754,6 +754,11 @@ static void Mjoin(PATL,@(sh)ComputeIPInfo)
    ATL_assert(0);
 }
 @endwhile
+void Mjoin(PATL,doAmmBlk)
+   (ipinfo_t*,ATL_CUINT,ATL_iptr_t,ATL_iptr_t,ATL_iptr_t,
+    const TYPE*, const TYPE*, TYPE*, TYPE*, TYPE*, TYPE*, TYPE*,
+    const SCALAR, const ablk2cmat_t);
+
 @multidef rt iploopsMNK iploopsMNK
 @whiledef rt iploopsNK iploopsMK iploopsK iploopsNMK iploopsNMK
 void Mjoin(PATL,@(rt))
@@ -885,21 +890,30 @@ void Mjoin(PATL,ipherk)
 #ifdef TCPLX
 @whiledef up U L
 void Mjoin(PATL,heR@(up)2ipBlk)
-   (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
-    const TYPE *A, TYPE *W, TYPE *D);
+   (ipinfo_t *ip, ATL_CUINT bv, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, 
+    ATL_iptr_t KBLK, const TYPE *A, TYPE *W, TYPE *D);
 void Mjoin(PATL,heL@(up)2ipBlk)
-   (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
-    const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
+   (ipinfo_t *ip, ATL_CUINT bv, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, 
+    ATL_iptr_t KBLK, const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
 @endwhile
 #endif
 @whiledef up U L
 void Mjoin(PATL,syR@(up)2ipBlk)
-   (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
-    const TYPE *A, TYPE *W, TYPE *D);
+   (ipinfo_t *ip, ATL_CUINT bv, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, 
+    ATL_iptr_t KBLK, const TYPE *A, TYPE *W, TYPE *D);
 void Mjoin(PATL,syL@(up)2ipBlk)
-   (ipinfo_t *ip, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, ATL_iptr_t KBLK,
-    const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
+   (ipinfo_t *ip, ATL_CUINT bv, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, 
+    ATL_iptr_t KBLK, const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
 @endwhile
+cm2am_t Mjoin(PATL,ipsyGetCopyA)(ipinfo_t*, ATL_CUINT flg, cm2am_t *CPT);
+cm2am_t Mjoin(PATL,ipsyGetCopyB)(ipinfo_t*, ATL_CUINT flg, cm2am_t *CPT);
+
+void Mjoin(PATL,ipsymmL_tN_wrk)
+   (ipinfo_t *ip, ATL_CUINT flg, const TYPE *S, const TYPE *B, const SCALAR,
+    TYPE *C, TYPE *D, TYPE *wA, TYPE *wB, TYPE *rC, TYPE *iC);
+int Mjoin(PATL,ipsymmL_tN)
+   (ATL_CUINT, ATL_iptr_t, ATL_iptr_t, const SCALAR, const TYPE*, ATL_iptr_t,
+    const TYPE*, ATL_iptr_t, const SCALAR, TYPE*, ATL_iptr_t);
 int Mjoin(PATL,ipsymmL)
    (ATL_CUINT, ATL_CSZT, ATL_CSZT, const SCALAR, const TYPE*,
     ATL_CSZT, const TYPE*, ATL_CSZT, const SCALAR, TYPE*, ATL_CSZT);
@@ -28921,11 +28935,199 @@ void Mjoin(PATL,oploopsN)
 }
 @ROUT ATL_iploops ATL_ciploops
 #include "atlas_misc.h"
+#define ATL_GLOBIDX 1
 #include "atlas_amm.h"
+#undef ATL_GLOBIDX
 #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+/*
+ * This function does one step of matmul while optionally copying data
+ * from A or B.  It assumes (rC,iC) already initialized, unless k==0,
+ * in which case it is zeroed by using the _b0 kernel.
+ * A,B,wA,wB should all be base pointers, and any indexing will be done here.
+ *
+ * bv is a bitvec with following meanings for each bit position
+ * 0 : wA is 1 kpanel in size
+ * 1 : wA has space for full matrix
+ * 2 : wB is 1 kpanel in size
+ * 3 : wB has space for full matrix
+ * 4 : use beta=0, else use beta=1
+ */
+void Mjoin(PATL,doAmmBlk)
+(
+   ipinfo_t *ip,
+   ATL_CUINT bv,          /* bitvec, see explanation above */
+   ATL_iptr_t i,          /* which global row block of C is being computed */
+   ATL_iptr_t j,          /* which global col block of C is being computed */
+   ATL_iptr_t k,          /* which global K block is being multiplied */
+   const TYPE *A,         /* if non-NULL, A to cpy from */
+   const TYPE *B,         /* if non-NULL, B to cpy from */
+   TYPE *C,               /* if non-NULL, C to write to after doing multiply */
+   TYPE *wA,              /* wrkspace for block-copied A */
+   TYPE *wB,              /* wrkspace for block-copied B */
+   TYPE *rC,              /* ptr to real portion of C access-major workspace */
+   TYPE *iC,              /* ptr to complex C workspace */
+   const SCALAR beta,     /* scaling factor for C */
+   const ablk2cmat_t blk2c
+)
 /*
  * A & B ptrs should point to start of K iteration in this rout
  */
+{
+   const ATL_iptr_t nfmblks=ip->nfmblks,nfnblks=ip->nfnblks,nfkblks=ip->nfkblks;
+   const ATL_iptr_t nmblks=ip->npmblks+nfmblks, nnblks=ip->npnblks+nfnblks;
+   #ifdef TCPLX
+      ATL_iptr_t inca, incb;
+      TYPE *rA, *rB;
+   #endif
+   ATL_UINT nmu, nnu, mb, nb;
+   ATL_CUINT kb0=ip->kb0, kb=(k < nfkblks) ? ip->kb : kb0;
+
+   if (i == nmblks-1)
+   {
+      nmu = ip->nmuF;
+      mb = ip->mF;
+      #ifdef TCPLX
+         inca = (i < nfmblks) ? ip->szA : ip->pszA;
+      #endif
+   }
+   else if (i < nfmblks)
+   {
+      nmu = ip->nmu;
+      mb = ip->mb;
+      #ifdef TCPLX
+         inca = ip->szA;
+      #endif
+   }
+   else
+   {
+      nmu = ip->pnmu;
+      mb = ip->pmb;
+      #ifdef TCPLX
+         inca = ip->pszA;
+      #endif
+   }
+   #ifdef TCPLX
+      rA = wA + inca;
+   #endif
+
+   if (j == nnblks-1)
+   {
+      nnu = ip->nnuF;
+      nb = ip->nF;
+      #ifdef TCPLX
+         incb = (j < nfnblks) ? ip->szB : ip->pszB;
+      #endif
+   }
+   else if (j < nfnblks)
+   {
+      nnu = ip->nnu;
+      nb = ip->nb;
+      #ifdef TCPLX
+         incb = ip->szB;
+      #endif
+   }
+   else
+   {
+      nnu = ip->pnnu;
+      nb = ip->pnb;
+      #ifdef TCPLX
+         incb = ip->pszB;
+      #endif
+   }
+   #ifdef TCPLX
+      rB = wB + incb;
+   #endif
+   if (bv&8)
+      wB = IdxBw_ip(ip, wB, k, j);
+   else if (bv&4)
+      wB = IdxBw_ip(ip, wB, k, 0);
+   if (B) /* need to copy from original B */
+   {
+      B = IdxB_ip(ip, B, k, j);
+      #ifdef TCPLX
+         ip->b2blk(kb, nb, ip->alpB, B, ip->ldb, rB, wB);
+      #else
+         ip->b2blk(kb, nb, ip->alpB, B, ip->ldb, wB);
+      #endif
+   }
+   if (bv&2)
+      wA = IdxAw_ip(ip, wA, i, k);
+   else if (bv&1)
+      wA = IdxAw_ip(ip, wA, 0, k);
+   if (A) /* need to copy from original A */
+   {
+      A = IdxA_ip(ip, A, i, k);
+      #ifdef TCPLX
+         ip->a2blk(kb, mb, ip->alpA, A, ip->lda, rB, wB);
+      #else
+         ip->a2blk(kb, mb, ip->alpA, A, ip->lda, wB);
+      #endif
+   }
+   if (!rC)   /* If rC NULL, user wants only A/B copy done */
+     return;
+   if ((k < nfkblks) | (kb0 == ip->kb))  /* usual case of full kb */
+   {
+      if (bv&16)    /* rC,iC not initialized, use beta=0 */
+      {
+         #ifdef TCPLX
+            ammkern_t amm = ip->amm_b0;
+            amm(nmu, nnu, kb, wA, wB, rC, rA, wB, iC);
+            amm(nmu, nnu, kb, rA, wB, iC, rA, rB, rC);
+            ip->amm_bn(nmu, nnu, kb, rA, rB, rC, wA, rB, iC);
+            ip->amm_b1(nmu, nnu, kb, wA, rB, iC, an, bn, rC);
+         #else
+            ip->amm_b0(nmu, nnu, kb, wA, wB, rC, wA, wB, rC);
+         #endif
+      }
+      else  /* rC,iC initialized, so use beta=1 */
+      {
+         #ifdef TCPLX
+            ammkern_t amm_b1 = ip->amm_b1, amm_bn = ip->amm_bn;
+            amm_bn(nmu, nnu, kb, wA, wB, rC, rA, wB, iC);
+            amm_b1(nmu, nnu, kb, rA, wB, iC, rA, rB, rC);
+            amm_bn(nmu, nnu, kb, rA, rB, rC, wA, rB, iC);
+            amm_b1(nmu, nnu, kb, wA, rB, iC, an, bn, rC);
+         #else
+            ip->amm_b1(nmu, nnu, kb, wA, wB, rC, wA, wB, rC);
+         #endif
+      }
+   }
+   else /* final kb0 comes from end of K panel */
+   {
+      ATL_CUINT KB=ip->KB0;
+      if (bv&16)    /* rC,iC not initialized, use beta=0 */
+      {
+         #ifdef TCPLX
+            ammkern_t amm = ip->ammK1_b0;
+            amm(nmu, nnu, KB, wA, wB, rC, rA, wB, iC);
+            amm(nmu, nnu, KB, rA, wB, iC, rA, rB, rC);
+            ip->ammK1_bn(nmu, nnu, KB, rA, rB, rC, wA, rB, iC);
+            ip->ammK1_b1(nmu, nnu, KB, wA, rB, iC, an, bn, rC);
+         #else
+            ip->ammK1_b0(nmu, nnu, KB, wA, wB, rC, wA, wB, rC);
+         #endif
+      }
+      else  /* rC,iC initialized, so use beta=1 */
+      {
+         #ifdef TCPLX
+            ammkern_t amm_b1 = ip->ammK1_b1, amm_bn = ip->ammK1_bn;
+            amm_bn(nmu, nnu, KB, wA, wB, rC, rA, wB, iC);
+            amm_b1(nmu, nnu, KB, rA, wB, iC, rA, rB, rC);
+            amm_bn(nmu, nnu, KB, rA, rB, rC, wA, rB, iC);
+            amm_b1(nmu, nnu, KB, wA, rB, iC, an, bn, rC);
+         #else
+            ip->ammK1_b1(nmu, nnu, KB, wA, wB, rC, wA, wB, rC);
+         #endif
+      }
+   }
+   if (blk2c)
+   #ifdef TCPLX
+      blk2c(mb, nb, ip->alpC, rC, iC, beta, C, ip->ldc);
+   #else
+      blk2c(mb, nb, ip->alpC, rC, beta, C, ip->ldc);
+   #endif
+}
+
 void Mjoin(PATL,iploopsK)
 (
    ipinfo_t *ip,
