@@ -219,7 +219,8 @@ static unsigned int trsm_recR
 )
 {
    unsigned int iret=0;
-   if (Mjoin(PATL,trsmR_IP)(bv, N, NRHS, alpha, T, ldt, Z, ldz))
+   /*if (Mjoin(PATL,trsmR_IP)(bv, N, NRHS, alpha, T, ldt, Z, ldz))*/
+   if (Mjoin(PATL,iptrsmR)(bv, N, NRHS, alpha, T, ldt, Z, ldz))
    {
       #ifdef TCPLX
          enum ATLAS_TRANS TB;
@@ -287,7 +288,8 @@ static unsigned int trsm_recL
 )
 {
    unsigned int iret=0;
-   if (Mjoin(PATL,trsmL_IP)(bv, N, NRHS, alpha, T, ldt, Z, ldz))
+   /*if (Mjoin(PATL,trsmL_IP)(bv, N, NRHS, alpha, T, ldt, Z, ldz))*/
+   if (Mjoin(PATL,iptrsmL)(bv, N, NRHS, alpha, T, ldt, Z, ldz))
    {
       #ifdef TCPLX
          enum ATLAS_TRANS TA;
@@ -532,6 +534,801 @@ int ATL_trsm_IP
          (bv&16)?AtlasNonUnit:AtlasUnit, M, N, alpha, A, lda, B, ldb);
    }
 #endif      
+   return(0);
+}
+@ROUT ATL_iptrsm 
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_lvl3.h"
+#ifdef Right_
+   #define ATL_iptrsm Mjoin(PATL,iptrsmR)
+   #define ATL_sminfoN Mjoin(PATL,sminfoR_LN)
+   #define ATL_sminfoT Mjoin(PATL,sminfoR_LT)
+   #define ATL_utrsm_alloc Mjoin(PATL,utrsmR_alloc)
+   #define INCR 1
+   #define ATL_trsm_alloc Mjoin(PATL,trsmR_alloc)
+   #define ATL_trsm_LNUT Mjoin(PATL,trsmR_LNUT)
+   #define ATL_trsm_LTUN Mjoin(PATL,trsmR_LTUN)
+#else
+   #define ATL_iptrsm Mjoin(PATL,iptrsmL)
+   #define ATL_sminfoN Mjoin(PATL,sminfoL_LN)
+   #define ATL_sminfoT Mjoin(PATL,sminfoL_LT)
+   #define ATL_utrsm_alloc Mjoin(PATL,utrsmL_alloc)
+   #define INCR ldb
+   #define ATL_trsm_alloc Mjoin(PATL,trsmL_alloc)
+   #define ATL_trsm_LNUT Mjoin(PATL,trsmL_LNUT)
+   #define ATL_trsm_LTUN Mjoin(PATL,trsmL_LTUN)
+#endif
+
+/*#define DEBUG 1 */
+
+int ATL_iptrsm
+(
+   ATL_UINT bv,  /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
+   ATL_CSZT               NT,  /* number of diagonals in triangle */
+   ATL_CSZT               NR,  /* number of right hand sides */
+   const SCALAR           alpha,
+   const TYPE             *A,
+   ATL_CSZT               lda,
+   TYPE                   *B,
+   ATL_CSZT               ldb
+)
+{
+   int RECUR;
+   RECUR=0;
+   #ifdef DEBUG
+   printf("D=(%u,%u), SD=%c, UP=%c TA=%c DI=%c, alpha=%e\n", NT, NR,
+          (bv&1)?'R':'L', (bv&2)?'U':'L', (bv&4)?'T':'N', (bv&16)?'N':'U',
+          SVAL alpha);
+   #endif
+/*
+ * Handle degenrated cases 
+ */
+   if (NT == 1)
+   {
+      if (bv&16)   /* if non-unit, work to do, else nothing to do at M=1! */
+      #ifdef TCPLX
+      {
+         TYPE inv[2], tmp;
+         *inv = *A;
+         tmp = A[1];
+         inv[1] = (bv&8) ? -tmp : tmp;
+         if (SCALAR_IS_ONE(alpha))
+         {  CXINV(inv, inv); }
+         else
+            Mjoin(PATL,cplxdivide)(1, inv, (TYPE*)alpha, 1, inv, 1);
+         Mjoin(PATL,scal)(NR, inv, B, INCR);
+      }
+      #else
+         Mjoin(PATL,scal)(NR, alpha / *A, B, INCR);
+      #endif
+      else if (!SCALAR_IS_ONE(alpha))  /* unit may still need to scale! */
+         Mjoin(PATL,scal)(NR, alpha, B, INCR);
+   }
+   else if (RECUR)  /* if told to */
+      return(1);    /* do pure recursion */
+#if 1     /* default case uses utrsm */
+   else
+   {
+/*
+ *    general case 
+ */
+      ATL_UINT LN, ctu;
+      ATL_SZT Tsz, Rsz;
+      void *vp;
+      ipinfo_t gip;
+      sminfo_t si;
+      TYPE *diag, *T, *L, *R, *w;
+      #ifdef TCPLX
+         TYPE ONE[2] = {ATL_rone, ATL_rzero};
+         TYPE ZERO[2] = {ATL_rzero, ATL_rzero};
+         TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+      #else
+         #define ONE ATL_rone
+         #define ZERO ATL_rzero
+         #define NONE ATL_rnone
+      #endif
+      enum ATLAS_TRANS TA;
+      #ifdef TCPLX
+         if ((bv&12)==12)
+            TA = AtlasConjTrans;
+         else
+      #endif
+      TA = (bv&4) ? AtlasTrans:AtlasNoTrans;
+      void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
+         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
+         TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+      int ATL_sminfoN
+         (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R,
+          const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb);
+      int ATL_sminfoT
+         (sminfo_t *ip, ATL_CUINT bv, ATL_CSZT N, ATL_CSZT R,
+          const SCALAR alpha, ATL_CSZT lda, ATL_CSZT ldb);
+
+      LN = bv & 6;
+      LN = (!LN) |(LN == 6);
+      if (LN) /* Lower,NoTrans & Upper,Trans use LN case */
+         ATL_sminfoN(&si, bv, NT, NR, alpha, lda, ldb);
+      else              /* Upper,NoTrans & Lower,Trans use LT case */
+         ATL_sminfoT(&si, bv, NT, NR, alpha, lda, ldb);
+/*
+ *    ST case 
+ */
+      if (NT <= si.kb)
+      {
+         #ifdef DEBUG
+            fprintf(stderr, "NT=%u, kb=%u\n", NT, si.kb);
+         #endif
+         vp = ATL_utrsm_alloc(&si, NT, &diag, &T, &R, &w);
+         if (!vp)
+            return(1);
+         utrsm = si.utrsm;
+         if (bv & 1)
+            utrsm(&si, (bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, A, lda,
+                  B, ldb, diag, T, R, w);
+         else
+            utrsm(&si, (bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, A, lda,
+                  B, ldb, diag, T, R, w);
+         free(vp);
+         return(0);
+      }
+/*
+ *    outer loop 
+ */
+      else
+      {
+         if (bv&1)
+            Mjoin(PATL,ipnekInfo)(&gip, AtlasNoTrans, TA, NR, NT, NT, ldb, lda, 
+                                  ldb, NONE, alpha ); /* alpha=-1, beta=alpha*/
+         else  /* Left */
+            Mjoin(PATL,ipmekInfo)(&gip, TA, AtlasNoTrans, NT, NR, NT, lda, ldb, 
+                                  ldb, NONE, alpha); /* alpha=-1, beta=alpha*/
+         #ifdef DEBUG
+            fprintf(stderr, "After ip[m,n]ek: mb=%d, nb=%d, kb=%d\n", 
+                    gip.mb, gip.nb, gip.kb);
+         #endif
+
+         vp = ATL_trsm_alloc(&gip, &si, NT, &Tsz, &Rsz, &diag, &L, &R, &w);
+         if (!vp)
+            return(1); /* not enough memory, reucrse again  */
+         int (*ammtrsm)(ipinfo_t *gip, sminfo_t *si,const enum ATLAS_DIAG Diag,
+               ATL_CSZT R, 
+               ATL_CSZT N, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
+               TYPE *X, ATL_CSZT ldx, ATL_CSZT Tsz, ATL_CSZT Rsz, TYPE *diag, 
+               TYPE *L, TYPE *RW, TYPE *w);
+         
+         ctu = (bv>>1)&7; /*masked three bits responsible for Conj Trans Upper*/
+         if (!ctu || ctu==3 || ctu == 7)
+            ammtrsm = ATL_trsm_LNUT;
+         else
+            ammtrsm = ATL_trsm_LTUN;
+/*
+ *       NOTE: 
+ *       we first implement no-sharing... so, trsm may use diff info
+ *       BUT if we want to share copies with gemm, need to recalculation 
+ *       sminfo based on gip  
+ */
+         if (bv & 1)
+            ammtrsm(&gip, &si, (bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, A, 
+                  lda, B, ldb, Tsz, Rsz, diag, L, R, w);
+         else
+            ammtrsm(&gip, &si, (bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, A,
+                  lda, B, ldb, Tsz, Rsz, diag, L, R, w);
+      #ifdef DEBUG
+         #define MEM_DEBUG 1 
+      #endif
+      #ifdef MEM_DEBUG
+         free(diag);
+         free(L);
+         free(R);
+         free(w);
+      #else
+         free(vp);
+      #endif
+      }
+   }
+#else
+   else
+   {
+      enum ATLAS_TRANS TA;
+      #ifdef TCPLX
+         if ((bv&12)==12)
+            TA == AtlasConjTrans;
+         else
+      #endif
+      TA = (bv&4) ? AtlasTrans:AtlasNoTrans;
+      #ifdef DEBUG
+      printf("D=(%u,%u), UP=%c TA=%c DI=%c, alpha=%e\n", M, N, (bv&2)?'U':'L',
+             TA==AtlasTrans?'T':'N', (bv&16)?'N':'U', alpha);
+      #endif
+      Mjoin(PATL,trsm_APR)(AtlasLeft, (bv&2)?AtlasUpper:AtlasLower, TA,
+         (bv&16)?AtlasNonUnit:AtlasUnit, M, N, alpha, A, lda, B, ldb);
+   }
+#endif
+   return(0);
+}
+@ROUT ATL_trsm_alloc
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+
+#ifdef Right_
+   #define ATL_trsm_alloc Mjoin(PATL,trsmR_alloc)
+#else
+   #define ATL_trsm_alloc Mjoin(PATL,trsmL_alloc)
+#endif
+
+/* #define MEM_DEBUG 1*/
+/* #define DEBUG 1*/
+
+void* ATL_trsm_alloc
+( 
+   const ipinfo_t *ip,
+   const sminfo_t *tip,
+   ATL_CSZT N, 
+   ATL_SZT *Tsz, 
+   ATL_SZT *Rsz,
+   TYPE **Diag, 
+   TYPE **L,      /* workspace for A: both gemm and trsm */ 
+   TYPE **R, 
+   TYPE **w
+)
+{
+   void *vp = NULL;
+   ATL_SZT sz;
+   ATL_SZT szL, szR, szW, exsz;
+   ATL_CSZT szD = N;
+
+   const int tmu = tip->mu;
+   const int tnu = tip->nu;
+   const int tku = tip->ku;
+   const int mb = ip->mb;
+   const int nb = ip->nb;
+   const size_t mbnb = mb * nb;
+   const int mu = ip->mu;
+   const int nu = ip->nu;
+   const int ku = ip->ku;
+   ATL_CSZT szA = ip->szA;
+   ATL_CSZT szB = ip->szB;
+/*
+ * szD = size of diagonal elements
+ * Tsz = size of a triangular blk in TRSM
+ */
+#ifdef DEBUG 
+fprintf(stderr, "---alloc: szA=%d, szB=%d, pszA=%d, pszB=%d\n", 
+      ip->szA, ip->szB, ip->pszA, ip->pszB);
+#endif 
+#ifdef Right_
+   /*const size_t nbnb = ((nb * nb + ip->vlen-1)/ip->vlen)*ip->vlen;*/
+   const int nnb = (N + nb - 1) / nb;
+   const int tnnu = (nb + tnu - 1) / tnu;
+/*
+ * size calculated for utrsm 
+ */
+   *Tsz = tnu*tnu*tnnu*(tnnu+1)>>1;
+   *Rsz = tmu*tnu*tnnu;
+   /*szL = (nbnb*nnb*(nnb-1))/2 + (*Tsz)*nnb; */
+   szL = (szB*nnb*(nnb-1)>>1) + (*Tsz)*nnb; 
+   /*szR = mbnb*nnb;*/
+   szR = szA*nnb;
+   szW = (Mmax(*Rsz,mbnb))<<1;
+   exsz = tnu*tku + Mmax(mu*ku,tmu*tku) + (mu+mu)*nu;
+#else
+   /*const size_t mbmb = ((mb * mb + ip->vlen-1)/ip->vlen)*ip->vlen;*/
+   const int nmb = (N + mb - 1) / mb;
+   const int tnmu = (mb + tmu - 1) / tmu;
+
+   *Tsz = tmu*tmu * (tnmu*(tnmu+1))>>1;
+   *Rsz = tmu*tnu * tnmu;
+   /*szL = ((mbmb*nmb*(nmb-1))>>1) + (*Tsz)*nmb;*/ /* presidence is low >> than + */
+   szL = ((szA*nmb*(nmb-1))>>1) + (*Tsz)*nmb; 
+   /*szR = mbnb*nmb; */
+   szR = szB*nmb; 
+   szW = (Mmax(*Rsz,mbnb))<<1;
+   exsz = tmu*tku + Mmax(mu*ku,tmu*tku) + (mu+mu)*nu;
+#endif
+#ifdef DEBUG
+   #define MEM_DEBUG
+#endif 
+#ifdef MEM_DEBUG
+   {
+      /* for Right case */
+      szL += Mmax(nu*ku,tnu*tku); /* extra mem to load A */ 
+      szR += Mmax(mu*ku, tmu*tku); /* extra mem to load B in gemm*/
+      szW += (mu+mu)*nu;
+      posix_memalign(&(*Diag), 32, ATL_MulBySize(szD+ATL_Cachelen)); 
+      posix_memalign(&(*L), 32, ATL_MulBySize(szL+ATL_Cachelen)); 
+      posix_memalign(&(*R), 32, ATL_MulBySize(szR+ATL_Cachelen)); 
+      posix_memalign(&(*w), 32, ATL_MulBySize(szW+ATL_Cachelen)); 
+      if ( !(*Diag && *L && *R && *w ) )
+      {
+         if (*Diag) free(*Diag);
+         if (*L) free(*L);
+         if (*R) free(*R);
+         if (*w) free(*w);
+         return (NULL); /* memory leak, doesn't care since only in debug */
+      }
+      vp = *Diag;
+      fprintf(stderr, "-----alloc: Diag=%ld, L=%ld, R=%ld, w=%ld\n", 
+            *Diag, *L, *R, *w);
+   }
+#else
+   #ifdef DEBUG
+      fprintf(stderr, 
+      "---szD=%ld, szL=%ld, szR=%ld, szW=%ld, exsz=%ld, Tsz=%ld, Rsz=%ld \n", 
+         szD, szL, szR, szW, exsz, *Tsz, *Rsz);
+   #endif
+   sz = ATL_MulBySize( szD + szL + szR + szW + exsz) + 5*ATL_Cachelen;
+   if (sz <= ATL_MaxMalloc)
+      vp = malloc(sz);
+   if (!vp) return(NULL); /* not enough memory */
+   *Diag = vp;
+   *L = (*Diag) + (szD SHIFT);
+   *L = ATL_AlignPtr(*L);
+   *R = (*L) + (szL SHIFT);
+   *R = ATL_AlignPtr(*R);
+   *w = (*R) + (szR SHIFT);
+   *w = ATL_AlignPtr(*w);
+#endif 
+   return(vp);
+}
+@ROUT ATL_trsmL_LN_UT
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_reflvl3.h"
+#define ATL_trsmL_LNUT Mjoin(PATL,trsmL_LNUT)
+
+int ATL_trsmL_LNUT
+(
+   ipinfo_t *ip,   /* ipinfo for gemm */
+   sminfo_t *tip,  /* ipinfo for trsm */
+   const enum ATLAS_DIAG Diag,
+   ATL_CSZT N,
+   ATL_CSZT R,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   TYPE *X,
+   ATL_CSZT ldx,
+   ATL_CSZT Tsz,   /* workspace size of single A Block for TRMM */
+   ATL_CSZT Rsz,   /* workspace size of single B Block for TRMM */
+   TYPE *diag,      /* workspace ptr for*/
+   TYPE *L,        /* workspace ptr for whole A matrix */
+   TYPE *RW,       /* workspace ptr for B panel */
+   TYPE *w         /* workspace ptr for C in gemm (may be shared with trsm) */
+)
+{
+   cm2am_t b2blk = NULL;
+   #ifdef TCPLX
+      TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   /*const int ainc = (TransA != AtlasNoTrans) ? 1 : lda;*/
+   const int ainc = tip->incA;
+   ATL_SZT r;
+   int i, ib, jb;
+   const int MV = 3; /* move A & B */
+   TYPE *x, *l, *rw, *wL, *wR, *wC;
+   unsigned int NB, MB, szA, szC, incb;
+   void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
+         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
+         TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+
+   utrsm = tip->utrsm;
+   /*Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TransA, AtlasNoTrans, N, R, MB, 
+                              lda, ldx, ldx, NONE, alpha, MB);*/
+   /* get info that we need here */
+   szA = ip->szA;
+   szC = ip->szC;
+   b2blk = ip->b2blk;
+   NB = ip->nb;
+   MB = ip->mb;
+   
+   wR = w;
+   wC = w + (Rsz SHIFT);
+/*
+ * NOTE: Gemm will always be called on full K-blks,
+ * only TRMM applied on partial k-blks. So, make KB0 and kb0 equal to kb
+ */
+   ip->KB0 = ip->kb0 = ip->kb;
+
+   for (r=0, jb=0, x=X; r < R; r += NB, jb++, x += (NB SHIFT)*ldx)
+   {
+      int mb, nb = R - r;
+      const int DoCopy = !r;
+      TYPE *a, *d, *Ac = ((TYPE*)A), *xc = x;
+      nb = Mmin(nb, NB);
+      mb = Mmin(MB, N);
+      incb = nb < NB ? ip->pszB : ip->szB;
+/* 
+ *    do the first triangle 
+ */
+      wL = L;
+      a = DoCopy ? Ac : NULL;
+      utrsm(tip, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
+
+      for (i=mb, ib=1, l=L+(Tsz SHIFT); 
+            i < N; i += MB, ib++, l+=(Tsz SHIFT))
+      {
+         mb = Mmin(N-i, MB);
+         Ac += (MB SHIFT) * (lda+1);
+         xc += (MB SHIFT);
+         #ifdef TCPLX
+         {
+            TYPE *iR = RW+(((ib-1)*incb) SHIFT), *rR = iR + incb;
+            b2blk(MB, nb, ONE, xc-(MB SHIFT), ldx, rR, iR);
+         }
+         #else
+            b2blk(MB, nb, ONE, xc-MB, ldx, RW+(ib-1)*incb);
+         #endif
+/*
+ *       FIXED: ainc already multiplied by SHIFT 
+ */
+         /*a = DoCopy ? (Ac-(i SHIFT)*ainc) : NULL;*/
+         a = DoCopy ? (Ac-i*ainc) : NULL;
+         ip->nfkblks = ib - 1;
+         Mjoin(PATL,iploopsK)(ip, ib, jb, a, NULL, xc, MV, l, RW, w, w+szC, 
+               alpha, ip->blk2c);
+/* 
+ *       now do the diagonal trsm 
+ */
+         l += (ib SHIFT) * szA;
+         d = diag + (i SHIFT);
+         wL = l;
+         a = DoCopy ? Ac : NULL;
+         utrsm(tip, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
+      }
+   }
+   return(0);
+}
+@ROUT ATL_trsmL_LT_UN
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_reflvl3.h"
+
+#define ATL_trsmL_LTUN Mjoin(PATL,trsmL_LTUN)
+
+int ATL_trsmL_LTUN
+(
+   ipinfo_t *ip,   /* ipinfo for gemm */
+   sminfo_t *tip,  /* ipinfo for trsm */
+   const enum ATLAS_DIAG Diag,
+   ATL_CSZT N,
+   ATL_CSZT R,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   TYPE *X,
+   ATL_CSZT ldx,
+   ATL_CSZT Tsz,   /* workspace size of single A Block for TRMM */
+   ATL_CSZT Rsz,   /* workspace size of single B Block for TRMM */
+   TYPE *diag,      /* workspace ptr for*/
+   TYPE *L,        /* workspace ptr for whole A matrix */
+   TYPE *RW,       /* workspace ptr for B panel */
+   TYPE *w         /* workspace ptr for C in gemm (may be shared with trsm) */
+)
+{
+   cm2am_t b2blk = NULL;
+   #ifdef TCPLX
+      TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   /*const int ainc = (TransA != AtlasNoTrans) ? 1 : lda;*/
+   const int ainc = tip->incA;
+   ATL_SZT r;
+   int i, ib, jb;
+   const int MV = 3; /* move A & B */
+   void *vp;
+   TYPE *x, *l, *rw, *wL, *wR, *wC;
+   unsigned int NB, MB, szA, szC, nmblks, incb;
+   void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
+         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
+         TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+   utrsm = tip->utrsm;
+   
+   nmblks = ip->nfmblks + ip->npmblks;
+   szA = ip->szA;
+   szC = ip->szC;
+   b2blk = ip->b2blk;
+   NB = ip->nb;
+   MB = ip->mb;
+
+   wR = w;
+   wC = w + (Rsz SHIFT);
+/*
+ * NOTE: Gemm will always be called on full K-blks,
+ * only TRMM applied on partial k-blks. So, make KB0 and kb0 equal to kb
+ */
+   ip->KB0 = ip->kb0 = ip->kb;
+
+   for (r=0, jb=0, x=X; r < R; r += NB, jb++, x += (NB SHIFT)*ldx)
+   {
+      int mb, nb = R - r;
+      const int DoCopy = !r;
+      TYPE *a, *d, *Ac = ((TYPE*)A), *xc = x;
+      nb = Mmin(nb, NB);
+      mb = Mmin(MB, N);
+      incb = nb < NB ? ip->pszB : ip->szB;
+      Ac += ((N - mb) SHIFT) * (lda+1);
+      xc += ((N - mb) SHIFT);
+/* 
+ *    do the first triangle 
+ */
+      wL = L;
+      a = DoCopy ? Ac : NULL;
+      utrsm(tip, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
+
+      for (i=N-mb, ib=1, l=L+(Tsz SHIFT); 
+            i > 0; i -= MB, ib++, l+=(Tsz SHIFT))
+      {
+         mb = Mmin(i, MB);
+         Ac -= (mb SHIFT) * (lda+1);
+         xc -= (mb SHIFT);
+         #ifdef TCPLX
+         {
+            TYPE *iR = RW+(nmblks-ib)*(incb SHIFT), *rR = iR + incb;
+            b2blk(MB, nb, ONE, xc+(mb SHIFT), ldx, rR, iR);
+         }
+         #else
+            b2blk(MB,nb,ONE, xc+mb, ldx, RW+(nmblks-ib)*incb);
+         #endif
+/*
+ *       FIXED: already multiplied by SHIFT
+ */
+         a = DoCopy ? (Ac+mb*ainc) : NULL;
+         ip->nfkblks = ib - 1;
+         Mjoin(PATL,iploopsK)(ip, ib, jb, a, NULL, xc, MV, l, 
+               RW+(nmblks-ib)*(incb SHIFT), w, w+szC, alpha, ip->blk2c);
+/* 
+ *       now do the diagonal trsm 
+ */
+         l += (ib SHIFT) * szA;
+         d = diag + ((N-i) SHIFT);
+         wL = l;
+         a = DoCopy ? Ac : NULL;
+         utrsm(tip, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
+      }
+   }
+   free(vp);
+   return(0);
+}
+@ROUT ATL_trsmR_LN_UT
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_reflvl3.h"
+
+#define ATL_trsmR_LNUT Mjoin(PATL,trsmR_LNUT)
+
+int ATL_trsmR_LNUT
+(
+   ipinfo_t *ip,   /* ipinfo for gemm */
+   sminfo_t *tip,  /* ipinfo for trsm */
+   const enum ATLAS_DIAG Diag,
+   ATL_CSZT R,
+   ATL_CSZT N,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   TYPE *X,
+   ATL_CSZT ldx,
+   ATL_CSZT Tsz,   /* workspace size of single A Block for TRMM */
+   ATL_CSZT Rsz,   /* workspace size of single B Block for TRMM */
+   TYPE *diag,      /* workspace ptr for*/
+   TYPE *L,        /* workspace ptr for whole A matrix */
+   TYPE *RW,       /* workspace ptr for B panel */
+   TYPE *w         /* workspace ptr for C in gemm (may be shared with trsm) */
+)
+{
+   cm2am_t a2blk = NULL;
+   #ifdef TCPLX
+      TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   /*const int ainc = (TransA == AtlasNoTrans) ? 1 : lda;*/
+   const int ainc = tip->incA;
+   ATL_SZT r;
+   int i, ib, jb;
+   const int MV = 3; /* move A & B */
+   TYPE *x, *l, *wL, *wR, *wC;
+   unsigned int szA, szB, szC;
+   unsigned int MB, NB, nnblks, inca;
+   void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
+         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
+         TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+   utrsm = tip->utrsm;
+   
+   nnblks = ip->nfnblks + ip->npnblks;
+   szA = ip->szA;
+   szB = ip->szB;
+   szC = ip->szC;
+   a2blk = ip->a2blk;
+   MB = ip->mb;
+   NB = ip->nb;
+   
+   wR = w;
+   wC = w + (Rsz SHIFT);
+/*
+ * NOTE: Gemm will always be called on full K-blks,
+ * only TRSM applied on partial k-blks. So, make KB0 and kb0 equal to kb
+ */
+   ip->KB0 = ip->kb0 = ip->kb;
+   
+   for (r=0, ib=0, x=X; r < R; r += MB, ib++, x += (MB SHIFT))
+   {
+      int nb, mb = R - r;
+      const int DoCopy = !r;
+      TYPE *a, *d, *Ac = ((TYPE*)A), *xc = x;
+      mb = Mmin(mb, MB);
+      nb = Mmin(NB, N);
+      inca = mb < MB ? ip->pszA : ip->szA;
+      Ac += ((N - nb) SHIFT) * (lda+1);
+      xc += ((N - nb) SHIFT) * ldx;
+/*
+ *    do the first triangle 
+ */
+      wL = L;
+      a = DoCopy ? Ac : NULL;
+      utrsm(tip, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
+
+      for (i=N-nb, jb=1, l=L+(Tsz SHIFT); 
+            i > 0; i -= NB, jb++, l+=(Tsz SHIFT))
+      {
+         nb = Mmin(i, NB);
+         Ac -= (nb SHIFT) * (lda+1);
+         xc -= (nb SHIFT) * ldx;
+         #ifdef TCPLX
+         {
+            TYPE *iR = RW+(nnblks-jb)*(inca SHIFT), *rR = iR + inca;
+            a2blk(NB, mb, ONE, xc+(nb SHIFT)*ldx, ldx, rR, iR);
+         }
+         #else
+            a2blk(NB, mb, ONE, xc+nb*ldx, ldx, RW+(nnblks-jb)*inca);
+         #endif
+/*
+ *       FIXED: already multiplied by SHIFT
+ */
+         a = DoCopy ? (Ac+nb*ainc) : NULL;
+         ip->nfkblks = jb - 1;
+         Mjoin(PATL,iploopsK)(ip, ib, jb, NULL, a, xc, MV, 
+               RW+(nnblks-jb)*(inca SHIFT), l, w, w+szC, alpha, ip->blk2c);
+/* 
+ *       now do the diagonal trsm 
+ */
+         /*l += (jb SHIFT) * szA;*/ 
+         /* FIXED: */
+         l += (jb SHIFT) * szB;
+         d = diag + ((N-i) SHIFT);
+         wL = l;
+         a = DoCopy ? Ac : NULL;
+         utrsm(tip, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
+      }
+   }
+   return(0);
+}
+@ROUT ATL_trsmR_LT_UN
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_reflvl3.h"
+
+#define ATL_trsmR_LTUN Mjoin(PATL,trsmR_LTUN)
+
+int ATL_trsmR_LTUN
+(
+   ipinfo_t *ip,   /* ipinfo for gemm */
+   sminfo_t *tip,  /* ipinfo for trsm */
+   const enum ATLAS_DIAG Diag,
+   ATL_CSZT R,
+   ATL_CSZT N,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   TYPE *X,
+   ATL_CSZT ldx,
+   ATL_CSZT Tsz,   /* workspace size of single A Block for TRMM */
+   ATL_CSZT Rsz,   /* workspace size of single B Block for TRMM */
+   TYPE *diag,      /* workspace ptr for*/
+   TYPE *L,        /* workspace ptr for whole A matrix */
+   TYPE *RW,       /* workspace ptr for B panel */
+   TYPE *w         /* workspace ptr for C in gemm (may be shared with trsm) */
+)
+{
+   cm2am_t a2blk = NULL;
+   #ifdef TCPLX
+      TYPE ONE[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *ZERO=ONE+1;
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define ZERO ATL_rzero
+      #define NONE ATL_rnone
+   #endif
+   /*const int ainc = (TransA == AtlasNoTrans) ? 1 : lda;*/
+   const int ainc = tip->incA;
+   ATL_SZT r;
+   int i, ib, jb;
+   const int MV = 3; /* move A & B */
+   TYPE *x, *l, *rw, *wL, *wR, *wC;
+   unsigned int szA, szB, szC;
+   unsigned int MB, NB, inca;
+   void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
+         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
+         TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
+   utrsm = tip->utrsm;
+   
+   szA = ip->szA;
+   szB = ip->szB;
+   szC = ip->szC;
+   a2blk = ip->a2blk;
+   MB = ip->mb;
+   NB = ip->nb;
+
+   wR = w;
+   wC = w + (Rsz SHIFT);
+/*
+ * NOTE: Gemm will always be called on full K-blks,
+ * only TRMM applied on partial k-blks. So, make KB0 and kb0 equal to kb
+ */
+   ip->KB0 = ip->kb0 = ip->kb;
+
+   for (r=0, ib=0, x=X; r < R; r += MB, ib++, x += (MB SHIFT))
+   {
+      int nb, mb = R - r;
+      const int DoCopy = !r;
+      TYPE *a, *d, *Ac = ((TYPE*)A), *xc = x;
+      mb = Mmin(mb, MB);
+      nb = Mmin(NB, N);
+      inca = mb < MB ? ip->pszA : ip->szA;
+/* 
+ *    do the first triangle 
+ */
+      wL = L;
+      a = DoCopy ? Ac : NULL;
+      utrsm(tip, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
+
+      for (i=nb, jb=1, l=L+(Tsz SHIFT); 
+            i < N; i += NB, jb++, l+=(Tsz SHIFT))
+      {
+         nb = Mmin(N-i, NB);
+         Ac += (NB SHIFT) * (lda+1);
+         xc += (NB SHIFT) * ldx;
+         #ifdef TCPLX
+         {
+            TYPE *iR = RW+(jb-1)*(inca SHIFT), *rR = iR + inca;
+            a2blk(NB, mb, ONE, xc-(NB SHIFT)*ldx, ldx, rR, iR);
+         }
+         #else
+            a2blk(NB, mb, ONE, xc-NB*ldx, ldx, RW+(jb-1)*inca);
+         #endif
+/*
+ *       FIXMED: already multiplied by ainc 
+ */
+         /*a = DoCopy ? (Ac-(i SHIFT)*ainc) : NULL;*/
+         a = DoCopy ? (Ac-i*ainc) : NULL;
+         ip->nfkblks = jb - 1;
+         Mjoin(PATL,iploopsK)(ip, ib, jb, NULL, a, xc, MV, RW, l, 
+                              w, w+szC, alpha, ip->blk2c);
+/* 
+ *       now do the diagonal trsm 
+ */
+         /*l += (jb SHIFT) * szA;*/
+         /* FIXED: */
+         l += (jb SHIFT) * szB;
+         d = diag + (i SHIFT);
+         wL = l;
+         a = DoCopy ? Ac : NULL;
+         utrsm(tip, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
+      }
+   }
    return(0);
 }
 @ROUT ATL_utrsmR_alloc
