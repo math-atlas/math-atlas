@@ -678,20 +678,19 @@ int ATL_iptrsm
       else
       {
          if (bv&1)
-            Mjoin(PATL,ipnekInfo)(&gip, AtlasNoTrans, TA, NR, NT, NT, ldb, lda, 
+            Mjoin(PATL,ipnekInfo)(&ip, AtlasNoTrans, TA, NR, NT, NT, ldb, lda, 
                                   ldb, NONE, alpha ); /* alpha=-1, beta=alpha*/
          else  /* Left */
-            Mjoin(PATL,ipmekInfo)(&gip, TA, AtlasNoTrans, NT, NR, NT, lda, ldb, 
+            Mjoin(PATL,ipmekInfo)(&ip, TA, AtlasNoTrans, NT, NR, NT, lda, ldb, 
                                   ldb, NONE, alpha); /* alpha=-1, beta=alpha*/
          #ifdef DEBUG
-            fprintf(stderr, "After ip[m,n]ek: mb=%d, nb=%d, kb=%d\n", 
-                    gip.mb, gip.nb, gip.kb);
+            fprintf(stderr, "MB=%d, NB=%d, KB=%d\n", ip.mb, ip.nb, ip.kb);
          #endif
 
-         vp = ATL_trsm_alloc(&gip, &si, NT, &Tsz, &Rsz, &diag, &L, &R, &w);
+         vp = ATL_trsm_alloc(&ip, &si, NT, &Tsz, &Rsz, &diag, &L, &R, &w);
          if (!vp)
             return(1); /* not enough memory, reucrse again  */
-         int (*ammtrsm)(ipinfo_t *gip, sminfo_t *si,const enum ATLAS_DIAG Diag,
+         int (*ammtrsm)(ipinfo_t *ip, sminfo_t *si,const enum ATLAS_DIAG Diag,
                ATL_CSZT R, 
                ATL_CSZT N, const SCALAR alpha, const TYPE *A, ATL_CSZT lda,
                TYPE *X, ATL_CSZT ldx, ATL_CSZT Tsz, ATL_CSZT Rsz, TYPE *diag, 
@@ -706,25 +705,15 @@ int ATL_iptrsm
  *       NOTE: 
  *       we first implement no-sharing... so, trsm may use diff info
  *       BUT if we want to share copies with gemm, need to recalculation 
- *       sminfo based on gip  
+ *       sminfo based on ip  
  */
          if (bv & 1)
-            ammtrsm(&gip, &si, (bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, A, 
+            ammtrsm(&ip, &si, (bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, A, 
                   lda, B, ldb, Tsz, Rsz, diag, L, R, w);
          else
-            ammtrsm(&gip, &si, (bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, A,
+            ammtrsm(&ip, &si, (bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, A,
                   lda, B, ldb, Tsz, Rsz, diag, L, R, w);
-      #ifdef DEBUG
-         #define MEM_DEBUG 1 
-      #endif
-      #ifdef MEM_DEBUG
-         free(diag);
-         free(L);
-         free(R);
-         free(w);
-      #else
          free(vp);
-      #endif
       }
    }
 #else
@@ -762,15 +751,15 @@ int ATL_iptrsm
 
 void* ATL_trsm_alloc
 ( 
-   const ipinfo_t *ip,
-   const sminfo_t *tip,
-   ATL_CSZT N, 
-   ATL_SZT *Tsz, 
-   ATL_SZT *Rsz,
-   TYPE **Diag, 
-   TYPE **L,      /* workspace for A: both gemm and trsm */ 
-   TYPE **R, 
-   TYPE **w
+   const ipinfo_t *ip,  /* ipinfo for gemm */
+   const sminfo_t *si,  /* ipinfo for trsm */
+   ATL_CSZT N,          /* number of triangles */ 
+   ATL_SZT *Tsz,        /* size of triangle blk used in utrsm */
+   ATL_SZT *Rsz,        /* R size using in utrsm */
+   TYPE **Diag,         /* workspace for diagonals */ 
+   TYPE **L,            /* workspace for A: both gemm and trsm */ 
+   TYPE **R,            /* workspace for B rowspan or colspan */
+   TYPE **w             /* workspace for C block in gemm, utrsm: R & w*/
 )
 {
    void *vp = NULL;
@@ -778,25 +767,18 @@ void* ATL_trsm_alloc
    ATL_SZT szL, szR, szW, exsz;
    ATL_CSZT szD = N;
 
-   const int tmu = tip->mu;
-   const int tnu = tip->nu;
-   const int tku = tip->ku;
+   const int tmu = si->mu;
+   const int tnu = si->nu;
+   const int tku = si->ku;
    const int mb = ip->mb;
    const int nb = ip->nb;
-   const size_t mbnb = mb * nb;
    const int mu = ip->mu;
    const int nu = ip->nu;
    const int ku = ip->ku;
-   ATL_CSZT szA = ip->szA;
-   ATL_CSZT szB = ip->szB;
-/*
- * szD = size of diagonal elements
- * Tsz = size of a triangular blk in TRSM
- */
-#ifdef DEBUG 
-fprintf(stderr, "---alloc: szA=%d, szB=%d, pszA=%d, pszB=%d\n", 
-      ip->szA, ip->szB, ip->pszA, ip->pszB);
-#endif 
+   const unsigned int szA = ip->szA;
+   const unsigned int szB = ip->szB;
+   const unsigned int szC = ip->szC;
+
 #ifdef Right_
    /*const size_t nbnb = ((nb * nb + ip->vlen-1)/ip->vlen)*ip->vlen;*/
    const int nnb = (N + nb - 1) / nb;
@@ -810,53 +792,21 @@ fprintf(stderr, "---alloc: szA=%d, szB=%d, pszA=%d, pszB=%d\n",
    szL = (szB*nnb*(nnb-1)>>1) + (*Tsz)*nnb; 
    /*szR = mbnb*nnb;*/
    szR = szA*nnb;
-   szW = (Mmax(*Rsz,mbnb))<<1;
+   szW = (Mmax(*Rsz,szC))<<1;
    exsz = tnu*tku + Mmax(mu*ku,tmu*tku) + (mu+mu)*nu;
 #else
-   /*const size_t mbmb = ((mb * mb + ip->vlen-1)/ip->vlen)*ip->vlen;*/
    const int nmb = (N + mb - 1) / mb;
    const int tnmu = (mb + tmu - 1) / tmu;
 
    *Tsz = tmu*tmu * (tnmu*(tnmu+1))>>1;
    *Rsz = tmu*tnu * tnmu;
-   /*szL = ((mbmb*nmb*(nmb-1))>>1) + (*Tsz)*nmb;*/ /* presidence is low >> than + */
+   /*szL = ((mbmb*nmb*(nmb-1))>>1) + (*Tsz)*nmb;*/ 
    szL = ((szA*nmb*(nmb-1))>>1) + (*Tsz)*nmb; 
    /*szR = mbnb*nmb; */
    szR = szB*nmb; 
-   szW = (Mmax(*Rsz,mbnb))<<1;
+   szW = (Mmax(*Rsz,szC))<<1;
    exsz = tmu*tku + Mmax(mu*ku,tmu*tku) + (mu+mu)*nu;
 #endif
-#ifdef DEBUG
-   #define MEM_DEBUG
-#endif 
-#ifdef MEM_DEBUG
-   {
-      /* for Right case */
-      szL += Mmax(nu*ku,tnu*tku); /* extra mem to load A */ 
-      szR += Mmax(mu*ku, tmu*tku); /* extra mem to load B in gemm*/
-      szW += (mu+mu)*nu;
-      posix_memalign(&(*Diag), 32, ATL_MulBySize(szD+ATL_Cachelen)); 
-      posix_memalign(&(*L), 32, ATL_MulBySize(szL+ATL_Cachelen)); 
-      posix_memalign(&(*R), 32, ATL_MulBySize(szR+ATL_Cachelen)); 
-      posix_memalign(&(*w), 32, ATL_MulBySize(szW+ATL_Cachelen)); 
-      if ( !(*Diag && *L && *R && *w ) )
-      {
-         if (*Diag) free(*Diag);
-         if (*L) free(*L);
-         if (*R) free(*R);
-         if (*w) free(*w);
-         return (NULL); /* memory leak, doesn't care since only in debug */
-      }
-      vp = *Diag;
-      fprintf(stderr, "-----alloc: Diag=%ld, L=%ld, R=%ld, w=%ld\n", 
-            *Diag, *L, *R, *w);
-   }
-#else
-   #ifdef DEBUG
-      fprintf(stderr, 
-      "---szD=%ld, szL=%ld, szR=%ld, szW=%ld, exsz=%ld, Tsz=%ld, Rsz=%ld \n", 
-         szD, szL, szR, szW, exsz, *Tsz, *Rsz);
-   #endif
    sz = ATL_MulBySize( szD + szL + szR + szW + exsz) + 5*ATL_Cachelen;
    if (sz <= ATL_MaxMalloc)
       vp = malloc(sz);
@@ -868,7 +818,6 @@ fprintf(stderr, "---alloc: szA=%d, szB=%d, pszA=%d, pszB=%d\n",
    *R = ATL_AlignPtr(*R);
    *w = (*R) + (szR SHIFT);
    *w = ATL_AlignPtr(*w);
-#endif 
    return(vp);
 }
 @ROUT ATL_trsmL_LN_UT
@@ -879,22 +828,22 @@ fprintf(stderr, "---alloc: szA=%d, szB=%d, pszA=%d, pszB=%d\n",
 
 int ATL_trsmL_LNUT
 (
-   ipinfo_t *ip,   /* ipinfo for gemm */
-   sminfo_t *tip,  /* ipinfo for trsm */
+   ipinfo_t *ip,     /* ipinfo for gemm */
+   sminfo_t *si,     /* ipinfo for trsm */
    const enum ATLAS_DIAG Diag,
-   ATL_CSZT N,
-   ATL_CSZT R,
+   ATL_CSZT N,       /* M */
+   ATL_CSZT R,       /* N */
    const SCALAR alpha,
-   const TYPE *A,
-   ATL_CSZT lda,
+   const TYPE *A,    
+   ATL_CSZT lda,    
    TYPE *X,
    ATL_CSZT ldx,
-   ATL_CSZT Tsz,   /* workspace size of single A Block for TRMM */
-   ATL_CSZT Rsz,   /* workspace size of single B Block for TRMM */
-   TYPE *diag,      /* workspace ptr for*/
-   TYPE *L,        /* workspace ptr for whole A matrix */
-   TYPE *RW,       /* workspace ptr for B panel */
-   TYPE *w         /* workspace ptr for C in gemm (may be shared with trsm) */
+   ATL_CSZT Tsz,     /* workspace size of single A Block for TRSM */
+   ATL_CSZT Rsz,     /* size of R in TRSM */
+   TYPE *diag,       /* workspace ptr for diagonals */
+   TYPE *L,          /* workspace ptr for A matrix used both in gemm and trsm */
+   TYPE *RW,         /* workspace ptr for B panel */
+   TYPE *w           /* workspace ptr for C in gemm, used in trsm as well */
 )
 {
    cm2am_t b2blk = NULL;
@@ -906,8 +855,7 @@ int ATL_trsmL_LNUT
       #define ZERO ATL_rzero
       #define NONE ATL_rnone
    #endif
-   /*const int ainc = (TransA != AtlasNoTrans) ? 1 : lda;*/
-   const int ainc = tip->incA;
+   const int ainc = si->incA;
    ATL_SZT r;
    int i, ib, jb;
    const int MV = 3; /* move A & B */
@@ -917,10 +865,8 @@ int ATL_trsmL_LNUT
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
          TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
 
-   utrsm = tip->utrsm;
-   /*Mjoin(PATL,sqFillInIPInfo)(&ip, idx, TransA, AtlasNoTrans, N, R, MB, 
-                              lda, ldx, ldx, NONE, alpha, MB);*/
-   /* get info that we need here */
+   utrsm = si->utrsm;
+   
    szA = ip->szA;
    szC = ip->szC;
    b2blk = ip->b2blk;
@@ -948,7 +894,7 @@ int ATL_trsmL_LNUT
  */
       wL = L;
       a = DoCopy ? Ac : NULL;
-      utrsm(tip, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
+      utrsm(si, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
 
       for (i=mb, ib=1, l=L+(Tsz SHIFT); 
             i < N; i += MB, ib++, l+=(Tsz SHIFT))
@@ -979,7 +925,7 @@ int ATL_trsmL_LNUT
          d = diag + (i SHIFT);
          wL = l;
          a = DoCopy ? Ac : NULL;
-         utrsm(tip, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
+         utrsm(si, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
       }
    }
    return(0);
@@ -993,8 +939,8 @@ int ATL_trsmL_LNUT
 
 int ATL_trsmL_LTUN
 (
-   ipinfo_t *ip,   /* ipinfo for gemm */
-   sminfo_t *tip,  /* ipinfo for trsm */
+   ipinfo_t *ip,     /* ipinfo for gemm */
+   sminfo_t *si,     /* ipinfo for trsm */
    const enum ATLAS_DIAG Diag,
    ATL_CSZT N,
    ATL_CSZT R,
@@ -1003,10 +949,10 @@ int ATL_trsmL_LTUN
    ATL_CSZT lda,
    TYPE *X,
    ATL_CSZT ldx,
-   ATL_CSZT Tsz,   /* workspace size of single A Block for TRMM */
-   ATL_CSZT Rsz,   /* workspace size of single B Block for TRMM */
-   TYPE *diag,      /* workspace ptr for*/
-   TYPE *L,        /* workspace ptr for whole A matrix */
+   ATL_CSZT Tsz,   
+   ATL_CSZT Rsz,  
+   TYPE *diag,      /* workspace ptr for diagonals */
+   TYPE *L,        /* workspace ptr for A matrix: used both in gemm and trsm */
    TYPE *RW,       /* workspace ptr for B panel */
    TYPE *w         /* workspace ptr for C in gemm (may be shared with trsm) */
 )
@@ -1020,8 +966,7 @@ int ATL_trsmL_LTUN
       #define ZERO ATL_rzero
       #define NONE ATL_rnone
    #endif
-   /*const int ainc = (TransA != AtlasNoTrans) ? 1 : lda;*/
-   const int ainc = tip->incA;
+   const int ainc = si->incA;
    ATL_SZT r;
    int i, ib, jb;
    const int MV = 3; /* move A & B */
@@ -1031,7 +976,7 @@ int ATL_trsmL_LTUN
    void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
          TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
-   utrsm = tip->utrsm;
+   utrsm = si->utrsm;
    
    nmblks = ip->nfmblks + ip->npmblks;
    szA = ip->szA;
@@ -1063,7 +1008,7 @@ int ATL_trsmL_LTUN
  */
       wL = L;
       a = DoCopy ? Ac : NULL;
-      utrsm(tip, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
+      utrsm(si, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
 
       for (i=N-mb, ib=1, l=L+(Tsz SHIFT); 
             i > 0; i -= MB, ib++, l+=(Tsz SHIFT))
@@ -1093,7 +1038,7 @@ int ATL_trsmL_LTUN
          d = diag + ((N-i) SHIFT);
          wL = l;
          a = DoCopy ? Ac : NULL;
-         utrsm(tip, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
+         utrsm(si, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
       }
    }
    free(vp);
@@ -1108,8 +1053,8 @@ int ATL_trsmL_LTUN
 
 int ATL_trsmR_LNUT
 (
-   ipinfo_t *ip,   /* ipinfo for gemm */
-   sminfo_t *tip,  /* ipinfo for trsm */
+   ipinfo_t *ip,     /* ipinfo for gemm */
+   sminfo_t *si,     /* ipinfo for trsm */
    const enum ATLAS_DIAG Diag,
    ATL_CSZT R,
    ATL_CSZT N,
@@ -1118,9 +1063,9 @@ int ATL_trsmR_LNUT
    ATL_CSZT lda,
    TYPE *X,
    ATL_CSZT ldx,
-   ATL_CSZT Tsz,   /* workspace size of single A Block for TRMM */
-   ATL_CSZT Rsz,   /* workspace size of single B Block for TRMM */
-   TYPE *diag,      /* workspace ptr for*/
+   ATL_CSZT Tsz,  
+   ATL_CSZT Rsz, 
+   TYPE *diag,      /* workspace ptr for diagonals */
    TYPE *L,        /* workspace ptr for whole A matrix */
    TYPE *RW,       /* workspace ptr for B panel */
    TYPE *w         /* workspace ptr for C in gemm (may be shared with trsm) */
@@ -1135,8 +1080,7 @@ int ATL_trsmR_LNUT
       #define ZERO ATL_rzero
       #define NONE ATL_rnone
    #endif
-   /*const int ainc = (TransA == AtlasNoTrans) ? 1 : lda;*/
-   const int ainc = tip->incA;
+   const int ainc = si->incA;
    ATL_SZT r;
    int i, ib, jb;
    const int MV = 3; /* move A & B */
@@ -1146,7 +1090,7 @@ int ATL_trsmR_LNUT
    void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
          TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
-   utrsm = tip->utrsm;
+   utrsm = si->utrsm;
    
    nnblks = ip->nfnblks + ip->npnblks;
    szA = ip->szA;
@@ -1179,7 +1123,7 @@ int ATL_trsmR_LNUT
  */
       wL = L;
       a = DoCopy ? Ac : NULL;
-      utrsm(tip, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
+      utrsm(si, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
 
       for (i=N-nb, jb=1, l=L+(Tsz SHIFT); 
             i > 0; i -= NB, jb++, l+=(Tsz SHIFT))
@@ -1211,7 +1155,7 @@ int ATL_trsmR_LNUT
          d = diag + ((N-i) SHIFT);
          wL = l;
          a = DoCopy ? Ac : NULL;
-         utrsm(tip, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
+         utrsm(si, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
       }
    }
    return(0);
@@ -1225,8 +1169,8 @@ int ATL_trsmR_LNUT
 
 int ATL_trsmR_LTUN
 (
-   ipinfo_t *ip,   /* ipinfo for gemm */
-   sminfo_t *tip,  /* ipinfo for trsm */
+   ipinfo_t *ip,     /* ipinfo for gemm */
+   sminfo_t *si,     /* ipinfo for trsm */
    const enum ATLAS_DIAG Diag,
    ATL_CSZT R,
    ATL_CSZT N,
@@ -1235,9 +1179,9 @@ int ATL_trsmR_LTUN
    ATL_CSZT lda,
    TYPE *X,
    ATL_CSZT ldx,
-   ATL_CSZT Tsz,   /* workspace size of single A Block for TRMM */
-   ATL_CSZT Rsz,   /* workspace size of single B Block for TRMM */
-   TYPE *diag,      /* workspace ptr for*/
+   ATL_CSZT Tsz,   
+   ATL_CSZT Rsz,   
+   TYPE *diag,      /* workspace ptr for diagonals */
    TYPE *L,        /* workspace ptr for whole A matrix */
    TYPE *RW,       /* workspace ptr for B panel */
    TYPE *w         /* workspace ptr for C in gemm (may be shared with trsm) */
@@ -1252,8 +1196,7 @@ int ATL_trsmR_LTUN
       #define ZERO ATL_rzero
       #define NONE ATL_rnone
    #endif
-   /*const int ainc = (TransA == AtlasNoTrans) ? 1 : lda;*/
-   const int ainc = tip->incA;
+   const int ainc = si->incA;
    ATL_SZT r;
    int i, ib, jb;
    const int MV = 3; /* move A & B */
@@ -1263,7 +1206,7 @@ int ATL_trsmR_LTUN
    void (*utrsm)(sminfo_t*,const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
          const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx,
          TYPE *diag, TYPE *L, TYPE *RW, TYPE *w);
-   utrsm = tip->utrsm;
+   utrsm = si->utrsm;
    
    szA = ip->szA;
    szB = ip->szB;
@@ -1293,7 +1236,7 @@ int ATL_trsmR_LTUN
  */
       wL = L;
       a = DoCopy ? Ac : NULL;
-      utrsm(tip, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
+      utrsm(si, Diag, mb, nb, alpha, a, lda, xc, ldx, diag, wL, wR, wC);
 
       for (i=nb, jb=1, l=L+(Tsz SHIFT); 
             i < N; i += NB, jb++, l+=(Tsz SHIFT))
@@ -1326,7 +1269,7 @@ int ATL_trsmR_LTUN
          d = diag + (i SHIFT);
          wL = l;
          a = DoCopy ? Ac : NULL;
-         utrsm(tip, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
+         utrsm(si, Diag, mb, nb, ONE, a, lda, xc, ldx, d, wL, wR, wC);
       }
    }
    return(0);
