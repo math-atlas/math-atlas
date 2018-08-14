@@ -4504,11 +4504,11 @@ void Mjoin(PATL,symmR_rec)
    ATL_CSZT ldc
 )
 {
-   #if 0
+/*
+ * If the symmetric matrix is smaller than our rank-K GEMM support, use
+ * outer product gemm to solve this problem.
+ */
    if (N <= ATL_VWopgen_LAST_KB)
-   #else
-   if (N < 2)
-   #endif
    {
       const enum ATLAS_UPLO Uplo = (flg&1) ? AtlasUpper:AtlasLower;
       #ifdef TCPLX
@@ -4529,12 +4529,27 @@ void Mjoin(PATL,symmR_rec)
       #endif
    }
 /*
+ * To avoid recurring and redundantly copying matrices as we average various
+ * size GEMM's performance, attempt to halt recursion on symmetric dims by
+ * allocating enough space to copy entire symmetric matrix to dense, and then
+ * call GEMM only one time.  Do not do this if the general matrix consists
+ * only of a single K-panel: in this case better to recur down and use opsymm.
+ * Reason is copy of A a big deal, and copying up front brings it through cache
+ * twice, wheareas recursion will provide automatic blocking, and avoid this
+ * for small problems where it matters.
+ */
+   else if (M > ATL_VIEW_BEST_MB)
+   {
+      if (!Mjoin(PATL,ipsymmR)(flg, M, N, alpha,A,lda,B,ldb,beta,C,ldc))
+         return;
+   }
+/*
+ * Otherwise, recur on symmetric matrix until we can stop one of above using:
  * C0 = B0 * A00  + beta*C0  (symm)
  * C0 = B1 * A10 + C0        (gemm)
  * C1 = B0 * A10^T + beta*C1 (gemm)
  * C1 = B1 * A11 + C1        (symm)
  */
-   else if (Mjoin(PATL,ipsymmR)(flg, M, N, alpha,A,lda,B,ldb,beta,C,ldc))
    {
       #ifdef TCPLX
          const TYPE ONE[2] = {ATL_rone, ATL_rzero};
@@ -4882,7 +4897,7 @@ void Mjoin(PATL,@(sy)R@(up)2ipBlk) /* left, @(uplo) hermitian copy to amm */
 
    if (bv&1)
       iw = IdxBw_ip(ip, W, KBLK, JBLK);
-   else (bv&2)
+   else if (bv&2)
       iw = IdxBw_ip(ip, W, KBLK, 0);
    kb = (KBLK < ip->nfkblks) ? ip->kb : ip->kb0;
    if (JBLK < nfnblks)
@@ -5299,7 +5314,7 @@ void Mjoin(PATL,@(sy)L@(up)2ipBlk) /* left, @(uplo) hermitian copy to amm */
    const ATL_iptr_t nfmblks = ip->nfmblks, lda=ip->lda;
    ATL_iptr_t I, K=KBLK*ip->kb, szA;
    ATL_iptr_t ldd2=ldd+ldd;
-   TYPE *rw, *iw=wA;
+   TYPE *rw, *iw=W;
 
 /* printf("B(%lu,%lu)\n", IBLK, KBLK); */
    if (bv&1)
@@ -5978,6 +5993,11 @@ int Mjoin(PATL,ipsymmL_tN)
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipgen_view.h))
 /*
+ * inline copy never really wins, and recursion beats symm_tN, so this should
+ * always be 1
+ */
+#define SEP_CPY 1
+/*
  * These required for testing only
  */
 #define DEBUG 1
@@ -6062,6 +6082,7 @@ int Mjoin(PATL,ipsymmL)
    #ifdef DEBUG
       ATL_BV_t *bv;
    #endif
+   @BEGINSKIP
 /*
  * Uncomment to do with gemm via reflection
  */
@@ -6078,13 +6099,9 @@ int Mjoin(PATL,ipsymmL)
       return(0);
    }
    #endif
+   @ENDSKIP
    Mjoin(PATL,ipgenInfo)(&ip, 0, AtlasNoTrans, AtlasNoTrans, M, N, M, lds, ldg,
                          ldc, alpha, beta);
-   #if 0
-   if (N <= ip.nb)
-      return(Mjoin(PATL,ipsymmL_tN)(flg, M, N, alpha, S, lds, G, ldg, 
-                                    beta, C, ldc));
-   #endif
 /*
  * This routine attempts to malloc space for 1 block of C, 1 column panel of B,
  * and entire matrix A.  Also needs space for kb*mb workspace, which is
@@ -6106,7 +6123,13 @@ int Mjoin(PATL,ipsymmL)
    szB = (ip.nfnblks) ? ip.szB : ip.pszB;
    szB *= tkblks;
    sz *= ldd;
-   extra = Mmax(sz, ip.exsz);
+   #if SEP_CPY
+      extra = ip.exsz;
+      if (sz > extra+szB+ip.szC)
+         extra += sz - extra - szA - ip.szC;
+   #else
+      extra = Mmax(sz, ip.exsz);
+   #endif
 
    sz = ATL_MulBySize(extra + szA + szB + ip.szC) + 3*ATL_Cachelen;
    if (sz <= ATL_MaxMalloc)
@@ -6120,28 +6143,16 @@ int Mjoin(PATL,ipsymmL)
     wC = ATL_AlignPtr(wC);
     #ifdef TCPLX
        rC = wC + ip.szC;
-       wd = rC + ip.szC
-    #else
+       #if !SEP_CPY
+          wd = rC + ip.szC
+       #endif
+    #elif !SEP_CPY
        wd = wC + ip.szC;
     #endif
-/*
- *  Write known pattern so we can test elt test
- */
-   #if defined(DEBUG) && 0
-   {
-      ATL_iptr_t i, j, cnt=0;
-      TYPE *p=(TYPE*)S;
-      double div=10, M2=M*M;
-      while (div < M2)
-         div *= 10;
-      div = 1.0 / div;
-      for (j=0; j < M; j++, p += lds)
-      {
-         for (i=j; i < M; i++)
-            p[i] = 1.0 + (++cnt)*div;
-      }
-   }
-   #endif
+    #if SEP_CPY
+       wd = wB;
+    #endif
+   @BEGINSKIP
    #if defined(DEBUG) && 0
    {
       ATL_iptr_t i, len=szA SHIFT;
@@ -6153,11 +6164,13 @@ int Mjoin(PATL,ipsymmL)
          wA[i] = (-4.0 - i*mul)*1.0e6;
    }
    #endif
-   #if 0
-   ATL_cpsy2amm(&ip, flg, N, S, lds, wd, ldd, wA);
+   @ENDSKIP
+   #if SEP_CPY
+      ATL_cpsy2amm(&ip, flg, N, S, lds, wd, ldd, wA);
    #else
-   Mjoin(PATL,ipsymmL_tN_wrk)(&ip, flg+256, S, G, beta, C, wd, wA, wB, rC, wC);
+      Mjoin(PATL,ipsymmL_tN_wrk)(&ip, flg+256, S, G, beta, C, wd, wA,wB,rC,wC);
    #endif
+   @BEGINSKIP
 /* 
  * Uncomment to get 1.cnt sequential numbering
  */
@@ -6173,29 +6186,27 @@ int Mjoin(PATL,ipsymmL)
          wA[k] = 1.0+k*mul;
    }
    #endif
+   @ENDSKIP
    #if defined(DEBUG) && 0
-   #ifdef TCPLX
-      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)<<2)|((flg&2)<<2),
-                                 wA, M, S);
-   #else
-      bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)<<2), wA, M, S);
-   #endif
-   if (bv)
-   {
-      ATL_print2dBV(M, M, bv);
-      free(bv);
-      printf("\nDONE PRINt2DBV\n\n");
-/*
-      fprintf(stderr, "\nKILLING DUE TO sycmpBV!\n\n");
-      exit(-1);
- */
-   }
-   else
-      printf("\nNO ERRORS FOUND IN SYCP!\n\n");
+      #ifdef TCPLX
+         bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)<<2)|((flg&2)<<2),
+                                    wA, M, S);
+      #else
+         bv = Mjoin(PATL,ipsycmpBV)(2, 0.0, &ip, 1|((flg&1)<<2), wA, M, S);
+      #endif
+      if (bv)
+      {
+         ATL_print2dBV(M, M, bv);
+         free(bv);
+         printf("\nDONE PRINt2DBV\n\n");
+      }
+      else
+         printf("\nNO ERRORS FOUND IN SYCP!\n\n");
    #endif
    #if 0
       Mjoin(PATL,ipprint)(stdout, &ip, 1, "SY", M, M, wA);
    #endif
+   @BEGINSKIP
 /*
  * Uncomment this code to make sure problem isn't in iploopsNMK!
  */
@@ -6224,8 +6235,13 @@ int Mjoin(PATL,ipsymmL)
       free(A);
    }
    #else
-   Mjoin(PATL,iploopsNMK)(&ip, 0, 1, NULL, G, C, 1|2|4, wA, wB, rC, wC, beta,
-                          ip.blk2c);
+   @ENDSKIP
+   #if SEP_CPY
+      Mjoin(PATL,iploopsNMK)(&ip, 0, 0, NULL, G, C, 1|2|4, wA, wB, rC, wC, beta,
+                             ip.blk2c);
+   #else
+      Mjoin(PATL,iploopsNMK)(&ip, 0, 1, NULL, G, C, 1|2|4, wA, wB, rC, wC, beta,
+                             ip.blk2c);
    #endif
    free(vp);
    return(0);
@@ -6739,11 +6755,11 @@ void Mjoin(PATL,symmL_rec)
    ATL_CSZT ldc
 )
 {
-   #if 0
+/*
+ * If the symmetric matrix is smaller than our rank-K GEMM support, use
+ * outer product gemm to solve this problem by reflecting block matrix to dense.
+ */
    if (M <= ATL_VWopgen_LAST_KB)
-   #else
-   if (M < 2)
-   #endif
    {
       const enum ATLAS_UPLO Uplo = (flg&1) ? AtlasUpper : AtlasLower;
       #ifdef TCPLX
@@ -6764,11 +6780,22 @@ void Mjoin(PATL,symmL_rec)
       #endif
    }
 /*
- * For large problems, try copying entire matrix to dense, and calling gemm
+ * To avoid recurring and redundantly copying matrices as we average various
+ * size GEMM's performance, attempt to halt recursion on symmetric dims by
+ * allocating enough space to copy entire symmetric matrix to dense, and then
+ * call GEMM only one time.  Do not do this if the general matrix consists
+ * only of a single K-panel: in this case better to recur down and use opsymm.
+ * Reason is copy of symat a big cost, and copying up front brings it through
+ * cache twice, wheareas recursion will provide automatic blocking, and avoid
+ * this for small problems where it matters.  Unlike more square cases, 
+ * due to lack of symmetric block reuse, ipsymm has no performance benefit
+ * over continue recursion.
  */
-   #if 1
-   else if (Mjoin(PATL,ipsymmL)(flg, M, N, alpha,A,lda,B,ldb,beta,C,ldc))
-   #endif
+   else if (N > ATL_VIEW_BEST_NB)
+   {
+      if (!Mjoin(PATL,ipsymmL)(flg, M, N, alpha,A,lda,B,ldb,beta,C,ldc))
+         return;
+   }
 /*
  * If neither of those work, split along M using recursive steps:
  *    C0 = A00 * B0 + beta*C0 (symm)
@@ -6799,10 +6826,10 @@ void Mjoin(PATL,symmL_rec)
       else          /* Lower matrix */
       {
          const TYPE *A10 = A + (ML SHIFT);
-         Mjoin(PATL,ammm)(TA, AtlasNoTrans, ML, N, MR, alpha, A10, lda,
-                          B1, ldb, ONE, C, ldc);
          Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, MR, N, ML, alpha, 
                           A10, lda, B, ldb, beta, C1, ldc);
+         Mjoin(PATL,ammm)(TA, AtlasNoTrans, ML, N, MR, alpha, A10, lda,
+                          B1, ldb, ONE, C, ldc);
       }
       Mjoin(PATL,symmL_rec)(flg, MR, N, alpha, A+(ML SHIFT)*(lda+1), 
                             lda, B1, ldb, ONE, C1, ldc);
