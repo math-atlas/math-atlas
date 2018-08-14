@@ -616,7 +616,7 @@ int ATL_iptrsm
       ATL_UINT LN, ctu;
       ATL_SZT Tsz, Rsz;
       void *vp;
-      ipinfo_t gip;
+      ipinfo_t ip;
       sminfo_t si;
       TYPE *diag, *T, *L, *R, *w;
       #ifdef TCPLX
@@ -702,10 +702,7 @@ int ATL_iptrsm
          else
             ammtrsm = ATL_trsm_LTUN;
 /*
- *       NOTE: 
- *       we first implement no-sharing... so, trsm may use diff info
- *       BUT if we want to share copies with gemm, need to recalculation 
- *       sminfo based on ip  
+ *       apply outer-loop trsm 
  */
          if (bv & 1)
             ammtrsm(&ip, &si, (bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, A, 
@@ -713,7 +710,19 @@ int ATL_iptrsm
          else
             ammtrsm(&ip, &si, (bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, A,
                   lda, B, ldb, Tsz, Rsz, diag, L, R, w);
+@BEGINSKIP 
+/*
+ * when debug codes for memory overwrite enabled 
+ */
+/*#define MEM_DEBUG 1 */
+#ifdef MEM_DEBUG
+         free(diag);
+         free(L);
+         free(R);
+         free(w);
+@ENDSKIP
          free(vp);
+@SKIP #endif
       }
    }
 #else
@@ -737,6 +746,7 @@ int ATL_iptrsm
    return(0);
 }
 @ROUT ATL_trsm_alloc
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Rakib Hasan" -def contrib "Majedul Sujon"
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 
@@ -746,7 +756,6 @@ int ATL_iptrsm
    #define ATL_trsm_alloc Mjoin(PATL,trsmL_alloc)
 #endif
 
-/* #define MEM_DEBUG 1*/
 /* #define DEBUG 1*/
 
 void* ATL_trsm_alloc
@@ -807,6 +816,35 @@ void* ATL_trsm_alloc
    szW = (Mmax(*Rsz,szC))<<1;
    exsz = tmu*tku + Mmax(mu*ku,tmu*tku) + (mu+mu)*nu;
 #endif
+@BEGINSKIP
+/*
+ * To debug memory overwrite  
+ */
+/* #define MEM_DEBUG 1*/
+#ifdef MEM_DEBUG
+   {
+      /* for Right case */
+      szL += Mmax(nu*ku,tnu*tku); /* extra mem to load A */ 
+      szR += Mmax(mu*ku, tmu*tku); /* extra mem to load B in gemm*/
+      szW += (mu+mu)*nu;
+      posix_memalign(&(*Diag), 32, ATL_MulBySize(szD+ATL_Cachelen)); 
+      posix_memalign(&(*L), 32, ATL_MulBySize(szL+ATL_Cachelen)); 
+      posix_memalign(&(*R), 32, ATL_MulBySize(szR+ATL_Cachelen)); 
+      posix_memalign(&(*w), 32, ATL_MulBySize(szW+ATL_Cachelen)); 
+      if ( !(*Diag && *L && *R && *w ) )
+      {
+         if (*Diag) free(*Diag);
+         if (*L) free(*L);
+         if (*R) free(*R);
+         if (*w) free(*w);
+         return (NULL); /* memory leak, doesn't care since only in debug */
+      }
+      vp = *Diag;
+      fprintf(stderr, "-----alloc: Diag=%ld, L=%ld, R=%ld, w=%ld\n", 
+            *Diag, *L, *R, *w);
+   }
+#else
+@ENDSKIP
    sz = ATL_MulBySize( szD + szL + szR + szW + exsz) + 5*ATL_Cachelen;
    if (sz <= ATL_MaxMalloc)
       vp = malloc(sz);
@@ -818,9 +856,11 @@ void* ATL_trsm_alloc
    *R = ATL_AlignPtr(*R);
    *w = (*R) + (szR SHIFT);
    *w = ATL_AlignPtr(*w);
+@SKIP #endif
    return(vp);
 }
 @ROUT ATL_trsmL_LN_UT
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Rakib Hasan" -def contrib "Majedul Sujon"
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include "atlas_reflvl3.h"
@@ -877,7 +917,7 @@ int ATL_trsmL_LNUT
    wC = w + (Rsz SHIFT);
 /*
  * NOTE: Gemm will always be called on full K-blks,
- * only TRMM applied on partial k-blks. So, make KB0 and kb0 equal to kb
+ * only TRSM applied on partial k-blks. So, make KB0 and kb0 equal to kb
  */
    ip->KB0 = ip->kb0 = ip->kb;
 
@@ -910,10 +950,6 @@ int ATL_trsmL_LNUT
          #else
             b2blk(MB, nb, ONE, xc-MB, ldx, RW+(ib-1)*incb);
          #endif
-/*
- *       FIXED: ainc already multiplied by SHIFT 
- */
-         /*a = DoCopy ? (Ac-(i SHIFT)*ainc) : NULL;*/
          a = DoCopy ? (Ac-i*ainc) : NULL;
          ip->nfkblks = ib - 1;
          Mjoin(PATL,iploopsK)(ip, ib, jb, a, NULL, xc, MV, l, RW, w, w+szC, 
@@ -931,6 +967,7 @@ int ATL_trsmL_LNUT
    return(0);
 }
 @ROUT ATL_trsmL_LT_UN
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Rakib Hasan" -def contrib "Majedul Sujon"
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include "atlas_reflvl3.h"
@@ -989,7 +1026,7 @@ int ATL_trsmL_LTUN
    wC = w + (Rsz SHIFT);
 /*
  * NOTE: Gemm will always be called on full K-blks,
- * only TRMM applied on partial k-blks. So, make KB0 and kb0 equal to kb
+ * only TRSM applied on partial k-blks. So, make KB0 and kb0 equal to kb
  */
    ip->KB0 = ip->kb0 = ip->kb;
 
@@ -1024,9 +1061,6 @@ int ATL_trsmL_LTUN
          #else
             b2blk(MB,nb,ONE, xc+mb, ldx, RW+(nmblks-ib)*incb);
          #endif
-/*
- *       FIXED: already multiplied by SHIFT
- */
          a = DoCopy ? (Ac+mb*ainc) : NULL;
          ip->nfkblks = ib - 1;
          Mjoin(PATL,iploopsK)(ip, ib, jb, a, NULL, xc, MV, l, 
@@ -1045,6 +1079,7 @@ int ATL_trsmL_LTUN
    return(0);
 }
 @ROUT ATL_trsmR_LN_UT
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Rakib Hasan" -def contrib "Majedul Sujon"
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include "atlas_reflvl3.h"
@@ -1139,9 +1174,6 @@ int ATL_trsmR_LNUT
          #else
             a2blk(NB, mb, ONE, xc+nb*ldx, ldx, RW+(nnblks-jb)*inca);
          #endif
-/*
- *       FIXED: already multiplied by SHIFT
- */
          a = DoCopy ? (Ac+nb*ainc) : NULL;
          ip->nfkblks = jb - 1;
          Mjoin(PATL,iploopsK)(ip, ib, jb, NULL, a, xc, MV, 
@@ -1149,8 +1181,6 @@ int ATL_trsmR_LNUT
 /* 
  *       now do the diagonal trsm 
  */
-         /*l += (jb SHIFT) * szA;*/ 
-         /* FIXED: */
          l += (jb SHIFT) * szB;
          d = diag + ((N-i) SHIFT);
          wL = l;
@@ -1161,6 +1191,7 @@ int ATL_trsmR_LNUT
    return(0);
 }
 @ROUT ATL_trsmR_LT_UN
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Rakib Hasan" -def contrib "Majedul Sujon"
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include "atlas_reflvl3.h"
@@ -1219,7 +1250,7 @@ int ATL_trsmR_LTUN
    wC = w + (Rsz SHIFT);
 /*
  * NOTE: Gemm will always be called on full K-blks,
- * only TRMM applied on partial k-blks. So, make KB0 and kb0 equal to kb
+ * only TRSM applied on partial k-blks. So, make KB0 and kb0 equal to kb
  */
    ip->KB0 = ip->kb0 = ip->kb;
 
@@ -1252,10 +1283,6 @@ int ATL_trsmR_LTUN
          #else
             a2blk(NB, mb, ONE, xc-NB*ldx, ldx, RW+(jb-1)*inca);
          #endif
-/*
- *       FIXMED: already multiplied by ainc 
- */
-         /*a = DoCopy ? (Ac-(i SHIFT)*ainc) : NULL;*/
          a = DoCopy ? (Ac-i*ainc) : NULL;
          ip->nfkblks = jb - 1;
          Mjoin(PATL,iploopsK)(ip, ib, jb, NULL, a, xc, MV, RW, l, 
@@ -1263,8 +1290,6 @@ int ATL_trsmR_LTUN
 /* 
  *       now do the diagonal trsm 
  */
-         /*l += (jb SHIFT) * szA;*/
-         /* FIXED: */
          l += (jb SHIFT) * szB;
          d = diag + (i SHIFT);
          wL = l;
