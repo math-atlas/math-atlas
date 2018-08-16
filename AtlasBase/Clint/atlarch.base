@@ -631,6 +631,51 @@ enum MACHTYPE ProbeArch()
    return(MACHOther);
 }
 @ROUT archinfo_linux archinfo_freebsd archinfo_sunos archinfo_irix archinfo_aix
+/*
+ * RETURNS: CPU part
+ * -1 means value is not found
+ */
+#ifndef uint
+   #define uint unsigned int
+#endif
+uint getArmInfo(uint *IMPL, uint *ARCH, uint *VAR, uint *REV)
+{
+   uint part;
+   char *res;
+   *IMPL = *ARCH = *VAR = *REV = part = -1;
+   @multidef sr CPU@^implement CPU@^variant CPU@^part
+   @whiledef vr *IMPL *VAR part
+   res = atlsys_1L(NULL, "fgrep '@(sr)' /proc/cpuinfo", 0, 0);
+   if (res)
+   {
+      char *sp;
+      uint i;
+      sp = strstr(res, "0x");
+      if (sp)
+         if (sscanf(sp, "%x", &i) == 1)
+            @(vr) = i;
+      free(res);
+   }
+      @undef sr
+   @endwhile
+
+   @multidef sr CPU@^revision CPU@^architect
+   @whiledef vr *REV *ARCH
+   res = atlsys_1L(NULL, "fgrep '@(sr)' /proc/cpuinfo", 0, 0);
+   if (res)
+   {
+      char *sp;
+      uint i;
+      sp = strstr(res, ": ");
+      if (sp)
+         if (sscanf(sp+1, "%u", &i) == 1)
+            @(vr) = i;
+      free(res);
+   }
+      @undef sr
+   @endwhile
+   return(part);
+}
 enum MACHTYPE ProbeArch()
 {
    enum ARCHFAM fam;
@@ -924,6 +969,22 @@ enum MACHTYPE ProbeArch()
             }
          }
          free(res);
+      }
+      else
+      {
+         uint part, impl, arch, var, rev;
+         part = getArmInfo(&impl, &arch, &var, &rev);
+/*
+ *       Unfortunately, later linuxes seem to have no idea what my early
+ *       ARM64xgene1 board is, as most info comes back 0.  So, say anytime
+ *       implementer is 0x50 and arch=8 (only filled in values) that that is
+ *       what we've got
+ */
+         if (impl == 0x50)
+         {
+            if (arch == 8 && !var && !part & !rev)
+               mach = ARM64xg;
+         }
       }
 @beginskip
       else if ( res=atlsys_1L(NULL, "fgrep cpu /proc/cpuinfo", 0, 0) )
@@ -1512,7 +1573,7 @@ int ProbeThrottle()
    return(iret);
 }
 
-main(int nargs, char **args)
+int main(int nargs, char **args)
 {
    int flags, CacheLevel, ncpu, mhz, bits, sure;
    enum MACHTYPE arch=MACHOther;
@@ -1544,5 +1605,5 @@ main(int nargs, char **args)
       printf("NCACHES=0\n");
    if (flags & PCacheSize)
       printf("%d Cache size (kb) = 0\n", CacheLevel);
-   exit(0);
+   return(0);
 }
