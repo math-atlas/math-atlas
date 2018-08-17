@@ -2102,10 +2102,71 @@ void PrintUsage(char *name, int ierr, char *flag)
    exit(ierr ? ierr : -1);
 }
 
+ATL_mmnode_t *weedOutBadTrsm(char pre, int flag, ATL_mmnode_t *mb)
+/*
+ * Deletes any mmkerns that can't be used for the TRSM case given in flag,
+ * and returns ptr to base of modified queue (original queue changed!)
+ */
+{
+   ATL_mmnode_t *mp = mb;
+   while (mp)
+   {
+      ATL_mmnode_t *nxt = mp->next;
+      int KILL;
+      KILL = !(mp->flag & (1<<MMF_KRUNTIME));  /* kill compile-time K */
+      KILL |= mp->flag & (1<<MMF_KUISKB);  /* kill fixed ku=KB kerns */
+      KILL |= mp->kbmin | mp->kbmax;       /* kill K-restricted kerns */
+      if (flag&(1<<TSM_RIGHT))      /* Right case requires */
+         KILL |= (mp->nu % mp->ku); /* nu a multiple of ku */
+      else                          /* Left case requires */
+         KILL |= (mp->mu % mp->ku); /* mu a multiple of ku */
+      if (KILL)
+         mb = KillMMNodeFromQ(mb, mp);
+      else
+      {
+         mp->blask = ATL_KTRSM;
+         mp->flag = (mp->flag&(~MMF_MVSET))|MMF_MVDEF;
+      }
+      mp = nxt;
+   }
+   return(mb);
+}
+
 ATL_mmnode_t *forceTrsmCases(char pre, int flag)
 {
    ATL_mmnode_t *mb, *mp, *gb=NULL;
-
+   char *fn;
+/*
+ * TRMM has the same restrictions as TRSM, and TRMM has been searched for
+ * a working generated case, so read the TRMM kernel in, and change it back
+ * to a GEMM
+ */
+   fn = (flag&(1<<TSM_RIGHT)) ? "trmmKRL.sum" : "trmmKLL.sum";
+      
+   gb = ReadMMFileWithPath(pre, "res", fn);
+   if (!gb)
+   {
+      char ln[32];
+      sprintf(ln, "make res/%c%s", pre, fn);
+      assert(!system(ln));
+      gb = ReadMMFileWithPath(pre, "res", fn);
+      assert(gb);
+   }
+   assert(!gb->next); /* expect only 1 kern from trmm */
+   gb->blask = ATL_KGEMM;
+/*
+ * Bring in all working gemm kernels since they may beat trmm for trsm usage
+ */
+   gb->next = ReadMMFileWithPath((pre=='s'||pre=='c')?'s':'d', "res", 
+                                 "WORKING.sum");
+   mb = AddUniqueMMKernsToList(NULL, gb);
+   KillAllMMNodes(gb);
+   mb = weedOutBadTrsm(pre, flag, mb);
+/* 
+ * Remove duplicate cases after forcing TRSM reqs, then make them TRSM kerns
+ */
+   return(mb);
+@beginskip
    gb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
    if (flag&(1<<TSM_RIGHT))      /* Right case requires  N=K */
       mb = ReadMMFileWithPath(pre, "res", "ipnek.sum");
@@ -2185,6 +2246,7 @@ ATL_mmnode_t *forceTrsmCases(char pre, int flag)
       mp->flag = (mp->flag&(~MMF_MVSET))|MMF_MVDEF;
    }
    return(mb);
+@ENDSKIP
 }
 
 ATL_mmnode_t *getAllCandKerns(char pre, int flag)
@@ -2196,6 +2258,7 @@ ATL_mmnode_t *getAllCandKerns(char pre, int flag)
    mb = ATL_JoinMMQs(mb, ReadMMFileWithPath(pre, "res", "ipmen.sum"));
    mp = AddUniqueMMKernsToList(NULL, mb);
    KillAllMMNodes(mb);
+   @BEGINSKIP
    mb = mp;
    while (mp)
    {
@@ -2217,6 +2280,8 @@ ATL_mmnode_t *getAllCandKerns(char pre, int flag)
       }
       mp = nxt;
    }
+   @ENDSKIP
+   mb = weedOutBadTrsm(pre, flag, mp);
    if (!mb) /* no candidates! */
       mb = forceTrsmCases(pre, flag);
    assert(mb);
