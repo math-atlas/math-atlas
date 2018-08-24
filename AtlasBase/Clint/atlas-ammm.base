@@ -14621,6 +14621,7 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
 ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg, 
                        int MB, int NB, ATL_mmnode_t *mmB)
 /*
+ * flag bitvec: 0:Left
  * Assumes mmB is best-performing case found so far, MB, NB block factors of
  * original (unadapted) TRMM case.  Searches for all U that match ku.
  * RETURNS: (possibly new) mmB case (kills original mmB in this case).
@@ -14644,7 +14645,7 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
    printf("   ==  ===  ===  ==  ==  =========\n");
    for (MU=1; MU < nreg; MU++)
    {
-      unsigned int NU, mb, nb, kb;
+      unsigned int NU, mb, nb, kb, DOK;
       double mf;
       for (NU=1; NU < nreg; NU++)
       {
@@ -14680,7 +14681,11 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
             mmB->mflop[0] = mf;
          }
          free(pM->genstr);
-         if (KU%MU == 0 || MU%KU == 0)
+         if (flag&1)
+            DOK = (KU%MU == 0 || MU%KU == 0);
+         else
+            DOK = (KU%NU == 0 || NU%KU == 0);
+         if (DOK)
          {
             unsigned int U;
             if (flag&1)
@@ -17710,39 +17715,52 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = vec_add(d_, t_) ; \
       }
       #if ATL_FULLGCCVSX
-         #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
-         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
-            t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
-            s0_ = vec_vmrglw(s0_, s1_);          /* s1d,s0d,s1c,s0c}*/ \
-            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
-            h_ = vec_vmrghw(s2_, s3_);           /*{s3b,s2b,s3a,s2a}*/\
-            s2_ = vec_vmrglw(s2_, s3_);          /*{s3d,s2d,s3c,s2c}*/ \
-            s2_ = ATL_vadd(s2_, s2_, h_);        /*{s3bd,s2bd,s3ac,s2ac}*/\
-            t_ =  vec_xxpermdi(s0_, s2_, 0);     /*{s3ac,s2ac,s1ac,s0ac}*/\
-            s0_ = vec_xxpermdi(s0_, s2_, 3);     /*{s3bd,s2bd,s1bd,s0bd}*/ \
-            ATL_vadd(s0_, s0_, t_); \
-            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
-         }
-         #define ATL_vvrsum2(s0_, s1_) \
-         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
-            t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
-            s0_ = vec_vmrglw(s0_, s1_);          /*{s1d,s0d,s1c,s0c}*/ \
-            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
-            t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s1ac,s0ac,s1ac,s0ac}*/\
-            s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s1bd,s0bd,s1bd,s0bd}*/ \
-            ATL_vadd(s0_, s0_, t_); \
-            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
-         }
-         #define ATL_vvrsum1(s0_) \
-         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
-            t_ = vec_vmrghw(s0_, s0_);           /*{s0b,s0b,s0a,s0a}*/\
-            s0_ = vec_vmrglw(s0_, s0_);          /*{s0d,s0d,s0c,s0c}*/ \
-            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s0bd,s0bd,s0ac,s0ac}*/\
-            t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s0ac,s0ac,s0ac,s0ac}*/\
-            s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s0bd,s0bd,s0bd,s0bd}*/ \
-            ATL_vadd(s0_, s0_, t_); \
-            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
-         }
+         #ifdef ATL_ARCH_POWER8
+         @whiledef pwr 9 8
+            @iif pwr ! 8
+         #else
+            @endiif
+            #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+            {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+               t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
+               s0_ = vec_vmrglw(s0_, s1_);          /* s1d,s0d,s1c,s0c}*/ \
+               s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
+               h_ = vec_vmrghw(s2_, s3_);           /*{s3b,s2b,s3a,s2a}*/\
+               s2_ = vec_vmrglw(s2_, s3_);          /*{s3d,s2d,s3c,s2c}*/ \
+               s2_ = ATL_vadd(s2_, s2_, h_);        /*{s3bd,s2bd,s3ac,s2ac}*/\
+               t_ =  vec_xxpermdi(s0_, s2_, 0);     /*{s3ac,s2ac,s1ac,s0ac}*/\
+               s0_ = vec_xxpermdi(s0_, s2_, 3);     /*{s3bd,s2bd,s1bd,s0bd}*/ \
+               ATL_vadd(s0_, s0_, t_); \
+            @iif pwr = 8
+               s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+            @endiif
+            }
+            #define ATL_vvrsum2(s0_, s1_) \
+            {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+               t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
+               s0_ = vec_vmrglw(s0_, s1_);          /*{s1d,s0d,s1c,s0c}*/ \
+               s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
+               t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s1ac,s0ac,s1ac,s0ac}*/\
+               s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s1bd,s0bd,s1bd,s0bd}*/ \
+               ATL_vadd(s0_, s0_, t_); \
+            @iif pwr = 8
+               s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+            @endiif
+            }
+            #define ATL_vvrsum1(s0_) \
+            {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+               t_ = vec_vmrghw(s0_, s0_);           /*{s0b,s0b,s0a,s0a}*/\
+               s0_ = vec_vmrglw(s0_, s0_);          /*{s0d,s0d,s0c,s0c}*/ \
+               s0_ = ATL_vadd(s0_, s0_, t_);        /*{s0bd,s0bd,s0ac,s0ac}*/\
+               t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s0ac,s0ac,s0ac,s0ac}*/\
+               s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s0bd,s0bd,s0bd,s0bd}*/ \
+               ATL_vadd(s0_, s0_, t_); \
+            @iif pwr = 8
+               s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+            @endiif
+            }
+         @endwhile
+         #endif
       #endif
    @iexp i 0 0 +
    @iwhile i < 4
@@ -17756,18 +17774,32 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = vec_add(d_, s_) ; \
       }
       #if ATL_FULLGCCVSX 
-         #define ATL_vvrsum2(s0_, s1_) \
-         {  ATL_VTYPE t_;\
-            t_ =  vec_xxpermdi(s0_, s1_, 0); \
-            s0_ = vec_xxpermdi(s0_, s1_, 3); \
-            ATL_vadd(s0_, s0_, t_); \
-            s0_ = vec_xxpermdi(s0_, s0_, 2); /* pwr8 endian-insanity */ \
-         }
-         #define ATL_vvrsum1(s0_) \
-         {  ATL_VTYPE t_;\
-            t_ =  vec_xxpermdi(s0_, s0_, 0); \
-            ATL_vadd(s0_, s0_, t_); \
-         }
+         #ifdef ATL_ARCH_POWER8
+            #define ATL_vvrsum2(s0_, s1_) \
+            {  ATL_VTYPE t_;\
+               t_ =  vec_xxpermdi(s0_, s1_, 0); \
+               s0_ = vec_xxpermdi(s0_, s1_, 3); \
+               ATL_vadd(s0_, s0_, t_); \
+               s0_ = vec_xxpermdi(s0_, s0_, 2); /* pwr8 endian-insanity */ \
+            }
+            #define ATL_vvrsum1(s0_) \
+            {  ATL_VTYPE t_;\
+               t_ =  vec_xxpermdi(s0_, s0_, 0); \
+               ATL_vadd(s0_, s0_, t_); \
+            }
+         #else
+            #define ATL_vvrsum2(s0_, s1_) \
+            {  ATL_VTYPE t_;\
+               t_ =  vec_xxpermdi(s0_, s1_, 0); \
+               s0_ = vec_xxpermdi(s0_, s1_, 3); \
+               ATL_vadd(s0_, s0_, t_); \
+            }
+            #define ATL_vvrsum1(s0_) \
+            {  ATL_VTYPE t_;\
+               t_ = vec_splat(s0_, 1); \
+               ATL_vadd(s0_, s0_, t_); \
+            }
+         #endif
       #else
          #define ATL_vvrsum1(s0_) \
          {  ATL_VTYPE t_;\

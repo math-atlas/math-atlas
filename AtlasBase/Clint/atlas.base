@@ -35992,6 +35992,7 @@ gemm(...)
 #ifdef ATL_NCPU
    #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
    #define __USE_GNU   1 /* what you actually need set on linuxes I've seen */
+   #define __USE_XOPEN2K8/* needed to avoid undef locale_t on some systems */
    #include <sched.h>    /* must include this before pthreads */
    #include <pthread.h>
    #define dumb_prand(is_) ( 0.5 - ((double)rand_r(is_))/((double)RAND_MAX) )
@@ -37056,6 +37057,7 @@ int main(int nargs, char **args)
 #ifdef ATL_NCPU
    #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
    #define __USE_GNU   1 /* what you actually need set on linuxes I've seen */
+   #define __USE_XOPEN2K8/* needed to avoid undef locale_t on some systems */
    #include <sched.h>    /* must include this before pthreads */
    #include <pthread.h>
    #define dumb_prand(is_) ( 0.5 - ((double)rand_r(is_))/((double)RAND_MAX) )
@@ -42709,18 +42711,21 @@ int findISA(char pre, int *VLENB)
       else
          printf("   %s : no.\n", isas[i]);
    }
-   printf("\nPROBING FOR VLEN (bytes):\n");
-   for (vl=64; vl >= 32; vl >>= 1)
+   if (*VLENB == 0)
    {
-      if (getMflop(pre, i, vl, 4, 1, 0.0) > 0.0)
+      printf("\nPROBING FOR VLEN (bytes):\n");
+      for (vl=64; vl >= 32; vl >>= 1)
       {
-         printf("   VLEN=%u: yes!\n", vl);
-         break;
+         if (getMflop(pre, i, vl, 4, 1, 0.0) > 0.0)
+         {
+            printf("   VLEN=%u: yes!\n", vl);
+            break;
+         }
+         else
+            printf("   VLEN=%u: no.\n", vl);
       }
-      else
-         printf("   VLEN=%u: no.\n", vl);
+      *VLENB = vl;
    }
-   *VLENB = vl;
    return(i);
    #elif defined(ATL_AVXZ)
       *VLENB = 64;
@@ -42894,14 +42899,16 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags]:\n", name);
    fprintf(stderr, "   -p <pre> [d] : Date type prefix, one of [s,d]\n");
+   fprintf(stderr, "   -v <vlen> [probe]: vector len in bytes to force\n");
    exit(ierr ? ierr : -1);
 }
 
-char getFlags(int nargs, char **args)
+char getFlags(int nargs, char **args, int *VLEN)
 {
    char pre='d';
    int i;
 
+   *VLEN = 0;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
@@ -42912,6 +42919,11 @@ char getFlags(int nargs, char **args)
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
          pre = args[i][0];
+         break;
+      case 'v':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *VLEN = atoi(args[i]);
          break;
       default:
          PrintUsage(args[0], i, args[i]);
@@ -42940,7 +42952,7 @@ int main(int nargs, char **args)
    char pre='d';
    char fn[32];
 
-   pre = getFlags(nargs, args);
+   pre = getFlags(nargs, args, &vlenb);
 
    isa = findISA(pre, &vlenb);
    #if GAS_X86
