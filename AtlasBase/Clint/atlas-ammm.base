@@ -85,7 +85,7 @@ ID=22 MU=3 NU=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_damm3x4x1_armpf.S' \
 ID=23 MU=4 NU=2 KU=4 AUTH='R. Clint Whaley' ROUT='ATL_amm4x2x4_kb4.c' \
      KRUNTIME=0 KBMIN=4 KBMAX=4 
 ID=24 MU=6 NU=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_damm6x4x1_fma3.S' \
-     SSE=3 VLEN=4 ASM=GAS_x8664 KRUNTIME=1 \
+     SSE=3 VLEN=2 ASM=GAS_x8664 KRUNTIME=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx -mfma'
 ID=25 MU=6 NU=3 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_damm6x3x2_sse3.S' \
      SSE=3 VLEN=2 KBMIN=4 ASM=GAS_x8664 \
@@ -554,7 +554,7 @@ struct sminfo
 typedef struct tminfo tminfo_t;  /* struct for trmm microkernel */
 struct tminfo
 {
-   ushort flg;                   /* 0:same kernel as gemm? */
+   ushort flg;                   /* 0 bit: same kernel as gemm? */
    tcm2am_t t2blk;               /* copy routine for triangular matrix */
    cm2am_t r2blk;                /* copy routines for regular matrix */
    ablk2cmat_t blk2c;            /* cpy from acc-maj blk to col-maj C */
@@ -566,7 +566,7 @@ struct tminfo
    ushort kb;                    /* triangular blocking */
    ushort mu, nu, ku;            /* unrollings of underlying amm */
    ushort vlen;                  /* vector len for the kernels */
-   /*ushort kvec;*/              /* is kvec kernel */
+   ushort kvec;                  /* kvec kernel ? */
 };
 
 typedef struct amminfo amminfo_t;
@@ -605,6 +605,8 @@ struct ipinfo
    uint szC;                /* size of real portion of C workspace */
    uint pszA, szA;          /* size of real portion of part & full blks of A */
    uint pszB, szB;          /* size of real portion of part & full blks of B */
+   uint idx;                /* index in view of this amm case */
+   uint idxK;               /* index in atlas_?amm_kern.h */
    ushort exsz;             /* extra bytes to alloc past end */
    ushort mF, nF;           /* size of final part of mat before copy */
    ushort mb, pmb, nb, pnb; /* full & partial blk factors for M & N */
@@ -752,6 +754,11 @@ static void Mjoin(PATL,@(sh)ComputeIPInfo)
    ATL_assert(0);
 }
 @endwhile
+void Mjoin(PATL,doAmmBlk)
+   (ipinfo_t*,ATL_CUINT,ATL_iptr_t,ATL_iptr_t,ATL_iptr_t,
+    const TYPE*, const TYPE*, TYPE*, TYPE*, TYPE*, TYPE*, TYPE*,
+    const SCALAR, const ablk2cmat_t);
+
 @multidef rt iploopsMNK iploopsMNK
 @whiledef rt iploopsNK iploopsMK iploopsK iploopsNMK iploopsNMK
 void Mjoin(PATL,@(rt))
@@ -880,6 +887,41 @@ void Mjoin(PATL,ipherk)
     const TYPE, const TYPE*, ATL_CSZT, const TYPE, TYPE*,ATL_CSZT);
 #endif
 @endskip
+#ifdef TCPLX
+@whiledef up U L
+void Mjoin(PATL,heR@(up)2ipBlk)
+   (ipinfo_t *ip, ATL_CUINT bv, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, 
+    ATL_iptr_t KBLK, const TYPE *A, TYPE *W, TYPE *D);
+void Mjoin(PATL,heL@(up)2ipBlk)
+   (ipinfo_t *ip, ATL_CUINT bv, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, 
+    ATL_iptr_t KBLK, const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
+@endwhile
+#endif
+@whiledef up U L
+void Mjoin(PATL,syR@(up)2ipBlk)
+   (ipinfo_t *ip, ATL_CUINT bv, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, 
+    ATL_iptr_t KBLK, const TYPE *A, TYPE *W, TYPE *D);
+void Mjoin(PATL,syL@(up)2ipBlk)
+   (ipinfo_t *ip, ATL_CUINT bv, cm2am_t cpN, cm2am_t cpT, ATL_iptr_t IBLK, 
+    ATL_iptr_t KBLK, const TYPE *A, TYPE *W, TYPE *D, ATL_iptr_t ldd);
+@endwhile
+cm2am_t Mjoin(PATL,ipsyGetCopyA)(ipinfo_t*, ATL_CUINT flg, cm2am_t *CPT);
+cm2am_t Mjoin(PATL,ipsyGetCopyB)(ipinfo_t*, ATL_CUINT flg, cm2am_t *CPT);
+
+@BEGINSKIP
+void Mjoin(PATL,ipsymmL_tN_wrk)
+   (ipinfo_t *ip, ATL_CUINT flg, const TYPE *S, const TYPE *B, const SCALAR,
+    TYPE *C, TYPE *D, TYPE *wA, TYPE *wB, TYPE *rC, TYPE *iC);
+int Mjoin(PATL,ipsymmL_tN)
+   (ATL_CUINT, ATL_iptr_t, ATL_iptr_t, const SCALAR, const TYPE*, ATL_iptr_t,
+    const TYPE*, ATL_iptr_t, const SCALAR, TYPE*, ATL_iptr_t);
+@ENDSKIP
+int Mjoin(PATL,ipsymmL)
+   (ATL_CUINT, ATL_CSZT, ATL_CSZT, const SCALAR, const TYPE*,
+    ATL_CSZT, const TYPE*, ATL_CSZT, const SCALAR, TYPE*, ATL_CSZT);
+int Mjoin(PATL,ipsymmR)
+   (ATL_CUINT, ATL_CSZT, ATL_CSZT, const SCALAR, const TYPE*,
+    ATL_CSZT, const TYPE*, ATL_CSZT, const SCALAR, TYPE*, ATL_CSZT);
 @whiledef rt op ip
 int Mjoin(PATL,@(rt)syr2k)
    (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT,
@@ -926,6 +968,17 @@ int Mjoin(PATL,@(rt)herk)
 /*
  * Helper functions we'd like to inline
  */
+#ifdef ATL_GLOBELT
+   #if defined(SCPLX) || defined(SREAL)
+      #include "atlas_samm_kern.h"
+   #else
+      #if !defined(DREAL) && !defined(DCPLX)
+         #error "TYPE must be defined for GLOBELT!"
+      #endif
+      #include "atlas_damm_kern.h"
+   #endif
+   #define ATL_GLOBIDX 1
+#endif
 #ifdef ATL_GLOBIDX
 static TYPE INLINE *IdxAw_rkK(opinfo_t *op, TYPE *A, size_t i)
 {  /* index A workspace for ith block for rank-K (only 1 kb) */
@@ -961,6 +1014,152 @@ static TYPE INLINE *IdxBw_ip(ipinfo_t *ip, TYPE *B, size_t k, size_t j)
    n = (n+k*szB)SHIFT;
    return(B+n);
 }
+
+#ifdef ATL_GLOBELT
+/*
+ * Get (i,j) elt out of block-major A storage.  Used for debugging,
+ * so not optimized.  This code presently not debugged for KVEC.
+ */
+#ifdef TCPLX
+   static void IdxAwElt_ip
+      (ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k, TYPE *elt)
+#else
+   static TYPE IdxAwElt_ip
+      (ipinfo_t *ip, const TYPE *A, ATL_iptr_t i,ATL_iptr_t k)
+#endif
+{ /* get element (i,k) out of block storage */
+   ATL_iptr_t iblk = i / ip->mb, kblk = k / ip->kb;
+   ATL_UINT flg;
+   const TYPE *a;
+   #ifdef TCPLX
+      ATL_iptr_t szA=ip->szA;
+   #endif
+   const unsigned int mu = ip->mu;
+
+/*
+ * Compute block number we are on (iblk), and i within block (i)
+ */
+   if (iblk >= ip->nfmblks)
+   {
+      ATL_iptr_t ii;
+      i -= ip->mb * ip->nfmblks;
+      ii = i / ip->pmb;
+      iblk = ip->nfmblks + ii;
+      i -= ii* ip->pmb;
+      #ifdef TCPLX
+         szA = ip->pszA;
+      #endif
+   }
+   else
+      i -= ip->mb * iblk;
+   k -= kblk*ip->kb;           /* k now K index within block */
+   a = IdxAw_ip(ip, (TYPE*)A, iblk, kblk); /* a pts to kb*mb block */
+   flg = ATL_AMM_GetFLAG(ip->idxK);
+/* 
+ * blk has is ku-major: mu kvec length blocks
+ */
+   if (ATL_AMM_KMAJOR(flg))
+   {
+      unsigned int ks = k/ip->vlen, is = i/mu;
+      unsigned int bl=ip->vlen*mu, pl = ((ip->kb+ip->vlen-1)/ip->vlen)*bl;
+
+      a += is*pl;        /* a pts to correct K-panel */
+      i -= is*mu;
+      a += ks*bl;        /* a pts to correct sub-block */
+      k -= ks*ip->vlen;
+      a += k*ip->vlen+i; /* a pts at correct element */
+   }
+/*
+ * blk has standard mu-entry blks, repeated K times (vectorized along M)
+ */
+   else
+   {
+      ATL_CUINT is=i/mu, kb=(kblk < ip->nfkblks)?ip->kb:ip->KB0, pl=kb*mu;
+      a += is*pl;         /* go to correct kpanel */
+      i -= is*mu;         /* leave only i%mu remainder */
+      a += k*mu;          /* go to correct mu block */
+      a += i;             /* go to corect elt within mu blk */
+   }
+   #ifdef TCPLX
+      elt[1] = *a;
+      elt[0] = a[szA];
+   #else
+      return(*a);
+   #endif
+}
+
+/*
+ * Get (k,j) elt out of block-major B storage.  Used for debugging,
+ * so not optimized.  This code presently not debugged for KVEC.
+ */
+#ifdef TCPLX
+   static void IdxBwElt_ip
+      (ipinfo_t *ip, const TYPE *B, ATL_iptr_t k, ATL_iptr_t j, TYPE *elt)
+#else
+   static TYPE IdxBwElt_ip
+      (ipinfo_t *ip, const TYPE *B, ATL_iptr_t k, ATL_iptr_t j)
+#endif
+{ /* get element (k,j) out of access-major block storage */
+   ATL_iptr_t jblk = j / ip->nb, kblk = k / ip->kb;
+   ATL_UINT flg;
+   const TYPE *b;
+   #ifdef TCPLX
+      ATL_iptr_t szB=ip->szB;
+   #endif
+   const unsigned int nu = ip->nu;
+
+/*
+ * Compute block number we are on (jblk), and j within block (j)
+ */
+   if (jblk >= ip->nfnblks)
+   {
+      ATL_iptr_t jj;
+      j -= ip->nb * ip->nfnblks;
+      jj = j / ip->pnb;
+      jblk = ip->nfnblks + jj;
+      j -= jj* ip->pnb;
+      #ifdef TCPLX
+         szB = ip->pszB;
+      #endif
+   }
+   else
+      j -= ip->nb * jblk;
+   k -= kblk*ip->kb;           /* k now K index within block */
+   b = IdxBw_ip(ip, (TYPE*)B, kblk, jblk); /* b pts to kb*mb block */
+   flg = ATL_AMM_GetFLAG(ip->idxK);
+/* 
+ * blk has is ku-major: nu kvec length blocks
+ */
+   if (ATL_AMM_KMAJOR(flg))
+   {
+      unsigned int ks = k/ip->vlen, js = j/nu;
+      unsigned int bl=ip->vlen*nu, pl = ((ip->kb+ip->vlen-1)/ip->vlen)*bl;
+
+      b += js*pl;        /* b pts to correct K-panel */
+      j -= js*nu;
+      b += ks*bl;        /* b pts to correct sub-block */
+      k -= ks*ip->vlen;
+      b += k*ip->vlen+j; /* b pts at correct element */
+   }
+/*
+ * blk has standard nu-entry blks, repeated K times (vectorized along M)
+ */
+   else
+   {
+      ATL_CUINT js=j/nu, kb=(kblk < ip->nfkblks)?ip->kb:ip->KB0, pl=kb*nu;
+      b += js*pl;         /* go to correct kpanel */
+      j -= js*nu;         /* leave only i%nu remainder */
+      b += k*nu;          /* go to correct nu block */
+      b += j;             /* go to corect elt within nu blk */
+   }
+   #ifdef TCPLX
+      elt[1] = *b;
+      elt[0] = b[szB];
+   #else
+      return(*b);
+   #endif
+}
+#endif
 
 static const TYPE INLINE *IdxA_ip
    (ipinfo_t *ip, const TYPE *A, size_t i, size_t k)
@@ -14325,6 +14524,8 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
  * Takes an amm kernel, and adjusts it for use as a TRMM.  We will do following:
  * Adjust ku: KVEC must use VLEN, otherwise number between 1-4 where U%ku==0
  * or ku%U == 0.  KRUNTIME is also forced, and it doesn't need KCLEAN.
+ * If the kern isn't generated, get rid of special compiler/flags.
+ * We also delete any flags or special compilers, in case its not a C code.
  * if gd non-null, we also change mp's block factors to roughly match its.
  * RETURNS: old U (mu if flag&1, else nu)
  */
@@ -14335,23 +14536,21 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
 /*
  * Make K-loop runtime
  */
-   if (mp->ID)
+   if (mp->ID)  /* if present code is hand-tuned, make it generated */
    {
-      int ln;
-      char *s, *srmflg="-x assembler-with-cpp";
       mp->ID = 0;
       if (mp->rout)
          free(mp->rout);
       mp->rout = DupString("ATL_tmp.c");
-/*
- *    removing all '-x assembler-with-cpp' from cflags
- */
-      s = mp->cflags;
-      if (s)
+      if (mp->comp)
       {
-         ln = strlen(srmflg);
-         while(s=strstr(s,srmflg))
-            memmove(s,s+ln,1+strlen(s+ln));
+         free(mp->comp);
+         mp->comp = NULL;
+      }
+      if (mp->cflags)
+      {
+         free(mp->cflags);
+         mp->cflags = NULL;
       }
    }
    mp->flag &= ~((1<<MMF_KUISKB)|(1<<MMF_KCLN));
@@ -14422,6 +14621,7 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
 ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg, 
                        int MB, int NB, ATL_mmnode_t *mmB)
 /*
+ * flag bitvec: 0:Left
  * Assumes mmB is best-performing case found so far, MB, NB block factors of
  * original (unadapted) TRMM case.  Searches for all U that match ku.
  * RETURNS: (possibly new) mmB case (kills original mmB in this case).
@@ -14445,7 +14645,7 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
    printf("   ==  ===  ===  ==  ==  =========\n");
    for (MU=1; MU < nreg; MU++)
    {
-      unsigned int NU, mb, nb, kb;
+      unsigned int NU, mb, nb, kb, DOK;
       double mf;
       for (NU=1; NU < nreg; NU++)
       {
@@ -14481,7 +14681,11 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
             mmB->mflop[0] = mf;
          }
          free(pM->genstr);
-         if (KU%MU == 0 || MU%KU == 0)
+         if (flag&1)
+            DOK = (KU%MU == 0 || MU%KU == 0);
+         else
+            DOK = (KU%NU == 0 || NU%KU == 0);
+         if (DOK)
          {
             unsigned int U;
             if (flag&1)
@@ -17511,39 +17715,52 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = vec_add(d_, t_) ; \
       }
       #if ATL_FULLGCCVSX
-         #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
-         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
-            t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
-            s0_ = vec_vmrglw(s0_, s1_);          /* s1d,s0d,s1c,s0c}*/ \
-            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
-            h_ = vec_vmrghw(s2_, s3_);           /*{s3b,s2b,s3a,s2a}*/\
-            s2_ = vec_vmrglw(s2_, s3_);          /*{s3d,s2d,s3c,s2c}*/ \
-            s2_ = ATL_vadd(s2_, s2_, h_);        /*{s3bd,s2bd,s3ac,s2ac}*/\
-            t_ =  vec_xxpermdi(s0_, s2_, 0);     /*{s3ac,s2ac,s1ac,s0ac}*/\
-            s0_ = vec_xxpermdi(s0_, s2_, 3);     /*{s3bd,s2bd,s1bd,s0bd}*/ \
-            ATL_vadd(s0_, s0_, t_); \
-            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
-         }
-         #define ATL_vvrsum2(s0_, s1_) \
-         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
-            t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
-            s0_ = vec_vmrglw(s0_, s1_);          /*{s1d,s0d,s1c,s0c}*/ \
-            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
-            t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s1ac,s0ac,s1ac,s0ac}*/\
-            s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s1bd,s0bd,s1bd,s0bd}*/ \
-            ATL_vadd(s0_, s0_, t_); \
-            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
-         }
-         #define ATL_vvrsum1(s0_) \
-         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
-            t_ = vec_vmrghw(s0_, s0_);           /*{s0b,s0b,s0a,s0a}*/\
-            s0_ = vec_vmrglw(s0_, s0_);          /*{s0d,s0d,s0c,s0c}*/ \
-            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s0bd,s0bd,s0ac,s0ac}*/\
-            t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s0ac,s0ac,s0ac,s0ac}*/\
-            s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s0bd,s0bd,s0bd,s0bd}*/ \
-            ATL_vadd(s0_, s0_, t_); \
-            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
-         }
+         #ifdef ATL_ARCH_POWER8
+         @whiledef pwr 9 8
+            @iif pwr ! 8
+         #else
+            @endiif
+            #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+            {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+               t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
+               s0_ = vec_vmrglw(s0_, s1_);          /* s1d,s0d,s1c,s0c}*/ \
+               s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
+               h_ = vec_vmrghw(s2_, s3_);           /*{s3b,s2b,s3a,s2a}*/\
+               s2_ = vec_vmrglw(s2_, s3_);          /*{s3d,s2d,s3c,s2c}*/ \
+               s2_ = ATL_vadd(s2_, s2_, h_);        /*{s3bd,s2bd,s3ac,s2ac}*/\
+               t_ =  vec_xxpermdi(s0_, s2_, 0);     /*{s3ac,s2ac,s1ac,s0ac}*/\
+               s0_ = vec_xxpermdi(s0_, s2_, 3);     /*{s3bd,s2bd,s1bd,s0bd}*/ \
+               ATL_vadd(s0_, s0_, t_); \
+            @iif pwr = 8
+               s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+            @endiif
+            }
+            #define ATL_vvrsum2(s0_, s1_) \
+            {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+               t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
+               s0_ = vec_vmrglw(s0_, s1_);          /*{s1d,s0d,s1c,s0c}*/ \
+               s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
+               t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s1ac,s0ac,s1ac,s0ac}*/\
+               s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s1bd,s0bd,s1bd,s0bd}*/ \
+               ATL_vadd(s0_, s0_, t_); \
+            @iif pwr = 8
+               s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+            @endiif
+            }
+            #define ATL_vvrsum1(s0_) \
+            {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+               t_ = vec_vmrghw(s0_, s0_);           /*{s0b,s0b,s0a,s0a}*/\
+               s0_ = vec_vmrglw(s0_, s0_);          /*{s0d,s0d,s0c,s0c}*/ \
+               s0_ = ATL_vadd(s0_, s0_, t_);        /*{s0bd,s0bd,s0ac,s0ac}*/\
+               t_ =  vec_xxpermdi(s0_, s0_, 0);     /*{s0ac,s0ac,s0ac,s0ac}*/\
+               s0_ = vec_xxpermdi(s0_, s0_, 3);     /*{s0bd,s0bd,s0bd,s0bd}*/ \
+               ATL_vadd(s0_, s0_, t_); \
+            @iif pwr = 8
+               s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+            @endiif
+            }
+         @endwhile
+         #endif
       #endif
    @iexp i 0 0 +
    @iwhile i < 4
@@ -17557,18 +17774,32 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = vec_add(d_, s_) ; \
       }
       #if ATL_FULLGCCVSX 
-         #define ATL_vvrsum2(s0_, s1_) \
-         {  ATL_VTYPE t_;\
-            t_ =  vec_xxpermdi(s0_, s1_, 0); \
-            s0_ = vec_xxpermdi(s0_, s1_, 3); \
-            ATL_vadd(s0_, s0_, t_); \
-            s0_ = vec_xxpermdi(s0_, s0_, 2); /* pwr8 endian-insanity */ \
-         }
-         #define ATL_vvrsum1(s0_) \
-         {  ATL_VTYPE t_;\
-            t_ =  vec_xxpermdi(s0_, s0_, 0); \
-            ATL_vadd(s0_, s0_, t_); \
-         }
+         #ifdef ATL_ARCH_POWER8
+            #define ATL_vvrsum2(s0_, s1_) \
+            {  ATL_VTYPE t_;\
+               t_ =  vec_xxpermdi(s0_, s1_, 0); \
+               s0_ = vec_xxpermdi(s0_, s1_, 3); \
+               ATL_vadd(s0_, s0_, t_); \
+               s0_ = vec_xxpermdi(s0_, s0_, 2); /* pwr8 endian-insanity */ \
+            }
+            #define ATL_vvrsum1(s0_) \
+            {  ATL_VTYPE t_;\
+               t_ =  vec_xxpermdi(s0_, s0_, 0); \
+               ATL_vadd(s0_, s0_, t_); \
+            }
+         #else
+            #define ATL_vvrsum2(s0_, s1_) \
+            {  ATL_VTYPE t_;\
+               t_ =  vec_xxpermdi(s0_, s1_, 0); \
+               s0_ = vec_xxpermdi(s0_, s1_, 3); \
+               ATL_vadd(s0_, s0_, t_); \
+            }
+            #define ATL_vvrsum1(s0_) \
+            {  ATL_VTYPE t_;\
+               t_ = vec_splat(s0_, 1); \
+               ATL_vadd(s0_, s0_, t_); \
+            }
+         #endif
       #else
          #define ATL_vvrsum1(s0_) \
          {  ATL_VTYPE t_;\
@@ -28738,11 +28969,187 @@ void Mjoin(PATL,oploopsN)
 }
 @ROUT ATL_iploops ATL_ciploops
 #include "atlas_misc.h"
+#define ATL_GLOBIDX 1
 #include "atlas_amm.h"
+#undef ATL_GLOBIDX
 #include Mstr(Mjoin(Mjoin(ATLAS_PRE,amm),_sum.h))
+/*
+ * This function does one step of matmul while optionally copying data
+ * from A or B.  It assumes (rC,iC) already initialized, unless k==0,
+ * in which case it is zeroed by using the _b0 kernel.
+ * A,B,wA,wB should all be base pointers, and any indexing will be done here.
+ *
+ * bv is a bitvec with following meanings for each bit position
+ * 0 : wA is 1 kpanel in size
+ * 1 : wA has space for full matrix
+ * 2 : wB is 1 kpanel in size
+ * 3 : wB has space for full matrix
+ * 4 : use beta=0, else use beta=1
+ */
+void Mjoin(PATL,doAmmBlk)
+(
+   ipinfo_t *ip,
+   ATL_CUINT bv,          /* bitvec, see explanation above */
+   ATL_iptr_t i,          /* which global row block of C is being computed */
+   ATL_iptr_t j,          /* which global col block of C is being computed */
+   ATL_iptr_t k,          /* which global K block is being multiplied */
+   const TYPE *A,         /* if non-NULL, A to cpy from */
+   const TYPE *B,         /* if non-NULL, B to cpy from */
+   TYPE *C,               /* if non-NULL, C to write to after doing multiply */
+   TYPE *wA,              /* wrkspace for block-copied A */
+   TYPE *wB,              /* wrkspace for block-copied B */
+   TYPE *rC,              /* ptr to real portion of C access-major workspace */
+   TYPE *iC,              /* ptr to complex C workspace */
+   const SCALAR beta,     /* scaling factor for C */
+   const ablk2cmat_t blk2c
+)
 /*
  * A & B ptrs should point to start of K iteration in this rout
  */
+{
+   const ATL_iptr_t nfmblks=ip->nfmblks,nfnblks=ip->nfnblks,nfkblks=ip->nfkblks;
+   const ATL_iptr_t nmblks=ip->npmblks+nfmblks, nnblks=ip->npnblks+nfnblks;
+   ATL_iptr_t inca, incb;
+   #ifdef TCPLX
+      TYPE *rA, *rB;
+   #endif
+   ATL_UINT nmu, nnu, mb, nb;
+   ATL_CUINT kb0=ip->kb0, kb=(k < nfkblks) ? ip->kb : kb0;
+
+   if (i == nmblks-1)
+   {
+      nmu = ip->nmuF;
+      mb = ip->mF;
+      inca = (i < nfmblks) ? ip->szA : ip->pszA;
+   }
+   else if (i < nfmblks)
+   {
+      nmu = ip->nmu;
+      mb = ip->mb;
+      inca = ip->szA;
+   }
+   else
+   {
+      nmu = ip->pnmu;
+      mb = ip->pmb;
+      inca = ip->pszA;
+   }
+
+   if (j == nnblks-1)
+   {
+      nnu = ip->nnuF;
+      nb = ip->nF;
+      incb = (j < nfnblks) ? ip->szB : ip->pszB;
+   }
+   else if (j < nfnblks)
+   {
+      nnu = ip->nnu;
+      nb = ip->nb;
+      incb = ip->szB;
+   }
+   else
+   {
+      nnu = ip->pnnu;
+      nb = ip->pnb;
+      incb = ip->pszB;
+   }
+   if (bv&8)
+      wB = IdxBw_ip(ip, wB, k, j);
+   else if (bv&4)
+      wB = IdxBw_ip(ip, wB, k, 0);
+   #ifdef TCPLX
+      rB = wB + incb;
+   #endif
+   if (B) /* need to copy from original B */
+   {
+      B = IdxB_ip(ip, B, k, j);
+      #ifdef TCPLX
+         ip->b2blk(kb, nb, ip->alpB, B, ip->ldb, rB, wB);
+      #else
+         ip->b2blk(kb, nb, ip->alpB, B, ip->ldb, wB);
+      #endif
+   }
+   if (bv&2)
+      wA = IdxAw_ip(ip, wA, i, k);
+   else if (bv&1)
+      wA = IdxAw_ip(ip, wA, 0, k);
+   #ifdef TCPLX
+      rA = wA + inca;
+   #endif
+   if (A) /* need to copy from original A */
+   {
+      A = IdxA_ip(ip, A, i, k);
+      #ifdef TCPLX
+         ip->a2blk(kb, mb, ip->alpA, A, ip->lda, rB, wB);
+      #else
+         ip->a2blk(kb, mb, ip->alpA, A, ip->lda, wB);
+      #endif
+   }
+   if (!rC)   /* If rC NULL, user wants only A/B copy done */
+     return;
+   if ((k < nfkblks) | (kb0 == ip->kb))  /* usual case of full kb */
+   {
+      if (bv&16)    /* rC,iC not initialized, use beta=0 */
+      {
+         #ifdef TCPLX
+            ammkern_t amm = ip->amm_b0;
+            amm(nmu, nnu, kb, wA, wB, rC, rA, wB, iC);
+            amm(nmu, nnu, kb, rA, wB, iC, rA, rB, rC);
+            ip->amm_bn(nmu, nnu, kb, rA, rB, rC, wA, rB, iC);
+            ip->amm_b1(nmu, nnu, kb, wA, rB, iC, rA+inca, rB+incb, rC);
+         #else
+            ip->amm_b0(nmu, nnu, kb, wA, wB, rC, wA+inca, wA+inca, rC);
+         #endif
+      }
+      else  /* rC,iC initialized, so use beta=1 */
+      {
+         #ifdef TCPLX
+            ammkern_t amm_b1 = ip->amm_b1, amm_bn = ip->amm_bn;
+            amm_bn(nmu, nnu, kb, wA, wB, rC, rA, wB, iC);
+            amm_b1(nmu, nnu, kb, rA, wB, iC, rA, rB, rC);
+            amm_bn(nmu, nnu, kb, rA, rB, rC, wA, rB, iC);
+            amm_b1(nmu, nnu, kb, wA, rB, iC, rA+inca, rB+incb, rC);
+         #else
+            ip->amm_b1(nmu, nnu, kb, wA, wB, rC, wA+inca, wB+incb, rC);
+         #endif
+      }
+   }
+   else /* final kb0 comes from end of K panel */
+   {
+      ATL_CUINT KB=ip->KB0;
+      if (bv&16)    /* rC,iC not initialized, use beta=0 */
+      {
+         #ifdef TCPLX
+            ammkern_t amm = ip->ammK1_b0;
+            amm(nmu, nnu, KB, wA, wB, rC, rA, wB, iC);
+            amm(nmu, nnu, KB, rA, wB, iC, rA, rB, rC);
+            ip->ammK1_bn(nmu, nnu, KB, rA, rB, rC, wA, rB, iC);
+            ip->ammK1_b1(nmu, nnu, KB, wA, rB, iC, wA, rB, rC);
+         #else
+            ip->ammK1_b0(nmu, nnu, KB, wA, wB, rC, wA, wB, rC);
+         #endif
+      }
+      else  /* rC,iC initialized, so use beta=1 */
+      {
+         #ifdef TCPLX
+            ammkern_t amm_b1 = ip->ammK1_b1, amm_bn = ip->ammK1_bn;
+            amm_bn(nmu, nnu, KB, wA, wB, rC, rA, wB, iC);
+            amm_b1(nmu, nnu, KB, rA, wB, iC, rA, rB, rC);
+            amm_bn(nmu, nnu, KB, rA, rB, rC, wA, rB, iC);
+            amm_b1(nmu, nnu, KB, wA, rB, iC, wA, rB, rC);
+         #else
+            ip->ammK1_b1(nmu, nnu, KB, wA, wB, rC, wA, wB, rC);
+         #endif
+      }
+   }
+   if (blk2c)
+   #ifdef TCPLX
+      blk2c(mb, nb, ip->alpC, rC, iC, beta, C, ip->ldc);
+   #else
+      blk2c(mb, nb, ip->alpC, rC, beta, C, ip->ldc);
+   #endif
+}
+
 void Mjoin(PATL,iploopsK)
 (
    ipinfo_t *ip,
@@ -37781,6 +38188,19 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n\n");
 
 
+   if (nbits[0] == 0)
+      fprintf(fpout, "#define ATL_AMM_GetFLAG(idx_) ATL_AMM_MIN_FLAG\n");
+   else
+   {
+      fprintf(fpout, "#define ATL_AMM_GetFLAG(idx_) \\\n");
+      fprintf(fpout, 
+              "   (((ATL_AMM_ML[ATL_AMM_Idx2Entry(idx_)+3])&0x%x)",
+              (1<<(nbits[0]))-1);
+      if (nbits[0+NIVAR])
+         fprintf(fpout, "+ATL_AMM_MIN_FLAG)\n");
+      else
+         fprintf(fpout, ")\n");
+   }
    if (nbits[3] == 0)
       fprintf(fpout, "#define ATL_AMM_GetKU(idx_) ATL_AMM_MIN_KU\n");
    else
@@ -39235,8 +39655,10 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
    ATL_UINT imm, ik1, icpA, icpB, icpC, flgK, kbmin, k;
    float spmf;
 
+   ip->idx = idx;
    ATL_GetVW@(vwf)Info(idx, spmf, k, k, kb, imm, icpA, icpB, icpC, k, 
                       kbmin, k);
+   ip->idxK = imm;
    icpA += icpA;
    icpB += icpB;
    icpC += icpC;

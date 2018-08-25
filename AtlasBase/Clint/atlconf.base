@@ -806,14 +806,14 @@ enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS,
  * Corei1: Nahalem / Westmere
  * Corei2: ivy bridge, sandy bridge: AVX
  * Corei3: haswell: AVXMAC
- * Corei3EP: v3 Haswell, E5-26XX
+ * Corei3EP: v3 Haswell, E5-26XX, v4 Broadwell
  * Corei4 : skylake
  * Corei4X : Skylake-X
  */
-#define NMACH 67
+#define NMACH 69
 static char *machnam[NMACH] = 
    {"UNKNOWN","PPCG4", "PPCG5", "POWER3", "POWER4", "POWER5", 
-    "POWER6", "POWER7", "POWER8", "POWERe6500", 
+    "POWER6", "POWER7", "POWER8", "POWER9", "POWERe6500", 
     "IBMz9", "IBMz10", "IBMz196", "IBMz12","IBMz13",
     "x86x87", "x86SSE1", "x86SSE2", "x86SSE3",
     "P5", "P5MMX", "PPRO", "PII", "PIII", "PM", "CoreSolo", 
@@ -824,10 +824,10 @@ static char *machnam[NMACH] =
     "USI", "USII", "USIII", "USIV", "UST1", "UST2", "UnknownUS", 
     "MIPSR1xK", "MIPSICE9", "ARMa7", 
     "ARMa9", "ARMa15", "ARMa17", 
-    "ARM64xgene1", "ARM64a53", "ARM64a57",
+    "ARM64xgene1", "ARM64a53", "ARM64a57", "ARM64thund",
     "TI_C66_BM", "XeonPHI"};
 enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5, 
-               IbmPwr6, IbmPwr7, IbmPwr8, Pwre6500,
+               IbmPwr6, IbmPwr7, IbmPwr8, IbmPwr9, Pwre6500,
                IbmZ9, IbmZ10, IbmZ196, IbmZ12, IbmZ13, /* s390(x) in Linux */
                x86x87, x86SSE1, x86SSE2, x86SSE3, /* generic targets */
                IntP5, IntP5MMX, IntPPRO, IntPII, IntPIII, IntPM, IntCoreS,
@@ -847,6 +847,7 @@ enum MACHTYPE {MACHOther, PPCG4, PPCG5, IbmPwr3, IbmPwr4, IbmPwr5,
                ARM64xg,   /* includes ARMv8 */
                ARM64a53, 
                ARM64a57,
+               ARM64thund,/* Cavium ThunderX */
                TI_C66_BM, /* TI accelerator */
                IntPhi     /* build for XEON Phi */
                };
@@ -4217,6 +4218,7 @@ void PrintResults
       fprintf(fpout,
    "#define __USE_GNU   1 /* what actually works on linuxes I've seen */\n");
       fprintf(fpout, "#include <sched.h>    /* must be included with above defs before pthread.h */\n");
+      fprintf(fpout, "#define __USE_XOPEN2K8 /* this required on new gcc to avoid __locale_t undef */\n");
       fprintf(fpout, "\n");
       break;
    case IA_PLPA:
@@ -4455,6 +4457,7 @@ int main(int nargs, char **args)
 @ROUT probe_aff_SCHED probe_aff_SETAFFNP
 #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
 #define __USE_GNU   1 /* what you actually have to set on linuxes I've seen */
+#define __USE_XOPEN2K8/* needed to avoid undef locale_t on some systems */
 #include <sched.h>    /* must include this before pthreads */
 @ROUT @peek
 #include <pthread.h>
@@ -6469,7 +6472,7 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
    switch(arch)
    {
    case IntCorei4X:
-      *GMAJOR = 7;
+      *GMAJOR = 8;
       *GMINOR = 2;
       *GPATCH = 0;
       break;
@@ -6498,6 +6501,11 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
       *GMINOR = 3;
       *GPATCH = 0;
       break;
+   case IbmPwr9:
+       *GMAJOR = 7;
+       *GMINOR = 3;
+       *GPATCH = 0;
+       break;
    case IbmPwr8:
        *GMAJOR = 5;
        *GMINOR = 3;
@@ -10258,10 +10266,26 @@ int main(int nargs, char **args)
       goodgcc = comps[GCC_] ? comps[GCC_] : "gcc";
    if (mach == IntPhi)
       fprintf(fpout, "   GOODGCC = icc");
+/*
+ * Get rid of any -ansi flag from gcc, since it causes cpp not to be able
+ * to handle # in arguments, which is needed for some assemblies, part. ARM
+ */
    else
+   {
+      char *sp;
+      sp = strstr(goodgcc, "-ansi");
+      if (sp)
+         sp[0] = sp[1] = sp[2] = sp[3] = sp[4] = ' ';
       fprintf(fpout, "   GOODGCC = %s", goodgcc);
+   }
    if (gccflags)
+   {
+      char *sp;
+      sp = strstr(gccflags, "-ansi");
+      if (sp)
+         sp[0] = sp[1] = sp[2] = sp[3] = sp[4] = ' ';
       fprintf(fpout, " %s", gccflags);
+   }
    GetGccVers(goodgcc, &i, &j, &k, &k);
 @skip   if (OS == OSOSX && j > 3)  /* need bullshit apple annoyance flag */
 @skip      fprintf(fpout, " -force_cpusubtype_ALL");
