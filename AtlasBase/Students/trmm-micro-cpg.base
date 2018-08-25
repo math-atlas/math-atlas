@@ -169,6 +169,7 @@
 @endproc
 @beginproc proc_cm2am_kvec_diag k n isup
    @iexp j 0
+   @iif nu { @(ku)
    @iwhile j < @(n)
       @iexp i 0
       @iwhile i < @(ku)
@@ -195,6 +196,99 @@
       @iexp j @(j) 1 +
    @endiwhile
       b += @(binc);
+   @endiif
+   @iif nu > @(ku)
+      /* for nu > ku, use rolled loop for copying (nu x nu) diag-blk */
+      {
+      @iexp KK @(k) @(ku) +
+      @iexp KK @(KK) -1 +
+      @iexp KK @(ku) @(KK) /
+      @iexp KK @(ku) @(KK) *
+         int di, dj;
+         const TYPE *pA = A0 + i;
+         TYPE *pb;
+         for (dj=0; dj<@(n); dj++, pA+=lda)
+         {
+            pb = b + dj*@(ku);
+            int doff = 0;
+            for (di=0; di<dj; di++)
+            {
+               @mif uplo = "U
+               pb[doff] = @(malp)pA[di];
+               @endmif
+               @mif uplo = "L
+               pb[doff] = ATL_rzero;
+               @endmif
+               doff++;
+               if (doff >= @(ku))
+               {
+                  doff = 0;
+                  pb += @(binc);
+               }
+            }
+            /* now the diagonal element */
+            #ifdef UnitDiag_
+               pb[doff] = @(malp)ATL_rone;
+            #else
+               pb[doff] = @(malp)pA[di];
+            #endif
+            doff++;
+            if (doff >= @(ku))
+            {
+               doff = 0;
+               pb += @(binc);
+            }
+            di++;
+            /* now below-diag elems */
+            for ( ; di<@(k); di++)
+            {
+               @mif uplo = "U
+               pb[doff] = ATL_rzero;
+               @endmif
+               @mif uplo = "L
+               pb[doff] = @(malp)pA[di];
+               @endmif
+               doff++;
+               if (doff >= @(ku))
+               {
+                  doff = 0;
+                  pb += @(binc);
+               }
+            }
+            @iif k < @(KK)
+            /* now below-diag padding */
+            for ( ; di<@(KK); di++)
+            {
+               pb[doff] = ATL_rzero;
+               doff++;
+               if (doff >= @(ku))
+               {
+                  doff = 0;
+                  pb += @(binc);
+               }
+            }
+            @endiif
+         }
+         @iif n < @(nu)
+         for ( ; dj<@(nu); dj++)
+         {
+            pb = b + dj*@(ku);
+            int doff = 0;
+            for (di=0; di<@(KK); di++)
+            {
+               pb[doff] = ATL_rzero;
+               doff++;
+               if (doff >= @(ku))
+               {
+                  doff = 0;
+                  pb += @(binc);
+               }
+            }
+         }
+         @endiif
+         b += @(nu)*@(nu);
+      }
+   @endiif
 @endproc
 @beginproc proc_cm2am_kvec_diagR k n isup
       {
@@ -799,13 +893,13 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
       @define ku @1@
    @endiif
 @endifdef
-@beginproc proc_ccm2am_elemR poff aoff
+@beginproc proc_ccm2am_elemR rA iA poff aoff
    @mif nalp ! "X
-               rA[@(poff)] = @(malp)pA[(@(aoff)) SHIFT];
+               @(rA)[@(poff)] = @(malp)pA[(@(aoff)) SHIFT];
                #ifdef Conj_
-                  iA[@(poff)] = @(calp)pA[((@(aoff)) SHIFT)+1];
+                  @(iA)[@(poff)] = @(calp)pA[((@(aoff)) SHIFT)+1];
                #else
-                  iA[@(poff)] = @(malp)pA[((@(aoff)) SHIFT)+1];
+                  @(iA)[@(poff)] = @(malp)pA[((@(aoff)) SHIFT)+1];
                #endif
    @endmif
    @mif nalp = "X
@@ -815,18 +909,18 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
                #else
                   iv = pA[((@(aoff)) SHIFT)+1];
                #endif
-               rA[@(poff)] = rv*ra - iv*ia;
-               iA[@(poff)] = rv*ia + iv*ra;
+               @(rA)[@(poff)] = rv*ra - iv*ia;
+               @(iA)[@(poff)] = rv*ia + iv*ra;
    @endmif
 @endproc
-@beginproc proc_ccm2am_elem_U poff
+@beginproc proc_ccm2am_elem_U rA iA poff
    @mif nalp ! "X
-               rA[@(poff)] = @(malp)ATL_rone;
-               iA[@(poff)] = ATL_rzero;
+               @(rA)[@(poff)] = @(malp)ATL_rone;
+               @(iA)[@(poff)] = ATL_rzero;
    @endmif
    @mif nalp = "X
-               rA[@(poff)] = ra;
-               iA[@(poff)] = ia;
+               @(rA)[@(poff)] = ra;
+               @(iA)[@(poff)] = ia;
    @endmif
 @endproc
 @beginproc proc_ccm2am_elem poff ap aoff
@@ -914,7 +1008,7 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
    @endiif
    @iif i = @(j)
       #ifdef UnitDiag_
-         @callproc proc_ccm2am_elem_U @(bi)
+         @callproc proc_ccm2am_elem_U rA iA @(bi)
       #else
          @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
       #endif
@@ -929,6 +1023,7 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
    @endiif
 @endproc
 @beginproc proc_ccm2am_kvec_diag k n isup
+   @iif nu { @(ku)
    @iexp j 0
    @iwhile j < @(n)
       @iexp i 0
@@ -955,7 +1050,107 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
       @endiwhile
       @iexp j @(j) 1 +
    @endiwhile
-   rA += @(binc); iA += @(binc);
+      rA += @(binc); iA += @(binc);
+   @endiif
+   @iif nu > @(ku)
+      /* for nu > ku, use rolled loop for copying (nu x nu) diag-blk */
+      {
+      @iexp KK @(k) @(ku) +
+      @iexp KK @(KK) -1 +
+      @iexp KK @(ku) @(KK) /
+      @iexp KK @(ku) @(KK) *
+         int di, dj;
+         const TYPE *pA = A0 + (i SHIFT);
+         TYPE *pr, *pc;
+         for (dj=0; dj<@(n); dj++, pA+=lda2)
+         {
+            pr = rA + dj*@(ku);
+            pc = iA + dj*@(ku);
+            int doff = 0;
+            for (di=0; di<dj; di++)
+            {
+               @iif isup = 1 
+               @callproc proc_ccm2am_elemR pr pc doff di
+               @endiif
+               @iif isup = 0 
+               pr[doff] = pc[doff] = ATL_rzero;
+               @endiif
+               doff++;
+               if (doff >= @(ku))
+               {
+                  doff = 0;
+                  pr += @(binc);
+                  pc += @(binc);
+               }
+            }
+            /* now the diagonal element */
+            #ifdef UnitDiag_
+               @callproc proc_ccm2am_elem_U pr pc doff
+            #else
+               @callproc proc_ccm2am_elemR pr pc doff di
+            #endif
+            doff++;
+            if (doff >= @(ku))
+            {
+               doff = 0;
+               pr += @(binc);
+               pc += @(binc);
+            }
+            di++;
+            /* now below-diag elems */
+            for ( ; di<@(k); di++)
+            {
+               @iif isup = 1 
+               pr[doff] = pc[doff] = ATL_rzero;
+               @endiif
+               @iif isup = 0 
+               @callproc proc_ccm2am_elemR pr pc doff di
+               @endiif
+               doff++;
+               if (doff >= @(ku))
+               {
+                  doff = 0;
+                  pr += @(binc);
+                  pc += @(binc);
+               }
+            }
+            @iif k < @(KK)
+            /* now below-diag padding */
+            for ( ; di<@(KK); di++)
+            {
+               pr[doff] = pc[doff] = ATL_rzero;
+               doff++;
+               if (doff >= @(ku))
+               {
+                  doff = 0;
+                  pr += @(binc);
+                  pc += @(binc);
+               }
+            }
+            @endiif
+         }
+         @iif n < @(nu)
+         for ( ; dj<@(nu); dj++)
+         {
+            pr = rA + dj*@(ku);
+            pc = iA + dj*@(ku);
+            int doff = 0;
+            for (di=0; di<@(KK); di++)
+            {
+               pr[doff] = pc[doff] = ATL_rzero;
+               doff++;
+               if (doff >= @(ku))
+               {
+                  doff = 0;
+                  pr += @(binc);
+                  pc += @(binc);
+               }
+            }
+         }
+         @endiif
+         rA += @(nu)*@(nu); iA += @(nu)*@(nu);
+      }
+   @endiif
 @endproc
 @beginproc proc_ccm2am_kvec_diagR k n isup
       {
@@ -968,7 +1163,7 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
             for (di=0; di<dbound; di++)
             {
             @iif isup = 1 
-               @callproc proc_ccm2am_elemR dj*@(ku)+di di
+               @callproc proc_ccm2am_elemR rA iA dj*@(ku)+di di
             @endiif
             @iif isup = 0 
                rA[dj*@(ku)+di] = iA[dj*@(ku)+di] = ATL_rzero;
@@ -976,9 +1171,9 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
             }
             /* now the diagonal element */
             #ifdef UnitDiag_
-               @callproc proc_ccm2am_elem_U dj*@(ku)+di
+               @callproc proc_ccm2am_elem_U rA iA dj*@(ku)+di
             #else
-               @callproc proc_ccm2am_elemR dj*@(ku)+di di
+               @callproc proc_ccm2am_elemR rA iA dj*@(ku)+di di
             #endif
             for (di++; di<@(k); di++)
             {
@@ -986,7 +1181,7 @@ void ATL_USERCPMM       /* col-access matrix to access-major block */
                rA[dj*@(ku)+di] = iA[dj*@(ku)+di] = ATL_rzero;
             @endiif
             @iif isup = 0 
-               @callproc proc_ccm2am_elemR dj*@(ku)+di di
+               @callproc proc_ccm2am_elemR rA iA dj*@(ku)+di di
             @endiif
             }
             @iif isup = 0 
@@ -1243,7 +1438,7 @@ void ATL_USERCPMM
    @endiif
    @iif i = @(j)
          #ifdef UnitDiag_
-            @callproc proc_ccm2am_elem_U @(bi)
+            @callproc proc_ccm2am_elem_U rA iA @(bi)
          #else
             @callproc proc_ccm2am_elem @(bi) @(j) i+@(i)
          #endif
@@ -1306,7 +1501,7 @@ void ATL_USERCPMM
             for (di=0; di<dbound; di++)
             {
             @iif isup = 1
-               @callproc proc_ccm2am_elemR di*@(nu)+dj di
+               @callproc proc_ccm2am_elemR rA iA di*@(nu)+dj di
             @endiif            
             @iif isup = 0
                rA[di*@(nu)+dj] = iA[di*@(nu)+dj] = ATL_rzero;
@@ -1314,9 +1509,9 @@ void ATL_USERCPMM
             }
             /* now the diagonal element */
             #ifdef UnitDiag_
-               @callproc proc_ccm2am_elem_U di*@(nu)+dj
+               @callproc proc_ccm2am_elem_U rA iA di*@(nu)+dj
             #else
-               @callproc proc_ccm2am_elemR di*@(nu)+dj di
+               @callproc proc_ccm2am_elemR rA iA di*@(nu)+dj di
             #endif
             for (di++; di<@(k); di++)
             {
@@ -1324,7 +1519,7 @@ void ATL_USERCPMM
                rA[di*@(nu)+dj] = iA[di*@(nu)+dj] = ATL_rzero;
             @endiif            
             @iif isup = 0
-               @callproc proc_ccm2am_elemR di*@(nu)+dj di
+               @callproc proc_ccm2am_elemR rA iA di*@(nu)+dj di
             @endiif            
             }
             @iif isup = 0
@@ -1619,6 +1814,9 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
    ATL_CSZT m = (K/@(mu))*@(mu), mr = K-m, incA = lda - m;
    ATL_CSZT KK = ((K+@(ku)-1)/@(ku))*@(ku);
    int i, j, k, pi;
+   @iif mu > @(ku)
+   int pj=0, joff=0;
+   @endiif
    @iexp incb @(ku) @(mu) *
 
    int off=0, coff=0;
@@ -1663,10 +1861,21 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
          pp += poff*@(mu);
       }
       @endiif
+      @iif mu > @(ku)
+      joff++;
+      if (joff >= @(ku))
+      {
+         joff = 0;
+         b += @(mu)*@(ku) - @(ku);
+      }
+      @endiif
       coff++;
       if (coff >= @(koff))
       {
-         coff = 0; off += @(koff); b += @(koff)*(@(mu)-1);
+         coff = 0; off += @(koff); 
+         @iif mu { @(ku)
+         b += @(koff)*@(mu)- @(koff);
+         @endiif
       }
    }
 @ROUT ATL_rm2am 
@@ -1705,6 +1914,9 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
          pp += (poff+@(ku))*@(mu);
          ioff += @(mu); if (ioff  >= @(ku)) { ioff = 0; poff+=@(ku); }
       }
+      @endiif
+      @iif mu > @(ku)
+      pp += pj;
       @endiif
       i = j;
       A = A+i;
@@ -1749,11 +1961,22 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
       default:;
       }
       @endiif
+      @iif mu > @(ku)
+      joff++;
+      if (joff >= @(ku))
+      {
+         joff = 0;
+         pj += @(mu)*@(ku) - @(ku);
+      }
+      @endiif
       coff++; 
       if (coff >= @(koff))
       { 
          coff = 0; off += @(koff);
          b += (off+@(mu))*@(koff);
+      @iif mu > @(ku)
+         pj = 0;
+      @endiif
       }
    }
    @iif mu > 1
@@ -1773,6 +1996,9 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
             ioff += @(mu); if (ioff  >= @(ku)) { ioff = 0; poff+=@(ku); }
          }
          @endiif
+         @iif mu > @(ku)
+         pp += pj;
+         @endiif
          i = j;
          A = A+i;
          /* copy diag block */
@@ -1787,11 +2013,22 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
             pp[pi*@(ku)] = @(malp)(*A);
          for ( ; pi<@(mu); pi++)
             pp[pi*@(ku)] = ATL_rzero;
+         @iif mu > @(ku)
+         joff++;
+         if (joff >= @(ku))
+         {
+            joff = 0;
+            pj += @(mu)*@(ku) - @(ku);
+         }
+         @endiif
          coff++;
          if (coff >= @(koff))
          {
             coff = 0; off += @(koff);
             b += (off+@(mu))*@(koff);
+         @iif mu > @(ku)
+            pj = 0;
+         @endiif
          }
       }
    }
@@ -1813,8 +2050,19 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
          ioff += @(mu); if (ioff  >= @(ku)) { ioff = 0; poff+=@(ku); }
       }
       @endiif
+      @iif mu > @(ku)
+      pp += pj;
+      @endiif
       @iif mu } @(ku)
          @callproc proc_rm2am_kvec_zero @(mu)
+      @endiif
+      @iif mu > @(ku)
+      joff++;
+      if (joff >= @(ku))
+      {
+         joff = 0;
+         pj += @(mu)*@(ku) - @(ku);
+      }
       @endiif
       coff++;
       if (coff >= @(koff))
@@ -2230,6 +2478,9 @@ void ATL_USERCPMM       /* row- to access-major */
    ATL_CSZT m = (K/@(mu))*@(mu), mr = K-m, incA = lda - m;
    ATL_CSZT KK = ((K+@(ku)-1)/@(ku))*@(ku);
    int i, j, k, pi;
+   @iif mu > @(ku)
+   int pj=0, joff=0;
+   @endiif
    @mif nalp = "X
    const register TYPE ra=(*alpha), ia=alpha[1];
    register TYPE rv, iv;
@@ -2282,12 +2533,23 @@ void ATL_USERCPMM       /* row- to access-major */
          pr += poff*@(mu); pc += poff*@(mu);
       }
       @endiif
+      @iif mu > @(ku)
+      joff++;
+      if (joff >= @(ku))
+      {
+         joff = 0;
+         rA += @(mu)*@(ku)-@(ku);
+         iA += @(mu)*@(ku)-@(ku);
+      }
+      @endiif
       coff++;
       if (coff >= @(koff))
       {
          coff = 0; off += @(koff);
-         rA += @(koff)*(@(mu)-1);
-         iA += @(koff)*(@(mu)-1);
+      @iif mu { @(ku)
+         rA += @(koff)*@(mu)-@(koff);
+         iA += @(koff)*@(mu)-@(koff);
+      @endiif
       }
    }
 @ROUT ATL_crm2am 
@@ -2325,6 +2587,9 @@ void ATL_USERCPMM       /* row- to access-major */
          pc += (poff+@(ku))*@(mu);
          ioff += @(mu); if (ioff  >= @(ku)) { ioff = 0; poff+=@(ku); }
       }
+      @endiif
+      @iif mu > @(ku)
+      pr += pj; pc += pj;
       @endiif
       i = j;
       A = A+(i SHIFT);
@@ -2376,12 +2641,23 @@ void ATL_USERCPMM       /* row- to access-major */
       default:;
       }
       @endiif
+      @iif mu > @(ku)
+      joff++;
+      if (joff >= @(ku))
+      {
+         joff = 0;
+         pj += @(mu)*@(ku) - @(ku);
+      }
+      @endiif
       coff++; 
       if (coff >= @(koff))
       { 
          coff = 0; off += @(koff);
          rA += (off+@(mu))*@(koff);
          iA += (off+@(mu))*@(koff);
+      @iif mu > @(ku)
+         pj = 0;
+      @endiif
       }
    }
    @iif mu > 1
@@ -2401,6 +2677,9 @@ void ATL_USERCPMM       /* row- to access-major */
             pc += (poff+@(ku))*@(mu);
             ioff += @(mu); if (ioff  >= @(ku)) { ioff = 0; poff+=@(ku); }
          }
+         @endiif
+         @iif mu > @(ku)
+         pr += pj; pc += pj;
          @endiif
          i = j;
          A = A+(i SHIFT);
@@ -2424,12 +2703,23 @@ void ATL_USERCPMM       /* row- to access-major */
             pr[pi*@(ku)] = ATL_rzero;
             pc[pi*@(ku)] = ATL_rzero;
          }
+         @iif mu > @(ku)
+         joff++;
+         if (joff >= @(ku))
+         {
+            joff = 0;
+            pj += @(mu)*@(ku) - @(ku);
+         }
+         @endiif
          coff++;
          if (coff >= @(koff))
          {
             coff = 0; off += @(koff);
             rA += (off+@(mu))*@(koff);
             iA += (off+@(mu))*@(koff);
+         @iif mu > @(ku)
+            pj = 0;
+         @endiif
          }
       }
    }
@@ -2452,8 +2742,19 @@ void ATL_USERCPMM       /* row- to access-major */
          ioff += @(mu); if (ioff  >= @(ku)) { ioff = 0; poff+=@(ku); }
       }
       @endiif
+      @iif mu > @(ku)
+      pr += pj; pc += pj;
+      @endiif
       @iif mu } @(ku)
          @callproc proc_crm2am_kvec_zero @(mu)
+      @endiif
+      @iif mu > @(ku)
+      joff++;
+      if (joff >= @(ku))
+      {
+         joff = 0;
+         pj += @(mu)*@(ku) - @(ku);
+      }
       @endiif
       coff++;
       if (coff >= @(koff))
