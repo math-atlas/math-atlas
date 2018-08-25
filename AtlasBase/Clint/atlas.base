@@ -42732,6 +42732,24 @@ int findLAT(char pre, int isa, int vlenb, int nreg, int *NMUL, double *PEAK)
 
    }
    while (naccB > 1);
+/*
+ * If best latency comes from halving size, need to make estimate exact
+ */
+   if (naccB >= 16)
+   {
+      double mf, mfL=mfB;
+      unsigned int big=naccB, sml=naccB>>1;
+      while (big-sml > 1)
+      {
+         unsigned int mid = sml + ((big-sml)>>1);
+         mf = getMflop(pre, isa, vlenb, mid, mid, mfF);
+         printf("   nacc=%d, nmul=%d, mf=%.2f\n", mid, mid, mf);
+         if (mf*1.03 <= mfB)  /* midpt still too slow, adjust upwards */
+            sml = mid;
+         else /* need to adjust big downwards */
+            big = mid;
+      }
+   }
    printf("EFFECTIVE FMA LATENCY DETECTED AS: %d, NMUL=%d\n\n", naccB, nmulB);
    *PEAK = mfB;
    *NMUL = nmulB;
@@ -42742,7 +42760,7 @@ void findAllPeaks(char pre, int isa, int nreg, int nmul, double peak)
 {
    double mfF;
    int i, vlens[3] = {64, 32, 16};
-   char fn[12];
+   char fn[16];
    FILE *fp;
 
    mfF = .05*peak;
