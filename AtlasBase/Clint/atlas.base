@@ -30,22 +30,29 @@ void PrintUsage(char *xnam)
    fprintf(stderr, "    -m x: do x MFLOPS of computation\n");
    fprintf(stderr, "   -f <outf>: write results to file outf\n");
    fprintf(stderr, "   -t 0: print mflop rates, else print times\n");
+   fprintf(stderr, "   -l <lat>: provide latency being timed\n");
    exit(-1);
 }
 
-FILE *GetFlags(int nargs, char **args, double *MFLOPS, int *TIME)
+FILE *GetFlags(int nargs, char **args, double *MFLOPS, int *TIME, int *LAT)
 {
    double mf=200;
    FILE *fpout = stdout;
    int i;
 
    *TIME = 0;
+   *LAT = 0;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
          PrintUsage(args[0]);
       switch(args[i][1])
       {
+      case 'l':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         *LAT = atoi(args[i]);
+         break;
       case 't':
          if (++i == nargs)
             PrintUsage(args[0]);
@@ -73,13 +80,16 @@ FILE *GetFlags(int nargs, char **args, double *MFLOPS, int *TIME)
 int main(int nargs, char **args)
 {
    FILE *fpout;
-   TYPE dum[32];
+   TYPE *dum;
    double lmf, mf, flops;
    char pre;
-   int i, nrep, PTIME;
+   int i, nrep, PTIME, lat, DL;
 
-   fpout = GetFlags(nargs, args, &mf, &PTIME);
-   for (i=0; i < 32; i++)
+   fpout = GetFlags(nargs, args, &mf, &PTIME, &lat);
+   DL = (lat > 32) ? lat : 32;
+   dum = malloc(sizeof(TYPE)*DL);
+   assert(dum);
+   for (i=0; i < DL; i++)
       dum[i] = 0.0;
    lmf = macase(1, dum);
    nrep = mf*1000000.0 / lmf;
@@ -204,12 +214,18 @@ double matime
       assert(fpout);
       magen(pre, fpout, 256, MAC, lat);
       fclose(fpout);
-      i = sprintf(ln, "make x%cma outf='%s' flags=\"-m %d", pre, fnam, fmf);
+      i = sprintf(ln, "make x%cma outf='%s' flags=\"-m %d -l %u", pre, fnam, 
+                  fmf, lat);
       if (TIME)
          i += sprintf(ln+i, " -t 1");
       ln[i++] = '"';
       ln[i] = '\0';
       sprintf(ln+i, "2>&1 > /dev/null");
+      if (system(ln))
+      {
+         fprintf(stderr, "\nFAILED: '%s'\n\n", ln);
+         assert(0);
+      }
       assert(!system(ln));
       fp = fopen(fnam, "r");
       assert(fp);
@@ -41074,11 +41090,13 @@ void goToTown(void)
    l1sz = findL1(16);
    if (!l1sz)
       l1sz = findL1(64);
-   assert(l1sz);
    printf("L1 SIZE DETECTED AS %lu for all cores.\n", l1sz);
+   fflush(stdout);
+   assert(l1sz);
    LLsz = findLLC(16, l1sz, &LLPsz);
    if (!LLsz)
       LLsz = findLLC(64, l1sz, &LLPsz);
+   fflush(stdout);
    assert(LLsz);
 
    fp = fopen("res/atlas_cache.h", "w");
