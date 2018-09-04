@@ -15597,6 +15597,9 @@ ATL_USERMM:
 
 @ROUT ATL_ammmUxUxKB_ppc.S
 #include "atlas_asm.h"
+#if defined(SCPLX) && !defined(SREAL)
+   #define SREAL 1
+#endif
 @ifdef ! mu
    @iexp mu 4
 @endifdef
@@ -15642,7 +15645,7 @@ ATL_USERMM:
    @iexp rn @(rn) 1 +
    @iexp ii @(ii) 1 +
 @endiwhile
-#if defined(SREAL) || defined(SCPLX)
+#ifdef SREAL
    #define ELTSZ 4
    #define lfd lfs
    #define stfd stfs
@@ -16003,14 +16006,16 @@ ATL_asmdecor(ATL_USERMM):
    @iexp kk @(kk) -1 +
 @endiwhile
 
-#if defined(SREAL) || defined(SCPLX)
+#ifdef SREAL
    #define ELTSZ 4
-   #define lfd lfs
-   #define stfd stfs
-   #define fmadd fmadds
-   #define fmul  fmuls
+   #define lxvd2x lxvw4x
+   #define xvsubdp xvsubsp
+   #define xvadddp xvaddsp
+   #define xvmaddadp xvmaddasp
+   #define KMUL *2
 #else
    #define ELTSZ 8
+   #define KMUL
 #endif
 #define VECSZ 16
 /*
@@ -16057,11 +16062,23 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
    @iexp ii @(ii) 1 +
 @endiwhile
 /* #define Kb0 r14 */
-#define ATL_vvrsum2(s0_, s1_, t_) \
-   xxpermdi t_, s0_, s1_, 0 ; \
-   xxpermdi s0_, s0_, s1_, 3 ; \
-   xvadddp s0_, s0_, t_ ; \
-
+#if defined(SREAL) || defined(SCPLX)
+   #define ATL_vvrsum4(s0_, s1_, s2_, s3_, t_, h_) \
+      xxmrghw t_, s0_, s1_ ; \
+      xxmrglw s0_, s0_, s1_ ; \
+      xvaddsp s0_, s0_, t_ ; \
+      xxmrghw h_, s2_, s3_ ; \
+      xxmrglw s2_, s2_, s3_ ; \
+      xvaddsp s2_, s2_, h_ ; \
+      xxpermdi t_, s0_, s2_, 0 ; \
+      xxpermdi s0_, s0_, s2_, 3 ; \
+      xvaddsp s0_, s0_, t_ 
+#else
+   #define ATL_vvrsum2(s0_, s1_, t_) \
+      xxpermdi t_, s0_, s1_, 0 ; \
+      xxpermdi s0_, s0_, s1_, 3 ; \
+      xvadddp s0_, s0_, t_ 
+#endif
 .local MLOOP
 .local NLOOP
 .globl ATL_asmdecor(ATL_USERMM)
@@ -16082,6 +16099,18 @@ ATL_asmdecor(ATL_USERMM):
 #define FOFF (VOFF+VSZ)
 #define IOFF (FOFF+FSZ)
 #define FSIZE (MSZ+LSZ+VSZ+FSZ+ISZ)
+/*
+ * Prefetch B using stream 3; pref A doesn't supply same speedup, probably
+ * need to fetch it line at a time just before use
+ */
+   li r9, -1
+   rldicr r9, r9, 0, 2
+   dcbt r9, pB, 0x8
+   li r9, -1
+   #if 0
+   rldicr r9, r9, 0, 0
+   dcbt r9, pA, 0x8
+   #endif
 /*
  * Allocate local stack frame in order to save & restore
  */
@@ -16134,6 +16163,7 @@ ATL_asmdecor(ATL_USERMM):
          lxv rB0, POFF+0(pB)
          lxv rA1, POFF+VECSZ*1(pA)
          lxv rA2, POFF+VECSZ*2(pA)
+         addi pC3, pC, 192
 
          lxv rA3, POFF+VECSZ*3(pA)
          lxv rA4, POFF+VECSZ*4(pA)
@@ -16155,24 +16185,27 @@ ATL_asmdecor(ATL_USERMM):
             @iexp ib @(ib) 1 +
          xvmuldp rC10, rA1, rB0
          xvmuldp rC20, rA2, rB0
+            dcbtstt 0, pC
          xvmuldp rC30, rA3, rB0
+            dcbtstt i16_8, pC
          xvmuldp rC40, rA4, rB0
          xvmuldp rC50, rA5, rB0
          xvmuldp rC60, rA6, rB0
          xvmuldp rC70, rA7, rB0
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rB0, POFF+VECSZ*@(ib)(pB)
             @iexp ib @(ib) 1 +
          #endif
          xvmuldp rC01, rA0, rB1
          xvmuldp rC11, rA1, rB1
+            dcbtstt i16_2, pC3
          xvmuldp rC21, rA2, rB1
          xvmuldp rC31, rA3, rB1
          xvmuldp rC41, rA4, rB1
          xvmuldp rC51, rA5, rB1
          xvmuldp rC61, rA6, rB1
          xvmuldp rC71, rA7, rB1
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rB1, POFF+VECSZ*@(ib)(pB)
             @iexp ib @(ib) 1 +
          #endif
@@ -16184,7 +16217,7 @@ ATL_asmdecor(ATL_USERMM):
          xvmuldp rC52, rA5, rB2
          xvmuldp rC62, rA6, rB2
          xvmuldp rC72, rA7, rB2
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rB2, POFF+VECSZ*@(ib)(pB)
             @iexp ib @(ib) 1 +
          #endif
@@ -16196,7 +16229,7 @@ ATL_asmdecor(ATL_USERMM):
          xvmuldp rC53, rA5, rB3
          xvmuldp rC63, rA6, rB3
          xvmuldp rC73, rA7, rB3
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rB3, POFF+VECSZ*@(ib)(pB)
             @iexp ib @(ib) 1 +
          #endif
@@ -16208,47 +16241,47 @@ ATL_asmdecor(ATL_USERMM):
          xvmuldp rC54, rA5, rB4
          xvmuldp rC64, rA6, rB4
          xvmuldp rC74, rA7, rB4
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rB4, POFF+VECSZ*@(ib)(pB)
             @iexp ib @(ib) 1 +
          #endif
          xvmuldp rC05, rA0, rB5
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rA0, POFF+VECSZ*@(ia)(pA)
             @iexp ia @(ia) 1 +
          #endif
          xvmuldp rC15, rA1, rB5
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rA1, POFF+VECSZ*@(ia)(pA)
             @iexp ia @(ia) 1 +
          #endif
          xvmuldp rC25, rA2, rB5
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rA2, POFF+VECSZ*@(ia)(pA)
             @iexp ia @(ia) 1 +
          #endif
          xvmuldp rC35, rA3, rB5
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rA3, POFF+VECSZ*@(ia)(pA)
             @iexp ia @(ia) 1 +
          #endif
          xvmuldp rC45, rA4, rB5
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rA4, POFF+VECSZ*@(ia)(pA)
             @iexp ia @(ia) 1 +
          #endif
          xvmuldp rC55, rA5, rB5
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rA5, POFF+VECSZ*@(ia)(pA)
             @iexp ia @(ia) 1 +
          #endif
          xvmuldp rC65, rA6, rB5
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rA6, POFF+VECSZ*@(ia)(pA)
             @iexp ia @(ia) 1 +
          #endif
          xvmuldp rC75, rA7, rB5
-         #if KB > 2
+         #if KB > 2 KMUL
             lxv rA7, POFF+VECSZ*@(ia)(pA)
             @iexp ia @(ia) 1 +
          #endif
@@ -16258,7 +16291,7 @@ ATL_asmdecor(ATL_USERMM):
  */
    @iexp kk 4
    @iwhile kk < 194
-         #if KB >= @(kk)
+         #if KB >= @(kk) KMUL
             xvmaddadp rC00, rA0, rB0
                lxv rB5, POFF+VECSZ*@(ib)(pB)
                @iexp ib @(ib) 1 +
@@ -16269,7 +16302,7 @@ ATL_asmdecor(ATL_USERMM):
             xvmaddadp rC50, rA5, rB0
             xvmaddadp rC60, rA6, rB0
             xvmaddadp rC70, rA7, rB0
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rB0, POFF+VECSZ*@(ib)(pB)
                @iexp ib @(ib) 1 +
             #endif
@@ -16281,7 +16314,7 @@ ATL_asmdecor(ATL_USERMM):
             xvmaddadp rC51, rA5, rB1
             xvmaddadp rC61, rA6, rB1
             xvmaddadp rC71, rA7, rB1
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rB1, POFF+VECSZ*@(ib)(pB)
                @iexp ib @(ib) 1 +
             #endif
@@ -16293,7 +16326,7 @@ ATL_asmdecor(ATL_USERMM):
             xvmaddadp rC52, rA5, rB2
             xvmaddadp rC62, rA6, rB2
             xvmaddadp rC72, rA7, rB2
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rB2, POFF+VECSZ*@(ib)(pB)
                @iexp ib @(ib) 1 +
             #endif
@@ -16305,7 +16338,7 @@ ATL_asmdecor(ATL_USERMM):
             xvmaddadp rC53, rA5, rB3
             xvmaddadp rC63, rA6, rB3
             xvmaddadp rC73, rA7, rB3
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rB3, POFF+VECSZ*@(ib)(pB)
                @iexp ib @(ib) 1 +
             #endif
@@ -16317,47 +16350,47 @@ ATL_asmdecor(ATL_USERMM):
             xvmaddadp rC54, rA5, rB4
             xvmaddadp rC64, rA6, rB4
             xvmaddadp rC74, rA7, rB4
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rB4, POFF+VECSZ*@(ib)(pB)
                @iexp ib @(ib) 1 +
             #endif
             xvmaddadp rC05, rA0, rB5
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rA0, POFF+VECSZ*@(ia)(pA)
                @iexp ia @(ia) 1 +
             #endif
             xvmaddadp rC15, rA1, rB5
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rA1, POFF+VECSZ*@(ia)(pA)
                @iexp ia @(ia) 1 +
             #endif
             xvmaddadp rC25, rA2, rB5
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rA2, POFF+VECSZ*@(ia)(pA)
                @iexp ia @(ia) 1 +
             #endif
             xvmaddadp rC35, rA3, rB5
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rA3, POFF+VECSZ*@(ia)(pA)
                @iexp ia @(ia) 1 +
             #endif
             xvmaddadp rC45, rA4, rB5
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rA4, POFF+VECSZ*@(ia)(pA)
                @iexp ia @(ia) 1 +
             #endif
             xvmaddadp rC55, rA5, rB5
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rA5, POFF+VECSZ*@(ia)(pA)
                @iexp ia @(ia) 1 +
             #endif
             xvmaddadp rC65, rA6, rB5
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rA6, POFF+VECSZ*@(ia)(pA)
                @iexp ia @(ia) 1 +
             #endif
             xvmaddadp rC75, rA7, rB5
-            #if KB > @(kk)
+            #if KB > @(kk) KMUL
                lxv rA7, POFF+VECSZ*@(ia)(pA)
                @iexp ia @(ia) 1 +
             #endif
@@ -16368,7 +16401,6 @@ ATL_asmdecor(ATL_USERMM):
  *       Write out to C
  */
 
-         addi pC3, pC, 192
       @iexp jj 0
       @iwhile jj < 6
          @iif jj < 3
@@ -16390,7 +16422,11 @@ ATL_asmdecor(ATL_USERMM):
             lxvd2x rA3, i16_@(kk), @(pC)
          #endif
          @iexp kk @(kk) -3 +
-         ATL_vvrsum2(rC0@(jj), rC1@(jj), rB0);
+         #ifdef SREAL
+            ATL_vvrsum4(rC0@(jj), rC1@(jj), rC2@(jj), rC3@(jj), rB0, rB1);
+         #else
+            ATL_vvrsum2(rC0@(jj), rC1@(jj), rB0);
+         #endif
          #ifdef BETA1
             xvadddp rC0@(jj), rC0@(jj), rA0
          #elif !defined(BETA0)
@@ -16398,7 +16434,10 @@ ATL_asmdecor(ATL_USERMM):
          #endif
          stxvd2x rC0@(jj), i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-         ATL_vvrsum2(rC2@(jj), rC3@(jj), rB0);
+         #ifdef SREAL
+         #else
+            ATL_vvrsum2(rC2@(jj), rC3@(jj), rB0);
+         #endif
          #ifdef BETA1
             xvadddp rC2@(jj), rC2@(jj), rA1
          #elif !defined(BETA0)
@@ -16406,7 +16445,10 @@ ATL_asmdecor(ATL_USERMM):
          #endif
          stxvd2x rC2@(jj), i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-         ATL_vvrsum2(rC4@(jj), rC5@(jj), rB0);
+         #ifdef SREAL
+         #else
+            ATL_vvrsum2(rC4@(jj), rC5@(jj), rB0);
+         #endif
          #ifdef BETA1
             xvadddp rC4@(jj), rC4@(jj), rA2
          #elif !defined(BETA0)
@@ -16414,7 +16456,10 @@ ATL_asmdecor(ATL_USERMM):
          #endif
          stxvd2x rC4@(jj), i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-         ATL_vvrsum2(rC6@(jj), rC7@(jj), rB0);
+         #ifdef SREAL
+         #else
+            ATL_vvrsum2(rC6@(jj), rC7@(jj), rB0);
+         #endif
          #ifdef BETA1
             xvadddp rC6@(jj), rC6@(jj), rA3
          #elif !defined(BETA0)
