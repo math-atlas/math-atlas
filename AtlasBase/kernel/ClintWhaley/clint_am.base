@@ -16012,6 +16012,8 @@ ATL_asmdecor(ATL_USERMM):
    #define xvsubdp xvsubsp
    #define xvadddp xvaddsp
    #define xvmaddadp xvmaddasp
+   #define xvmuldp xvmulsp
+
    #define KMUL *2
 #else
    #define ELTSZ 8
@@ -16163,7 +16165,7 @@ ATL_asmdecor(ATL_USERMM):
          lxv rB0, POFF+0(pB)
          lxv rA1, POFF+VECSZ*1(pA)
          lxv rA2, POFF+VECSZ*2(pA)
-         addi pC3, pC, 192
+         addi pC3, pC, ELTSZ*3*8
 
          lxv rA3, POFF+VECSZ*3(pA)
          lxv rA4, POFF+VECSZ*4(pA)
@@ -16290,7 +16292,7 @@ ATL_asmdecor(ATL_USERMM):
  *       K-loop fully unrolled to avoid iops that use VPU/slice
  */
    @iexp kk 4
-   @iwhile kk < 194
+   @iwhile kk < 128
          #if KB >= @(kk) KMUL
             xvmaddadp rC00, rA0, rB0
                lxv rB5, POFF+VECSZ*@(ib)(pB)
@@ -16401,6 +16403,34 @@ ATL_asmdecor(ATL_USERMM):
  *       Write out to C
  */
 
+         #ifdef SREAL
+      @iexp jj 0
+      @iwhile jj < 6
+         @iexp kk @(jj) 2 *
+            #if !defined(BETA0)
+               lxv rA0, 16*@(kk)(pC)
+         @iexp kk @(kk) 1 +
+               lxv rA1, 16*@(kk)(pC)
+            #endif
+         @iexp kk @(kk) -1 +
+            ATL_vvrsum4(rC3@(jj), rC2@(jj), rC1@(jj), rC0@(jj), rB0, rB1);
+            #ifdef BETA1
+               xvadddp rC3@(jj), rC3@(jj), rA0
+            #elif !defined(BETA0)
+               xvsubdp rC3@(jj), rC3@(jj), rA0
+            #endif
+            stxv rC3@(jj), 16*@(kk)(pC)
+         @iexp kk @(kk) 1 +
+            ATL_vvrsum4(rC7@(jj), rC6@(jj), rC5@(jj), rC4@(jj), rB0, rB1);
+            #ifdef BETA1
+               xvadddp rC7@(jj), rC7@(jj), rA1
+            #elif !defined(BETA0)
+               xvsubdp rC7@(jj), rC7@(jj), rA1
+            #endif
+            stxv rC7@(jj), 16*@(kk)(pC)
+            @iexp jj @(jj) 1 +
+         @endiwhile
+         #else
       @iexp jj 0
       @iwhile jj < 6
          @iif jj < 3
@@ -16412,63 +16442,51 @@ ATL_asmdecor(ATL_USERMM):
             @iexp kk @(jj) -3 +
          @endiif
          @iexp kk @(kk) 4 *
-         #if !defined(BETA0)
-            lxvd2x rA0, i16_@(kk), @(pC)
+            #if !defined(BETA0)
+               lxvd2x rA0, i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-            lxvd2x rA1, i16_@(kk), @(pC)
+               lxvd2x rA1, i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-            lxvd2x rA2, i16_@(kk), @(pC)
+               lxvd2x rA2, i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-            lxvd2x rA3, i16_@(kk), @(pC)
-         #endif
+               lxvd2x rA3, i16_@(kk), @(pC)
+            #endif
          @iexp kk @(kk) -3 +
-         #ifdef SREAL
-            ATL_vvrsum4(rC0@(jj), rC1@(jj), rC2@(jj), rC3@(jj), rB0, rB1);
-         #else
             ATL_vvrsum2(rC0@(jj), rC1@(jj), rB0);
-         #endif
-         #ifdef BETA1
-            xvadddp rC0@(jj), rC0@(jj), rA0
-         #elif !defined(BETA0)
-            xvsubdp rC0@(jj), rC0@(jj), rA0
-         #endif
-         stxvd2x rC0@(jj), i16_@(kk), @(pC)
+            #ifdef BETA1
+               xvadddp rC0@(jj), rC0@(jj), rA0
+            #elif !defined(BETA0)
+               xvsubdp rC0@(jj), rC0@(jj), rA0
+            #endif
+            stxvd2x rC0@(jj), i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-         #ifdef SREAL
-         #else
             ATL_vvrsum2(rC2@(jj), rC3@(jj), rB0);
-         #endif
-         #ifdef BETA1
-            xvadddp rC2@(jj), rC2@(jj), rA1
-         #elif !defined(BETA0)
-            xvsubdp rC2@(jj), rC2@(jj), rA1
-         #endif
-         stxvd2x rC2@(jj), i16_@(kk), @(pC)
+            #ifdef BETA1
+               xvadddp rC2@(jj), rC2@(jj), rA1
+            #elif !defined(BETA0)
+               xvsubdp rC2@(jj), rC2@(jj), rA1
+            #endif
+            stxvd2x rC2@(jj), i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-         #ifdef SREAL
-         #else
             ATL_vvrsum2(rC4@(jj), rC5@(jj), rB0);
-         #endif
-         #ifdef BETA1
-            xvadddp rC4@(jj), rC4@(jj), rA2
-         #elif !defined(BETA0)
-            xvsubdp rC4@(jj), rC4@(jj), rA2
-         #endif
-         stxvd2x rC4@(jj), i16_@(kk), @(pC)
+            #ifdef BETA1
+               xvadddp rC4@(jj), rC4@(jj), rA2
+            #elif !defined(BETA0)
+               xvsubdp rC4@(jj), rC4@(jj), rA2
+            #endif
+            stxvd2x rC4@(jj), i16_@(kk), @(pC)
          @iexp kk @(kk) 1 +
-         #ifdef SREAL
-         #else
             ATL_vvrsum2(rC6@(jj), rC7@(jj), rB0);
+            #ifdef BETA1
+               xvadddp rC6@(jj), rC6@(jj), rA3
+            #elif !defined(BETA0)
+               xvsubdp rC6@(jj), rC6@(jj), rA3
+            #endif
+            stxvd2x rC6@(jj), i16_@(kk), @(pC)
+            @iexp jj @(jj) 1 +
+            @undef pC
+         @endiwhile
          #endif
-         #ifdef BETA1
-            xvadddp rC6@(jj), rC6@(jj), rA3
-         #elif !defined(BETA0)
-            xvsubdp rC6@(jj), rC6@(jj), rA3
-         #endif
-         stxvd2x rC6@(jj), i16_@(kk), @(pC)
-         @iexp jj @(jj) 1 +
-         @undef pC
-      @endiwhile
 
          addi pC, pC, 8*6*ELTSZ /* pC += mu*nu*sizeof */
          ADDB pB, pB, incBn     /* pB += KB*nu*sizeof */
