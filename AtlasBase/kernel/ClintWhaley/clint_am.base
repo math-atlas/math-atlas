@@ -15596,6 +15596,7 @@ ATL_USERMM:
    blr
 
 @ROUT ATL_ammmUxUxKB_ppc.S
+#include "atlas_asm.h"
 @ifdef ! mu
    @iexp mu 4
 @endifdef
@@ -15609,19 +15610,25 @@ ATL_USERMM:
 @iexp nreg @(nrC) @(mu) + @(nu) +
 @iexp nrB @(nu)
 @iif @(nreg) > 32
-   @iexp nrB 2
-   @iexp nreg @(nu) @(nreg) - 2 +
+   @iexp nreg @(nrC) @(mu) +
+   @iexp nrB @(nreg) 32 -
+   @iexp kk @(nrB) @(nu) %
+   @iwhile kk ! 0
+      @iexp nrB @(nrB) -1 +
+      @iexp kk @(nrB) @(nu) %
+   @endiwhile
+   @iexp nreg @(nreg) @(nrB) +
 @endiif
 @iexp rn 0
 @iexp jj 0
 @iwhile jj < @(nu)
-   @iexp jj @(jj) 1 +
    @iexp ii 0
    @iwhile ii < @(mu)
 #define rC@(ii)@(jj) f@(rn)
       @iexp rn @(rn) 1 +
       @iexp ii @(ii) 1 +
    @endiwhile
+   @iexp jj @(jj) 1 +
 @endiwhile
 @iexp ii 0
 @iwhile ii < @(mu)
@@ -15652,28 +15659,104 @@ ATL_USERMM:
  */
 #define pB0  r0
 #define NMU  r3
-#define NNU0 r4
-#define NNU  r5
+#define NNU  r4
 #define pA   r6
 #define pB   r7
 #define pC   r8
+#if KB*@(nu)*ELTSZ > 32767
+   #define incBn r5
+   #define ADDB add
+   #if KB*@(mu)*ELTSZ > 32767
+      #define incAm r9
+      #define ADDA add
+   #else
+      #define incAm KB*@(mu)*ELTSZ
+      #define ADDA addi
+   #endif
+#else
+   #define incBn KB*@(nu)*ELTSZ
+   #define ADDB addi
+   #if KB*@(mu)*ELTSZ > 32767
+      #define incAm r5
+      #define ADDA add
+   #else
+      #define incAm KB*@(mu)*ELTSZ
+      #define ADDA addi
+   #endif
+#endif
 @SKIP assumes glob offsets ia, ib & dims mu, nu, nrB, set!
 @beginproc doLdIJ i_ j_ k_ ind_
    @beginindent 1 @(ind_)
+      @SKIP if (j == nu-1) must ld next iteration's A & B
       @iif @iexp @(j_) @(nu) -1 + =
+         @define cn @DUM@
+         @SKIP if (i == mu-1 && j==nu-1 && nrB==1) ld B last it instead of A_mu!
+         @iexp cn @(i_) @(mu) -1 + = @(j_) @(nu) -1 + = & @(nrB) 1 = &
+         @iif @(cn) = 1
       #if KB > @(k_)
-      lfd rA@(i_), ELTSZ*@(ia)(pA)
+      lfd rB0, POFF+ELTSZ*@(ib)(pB)
+         @iexp ib @(ib) 1 +
+      #endif
+         @endiif
+         @iif @(cn) = 0
+      #if KB > @(k_)
+      lfd rA@(i_), POFF+ELTSZ*@(ia)(pA)
          @iexp ia @(ia) 1 +
       #endif
+         @endiif
+         @undef cn
       @endiif
-      @iif @iexp 1 @(nrB) > @(j_) 0 = @(i_) 0 = & &
+      @SKIP if (1st mul) load last A or B reg
+      @iif @iexp @(j_) 0 = @(i_) 0 = &
          @define kk @dum@
-         @iexp kk @(nrB) -1 +
-      lfd rB@(kk), ELTSZ*@(ib)(pB)
-         @iexp ib @(ib) 1 +
+         @iif nrB = 1
+            @iexp kk @(mu) -1 +
+      lfd rA@(kk), POFF+ELTSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         @endiif
+         @iif nrB > 1
+            @iexp kk @(nrB) -1 +
+      lfd rB@(kk), POFF+ELTSZ*@(ib)(pB)
+            @iexp ib @(ib) 1 +
+         @endiif
          @undef kk
       @endiif
    @endindent
+@endproc
+@SKIP
+@SKIP assumes glob offset ib, reg rb & dim nu, nrB, set!
+@beginproc doLdJ j_ k_ ind_
+   @iif @iexp @(nu) @(j_) !
+      @define cn @dum@
+      @beginindent 1 @(ind_)
+         @iif nrB = 1
+            @SKIP if (j == nu) need if, else this it's data
+            @iif j_ = @(nu)
+      #if KB > @(k_)
+      lfd rB@(rb), POFF+ELTSZ*@(ib)(pB)
+      #endif
+            @endiif
+            @iif j_ < @(nu)
+      lfd rB@(rb), POFF+ELTSZ*@(ib)(pB)
+            @endiif
+         @endiif
+         @iif nrB > 1
+            @SKIP if (j < nu-nrB) still fetching this its data, no if req
+            @iexp cn @(nrB) @(nu) - @(j_) -1 + <
+            @iif @(cn) ! 0
+      lfd rB@(rb), POFF+ELTSZ*@(ib)(pB)
+            @endiif
+            @SKIP if (j >= nu-nrB) getting next times data
+            @iif @(cn) = 0
+      #if KB > @(k_)
+      lfd rB@(rb), POFF+ELTSZ*@(ib)(pB)
+      #endif
+            @endiif
+         @endiif
+         @iexp ib @(ib) 1 +
+      @endindent
+      @undef cn
+   @endiif
 @endproc
 /*
                      r3       r4     r5         r6         r7        r8
@@ -15693,9 +15776,12 @@ ATL_asmdecor(ATL_USERMM):
  *    f14-f31 -> vsr14-vsr31 -> 18*8 = 144 bytes
  *    v20-v31 -> vsr52-vsr63 -> 12*16 = 192 bytes
  */
-@iexp nsv @(nreg) 32 -
+@iexp nsv 0
+@iif nreg > 14
+   @iexp nsv @(nreg) -14 +
+@endiif
 #define ISZ 0*8     /* iregs storage size */
-#define FSZ @(nsv)*8/* fpregs storage size */
+#define FSZ @(nsv)*8   /* fpregs storage size */
 #define VSZ 0       /* Vector reg storage size */
 #define LSZ 0       /* Local storage area */
 #define MSZ 32      /* mandatory 32 bytes for stack frame tail */
@@ -15719,29 +15805,57 @@ ATL_asmdecor(ATL_USERMM):
    @endiwhile
 @endiif
 /*
+ * PWR addresses take a 16 bit signed offset, so of we can double the length
+ * of our possible unrolling by adding 2^15-1 to ptrs, and counting offsets
+ * from negatives.
+ */
+#define POFF -32768  /* -2^15 */
+   li pB0, POFF
+   sub pB, pB, pB0
+   sub pA, pA, pB0
+   #if KB*@(nu)*ELTSZ > 32767
+      li incBn KB
+      mulli incBn, incBn, @(nu)*ELTSZ  /* incBn = KB*nu*sizeof */
+   #endif
+   #if KB*@(mu)*ELTSZ > 32767
+      li incAm KB
+      mulli incAm, incAm, @(mu)*ELTSZ  /* incAm = KB*mu*sizeof */
+   #endif
+/*
  * Start loop ops; We use r0 to store pB0, since its zero for direct ptrs!
  */
    mr pB0, pB
+   mr pB0, pB
    MLOOP:
       mr pB, pB0
-      mr NNU, NNU0
+      mtctr NNU
       NLOOP:
-         lfd rB0, 0(pB)
+         lfd rB0, POFF(pB)
+      @iexp kk @(mu)
+      @iif nrB = 1
+          @iexp kk @(mu) -1 +
+      @endiif
       @iexp ii 0
-      @iwhile ii < @(mu)
-         lfd rA@(ii), ELTSZ*@(ii)(pA)
+      @iwhile ii < @(kk)
+         lfd rA@(ii), POFF+ELTSZ*@(ii)(pA)
          @iexp ii @(ii) 1 +
       @endiwhile
       @iexp jj 1
       @iexp ii @(nrB) -1 +
       @iwhile jj < @(ii)
-         lfd rB@(jj), ELTSZ*@(jj)(pB)
+         lfd rB@(jj), POFF+ELTSZ*@(jj)(pB)
          @iexp jj @(jj) 1 +
       @endiwhile
-         
+/*
+ *    Peel first iteration to handle BETA
+ */
          #ifdef BETA0
       @iexp ia @(mu)
-      @iexp ib @(nu) -1 +
+      @iexp ib @(nrB) -1 +
+      @iif nrB = 1
+         @iexp ia @(mu) -1 +
+         @iexp ib 1
+      @endiif
       @iexp jj 0
       @iwhile jj < @(nu)
          @iexp rb @(nrB) @(jj) %
@@ -15752,24 +15866,22 @@ ATL_asmdecor(ATL_USERMM):
             @iexp ii @(ii) 1 +
          @endiwhile
          @iexp jj @(jj) 1 +
-         @iif @iexp @(nu) @(jj) !
-            #if KB > 1
-               lfd rB@(rb), ELTSZ*@(ib)(pB)
-            #endif
-            @iexp ib @(ib) 1 +
-         @endiif
+         @callproc doLdJ @(jj) 1 9
       @endiwhile
          #else  /* BETA is 1 or -1 */
     @iexp ia @(mu)
-    @iexp ib @(nu) -1 +
+    @iexp ib @(nrB) -1 +
+    @iif nrB = 1
+       @iexp ia @(mu) -1 +
+       @iexp ib 1
+    @endiif
     @iexp kk 0
     @iexp jj 0
     @iwhile jj < @(nu)
        @iexp rb @(nrB) @(jj) %
        @iexp ii 0
        @iwhile ii < @(mu)
-            @iexp ia @(kk) 8 *
-            lfd rC@(ii)@(jj), @(ia)(pC)
+            lfd rC@(ii)@(jj), ELTSZ*@(kk)(pC)
             #ifdef BETA1
                fmadd rC@(ii)@(jj), rA@(ii), rB@(rb), rC@(ii)@(jj)
             #else /* BETA=-1 */
@@ -15780,14 +15892,50 @@ ATL_asmdecor(ATL_USERMM):
            @iexp ii @(ii) 1 +
        @endiwhile
         @iexp jj @(jj) 1 +
-        @iif @iexp @(nu) @(jj) !
-           #if KB > 1
-              lfd rB@(rb), ELTSZ*@(ib)(pB)
-           #endif
-           @iexp ib @(ib) 1 +
-        @endiif
+        @callproc doLdJ @(jj) 1 9
     @endiwhile
          #endif
+
+   @iexp kk 2
+   @iwhile kk < 3
+         #if KB >= @(kk)
+      @iexp jj 0
+      @iwhile jj < @(nu)
+         @iexp rb @(nrB) @(jj) %
+         @iexp ii 0
+         @iwhile ii < @(mu)
+            fmadd rC@(ii)@(jj), rA@(ii), rB@(rb), rC@(ii)@(jj)
+               @callproc doLdIJ @(ii) @(jj) @(kk) 9
+              @iexp ii @(ii) 1 +
+         @endiwhile
+          @iexp jj @(jj) 1 +
+          @callproc doLdJ @(jj) @(kk) 9
+      @endiwhile
+         #endif
+
+      @iexp kk @(kk) 1 +
+   @endiwhile
+/*
+ *       Write @(mu)x@(nu) C block out to memory
+ */
+    @iexp kk 0
+    @iexp jj 0
+    @iwhile jj < @(nu)
+       @iexp rb @(nrB) @(jj) %
+       @iexp ii 0
+       @iwhile ii < @(mu)
+         stfd rC@(ii)@(jj), ELTSZ*@(kk)(pC)
+          @iexp kk @(kk) 1 +
+          @iexp ii @(ii) 1 +
+       @endiwhile
+       @iexp jj @(jj) 1 +
+    @endiwhile
+         ADDB pB, pB, incBn
+         addi pC, pC, ELTSZ*@(kk)
+      bdnz+ NLOOP
+      ADDA pA, pA, incAm
+      addic. NMU, NMU, -1
+   bne+ MLOOP
 /*
  * Restore regs, deallocate stack frame & return
  */
@@ -15802,3 +15950,511 @@ ATL_asmdecor(ATL_USERMM):
    addi r1, r1, FSIZE
 @endiif
    blr
+@ROUT ATL_dkmm8x6x512_vsx.S
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2018
+#include "atlas_asm.h"
+
+/*
+ * This kernel optimized for POWER9, specifically early versions that have
+ * generic functional units (sometimes called slices) that do all integer &
+ * floating point operations using the same generic units.  This means that
+ * doing loop & ptr arithmetic reduces your floating-point peak, since they
+ * use the same functional unit!
+ * To get around this, we fully unroll the K loop, and encode the load offsets
+ * manually using lxsd.  Unfortunately, this instruction comes from AltiVec
+ * originally, so its register numbering is offset by -32, compared to later
+ * VSX instructions.  Therefore, we must use the A/B registers in using VSX
+ * regs 32-63, but when we load these guys with VSX, we will use reg #s 0-31!
+ * Note that these generic FUs also do all vector permuations, which means
+ * we must avoid any type of permute in the loop.  Since m-vectorized kerns
+ * require broadcast of B elements (splat for PPC), we use k-vectorized instead
+ * which allows us to use straight loads in the innerloop.  The system has 4
+ * load/store units, so this is fine.
+ */
+
+@iexp kk 0
+@iexp jj 0
+@iwhile jj < 6
+   @iexp ii 0
+   @iwhile ii < 8
+#define rC@(ii)@(jj) v@(kk)
+      @iexp kk @(kk) 1 +
+      @iexp ii @(ii) 1 +
+   @endiwhile
+   @iexp jj @(jj) 1 +
+@endiwhile
+
+@iexp kk 63
+@iexp ii 0
+@iwhile ii < 8
+#define rA@(ii) v@(kk)
+   @iexp il @(kk) -32 +
+   #define lA@(ii) @(il)
+   @iexp ii @(ii) 1 +
+   @iexp kk @(kk) -1 +
+@endiwhile
+
+@iexp ii 0
+@iwhile ii < 6
+#define rB@(ii) v@(kk)
+   @iexp il @(kk) -32 +
+   #define lB@(ii) @(il)
+   @iexp ii @(ii) 1 +
+   @iexp kk @(kk) -1 +
+@endiwhile
+
+#if defined(SREAL) || defined(SCPLX)
+   #define ELTSZ 4
+   #define lfd lfs
+   #define stfd stfs
+   #define fmadd fmadds
+   #define fmul  fmuls
+#else
+   #define ELTSZ 8
+#endif
+#define VECSZ 16
+/*
+ * NOTE: 1st param at 96(r1), because caller must reserve space for 8 reg-passed
+ * params in param passing space on stack.  ABI says parm passing space at
+ * 32(r1) -> 32+64 -> 96(r1).
+ * param save space can be written to by callee.
+ */
+/*
+                     r3       r4     r5         r6         r7        r8
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                       r9          r10     96(r1)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+#define pB0 r0
+#define NMU r3
+#define NNU r4
+#define pA  r6
+#define pB  r7
+#define pC  r8
+#define pfA r9
+#define pfB r10
+#if KB*6*ELTSZ > 32767
+   #define incBn r5
+   #define incAm r11
+   #define ADDA add
+   #define ADDB add
+#elif KB*8*ELTSZ > 32767
+   #define incAm r5
+   #define ADDA add
+   #define ADDB addi
+   #define incBn KB*6*ELTSZ    /* KB*nu*sizeof */
+#else
+   #define ADDA addi
+   #define ADDB addi
+   #define incAm KB*8*ELTSZ    /* KB*mu*sizeof */
+   #define incBn KB*6*ELTSZ    /* KB*nu*sizeof */
+#endif
+#define pC3 r12
+@iexp ii 1
+@iwhile ii < 12
+   @iexp kk @(ii) 12 +
+#define i16_@(ii) r@(kk)
+   @iexp ii @(ii) 1 +
+@endiwhile
+/* #define Kb0 r14 */
+#define ATL_vvrsum2(s0_, s1_, t_) \
+   xxpermdi t_, s0_, s1_, 0 ; \
+   xxpermdi s0_, s0_, s1_, 3 ; \
+   xvadddp s0_, s0_, t_ ; \
+
+.local MLOOP
+.local NLOOP
+.globl ATL_asmdecor(ATL_USERMM)
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Must save & restore:
+ *    r1&r2 -> in sframe tail
+ *    r14-r31 -> 18*8 = 144 bytes (if used)
+ *    f14-f31 -> vsr14-vsr31 -> 18*8 = 144 bytes
+ *    v20-v31 -> vsr52-vsr63 -> 12*16 = 192 bytes
+ */
+#define ISZ 12*8
+#define FSZ 0
+#define VSZ 12*16
+#define LSZ 0
+#define MSZ 32      /* mandatory 32 bytes for stack frame tail */
+#define VOFF (MSZ+LSZ)
+#define FOFF (VOFF+VSZ)
+#define IOFF (FOFF+FSZ)
+#define FSIZE (MSZ+LSZ+VSZ+FSZ+ISZ)
+/*
+ * Allocate local stack frame in order to save & restore
+ */
+   stdu r1, -FSIZE(r1)   /* allocate stack & store old stack ptr */
+/*
+ * Save iregs, and initialize fixed 16-increment indices for pC
+ */
+   std r2, 24(r1)        /* TOC reg always at 24(sp) */
+@iexp ii 1
+@iwhile ii < 12
+   std i16_@(ii), IOFF+8*@(ii)(r1)
+   li  i16_@(ii), 16*@(ii)
+   @iexp ii @(ii) 1 +
+@endiwhile
+   std pC3, IOFF+8*@(ii)(r1)
+/*
+ * Save vec regs
+ */
+   #define i16_0 0
+@iexp ii 0
+@iwhile ii < 12
+   @iexp kk @(ii) 20 +
+   stxv @(kk), VOFF+16*@(ii)(r1)
+   @iexp ii @(ii) 1 +
+@endiwhile
+/*
+ * PWR addresses take a 16 bit signed offset, so we can double the length
+ * of our possible unrolling by adding 2^15-1 to ptrs, and counting offsets
+ * from negatives.
+ */
+#define POFF -32768  /* -2^15 */
+   li pB0, POFF
+   sub pB, pB, pB0
+   sub pA, pA, pB0
+   #if KB*6*ELTSZ > 32767
+      li incBn KB
+      mulli incBn, incBn, 6*ELTSZ  /* incBn = KB*nu*sizeof */
+   #endif
+   #if KB*8*ELTSZ > 32767
+      li incAm KB
+      mulli incAm, incAm, 8*ELTSZ  /* incAm = KB*mu*sizeof */
+   #endif
+   mr pB0, pB
+   mtctr NNU
+
+   ALIGN16
+   MLOOP:
+@SKIP      NLOOP: 
+         lxv rA0, POFF+0(pA)
+         lxv rB0, POFF+0(pB)
+         lxv rA1, POFF+VECSZ*1(pA)
+         lxv rA2, POFF+VECSZ*2(pA)
+
+         lxv rA3, POFF+VECSZ*3(pA)
+         lxv rA4, POFF+VECSZ*4(pA)
+         lxv rA5, POFF+VECSZ*5(pA)
+         lxv rA6, POFF+VECSZ*6(pA)
+         lxv rA7, POFF+VECSZ*7(pA)
+
+         lxv rB1, POFF+VECSZ*1(pB)
+         lxv rB2, POFF+VECSZ*2(pB)
+         lxv rB3, POFF+VECSZ*3(pB)
+         lxv rB4, POFF+VECSZ*4(pB)
+/*
+ *       peeled K=1 iteration starts Cregs at zero
+ */
+            @iexp ia 8
+            @iexp ib 5
+         xvmuldp rC00, rA0, rB0
+            lxv rB5, POFF+VECSZ*@(ib)(pB)
+            @iexp ib @(ib) 1 +
+         xvmuldp rC10, rA1, rB0
+         xvmuldp rC20, rA2, rB0
+         xvmuldp rC30, rA3, rB0
+         xvmuldp rC40, rA4, rB0
+         xvmuldp rC50, rA5, rB0
+         xvmuldp rC60, rA6, rB0
+         xvmuldp rC70, rA7, rB0
+         #if KB > 2
+            lxv rB0, POFF+VECSZ*@(ib)(pB)
+            @iexp ib @(ib) 1 +
+         #endif
+         xvmuldp rC01, rA0, rB1
+         xvmuldp rC11, rA1, rB1
+         xvmuldp rC21, rA2, rB1
+         xvmuldp rC31, rA3, rB1
+         xvmuldp rC41, rA4, rB1
+         xvmuldp rC51, rA5, rB1
+         xvmuldp rC61, rA6, rB1
+         xvmuldp rC71, rA7, rB1
+         #if KB > 2
+            lxv rB1, POFF+VECSZ*@(ib)(pB)
+            @iexp ib @(ib) 1 +
+         #endif
+         xvmuldp rC02, rA0, rB2
+         xvmuldp rC12, rA1, rB2
+         xvmuldp rC22, rA2, rB2
+         xvmuldp rC32, rA3, rB2
+         xvmuldp rC42, rA4, rB2
+         xvmuldp rC52, rA5, rB2
+         xvmuldp rC62, rA6, rB2
+         xvmuldp rC72, rA7, rB2
+         #if KB > 2
+            lxv rB2, POFF+VECSZ*@(ib)(pB)
+            @iexp ib @(ib) 1 +
+         #endif
+         xvmuldp rC03, rA0, rB3
+         xvmuldp rC13, rA1, rB3
+         xvmuldp rC23, rA2, rB3
+         xvmuldp rC33, rA3, rB3
+         xvmuldp rC43, rA4, rB3
+         xvmuldp rC53, rA5, rB3
+         xvmuldp rC63, rA6, rB3
+         xvmuldp rC73, rA7, rB3
+         #if KB > 2
+            lxv rB3, POFF+VECSZ*@(ib)(pB)
+            @iexp ib @(ib) 1 +
+         #endif
+         xvmuldp rC04, rA0, rB4
+         xvmuldp rC14, rA1, rB4
+         xvmuldp rC24, rA2, rB4
+         xvmuldp rC34, rA3, rB4
+         xvmuldp rC44, rA4, rB4
+         xvmuldp rC54, rA5, rB4
+         xvmuldp rC64, rA6, rB4
+         xvmuldp rC74, rA7, rB4
+         #if KB > 2
+            lxv rB4, POFF+VECSZ*@(ib)(pB)
+            @iexp ib @(ib) 1 +
+         #endif
+         xvmuldp rC05, rA0, rB5
+         #if KB > 2
+            lxv rA0, POFF+VECSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         #endif
+         xvmuldp rC15, rA1, rB5
+         #if KB > 2
+            lxv rA1, POFF+VECSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         #endif
+         xvmuldp rC25, rA2, rB5
+         #if KB > 2
+            lxv rA2, POFF+VECSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         #endif
+         xvmuldp rC35, rA3, rB5
+         #if KB > 2
+            lxv rA3, POFF+VECSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         #endif
+         xvmuldp rC45, rA4, rB5
+         #if KB > 2
+            lxv rA4, POFF+VECSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         #endif
+         xvmuldp rC55, rA5, rB5
+         #if KB > 2
+            lxv rA5, POFF+VECSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         #endif
+         xvmuldp rC65, rA6, rB5
+         #if KB > 2
+            lxv rA6, POFF+VECSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         #endif
+         xvmuldp rC75, rA7, rB5
+         #if KB > 2
+            lxv rA7, POFF+VECSZ*@(ia)(pA)
+            @iexp ia @(ia) 1 +
+         #endif
+
+/*
+ *       K-loop fully unrolled to avoid iops that use VPU/slice
+ */
+   @iexp kk 4
+   @iwhile kk < 194
+         #if KB >= @(kk)
+            xvmaddadp rC00, rA0, rB0
+               lxv rB5, POFF+VECSZ*@(ib)(pB)
+               @iexp ib @(ib) 1 +
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+            xvmaddadp rC70, rA7, rB0
+            #if KB > @(kk)
+               lxv rB0, POFF+VECSZ*@(ib)(pB)
+               @iexp ib @(ib) 1 +
+            #endif
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+            xvmaddadp rC71, rA7, rB1
+            #if KB > @(kk)
+               lxv rB1, POFF+VECSZ*@(ib)(pB)
+               @iexp ib @(ib) 1 +
+            #endif
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+            xvmaddadp rC72, rA7, rB2
+            #if KB > @(kk)
+               lxv rB2, POFF+VECSZ*@(ib)(pB)
+               @iexp ib @(ib) 1 +
+            #endif
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+            xvmaddadp rC73, rA7, rB3
+            #if KB > @(kk)
+               lxv rB3, POFF+VECSZ*@(ib)(pB)
+               @iexp ib @(ib) 1 +
+            #endif
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+            xvmaddadp rC74, rA7, rB4
+            #if KB > @(kk)
+               lxv rB4, POFF+VECSZ*@(ib)(pB)
+               @iexp ib @(ib) 1 +
+            #endif
+            xvmaddadp rC05, rA0, rB5
+            #if KB > @(kk)
+               lxv rA0, POFF+VECSZ*@(ia)(pA)
+               @iexp ia @(ia) 1 +
+            #endif
+            xvmaddadp rC15, rA1, rB5
+            #if KB > @(kk)
+               lxv rA1, POFF+VECSZ*@(ia)(pA)
+               @iexp ia @(ia) 1 +
+            #endif
+            xvmaddadp rC25, rA2, rB5
+            #if KB > @(kk)
+               lxv rA2, POFF+VECSZ*@(ia)(pA)
+               @iexp ia @(ia) 1 +
+            #endif
+            xvmaddadp rC35, rA3, rB5
+            #if KB > @(kk)
+               lxv rA3, POFF+VECSZ*@(ia)(pA)
+               @iexp ia @(ia) 1 +
+            #endif
+            xvmaddadp rC45, rA4, rB5
+            #if KB > @(kk)
+               lxv rA4, POFF+VECSZ*@(ia)(pA)
+               @iexp ia @(ia) 1 +
+            #endif
+            xvmaddadp rC55, rA5, rB5
+            #if KB > @(kk)
+               lxv rA5, POFF+VECSZ*@(ia)(pA)
+               @iexp ia @(ia) 1 +
+            #endif
+            xvmaddadp rC65, rA6, rB5
+            #if KB > @(kk)
+               lxv rA6, POFF+VECSZ*@(ia)(pA)
+               @iexp ia @(ia) 1 +
+            #endif
+            xvmaddadp rC75, rA7, rB5
+            #if KB > @(kk)
+               lxv rA7, POFF+VECSZ*@(ia)(pA)
+               @iexp ia @(ia) 1 +
+            #endif
+         #endif
+      @iexp kk @(kk) 2 +
+   @endiwhile
+/*
+ *       Write out to C
+ */
+
+         addi pC3, pC, 192
+      @iexp jj 0
+      @iwhile jj < 6
+         @iif jj < 3
+            @define pC @pC@
+            @iexp kk @(jj)
+         @endiif
+         @iif jj > 2
+            @define pC @pC3@
+            @iexp kk @(jj) -3 +
+         @endiif
+         @iexp kk @(kk) 4 *
+         #if !defined(BETA0)
+            lxvd2x rA0, i16_@(kk), @(pC)
+         @iexp kk @(kk) 1 +
+            lxvd2x rA1, i16_@(kk), @(pC)
+         @iexp kk @(kk) 1 +
+            lxvd2x rA2, i16_@(kk), @(pC)
+         @iexp kk @(kk) 1 +
+            lxvd2x rA3, i16_@(kk), @(pC)
+         #endif
+         @iexp kk @(kk) -3 +
+         ATL_vvrsum2(rC0@(jj), rC1@(jj), rB0);
+         #ifdef BETA1
+            xvadddp rC0@(jj), rC0@(jj), rA0
+         #elif !defined(BETA0)
+            xvsubdp rC0@(jj), rC0@(jj), rA0
+         #endif
+         stxvd2x rC0@(jj), i16_@(kk), @(pC)
+         @iexp kk @(kk) 1 +
+         ATL_vvrsum2(rC2@(jj), rC3@(jj), rB0);
+         #ifdef BETA1
+            xvadddp rC2@(jj), rC2@(jj), rA1
+         #elif !defined(BETA0)
+            xvsubdp rC2@(jj), rC2@(jj), rA1
+         #endif
+         stxvd2x rC2@(jj), i16_@(kk), @(pC)
+         @iexp kk @(kk) 1 +
+         ATL_vvrsum2(rC4@(jj), rC5@(jj), rB0);
+         #ifdef BETA1
+            xvadddp rC4@(jj), rC4@(jj), rA2
+         #elif !defined(BETA0)
+            xvsubdp rC4@(jj), rC4@(jj), rA2
+         #endif
+         stxvd2x rC4@(jj), i16_@(kk), @(pC)
+         @iexp kk @(kk) 1 +
+         ATL_vvrsum2(rC6@(jj), rC7@(jj), rB0);
+         #ifdef BETA1
+            xvadddp rC6@(jj), rC6@(jj), rA3
+         #elif !defined(BETA0)
+            xvsubdp rC6@(jj), rC6@(jj), rA3
+         #endif
+         stxvd2x rC6@(jj), i16_@(kk), @(pC)
+         @iexp jj @(jj) 1 +
+         @undef pC
+      @endiwhile
+
+         addi pC, pC, 8*6*ELTSZ /* pC += mu*nu*sizeof */
+         ADDB pB, pB, incBn     /* pB += KB*nu*sizeof */
+      bdnz+ MLOOP
+      mr pB, pB0
+      mtctr NNU
+      ADDA pA, pA, incAm        /* pA += KB*mu*sizeof */
+      addic. NMU, NMU, -1
+   bne+ MLOOP
+/*
+ * Restore vec regs
+ */
+@iexp ii 0
+@iwhile ii < 12
+   @iexp kk @(ii) 20 +
+   lxv @(kk), VOFF+16*@(ii)(r1)
+   @iexp ii @(ii) 1 +
+@endiwhile
+/*
+ * Restore iregs
+ */
+   ld r2, 24(r1)        /* TOC reg always at 24(sp) */
+@iexp ii 1
+@iwhile ii < 12
+   ld i16_@(ii), IOFF+8*@(ii)(r1)
+   @iexp ii @(ii) 1 +
+@endiwhile
+   ld pC3, IOFF+8*@(ii)(r1)
+/*
+ * Dealloc stack frame & return
+ */
+   addi r1, r1, FSIZE
+   blr
+
