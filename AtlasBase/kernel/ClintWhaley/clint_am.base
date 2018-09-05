@@ -15953,25 +15953,27 @@ ATL_asmdecor(ATL_USERMM):
    addi r1, r1, FSIZE
 @endiif
    blr
-@ROUT ATL_dkmm8x6x512_vsx.S
+@ROUT ATL_kmm8x6x256_vsx.S
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2018
 #include "atlas_asm.h"
-
 /*
  * This kernel optimized for POWER9, specifically early versions that have
  * generic functional units (sometimes called slices) that do all integer &
  * floating point operations using the same generic units.  This means that
  * doing loop & ptr arithmetic reduces your floating-point peak, since they
  * use the same functional unit!
+@BEGINSKIP
  * To get around this, we fully unroll the K loop, and encode the load offsets
  * manually using lxsd.  Unfortunately, this instruction comes from AltiVec
  * originally, so its register numbering is offset by -32, compared to later
  * VSX instructions.  Therefore, we must use the A/B registers in using VSX
  * regs 32-63, but when we load these guys with VSX, we will use reg #s 0-31!
+@ENDSKIP
  * Note that these generic FUs also do all vector permuations, which means
  * we must avoid any type of permute in the loop.  Since m-vectorized kerns
  * require broadcast of B elements (splat for PPC), we use k-vectorized instead
- * which allows us to use straight loads in the innerloop.  The system has 4
+ * which allows us to use straight loads in the innerloop.  
+ * The system has 4
  * load/store units, so this is fine.
  */
 
@@ -16013,11 +16015,16 @@ ATL_asmdecor(ATL_USERMM):
    #define xvadddp xvaddsp
    #define xvmaddadp xvmaddasp
    #define xvmuldp xvmulsp
-
    #define KMUL *2
+   #if KB > 512
+      #error "MAX KB is 512!"
+   #endif
 #else
    #define ELTSZ 8
    #define KMUL
+   #if KB > 256
+      #error "MAX KB is 256!"
+   #endif
 #endif
 #define VECSZ 16
 /*
@@ -16043,10 +16050,13 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #if KB*6*ELTSZ > 32767
    #define incBn r5
    #define incAm r11
+   #define pA1 r12
+   #define pB1 r13
    #define ADDA add
    #define ADDB add
 #elif KB*8*ELTSZ > 32767
    #define incAm r5
+   #define pA1 r11
    #define ADDA add
    #define ADDB addi
    #define incBn KB*6*ELTSZ    /* KB*nu*sizeof */
@@ -16056,30 +16066,57 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
    #define incAm KB*8*ELTSZ    /* KB*mu*sizeof */
    #define incBn KB*6*ELTSZ    /* KB*nu*sizeof */
 #endif
-#define pC3 r12
+#define i128_0 0
 @iexp ii 1
-@iwhile ii < 12
-   @iexp kk @(ii) 12 +
-#define i16_@(ii) r@(kk)
+@iwhile ii < 3
+   @iexp kk @(ii) 13 +
+#define i128_@(ii) r@(kk)
    @iexp ii @(ii) 1 +
 @endiwhile
 /* #define Kb0 r14 */
+#if defined(__BIG_ENDIAN__)
+   #define BIGENDIEN 1
+#elif defined(__ORDER_BIG_ENDIAN__) && defined(__BYTE_ORDER__)
+   #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      #define BIGENDIEN 1
+   #endif
+#endif
 #if defined(SREAL) || defined(SCPLX)
-   #define ATL_vvrsum4(s0_, s1_, s2_, s3_, t_, h_) \
-      xxmrghw t_, s0_, s1_ ; \
-      xxmrglw s0_, s0_, s1_ ; \
-      xvaddsp s0_, s0_, t_ ; \
-      xxmrghw h_, s2_, s3_ ; \
-      xxmrglw s2_, s2_, s3_ ; \
-      xvaddsp s2_, s2_, h_ ; \
-      xxpermdi t_, s0_, s2_, 0 ; \
-      xxpermdi s0_, s0_, s2_, 3 ; \
-      xvaddsp s0_, s0_, t_ 
+   #ifdef BIGENDIEN
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_, t_, h_) \
+         xxmrghw t_, s0_, s1_ ; \
+         xxmrglw s0_, s0_, s1_ ; \
+         xvaddsp s0_, s0_, t_ ; \
+         xxmrghw h_, s2_, s3_ ; \
+         xxmrglw s2_, s2_, s3_ ; \
+         xvaddsp s2_, s2_, h_ ; \
+         xxpermdi t_, s0_, s2_, 0 ; \
+         xxpermdi s0_, s0_, s2_, 3 ; \
+         xvaddsp s0_, s0_, t_ 
+    #else
+      #define ATL_vvrsum4(s3_, s2_, s1_, s0_, t_, h_) \
+         xxmrghw t_, s0_, s1_ ; \
+         xxmrglw s0_, s0_, s1_ ; \
+         xvaddsp s0_, s0_, t_ ; \
+         xxmrghw h_, s2_, s3_ ; \
+         xxmrglw s2_, s2_, s3_ ; \
+         xvaddsp s2_, s2_, h_ ; \
+         xxpermdi t_, s0_, s2_, 0 ; \
+         xxpermdi s0_, s0_, s2_, 3 ; \
+         xvaddsp s3_, s0_, t_ 
+    #endif
 #else
-   #define ATL_vvrsum2(s0_, s1_, t_) \
-      xxpermdi t_, s0_, s1_, 0 ; \
-      xxpermdi s0_, s0_, s1_, 3 ; \
-      xvadddp s0_, s0_, t_ 
+   #ifdef BIGENDIEN
+      #define ATL_vvrsum2(s0_, s1_, t_) \
+         xxpermdi t_, s0_, s1_, 0 ; \
+         xxpermdi s0_, s0_, s1_, 3 ; \
+         xvadddp s0_, s0_, t_ 
+   #else
+      #define ATL_vvrsum2(s1_, s0_, t_) \
+         xxpermdi t_, s0_, s1_, 0 ; \
+         xxpermdi s0_, s0_, s1_, 3 ; \
+         xvadddp s1_, s0_, t_ 
+   #endif
 #endif
 .local MLOOP
 .local NLOOP
@@ -16092,7 +16129,11 @@ ATL_asmdecor(ATL_USERMM):
  *    f14-f31 -> vsr14-vsr31 -> 18*8 = 144 bytes
  *    v20-v31 -> vsr52-vsr63 -> 12*16 = 192 bytes
  */
-#define ISZ 12*8
+#ifdef pB1
+   #define ISZ 12*4
+#else
+   #define ISZ 12*3
+#endif
 #define FSZ 0
 #define VSZ 12*16
 #define LSZ 0
@@ -16102,14 +16143,13 @@ ATL_asmdecor(ATL_USERMM):
 #define IOFF (FOFF+FSZ)
 #define FSIZE (MSZ+LSZ+VSZ+FSZ+ISZ)
 /*
- * Prefetch B using stream 3; pref A doesn't supply same speedup, probably
- * need to fetch it line at a time just before use
+ * Prefetch B using stream 3; pref A using stream 2
  */
    li r9, -1
    rldicr r9, r9, 0, 2
    dcbt r9, pB, 0x8
    li r9, -1
-   #if 0
+   #if 1
    rldicr r9, r9, 0, 0
    dcbt r9, pA, 0x8
    #endif
@@ -16122,16 +16162,17 @@ ATL_asmdecor(ATL_USERMM):
  */
    std r2, 24(r1)        /* TOC reg always at 24(sp) */
 @iexp ii 1
-@iwhile ii < 12
-   std i16_@(ii), IOFF+8*@(ii)(r1)
-   li  i16_@(ii), 16*@(ii)
+@iwhile ii < 3
+   std i128_@(ii), IOFF+8*@(ii)(r1)
+   li  i128_@(ii), 128*@(ii)
    @iexp ii @(ii) 1 +
 @endiwhile
-   std pC3, IOFF+8*@(ii)(r1)
+   #ifdef pB1
+      std pB1, IOFF+8*@(ii)(r1)
+   #endif
 /*
  * Save vec regs
  */
-   #define i16_0 0
 @iexp ii 0
 @iwhile ii < 12
    @iexp kk @(ii) 20 +
@@ -16147,6 +16188,15 @@ ATL_asmdecor(ATL_USERMM):
    li pB0, POFF
    sub pB, pB, pB0
    sub pA, pA, pB0
+   #if defined(pA1) || defined(pB1)
+      add pB0, pB0, pB0  /* pB0 = 2*(-32768) */
+   #endif
+   #if defined(pA1)
+      sub pA1, pA, pB0  /* pA1 = pA + 65536 */
+   #endif
+   #if defined(pB1)
+      sub pB1, pB, pB0  /* pB1 = pB + 65536 */
+   #endif
    #if KB*6*ELTSZ > 32767
       li incBn KB
       mulli incBn, incBn, 6*ELTSZ  /* incBn = KB*nu*sizeof */
@@ -16165,7 +16215,6 @@ ATL_asmdecor(ATL_USERMM):
          lxv rB0, POFF+0(pB)
          lxv rA1, POFF+VECSZ*1(pA)
          lxv rA2, POFF+VECSZ*2(pA)
-         addi pC3, pC, ELTSZ*3*8
 
          lxv rA3, POFF+VECSZ*3(pA)
          lxv rA4, POFF+VECSZ*4(pA)
@@ -16189,7 +16238,7 @@ ATL_asmdecor(ATL_USERMM):
          xvmuldp rC20, rA2, rB0
             dcbtstt 0, pC
          xvmuldp rC30, rA3, rB0
-            dcbtstt i16_8, pC
+            dcbtstt i128_1, pC
          xvmuldp rC40, rA4, rB0
          xvmuldp rC50, rA5, rB0
          xvmuldp rC60, rA6, rB0
@@ -16200,7 +16249,9 @@ ATL_asmdecor(ATL_USERMM):
          #endif
          xvmuldp rC01, rA0, rB1
          xvmuldp rC11, rA1, rB1
-            dcbtstt i16_2, pC3
+         #ifdef SREAL
+            dcbtstt i128_2, pC
+         #endif
          xvmuldp rC21, rA2, rB1
          xvmuldp rC31, rA3, rB1
          xvmuldp rC41, rA4, rB1
@@ -16292,7 +16343,7 @@ ATL_asmdecor(ATL_USERMM):
  *       K-loop fully unrolled to avoid iops that use VPU/slice
  */
    @iexp kk 4
-   @iwhile kk < 128
+   @iwhile kk < 256
          #if KB >= @(kk) KMUL
             xvmaddadp rC00, rA0, rB0
                lxv rB5, POFF+VECSZ*@(ib)(pB)
@@ -16413,43 +16464,35 @@ ATL_asmdecor(ATL_USERMM):
                lxv rA1, 16*@(kk)(pC)
             #endif
          @iexp kk @(kk) -1 +
-            ATL_vvrsum4(rC3@(jj), rC2@(jj), rC1@(jj), rC0@(jj), rB0, rB1);
+            ATL_vvrsum4(rC0@(jj), rC1@(jj), rC2@(jj), rC3@(jj), rB0, rB1);
             #ifdef BETA1
-               xvadddp rC3@(jj), rC3@(jj), rA0
+               xvadddp rC0@(jj), rC0@(jj), rA0
             #elif !defined(BETA0)
-               xvsubdp rC3@(jj), rC3@(jj), rA0
+               xvsubdp rC0@(jj), rC0@(jj), rA0
             #endif
-            stxv rC3@(jj), 16*@(kk)(pC)
+            stxv rC0@(jj), 16*@(kk)(pC)
          @iexp kk @(kk) 1 +
-            ATL_vvrsum4(rC7@(jj), rC6@(jj), rC5@(jj), rC4@(jj), rB0, rB1);
+            ATL_vvrsum4(rC4@(jj), rC5@(jj), rC6@(jj), rC7@(jj), rB0, rB1);
             #ifdef BETA1
-               xvadddp rC7@(jj), rC7@(jj), rA1
+               xvadddp rC4@(jj), rC4@(jj), rA1
             #elif !defined(BETA0)
-               xvsubdp rC7@(jj), rC7@(jj), rA1
+               xvsubdp rC4@(jj), rC4@(jj), rA1
             #endif
-            stxv rC7@(jj), 16*@(kk)(pC)
+            stxv rC4@(jj), 16*@(kk)(pC)
             @iexp jj @(jj) 1 +
          @endiwhile
          #else
       @iexp jj 0
       @iwhile jj < 6
-         @iif jj < 3
-            @define pC @pC@
-            @iexp kk @(jj)
-         @endiif
-         @iif jj > 2
-            @define pC @pC3@
-            @iexp kk @(jj) -3 +
-         @endiif
-         @iexp kk @(kk) 4 *
+         @iexp kk @(jj) 4 *
             #if !defined(BETA0)
-               lxvd2x rA0, i16_@(kk), @(pC)
+               lxv rA0, 16*@(kk)(pC)
          @iexp kk @(kk) 1 +
-               lxvd2x rA1, i16_@(kk), @(pC)
+               lxv rA1, 16*@(kk)(pC)
          @iexp kk @(kk) 1 +
-               lxvd2x rA2, i16_@(kk), @(pC)
+               lxv rA2, 16*@(kk)(pC)
          @iexp kk @(kk) 1 +
-               lxvd2x rA3, i16_@(kk), @(pC)
+               lxv rA3, 16*@(kk)(pC)
             #endif
          @iexp kk @(kk) -3 +
             ATL_vvrsum2(rC0@(jj), rC1@(jj), rB0);
@@ -16458,7 +16501,7 @@ ATL_asmdecor(ATL_USERMM):
             #elif !defined(BETA0)
                xvsubdp rC0@(jj), rC0@(jj), rA0
             #endif
-            stxvd2x rC0@(jj), i16_@(kk), @(pC)
+            stxv rC0@(jj), 16*@(kk)(pC)
          @iexp kk @(kk) 1 +
             ATL_vvrsum2(rC2@(jj), rC3@(jj), rB0);
             #ifdef BETA1
@@ -16466,7 +16509,7 @@ ATL_asmdecor(ATL_USERMM):
             #elif !defined(BETA0)
                xvsubdp rC2@(jj), rC2@(jj), rA1
             #endif
-            stxvd2x rC2@(jj), i16_@(kk), @(pC)
+            stxv rC2@(jj), 16*@(kk)(pC)
          @iexp kk @(kk) 1 +
             ATL_vvrsum2(rC4@(jj), rC5@(jj), rB0);
             #ifdef BETA1
@@ -16474,7 +16517,7 @@ ATL_asmdecor(ATL_USERMM):
             #elif !defined(BETA0)
                xvsubdp rC4@(jj), rC4@(jj), rA2
             #endif
-            stxvd2x rC4@(jj), i16_@(kk), @(pC)
+            stxv rC4@(jj), 16*@(kk)(pC)
          @iexp kk @(kk) 1 +
             ATL_vvrsum2(rC6@(jj), rC7@(jj), rB0);
             #ifdef BETA1
@@ -16482,9 +16525,8 @@ ATL_asmdecor(ATL_USERMM):
             #elif !defined(BETA0)
                xvsubdp rC6@(jj), rC6@(jj), rA3
             #endif
-            stxvd2x rC6@(jj), i16_@(kk), @(pC)
+            stxv rC6@(jj), 16*@(kk)(pC)
             @iexp jj @(jj) 1 +
-            @undef pC
          @endiwhile
          #endif
 
@@ -16510,11 +16552,13 @@ ATL_asmdecor(ATL_USERMM):
  */
    ld r2, 24(r1)        /* TOC reg always at 24(sp) */
 @iexp ii 1
-@iwhile ii < 12
-   ld i16_@(ii), IOFF+8*@(ii)(r1)
+@iwhile ii < 3
+   ld i128_@(ii), IOFF+8*@(ii)(r1)
    @iexp ii @(ii) 1 +
 @endiwhile
-   ld pC3, IOFF+8*@(ii)(r1)
+   #ifdef pB1
+      ld pB1, IOFF+8*@(ii)(r1)
+   #endif
 /*
  * Dealloc stack frame & return
  */
