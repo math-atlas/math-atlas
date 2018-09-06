@@ -37225,9 +37225,9 @@ int main(int nargs, char **args)
       #endif
       #ifdef TCPLX
          #if SD_Right == 1
-         void B2BLK(const size_t, const SCALAR,
-                    const TYPE*, const size_t, TYPE*, TYPE*);
          void A2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
+         void B2BLK(const size_t, const SCALAR,
                     const TYPE*, const size_t, TYPE*, TYPE*);
          #else
          void A2BLK(const size_t, const SCALAR,
@@ -37235,6 +37235,8 @@ int main(int nargs, char **args)
          void B2BLK(const size_t, const size_t, const SCALAR,
                     const TYPE*, const size_t, TYPE*, TYPE*);
          #endif
+         void BLK2C(const size_t, const size_t, const TYPE*, const TYPE*,
+                       const TYPE*, const TYPE*, TYPE*, const size_t);
          void AMM_bn(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                      TYPE*, const TYPE*, const TYPE*, const TYPE*);
       #else
@@ -37249,6 +37251,8 @@ int main(int nargs, char **args)
          void B2BLK(const size_t, const size_t, const SCALAR,
                     const TYPE*, const size_t, TYPE*);
          #endif
+         void BLK2C(const size_t, const size_t, const SCALAR, const TYPE*,
+                       const SCALAR, const TYPE*, const size_t);
       #endif
          void AMM_b0(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                      TYPE*, const TYPE*, const TYPE*, const TYPE*);
@@ -37470,22 +37474,6 @@ static double getMflops(double m, double n, double k)
       #endif
    #elif defined(TIME_SYRKK)
       return(1e-6*n*(n+1)*k);
-#if 0 /* already defined with TRMVK since the calc is same */
-   #elif defined(TIME_TRMM)
-      double muls, adds;
-      #ifdef SIDE_R_
-         muls = ((double)M)*N*(N+1.0) / 2.0;
-         adds = ((double)M)*N*(N-1.0) / 2.0;
-      #else
-         muls = ((double)N)*M*(M+1.0) / 2.0;
-         adds = ((double)N)*M*(M-1.0) / 2.0;
-      #endif
-      #ifdef TCPLX
-         return(1e-6*(6.0*muls + 2.0*adds));
-      #else
-         return(1e-6*(muls + adds));
-      #endif
-#endif
    #elif defined(TIME_COPY)
       return(1e-6*m*n);
    #else
@@ -37575,16 +37563,20 @@ double GetKmmMflop
  * special declaration for TRMM 
  */
    #ifdef TIME_TRMM
-      void *wp;
+      void *wp=NULL;
       TYPE *pt, *pr, *pc;
-      int sz, szT, szR;
-      int M = mb, N = nb;
+      size_t sz, szT, szR;
       int nmu = (mb+mu-1)/mu, nnu=(nb+nu-1)/nu;
       int tmb=nmu*mu, tnb=nnu*nu;
       #if SD_Right == 1
          CINT K = ((nb+ku-1)/ku)*ku;
       #else
          CINT K = ((mb+ku-1)/ku)*ku;
+      #endif
+      #ifdef TCPLX
+         TYPE alpT[2] = {ATL_rone, ATL_rzero};
+      #else
+         #define alpT ATL_rone
       #endif
    #endif
    setsz = mb*kb + kb*nb;
@@ -37630,31 +37622,12 @@ double GetKmmMflop
       /*incA *= mb; */
       #ifdef TIME_TRMM
 /*
- *    allocate workspace for TRMM
+ *       allocate workspace for TRMM
  */
-      {
-         int szFull, szPan, szCorner;
-         int tmu, tku, tuu, ntfu, tKr;
          #if SD_Right == 1
-            tnu = nu, tku = ku;
-            tuu = Mmax(tnu, tku);
-            /* first do full blocks */
-            ntfu = N/tuu;
-            tKr = N - ntfu*tuu;
-            szFull = (ntfu*(ntfu+1)/2) * tuu * tuu;
-            /* now the partial panel */
-            #if ( (!defined(UPLO_U_) && !defined(TRANSA_T_)) || \
-                (defined(UPLO_U_) && defined(TRANSA_T_)) )
-               szPan = ((tKr+tku-1)/tku)*ntfu * tuu * tku;
-            #else
-               szPan = ((tKr+tnu-1)/tnu)*ntfu * tuu * tnu;
-            #endif
-            /* finally the partial block */
-            szCorner = ((tKr + tnu - 1)/tnu) 
-                  * ((tKr + tku - 1)/tku) * tnu * tku;
-            szT = szFull + szPan + szCorner;
-            szR = tmb*K;
-            szC = (((mu*nu+vlen-1)/vlen*vlen)*nmu*nnu;
+            szT = ((tnb*K+vlen-1)/vlen)*vlen;
+            szR = ((tmb*K+vlen-1)/vlen)*vlen;
+            szC = (((mu*nu+vlen-1)/vlen)*vlen)*nmu*nnu;
             sz = ATL_MulBySize(szT + nu*ku + szR + mu*ku + szC + (mu+mu)*nu +
                                3*ATL_Cachelen);
             if (sz < ATL_MaxMalloc)
@@ -37670,23 +37643,8 @@ double GetKmmMflop
             pc = pr + (szR SHIFT);
             pc = ATL_AlignPtr(pc);
          #else
-            tmu = mu, tku = ku;
-            tuu = Mmax(tmu, tku);
-            /* first do full blocks */
-            ntfu = M/tuu;
-            tKr = M - ntfu*tuu;
-            szFull = (ntfu*(ntfu+1)/2) * tuu * tuu;
-            #if ( (!defined(UPLO_U_) && !defined(TRANSA_T_)) || \
-                (defined(UPLO_U_) && defined(TRANSA_T_)) )
-               szPan = ((tKr+tmu-1)/tmu)*ntfu * tuu * tmu;
-            #else
-               szPan = ((tKr+tku-1)/tku)*ntfu * tuu * tku;
-            #endif
-            /* finally the partial block */
-            szCorner = ((tKr + tmu - 1)/tmu) 
-                       * ((tKr + tku - 1)/tku) * tmu * tku;
-            szT = szFull + szPan + szCorner;
-            szR = tnb*K;
+            szT = ((tmb*K+vlen-1)/vlen)*vlen;
+            szR = ((tnb*K+vlen-1)/vlen)*vlen;
             szC = (((mu*nu+vlen-1)/vlen)*vlen)*nmu*nnu;
             sz = ATL_MulBySize(szT + mu*ku + szR + nu*ku + szC + (mu+mu)*nu +
                          3*ATL_Cachelen);
@@ -37703,7 +37661,6 @@ double GetKmmMflop
             pc = pr + (szR SHIFT);
             pc = ATL_AlignPtr(pc);
          #endif
-      }
       #endif
    #else
       {
@@ -37870,33 +37827,33 @@ double GetKmmMflop
       #elif defined(TIME_TRMM)
          #if SD_Right == 1
             #ifdef TCPLX
-               B2BLK(N, M, alpha, B, ldc, pr, pr+szR);
-               A2BLK(N, alpha, A, lda, pt, pt+szT);
+               A2BLK(nb, mb, alpT, b, ldc, pr, pr+szR);
+               B2BLK(nb, alpT, a, lda, pt, pt+szT);
                AMM_b0(nmu, nnu, K, pr+szR, pt+szT, pc, pr,pt+szT, pc+szC);
                AMM_b0(nmu, nnu, K, pr, pt+szT, pc+szC, pr, pt, pc);
                AMM_bn(nmu, nnu, K, pr, pt, pc, pr+szR, pt, pc+szC);
                AMM_b1(nmu, nnu, K, pr+szR, pt, pc+szC, pr+szR, pt+szT, pc);
-               BLK2C(M, N, one, pc, pc+szC, zero, B, ldc);
+               BLK2C(mb, nb, one, pc, pc+szC, zero, b, ldc);
             #else
-               B2BLK(N, M, alpha, B, ldc, pr);
-               A2BLK(N, alpha, A, lda, pt);
+               A2BLK(nb, mb, alpT, b, ldc, pr);
+               B2BLK(nb, alpT, a, lda, pt);
                AMM_b0(nmu, nnu, K, pr, pt, pc, pr, pt, pc);
-               BLK2C(M, N, one, pc, zero, B, ldc);
+               BLK2C(mb, nb, one, pc, zero, b, ldc);
             #endif
          #else
             #ifdef TCPLX
-               A2BLK(M, alpha, A, lda, pt, pt+szT);
-               B2BLK(M, N, alpha, B, ldc, pr, pr+szR);
+               A2BLK(mb, alpT, a, lda, pt, pt+szT);
+               B2BLK(mb, nb, alpT, b, ldc, pr, pr+szR);
                AMM_b0(nmu, nnu, K, pt+szT, pr+szR, pc, pt, pr+szR, pc+szC);
                AMM_b0(nmu, nnu, K, pt, pr+szR, pc+szC, pt, pr, pc);
                AMM_bn(nmu, nnu, K, pt, pr, pc, pt+szT, pr, pc+szC);
                AMM_b1(nmu, nnu, K, pt+szT, pr, pc+szC, pt+szT, pr+szR, pc);
-               BLK2C(M, N, one, pc, pc+szC, zero, B, ldc);
+               BLK2C(mb, nb, one, pc, pc+szC, zero, b, ldc);
             #else
-               A2BLK(M, alpha, A, lda, pt);
-               B2BLK(M, N, alpha, B, ldc, pr);
+               A2BLK(mb, alpT, a, lda, pt);
+               B2BLK(mb, nb, alpT, b, ldc, pr);
                AMM_b0(nmu, nnu, K, pt, pr, pc, pt, pr, pc);
-               BLK2C(M, N, one, pc, zero, B, ldc);
+               BLK2C(mb, nb, one, pc, zero, b, ldc);
             #endif
          #endif
       #elif defined(TIME_SYRKK)
