@@ -8424,6 +8424,8 @@ int MMExpandK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp,
    unsigned int kbB, k, U;
    if (!maxK)
       maxK = 1024;
+   if (mp->kbmax)
+      maxK = Mmin(maxK, mp->kbmax);
 /*
  * In initial search, recursive doubling
  */
@@ -8443,7 +8445,7 @@ int MMExpandK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp,
          kbB = k;
       }
    }
-   while (k <= maxK && mf*1.02 > mfB);
+   while (k+k <= maxK && mf*1.02 > mfB);
    if (ku < 4)
    {
       U = ATL_iLCM(mp->nu, ku);
@@ -8610,7 +8612,8 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
  */
 {
    const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku; 
-   unsigned int MB0=mp->mbB, NB0=mp->nbB, KB0=mp->kbB;
+   unsigned int MB0=mp->mbB, NB0=mp->nbB, KB0=mp->kbB; 
+   unsigned int KBMAX = mp->kbmax ? mp->kbmax : 512;
    unsigned int MU, NU;
    const int NK=(tflag>>31)&1;
    int kb=mp->kbB, mbB, nbB, kbB, mb, nb, maxD, maxDB;
@@ -8640,18 +8643,26 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    mfB = TimeMMKernel(verb, tflag, mp, pre, mb, nb, kb, beta, 0, -1);
    printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID, mbB, nbB, kb, mfB);
 
-   AGAIN:
+@skip   AGAIN:
       do   /* loop to check that best of M/N expansion improved performance */
       {
          double mfM, mfN, mf=0.0, penM, penN;
          int mbN=mb+MU, nbN=nb+NU;
          const unsigned int kbm = (NK) ? nb : mbN, kbn = (NK) ? nbN : mb;
 
+         if (kbn > KBMAX && kbm > KBMAX)
+             break;
          @callproc setFast M kbm
          @callproc setFast N kbn
-         mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kbn, beta, 0, -1);
+         if (kbn <= KBMAX)
+            mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kbn, beta, 0, -1);
+         else
+            mfN = 0;
          printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kbn,mfN);
-         mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kbm, beta, 0, -1);
+         if (kbn <= KBMAX)
+            mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kbm, beta, 0, -1);
+         else
+            mfM = 0;
          printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kbm,mfM);
 
          FASTER = 0;

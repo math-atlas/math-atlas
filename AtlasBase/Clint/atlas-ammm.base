@@ -166,7 +166,10 @@ ID=51 MU=32 NU=4 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_damm32x4x2rp_avxz.S' \
 ID=52 MU=32 NU=6 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_damm32x6x1_avxz.S' \
       ASM=GAS_x8664 VLEN=8 KRUNTIME=1
 ID=53 MU=8 NU=6 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x256_vsx.S' \
-      KMAJ=2 KVEC=1 VLEN=2 SSE=3 KBMAX=258 ASM=GAS_PPC \
+      KMAJ=2 KVEC=1 VLEN=2 KBMAX=258 ASM=GAS_PPC \
+      COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
+ID=54 MU=8 NU=6 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x16_vsx.S' \
+      KMAJ=2 KVEC=1 VLEN=2 ASM=GAS_PPC \
       COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 VLEN=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_samm16x4x1_av.c' \
@@ -251,8 +254,11 @@ ID=51 MU=64 NU=4 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_damm32x4x2rp_avxz.S' \
       ASM=GAS_x8664 VLEN=16 KRUNTIME=1 
 ID=52 MU=64 NU=6 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_damm32x6x1_avxz.S' \
       ASM=GAS_x8664 VLEN=16 KRUNTIME=1
-ID=53 MU=8 NU=6 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x256_vsx.S' \
-     KMAJ=4 KVEC=1 VLEN=4 SSE=3 KBMAX=516 ASM=GAS_PPC \
+ID=53 MU=8 NU=6 KU=4 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x256_vsx.S' \
+     KMAJ=4 KVEC=1 VLEN=4 KBMAX=516 ASM=GAS_PPC \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
+ID=54 MU=8 NU=6 KU=4 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x16_vsx.S' \
+     KMAJ=4 KVEC=1 VLEN=4 KBMAX=516 ASM=GAS_PPC \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
 @ROUT samcases.idx
 @ROUT atlas_gnuvec.h
@@ -35853,9 +35859,9 @@ int minSquareNB(char pre, size_t CS, ATL_mmnode_t *mmb)
    D = sqrt(mupnu*mupnu + 3.0*(NELT<<2)) / 6.0;
    D -= mupnu;
    if (pre == 'd' || pre == 'z')
-      D = Mmax(256,D);
+      D = Mmin(256,D);
    else
-      D = Mmax(512,D);
+      D = Mmin(512,D);
    return(D);
 }
 
@@ -35898,10 +35904,16 @@ void do_ipdek(int verb, char pre, int NEK)
       N = mp->mbB;
    }
    U = (U == 1 || U == 2) ? 4 : U;
+   if (mp->kbmax)
+      assert(U <= mp->kbmax);
    for (i=U; i < N; i += U)
    {
       ATL_mmnode_t *p;
       unsigned int b;
+      if (mp->kbmin && i < mp->kbmin)
+          continue;
+      if (mp->kbmax && i > mp->kbmax)
+         break;
       printf("   FINDING BEST CASE FOR %c=K=%u:\n", ch, i);
       p = CloneMMNode(mp);
       if (NEK)
@@ -36186,6 +36198,8 @@ void srch_menUM(char pre, int verb)
    U = ATL_iLCM(bp->mu, bp->nu);
    D = Mmax(bp->mbB, bp->nbB);
    maxK = Mmax(bp->kbB, D);
+   if (bp->kbmax)
+      maxK = Mmin(maxK, bp->kbmax);
    for (d=U; d <= D; d += U)
    {
       ATL_mmnode_t *mp;
