@@ -16008,6 +16008,9 @@ ATL_asmdecor(ATL_USERMM):
    @iexp kk @(kk) -1 +
 @endiwhile
 
+#if defined(SCPLX) && !defined(SREAL)
+   #define SREAL 1
+#endif
 #ifdef SREAL
    #define ELTSZ 4
    #define lxvd2x lxvw4x
@@ -16758,3 +16761,168 @@ KDONE:
    addi r1, r1, FSIZE
    blr
 
+@ROUT ATL_kmm7x7x2v16_vsx.S
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2018
+#include "atlas_asm.h"
+
+#ifdef SREAL
+   #define ELTSZ 4
+   #define lxvd2x lxvw4x
+   #define xvsubdp xvsubsp
+   #define xvadddp xvaddsp
+   #define xvmaddadp xvmaddasp
+   #define xvmuldp xvmulsp
+   #define KMUL *2
+#else
+   #define ELTSZ 8
+   #define KMUL
+#endif
+#define VECSZ 16
+@iexp k 0
+@iexp j 0
+@iwhile j < 7
+   @iexp i 0
+   @iwhile i < 7
+#define rC@(i)@(j) v@(k)
+      @iexp k @(k) 1 +
+      @iexp i @(i) 1 +
+   @endiwhile
+   @iexp j @(j) 1 +
+@endiwhile
+@iexp i 0
+@iwhile i < 7
+   @iexp ib @(i) 7 +
+#define rA@(i)
+#define rB@(ib)
+   @iexp k @(k) 1 +
+   @iexp i @(i) 1 +
+@endiwhile
+/*
+                     r3       r4     r5         r6         r7        r8
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                       r9          r10     96(r1)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+#define pB0 r0
+#define NMU r3
+#define NNU r4
+#define pA  r6
+#define pB  r7
+#define pC  r8
+#define pfA r9
+#define pfB r10
+#define KS r5
+#define KV r11
+#define pA0 r12
+#define pBn r30
+#define incAm r29
+#define incBn r28
+#define i128_0 0
+#define i128_1 r14
+#define i128_2 r15
+/* #define Kb0 r14 */
+#if defined(__BIG_ENDIAN__)
+   #define BIGENDIEN 1
+#elif defined(__ORDER_BIG_ENDIAN__) && defined(__BYTE_ORDER__)
+   #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      #define BIGENDIEN 1
+   #endif
+#endif
+#if defined(SREAL) || defined(SCPLX)
+   #ifdef BIGENDIEN
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_, t_, h_) \
+         xxmrghw t_, s0_, s1_ ; \
+         xxmrglw s0_, s0_, s1_ ; \
+         xvaddsp s0_, s0_, t_ ; \
+         xxmrghw h_, s2_, s3_ ; \
+         xxmrglw s2_, s2_, s3_ ; \
+         xvaddsp s2_, s2_, h_ ; \
+         xxpermdi t_, s0_, s2_, 0 ; \
+         xxpermdi s0_, s0_, s2_, 3 ; \
+         xvaddsp s0_, s0_, t_
+    #else
+      #define ATL_vvrsum4(s3_, s2_, s1_, s0_, t_, h_) \
+         xxmrghw t_, s0_, s1_ ; \
+         xxmrglw s0_, s0_, s1_ ; \
+         xvaddsp s0_, s0_, t_ ; \
+         xxmrghw h_, s2_, s3_ ; \
+         xxmrglw s2_, s2_, s3_ ; \
+         xvaddsp s2_, s2_, h_ ; \
+         xxpermdi t_, s0_, s2_, 0 ; \
+         xxpermdi s0_, s0_, s2_, 3 ; \
+         xvaddsp s3_, s0_, t_
+    #endif
+#else
+   #ifdef BIGENDIEN
+      #define ATL_vvrsum2(s0_, s1_, t_) \
+         xxpermdi t_, s0_, s1_, 0 ; \
+         xxpermdi s0_, s0_, s1_, 3 ; \
+         xvadddp s0_, s0_, t_
+   #else
+      #define ATL_vvrsum2(s1_, s0_, t_) \
+         xxpermdi t_, s0_, s1_, 0 ; \
+         xxpermdi s0_, s0_, s1_, 3 ; \
+         xvadddp s1_, s0_, t_
+   #endif
+#endif
+.local MLOOP
+.local NLOOP
+.globl ATL_asmdecor(ATL_USERMM)
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Must save & restore:
+ *    r1&r2 -> in sframe tail
+ *    r14-r31 -> 18*8 = 144 bytes (if used)
+ *    f14-f31 -> vsr14-vsr31 -> 18*8 = 144 bytes
+ *    v20-v31 -> vsr52-vsr63 -> 12*16 = 192 bytes
+ */
+#define ISZ 12*4
+#define FSZ 0
+#define VSZ 12*16
+#define LSZ 0
+#define MSZ 32      /* mandatory 32 bytes for stack frame tail */
+#define VOFF (MSZ+LSZ)
+#define FOFF (VOFF+VSZ)
+#define IOFF (FOFF+FSZ)
+#define FSIZE (MSZ+LSZ+VSZ+FSZ+ISZ)
+/*
+ * Prefetch B using stream 3; pref A using stream 2
+ */
+   li r9, -1
+   rldicr r9, r9, 0, 2
+   dcbt r9, pB, 0x8
+   li r9, -1
+   #if 1
+   rldicr r9, r9, 0, 0
+   dcbt r9, pA, 0x8
+   #endif
+/*
+ * Allocate local stack frame in order to save & restore
+ */
+   stdu r1, -FSIZE(r1)   /* allocate stack & store old stack ptr */
+/*
+ * Save iregs, and initialize fixed 16-increment indices for pC
+ */
+   std r2, 24(r1)        /* TOC reg always at 24(sp) */
+   std i128_1, IOFF+8*1(r1)
+   li  i128_1, 128*1
+   std i128_2, IOFF+8*2(r1)
+   li  i128_2, 128*2
+   std incBn, IOFF+8*3(r1)
+   std incAm, IOFF+8*4(r1)
+   std pBn, IOFF+8*5(r1)
+/*
+ * Save vec regs
+ */
+   stxv 20, VOFF+16*0(r1)
+   stxv 21, VOFF+16*1(r1)
+   stxv 22, VOFF+16*2(r1)
+   stxv 23, VOFF+16*3(r1)
+   stxv 24, VOFF+16*4(r1)
+   stxv 25, VOFF+16*5(r1)
+   stxv 26, VOFF+16*6(r1)
+   stxv 27, VOFF+16*7(r1)
+   stxv 28, VOFF+16*8(r1)
+   stxv 29, VOFF+16*9(r1)
+   stxv 30, VOFF+16*10(r1)
+   stxv 31, VOFF+16*11(r1)
