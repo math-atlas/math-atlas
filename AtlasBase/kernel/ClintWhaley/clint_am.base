@@ -16770,20 +16770,25 @@ KDONE:
 #endif
 
 #ifdef SREAL
-   #define ELTSZ 4
-   #define lxvd2x lxvw4x
    #define xvsubdp xvsubsp
    #define xvadddp xvaddsp
    #define xvmaddadp xvmaddasp
    #define xvmuldp xvmulsp
+   #define ELTSZ 4
+   #define SSH   2             /* size shift, 2^2 = 4 */
    #define KMUL *2
-   #define UK 32
-   #define USH 5
+   #define UK 32               /* unroll along K dim in elements */
+   #define USH 5               /* unroll shift: 2^5 = 32 */
+   #define VLEN 4              /* 4 floats in 1 vector */
+   #define VSH  2              /* vector shift: 2^2 = 4 */
 #else
-   #define UK 16
-   #define USH 4
-   #define ELTSZ 8
-   #define KMUL
+   #define ELTSZ 8             /* sizeof(double) = 8 */
+   #define SSH   3             /* size shift, 2^3 = 8 */
+   #define UK 16               /* unroll along K dim in elements */
+   #define USH 4               /* unroll shift: 2^4 = 16 */
+   #define VLEN 2              /* 2 doubles in 1 vector */
+   #define VSH  1              /* vector shift: 2^1 = 2 */
+   #define KMUL          
 #endif
 #define VECSZ 16
 #ifdef BETA1
@@ -16824,8 +16829,8 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #define pC  r8
 #define pfA r9
 #define pfB r10
-#define KS r5
-#define KV r11
+#define KR r5
+#define KU r11
 #define pA0 r12
 #define pBn r30
 #define incAm r29
@@ -16872,11 +16877,17 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
          xxpermdi t_, s0_, s1_, 0 ; \
          xxpermdi s0_, s0_, s1_, 3 ; \
          xvadddp s0_, s0_, t_
+      #define ATL_vvrsum1(s0_, t_) \
+         xxpermdi t_, s0_, s0_, 3 ; \
+         xvadddp s0_, s0_, t_
    #else
       #define ATL_vvrsum2(s1_, s0_, t_) \
          xxpermdi t_, s0_, s1_, 0 ; \
          xxpermdi s0_, s0_, s1_, 3 ; \
          xvadddp s1_, s0_, t_
+      #define ATL_vvrsum1(s0_, t_) \
+         xxpermdi t_, s0_, s0_, 0 ; \
+         xvadddp s0_, s0_, t_
    #endif
 #endif
 .local MLOOP
@@ -16942,7 +16953,17 @@ ATL_asmdecor(ATL_USERMM):
    stxv 29, VOFF+16*9(r1)
    stxv 30, VOFF+16*10(r1)
    stxv 31, VOFF+16*11(r1)
+/*
+ * incAm = mu*K*sizeof = 7*(K<<SSH); tmp = K<<SSH; incAm=8*tmp-tmp;
+ */
+   sld pA0, KR, SSH      /* pA0 = K*sizeof(TYPE) */
+   sld incAm, KR, 3+SSH  /* incAm = 8*K*sizeof(TYPE) */
+   sub incAm, incAm, pA0 /* incAm = 7*K*sizeof(TYPE) = mu*K*sizeof(TYPE) */
+   addi KR, KR, -VLEN    /* peeled VLEN iterations */
+   srdi KR, KR, VSH      /* # K iterations = (K-VLEN)/VLEN */
+   cmpdi cr2, KR, 0      /* check if all we do is K=2 peeled iterations */
    mr pA0, pA
+   mr pB0, pB
 
    MLOOP:
       mr NNU, NNU0
@@ -17023,12 +17044,78 @@ ATL_asmdecor(ATL_USERMM):
          xvmuldp rC56, rA5, rB6
             lxv rA5, 12*VECSZ(pA)
          xvmuldp rC66, rA6, rB6
+         beq cr2, KDONE
             lxv rA6, 13*VECSZ(pA)
 
-         #if 0
+         mtctr KR  /* move rolled VLEN K its to do to KR */
          KLOOP:
+            addi pA, pA, 7*VECSZ       /* pA += mu*sizeof */
+            addi pB, pB, 7*VECSZ       /* pB += mu*sizeof */
+            xvmaddadp rC00, rA0, rB0
+               lxv rB6, 6*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+               lxv rB0, 7*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+               lxv rB1, 8*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+               lxv rB2, 9*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+               lxv rB3, 10*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+               lxv rB4, 11*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+               lxv rB5, 12*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+               lxv rA0, 7*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+               lxv rA1, 8*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+               lxv rA2, 9*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+               lxv rA3, 10*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+               lxv rA4, 11*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+               lxv rA5, 12*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+               lxv rA6, 13*VECSZ(pA)
          bdnz+ KLOOP
-	 #endif
+         KDONE:
 	 #ifdef SREAL
 	 #else
 @SKIP given # of registers done so far, does vvrsum on 8 registers to produce
@@ -17038,6 +17125,8 @@ ATL_asmdecor(ATL_USERMM):
    @define i @dum@
    @define j @dum@
    @define N @dum@
+   @define d @dum@
+   @iexp d 4
    @iexp k_ @(n_)
    @iexp N @(n_) 8 +
       @iwhile k_ < @(N)
@@ -17046,13 +17135,15 @@ ATL_asmdecor(ATL_USERMM):
          @iexp k_ @(k_) 1 +
          @iexp j2 7 @(k_) /
          @iexp i2 7 @(k_) %
-	    ATL_vvrsum2(rC@(i)@(j), rC@(i2)@(j2), rB@(i))
+	    ATL_vvrsum2(rC@(i)@(j), rC@(i2)@(j2), rA@(d))
+         @iexp d 3 @(d) 1 + % 4 +
          @iexp k_ @(k_) 1 +
       @endiwhile
    @undef k_
    @undef i
    @undef j
    @undef N
+   @undef d
 @endproc
 @SKIP given # of registers done so far, does add to rC on 4 registers to produce
 @SKIP final C to write out
@@ -17065,13 +17156,16 @@ ATL_asmdecor(ATL_USERMM):
    @iexp ia 0
    @iexp k_ @(n_)
    @iexp N @(n_) 8 +
+	    #ifndef BETA0
+      @iexp ia 0
       @iwhile k_ < @(N)
-          @iexp ia 2 @(k_) /
          @iexp j 7 @(k_) /
          @iexp i 7 @(k_) %
-            stxv rC@(i)@(j), @(ia)*VECSZ(pC)
+               ADD2C rC@(i)@(j), rC@(i)@(j), rA@(ia)
          @iexp k_ @(k_) 2 +
+         @iexp ia 1 @(ia) +
       @endiwhile
+	    #endif
    @undef k_
    @undef i
    @undef j
@@ -17087,15 +17181,14 @@ ATL_asmdecor(ATL_USERMM):
    @iexp ia 0
    @iexp k_ @(n_)
    @iexp N @(n_) 8 +
-	    #ifndef BETA0
       @iwhile k_ < @(N)
+         @iexp ia 2 @(k_) /
          @iexp j 7 @(k_) /
          @iexp i 7 @(k_) %
-	       stxv rC@(i)@(j), rA0
+	    stxv rC@(i)@(j), @(ia)*VECSZ(pC)
          @iexp ia @(ia) 1 +
          @iexp k_ @(k_) 2 +
       @endiwhile
-	    #endif
    @undef k_
    @undef i
    @undef j
@@ -17106,27 +17199,40 @@ ATL_asmdecor(ATL_USERMM):
 	 @iwhile k < 48
 	    #ifndef BETA0
             @iexp i 0
+            @iexp j 2 @(k) /
             @iwhile i < 4
-               @iexp j @(k) @(i) +
 	       lxv rA@(i), @(j)*VECSZ(pC)
+               @iexp j @(j) 1 +
                @iexp i @(i) 1 +
             @endiwhile
 	    #endif
             @callproc doVsum @(k)
             @callproc doCsum @(k)
-            @BEGINSKIP
-	    #ifdef BETA1
-	       xvadddp rC@(i)@(j), rC@(i)@(j), rA0
-	       xvadddp rC@(i1)@(j1), rC@(i1)@(j1), rA1
-	    #elif !defined(BETA0)
-	    #endif
-            @ENDSKIP
+            @callproc stVC @(k)
             @iexp k @(k) 8 +
 	 @endiwhile
+            #ifndef BETA0
+               lxv rA0, 48*ELTSZ(pC)
+            #endif
+            ATL_vvrsum1(rC66, rA4)
+            #ifndef BETA0
+                ADD2C rC66, rC66, rA0
+            #endif
+            stxv rC66, 48*ELTSZ(pC)
 	 #endif
-         addic NNU, NNU, -1
+         #ifdef SREAL
+            addi  pC, pC, 52*ELTSZ
+         #else
+            addi  pC, pC, 50*ELTSZ
+         #endif
+         mr pA, pA0
+         addi pB, pB, 2*7*ELTSZ /* pB += peel*nu*sizeof */
+         addic. NNU, NNU, -1
       bne+ NLOOP
-      addic NMU, NMU, -1
+      mr pB, pB0
+      add pA0, pA0, incAm
+      mr pA, pA0
+      addic. NMU, NMU, -1
    bne+ MLOOP
 /*
  * Restore vec regs
