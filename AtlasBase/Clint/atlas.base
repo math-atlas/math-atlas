@@ -37170,11 +37170,15 @@ int main(int nargs, char **args)
                     const TYPE*, const size_t, TYPE*, TYPE*);
          void AMM_bn(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                      TYPE*, const TYPE*, const TYPE*, const TYPE*);
+         void BLK2C(const size_t, const size_t, const TYPE*, const TYPE*,
+                       const TYPE*, const TYPE*, TYPE*, const size_t);
       #else
          void A2BLK(const size_t, const size_t, const SCALAR,
                     const TYPE*, const size_t, TYPE*);
          void B2BLK(const size_t, const size_t, const SCALAR,
                     const TYPE*, const size_t, TYPE*);
+         void BLK2C(const size_t, const size_t, const TYPE*, const TYPE*,
+                       const TYPE*, const TYPE*, TYPE*, const size_t);
       #endif
       void AMM_b0(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                   TYPE*, const TYPE*, const TYPE*, const TYPE*);
@@ -37221,9 +37225,9 @@ int main(int nargs, char **args)
       #endif
       #ifdef TCPLX
          #if SD_Right == 1
-         void B2BLK(const size_t, const SCALAR,
-                    const TYPE*, const size_t, TYPE*, TYPE*);
          void A2BLK(const size_t, const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
+         void B2BLK(const size_t, const SCALAR,
                     const TYPE*, const size_t, TYPE*, TYPE*);
          #else
          void A2BLK(const size_t, const SCALAR,
@@ -37231,6 +37235,8 @@ int main(int nargs, char **args)
          void B2BLK(const size_t, const size_t, const SCALAR,
                     const TYPE*, const size_t, TYPE*, TYPE*);
          #endif
+         void BLK2C(const size_t, const size_t, const TYPE*, const TYPE*,
+                       const TYPE*, const TYPE*, TYPE*, const size_t);
          void AMM_bn(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                      TYPE*, const TYPE*, const TYPE*, const TYPE*);
       #else
@@ -37245,6 +37251,8 @@ int main(int nargs, char **args)
          void B2BLK(const size_t, const size_t, const SCALAR,
                     const TYPE*, const size_t, TYPE*);
          #endif
+         void BLK2C(const size_t, const size_t, const SCALAR, const TYPE*,
+                       const SCALAR, const TYPE*, const size_t);
       #endif
          void AMM_b0(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                      TYPE*, const TYPE*, const TYPE*, const TYPE*);
@@ -37466,20 +37474,6 @@ static double getMflops(double m, double n, double k)
       #endif
    #elif defined(TIME_SYRKK)
       return(1e-6*n*(n+1)*k);
-   #elif defined(TIME_TRMM)
-      double muls, adds;
-      #ifdef SIDE_R_
-         muls = ((double)M)*N*(N+1.0) / 2.0;
-         adds = ((double)M)*N*(N-1.0) / 2.0;
-      #else
-         muls = ((double)N)*M*(M+1.0) / 2.0;
-         adds = ((double)N)*M*(M-1.0) / 2.0;
-      #endif
-      #ifdef TCPLX
-         return(1e-6*(6.0*muls + 2.0*adds));
-      #else
-         return(1e-6*(muls + adds));
-      #endif
    #elif defined(TIME_COPY)
       return(1e-6*m*n);
    #else
@@ -37523,8 +37517,10 @@ double GetKmmMflop
    #if defined(TIME_AMM_SM) || defined(TIME_TRMM)
       #ifdef TCPLX
          TYPE one[2] = {ATL_rone, ATL_rzero};
+         TYPE zero[2] = {ATL_rzero, ATL_rzero};
       #else
          #define one ATL_rone
+         #define zero ATL_rzero
       #endif
    #endif
    void *vp=NULL;
@@ -37562,6 +37558,26 @@ double GetKmmMflop
       TYPE *diag, *L, *R, *w;
       void* ATL_usm_alloc(sminfo_t*, const int, TYPE**, TYPE**, TYPE**, TYPE**);
       wp = ATL_usm_alloc(&IPINFO, kb, &diag, &L, &R, &w);
+   #endif
+/*
+ * special declaration for TRMM 
+ */
+   #ifdef TIME_TRMM
+      void *wp=NULL;
+      TYPE *pt, *pr, *pc;
+      size_t sz, szT, szR;
+      int nmu = (mb+mu-1)/mu, nnu=(nb+nu-1)/nu;
+      int tmb=nmu*mu, tnb=nnu*nu;
+      #if SD_Right == 1
+         CINT K = ((nb+ku-1)/ku)*ku;
+      #else
+         CINT K = ((mb+ku-1)/ku)*ku;
+      #endif
+      #ifdef TCPLX
+         TYPE alpT[2] = {ATL_rone, ATL_rzero};
+      #else
+         #define alpT ATL_rone
+      #endif
    #endif
    setsz = mb*kb + kb*nb;
    if (!NOMOVE && FLSIZE)
@@ -37604,6 +37620,48 @@ double GetKmmMflop
 
    #ifndef TIME_AMM_SM
       /*incA *= mb; */
+      #ifdef TIME_TRMM
+/*
+ *       allocate workspace for TRMM
+ */
+         #if SD_Right == 1
+            szT = ((tnb*K+vlen-1)/vlen)*vlen;
+            szR = ((tmb*K+vlen-1)/vlen)*vlen;
+            szC = (((mu*nu+vlen-1)/vlen)*vlen)*nmu*nnu;
+            sz = ATL_MulBySize(szT + nu*ku + szR + mu*ku + szC + (mu+mu)*nu +
+                               3*ATL_Cachelen);
+            if (sz < ATL_MaxMalloc)
+               wp = malloc(sz);
+            if (!wp)
+            {
+               fprintf(stderr, "ERROR: can't allocate memory!!!");
+               exit(-1);
+            }
+            pt = ATL_AlignPtr(vp);
+            pr = pt + (szT SHIFT);
+            pr = ATL_AlignPtr(pr);
+            pc = pr + (szR SHIFT);
+            pc = ATL_AlignPtr(pc);
+         #else
+            szT = ((tmb*K+vlen-1)/vlen)*vlen;
+            szR = ((tnb*K+vlen-1)/vlen)*vlen;
+            szC = (((mu*nu+vlen-1)/vlen)*vlen)*nmu*nnu;
+            sz = ATL_MulBySize(szT + mu*ku + szR + nu*ku + szC + (mu+mu)*nu +
+                         3*ATL_Cachelen);
+            if (sz < ATL_MaxMalloc)
+            wp = malloc(sz);
+            if (!wp)
+            {
+               fprintf(stderr, "ERROR: can't allocate memory!!!");
+               exit(-1);
+            }
+            pt = ATL_AlignPtr(vp);
+            pr = pt + (szT SHIFT);
+            pr = ATL_AlignPtr(pr);
+            pc = pr + (szR SHIFT);
+            pc = ATL_AlignPtr(pc);
+         #endif
+      #endif
    #else
       {
          #if SD_Right == 1
@@ -37767,13 +37825,36 @@ double GetKmmMflop
             my_trsmk(mb, nb, 1.0, a, c, mb, B);
          #endif
       #elif defined(TIME_TRMM)
-         #ifdef TCPLX
-            AMM_b0(mblks, nblks, kb, a+szA, b+szB, c, a, b+szB, c+szC);
-            AMM_b0(mblks, nblks, kb, a, b+szB, c+szC, a, b, c);
-            AMM_bn(mblks, nblks, kb, a, b, c, a+szA, b, c+szC);
-            AMM_b1(mblks, nblks, kb, a+szA, b, c+szC, a+szA, b+szB, c);
+         #if SD_Right == 1
+            #ifdef TCPLX
+               A2BLK(nb, mb, alpT, b, ldc, pr, pr+szR);
+               B2BLK(nb, alpT, a, lda, pt, pt+szT);
+               AMM_b0(nmu, nnu, K, pr+szR, pt+szT, pc, pr,pt+szT, pc+szC);
+               AMM_b0(nmu, nnu, K, pr, pt+szT, pc+szC, pr, pt, pc);
+               AMM_bn(nmu, nnu, K, pr, pt, pc, pr+szR, pt, pc+szC);
+               AMM_b1(nmu, nnu, K, pr+szR, pt, pc+szC, pr+szR, pt+szT, pc);
+               BLK2C(mb, nb, one, pc, pc+szC, zero, b, ldc);
+            #else
+               A2BLK(nb, mb, alpT, b, ldc, pr);
+               B2BLK(nb, alpT, a, lda, pt);
+               AMM_b0(nmu, nnu, K, pr, pt, pc, pr, pt, pc);
+               BLK2C(mb, nb, one, pc, zero, b, ldc);
+            #endif
          #else
-            KMM(mblks, nblks, kb, a, b, c, an, bn, cn);
+            #ifdef TCPLX
+               A2BLK(mb, alpT, a, lda, pt, pt+szT);
+               B2BLK(mb, nb, alpT, b, ldc, pr, pr+szR);
+               AMM_b0(nmu, nnu, K, pt+szT, pr+szR, pc, pt, pr+szR, pc+szC);
+               AMM_b0(nmu, nnu, K, pt, pr+szR, pc+szC, pt, pr, pc);
+               AMM_bn(nmu, nnu, K, pt, pr, pc, pt+szT, pr, pc+szC);
+               AMM_b1(nmu, nnu, K, pt+szT, pr, pc+szC, pt+szT, pr+szR, pc);
+               BLK2C(mb, nb, one, pc, pc+szC, zero, b, ldc);
+            #else
+               A2BLK(mb, alpT, a, lda, pt);
+               B2BLK(mb, nb, alpT, b, ldc, pr);
+               AMM_b0(nmu, nnu, K, pt, pr, pc, pt, pr, pc);
+               BLK2C(mb, nb, one, pc, zero, b, ldc);
+            #endif
          #endif
       #elif defined(TIME_SYRKK)
          KMM(mblks, nblks, kb, a, a, c, an, an, cn);
@@ -37859,7 +37940,7 @@ double GetKmmMflop
          mf *= 4.0;
       #endif
    #endif
-   #if defined(TIME_TRMVK) && defined(TIME_AMM_SM)
+   #if (defined(TIME_TRMVK) && defined(TIME_AMM_SM)) || defined(TIME_TRMM)
       free(wp);
    #endif
    free(vp);
