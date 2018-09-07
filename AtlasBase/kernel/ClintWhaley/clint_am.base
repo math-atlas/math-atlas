@@ -16782,6 +16782,11 @@ KDONE:
    #define KMUL
 #endif
 #define VECSZ 16
+#ifdef BETA1
+   #define ADD2C xvadddp
+#elif !defined(BETA0)
+   #define ADD2C xvsubdp
+#endif
 @iexp k 0
 @iexp j 0
 @iwhile j < 7
@@ -17019,33 +17024,75 @@ ATL_asmdecor(ATL_USERMM):
 	 #endif
 	 #ifdef SREAL
 	 #else
+@SKIP given # of registers done so far, does vvrsum on 8 registers to produce
+@SKIP 4 vectors of C to write to contiguous storage
+@beginproc doVsum n_
+   @define k_ @dum@
+   @define i @dum@
+   @define j @dum@
+   @define N @dum@
+   @iexp k_ @(n_)
+   @iexp N @(n_) 8 +
+      @iwhile k_ < @(N)
+         @iexp j 7 @(k_) /
+         @iexp i 7 @(k_) %
+         @iexp k_ @(k_) 1 +
+         @iexp j2 7 @(k_) /
+         @iexp i2 7 @(k_) %
+	    ATL_vvrsum2(rC@(i)@(j), rC@(i2)@(j2), rB@(i));
+         @iexp k_ @(k_) 1 +
+      @endiwhile
+   @undef k_
+   @undef i
+   @undef j
+   @undef N
+@endproc
+@SKIP given # of registers done so far, does add to rC on 4 registers to produce
+@SKIP final C to write out
+@beginproc doCsum n_
+   @define k_ @dum@
+   @define i @dum@
+   @define j @dum@
+   @define N @dum@
+   @define ia @dum@
+   @iexp ia 0
+   @iexp k_ @(n_)
+   @iexp N @(n_) 8 +
+	    #ifndef BETA0
+      @iwhile k_ < @(N)
+         @iexp j 7 @(k_) /
+         @iexp i 7 @(k_) %
+	       ADD2C rC@(i)@(j), rC@(i)@(j), rA0
+         @iexp ia @(ia) 1 +
+         @iexp k_ @(k_) 2 +
+      @endiwhile
+	    #endif
+   @undef k_
+   @undef i
+   @undef j
+   @undef N
+   @undef ia
+@endproc
 	 @iexp k 0
 	 @iwhile k < 49
 	    #ifndef BETA0
-	       lxv rA0, 0*VECSZ(pC)
-	       lxv rA1, 1*VECSZ(pC)
-	       lxv rA2, 2*VECSZ(pC)
-	       lxv rA3, 3*VECSZ(pC)
+            @iexp i 0
+            @iwhile i < 4
+               @iexp j @(k) @(i) +
+	       lxv rA@(i), @(j)*VECSZ(pC)
+               @iexp i @(i) 1 +
+            @endiwhile
 	    #endif
-	    @iexp j 7 @(k) /
-	    @iexp i 7 @(k) %
-	    @iexp k @(k) 1 +
-	    @iexp j2 7 @(k) /
-	    @iexp i2 7 @(k) %
-	    ATL_vvrsum2(rC@(i)@(j), rC@(i2)@(j2), rB0);
-	    @iexp k @(k) 1 +
-	    @iexp j1 7 @(k) /
-	    @iexp i1 7 @(k) %
-	    @iexp k @(k) 1 +
-	    @iexp j2 7 @(k) /
-	    @iexp i2 7 @(k) %
-	    ATL_vvrsum2(rC@(i1)@(j1), rC@(i2)@(j2), rB1);
-	    @iexp kk @(kk) -2 +
+            @callproc doVsum @(k)
+            @callproc doCsum @(k)
+            @BEGINSKIP
 	    #ifdef BETA1
 	       xvadddp rC@(i)@(j), rC@(i)@(j), rA0
 	       xvadddp rC@(i1)@(j1), rC@(i1)@(j1), rA1
 	    #elif !defined(BETA0)
 	    #endif
+            @ENDSKIP
+            @iexp k @(k) 8 +
 	 @endiwhile
 	 #endif
          addic NNU, NNU, -1
