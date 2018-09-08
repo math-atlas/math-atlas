@@ -16829,8 +16829,8 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #define pC  r8
 #define pfA r9
 #define pfB r10
-#define KR r5
-#define KU r11
+#define K16 r5  /* The number of 16*VLEN K-iterations to do */
+#define KR r11  /* The number of VLEN K-its (cleanup) to do */
 #define pA0 r12
 #define pBn r30
 #define incAm r29
@@ -16859,6 +16859,11 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
          xxpermdi t_, s0_, s2_, 0 ; \
          xxpermdi s0_, s0_, s2_, 3 ; \
          xvaddsp s0_, s0_, t_
+      #define ATL_vvrsum1(s0_, t_) \
+         xxpermdi t_, s0_, s0_, 0 ; \
+         xvaddsp s0_, s0_, t_ ; \
+         xxspltw  t_, s0_, 1 ; \
+         xvaddsp s0_, s0_, t_ ; 
     #else
       #define ATL_vvrsum4(s3_, s2_, s1_, s0_, t_, h_) \
          xxmrghw t_, s0_, s1_ ; \
@@ -16870,6 +16875,11 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
          xxpermdi t_, s0_, s2_, 0 ; \
          xxpermdi s0_, s0_, s2_, 3 ; \
          xvaddsp s3_, s0_, t_
+      #define ATL_vvrsum1(s0_, t_) \
+         xxpermdi t_, s0_, s0_, 0 ; \
+         xvaddsp s0_, s0_, t_ ; \
+         xxspltw  t_, s0_, 2 ; \
+         xvaddsp s0_, s0_, t_ ; 
     #endif
 #else
    #ifdef BIGENDIEN
@@ -16956,12 +16966,15 @@ ATL_asmdecor(ATL_USERMM):
 /*
  * incAm = mu*K*sizeof = 7*(K<<SSH); tmp = K<<SSH; incAm=8*tmp-tmp;
  */
-   sldi pA0, KR, SSH     /* pA0 = K*sizeof(TYPE) */
-   sldi incAm, KR, 3+SSH /* incAm = 8*K*sizeof(TYPE) */
-   sub incAm, incAm, pA0 /* incAm = 7*K*sizeof(TYPE) = mu*K*sizeof(TYPE) */
-   addi KR, KR, -VLEN    /* peeled VLEN iterations */
-   srdi KR, KR, VSH      /* # K iterations = (K-VLEN)/VLEN */
-   cmpdi cr2, KR, 0      /* check if all we do is K=2 peeled iterations */
+   sldi pA0, K16, SSH     /* pA0 = K*sizeof(TYPE) */
+   sldi incAm, K16, 3+SSH /* incAm = 8*K*sizeof(TYPE) */
+   sub incAm, incAm, pA0  /* incAm = 7*K*sizeof(TYPE) = mu*K*sizeof(TYPE) */
+   addi K16, K16, -VLEN   /* peeled VLEN iterations */
+   srdi K16, K16, VSH     /* K16 now has number of vector K after peel */
+   andi. KR, K16, 0xF     /* KR = K%16 */
+   srdi K16, K16, 4       /* K16 = K/16 */
+   cmpdi cr2, KR, 0       /* check if all we do is K=2 peeled iterations */
+   cmpdi cr3, K16, 0      /* check if we do any 16-vec unroll its */
    mr pA0, pA
    mr pB0, pB
 
@@ -17008,10 +17021,15 @@ ATL_asmdecor(ATL_USERMM):
          xvmuldp rC62, rA6, rB2
             lxv rB2, 9*VECSZ(pB)
          xvmuldp rC03, rA0, rB3
+            dcbtstt 0, pC
          xvmuldp rC13, rA1, rB3
+            dcbtstt i128_1, pC
          xvmuldp rC23, rA2, rB3
          xvmuldp rC33, rA3, rB3
          xvmuldp rC43, rA4, rB3
+            #ifndef SREAL
+               dcbtstt i128_2, pC
+            #endif
          xvmuldp rC53, rA5, rB3
          xvmuldp rC63, rA6, rB3
             lxv rB3, 10*VECSZ(pB)
@@ -17044,13 +17062,1060 @@ ATL_asmdecor(ATL_USERMM):
          xvmuldp rC56, rA5, rB6
             lxv rA5, 12*VECSZ(pA)
          xvmuldp rC66, rA6, rB6
-         beq cr2, KDONE
             lxv rA6, 13*VECSZ(pA)
+         addi pA, pA, 7*VECSZ       /* pA += mu*sizeof */
+         addi pB, pB, 7*VECSZ       /* pB += mu*sizeof */
+         beq cr3, KCLEAN            /* if (K16==0) skip to cleanup loop */
+         mtctr K16                  /* move # of 16*vlen K its to ctr */
+         KLOOP16:
+            /* Vector unroll=0 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 6*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 7*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 8*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 9*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 10*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 11*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 12*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 7*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 8*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 9*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 10*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 11*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 12*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 13*VECSZ(pA)
 
+            /* Vector unroll=1 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 13*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 14*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 15*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 16*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 17*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 18*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 19*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 14*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 15*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 16*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 17*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 18*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 19*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 20*VECSZ(pA)
+
+            /* Vector unroll=2 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 20*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 21*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 22*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 23*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 24*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 25*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 26*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 21*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 22*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 23*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 24*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 25*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 26*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 27*VECSZ(pA)
+
+            /* Vector unroll=3 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 27*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 28*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 29*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 30*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 31*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 32*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 33*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 28*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 29*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 30*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 31*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 32*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 33*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 34*VECSZ(pA)
+
+            /* Vector unroll=4 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 34*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 35*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 36*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 37*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 38*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 39*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 40*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 35*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 36*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 37*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 38*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 39*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 40*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 41*VECSZ(pA)
+
+            /* Vector unroll=5 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 41*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 42*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 43*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 44*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 45*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 46*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 47*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 42*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 43*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 44*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 45*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 46*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 47*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 48*VECSZ(pA)
+
+            /* Vector unroll=6 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 48*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 49*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 50*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 51*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 52*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 53*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 54*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 49*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 50*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 51*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 52*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 53*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 54*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 55*VECSZ(pA)
+
+            /* Vector unroll=7 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 55*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 56*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 57*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 58*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 59*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 60*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 61*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 56*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 57*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 58*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 59*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 60*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 61*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 62*VECSZ(pA)
+
+            /* Vector unroll=8 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 62*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 63*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 64*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 65*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 66*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 67*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 68*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 63*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 64*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 65*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 66*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 67*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 68*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 69*VECSZ(pA)
+
+            /* Vector unroll=9 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 69*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 70*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 71*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 72*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 73*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 74*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 75*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 70*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 71*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 72*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 73*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 74*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 75*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 76*VECSZ(pA)
+
+            /* Vector unroll=10 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 76*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 77*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 78*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 79*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 80*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 81*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 82*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 77*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 78*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 79*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 80*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 81*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 82*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 83*VECSZ(pA)
+
+            /* Vector unroll=11 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 83*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 84*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 85*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 86*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 87*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 88*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 89*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 84*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 85*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 86*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 87*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 88*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 89*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 90*VECSZ(pA)
+
+            /* Vector unroll=12 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 90*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 91*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 92*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 93*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 94*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 95*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 96*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 91*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 92*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 93*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 94*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 95*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 96*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 97*VECSZ(pA)
+
+            /* Vector unroll=13 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 97*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 98*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 99*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 100*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 101*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 102*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 103*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 98*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 99*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 100*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 101*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 102*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 103*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 104*VECSZ(pA)
+
+            /* Vector unroll=14 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 104*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 105*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 106*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 107*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 108*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 109*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 110*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 105*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 106*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 107*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 108*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 109*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 110*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 111*VECSZ(pA)
+
+            /* Vector unroll=15 */
+            xvmaddadp rC00, rA0, rB0
+                     lxv rB6, 111*VECSZ(pB)
+            xvmaddadp rC10, rA1, rB0
+            xvmaddadp rC20, rA2, rB0
+            xvmaddadp rC30, rA3, rB0
+            xvmaddadp rC40, rA4, rB0
+            xvmaddadp rC50, rA5, rB0
+            xvmaddadp rC60, rA6, rB0
+                     lxv rB0, 112*VECSZ(pB)
+            xvmaddadp rC01, rA0, rB1
+            xvmaddadp rC11, rA1, rB1
+            xvmaddadp rC21, rA2, rB1
+            xvmaddadp rC31, rA3, rB1
+            xvmaddadp rC41, rA4, rB1
+            xvmaddadp rC51, rA5, rB1
+            xvmaddadp rC61, rA6, rB1
+                     lxv rB1, 113*VECSZ(pB)
+            xvmaddadp rC02, rA0, rB2
+            xvmaddadp rC12, rA1, rB2
+            xvmaddadp rC22, rA2, rB2
+            xvmaddadp rC32, rA3, rB2
+            xvmaddadp rC42, rA4, rB2
+            xvmaddadp rC52, rA5, rB2
+            xvmaddadp rC62, rA6, rB2
+                     lxv rB2, 114*VECSZ(pB)
+            xvmaddadp rC03, rA0, rB3
+            xvmaddadp rC13, rA1, rB3
+            xvmaddadp rC23, rA2, rB3
+            xvmaddadp rC33, rA3, rB3
+            xvmaddadp rC43, rA4, rB3
+            xvmaddadp rC53, rA5, rB3
+            xvmaddadp rC63, rA6, rB3
+                     lxv rB3, 115*VECSZ(pB)
+            xvmaddadp rC04, rA0, rB4
+            xvmaddadp rC14, rA1, rB4
+            xvmaddadp rC24, rA2, rB4
+            xvmaddadp rC34, rA3, rB4
+            xvmaddadp rC44, rA4, rB4
+            xvmaddadp rC54, rA5, rB4
+            xvmaddadp rC64, rA6, rB4
+                     lxv rB4, 116*VECSZ(pB)
+            xvmaddadp rC05, rA0, rB5
+            xvmaddadp rC15, rA1, rB5
+            xvmaddadp rC25, rA2, rB5
+            xvmaddadp rC35, rA3, rB5
+            xvmaddadp rC45, rA4, rB5
+            xvmaddadp rC55, rA5, rB5
+            xvmaddadp rC65, rA6, rB5
+                     lxv rB5, 117*VECSZ(pB)
+            xvmaddadp rC06, rA0, rB6
+                     lxv rA0, 112*VECSZ(pA)
+            xvmaddadp rC16, rA1, rB6
+                     lxv rA1, 113*VECSZ(pA)
+            xvmaddadp rC26, rA2, rB6
+                     lxv rA2, 114*VECSZ(pA)
+            xvmaddadp rC36, rA3, rB6
+                     lxv rA3, 115*VECSZ(pA)
+            xvmaddadp rC46, rA4, rB6
+                     lxv rA4, 116*VECSZ(pA)
+            xvmaddadp rC56, rA5, rB6
+                     lxv rA5, 117*VECSZ(pA)
+            xvmaddadp rC66, rA6, rB6
+                     lxv rA6, 118*VECSZ(pA)
+
+            addi pA, pA, 16*7*VECSZ       /* pA += 16*mu*sizeof */
+            addi pB, pB, 16*7*VECSZ       /* pB += 16*nu*sizeof */
+         bdnz KLOOP16
+
+         KCLEAN:
+         beq cr2, KDONE             /* if (KR==0) done with K loop */
          mtctr KR  /* move rolled VLEN K its to do to KR */
-         KLOOP:
-            addi pA, pA, 7*VECSZ       /* pA += mu*sizeof */
-            addi pB, pB, 7*VECSZ       /* pB += mu*sizeof */
+         KLOOP1:
             xvmaddadp rC00, rA0, rB0
                lxv rB6, 6*VECSZ(pB)
             xvmaddadp rC10, rA1, rB0
@@ -17114,119 +18179,213 @@ ATL_asmdecor(ATL_USERMM):
                lxv rA5, 12*VECSZ(pA)
             xvmaddadp rC66, rA6, rB6
                lxv rA6, 13*VECSZ(pA)
-         bdnz+ KLOOP
+            addi pA, pA, 7*VECSZ       /* pA += mu*sizeof */
+            addi pB, pB, 7*VECSZ       /* pB += mu*sizeof */
+         bdnz+ KLOOP1
          KDONE:
 	 #ifdef SREAL
-	 #else
-@SKIP given # of registers done so far, does vvrsum on 8 registers to produce
-@SKIP 4 vectors of C to write to contiguous storage
-@beginproc doVsum n_
-   @define k_ @dum@
-   @define i @dum@
-   @define j @dum@
-   @define N @dum@
-   @define d @dum@
-   @iexp d 4
-   @iexp k_ @(n_)
-   @iexp N @(n_) 8 +
-      @iwhile k_ < @(N)
-         @iexp j 7 @(k_) /
-         @iexp i 7 @(k_) %
-         @iexp k_ @(k_) 1 +
-         @iexp j2 7 @(k_) /
-         @iexp i2 7 @(k_) %
-	    ATL_vvrsum2(rC@(i)@(j), rC@(i2)@(j2), rA@(d))
-         @iexp d 3 @(d) 1 + % 4 +
-         @iexp k_ @(k_) 1 +
-      @endiwhile
-   @undef k_
-   @undef i
-   @undef j
-   @undef N
-   @undef d
-@endproc
-@SKIP given # of registers done so far, does add to rC on 4 registers to produce
-@SKIP final C to write out
-@beginproc doCsum n_
-   @define k_ @dum@
-   @define i @dum@
-   @define j @dum@
-   @define N @dum@
-   @define ia @dum@
-   @iexp ia 0
-   @iexp k_ @(n_)
-   @iexp N @(n_) 8 +
 	    #ifndef BETA0
-      @iexp ia 0
-      @iwhile k_ < @(N)
-         @iexp j 7 @(k_) /
-         @iexp i 7 @(k_) %
-               ADD2C rC@(i)@(j), rC@(i)@(j), rA@(ia)
-         @iexp k_ @(k_) 2 +
-         @iexp ia 1 @(ia) +
-      @endiwhile
+	       lxv rA0, 0*VECSZ(pC)
+	       lxv rA1, 1*VECSZ(pC)
+	       lxv rA2, 2*VECSZ(pC)
+	       lxv rA3, 3*VECSZ(pC)
 	    #endif
-   @undef k_
-   @undef i
-   @undef j
-   @undef N
-   @undef ia
-@endproc
-@beginproc stVC n_
-   @define k_ @dum@
-   @define i @dum@
-   @define j @dum@
-   @define N @dum@
-   @define ia @dum@
-   @iexp ia 0
-   @iexp k_ @(n_)
-   @iexp N @(n_) 8 +
-      @iwhile k_ < @(N)
-         @iexp ia 2 @(k_) /
-         @iexp j 7 @(k_) /
-         @iexp i 7 @(k_) %
-	    stxv rC@(i)@(j), @(ia)*VECSZ(pC)
-         @iexp ia @(ia) 1 +
-         @iexp k_ @(k_) 2 +
-      @endiwhile
-   @undef k_
-   @undef i
-   @undef j
-   @undef N
-   @undef ia
-@endproc
-	 @iexp k 0
-	 @iwhile k < 48
+	    ATL_vvrsum4(rC00, rC10, rC20, rC30, rA4, rA5)
+	    ATL_vvrsum4(rC40, rC50, rC60, rC01, rA4, rA5)
+	    ATL_vvrsum4(rC11, rC21, rC31, rC41, rA4, rA5)
+	    ATL_vvrsum4(rC51, rC61, rC02, rC12, rA4, rA5)
 	    #ifndef BETA0
-            @iexp i 0
-            @iexp j 2 @(k) /
-            @iwhile i < 4
-	       lxv rA@(i), @(j)*VECSZ(pC)
-               @iexp j @(j) 1 +
-               @iexp i @(i) 1 +
-            @endiwhile
+               ADD2C rC00, rC00, rA0
+               ADD2C rC40, rC40, rA1
+               ADD2C rC11, rC11, rA2
+               ADD2C rC51, rC51, rA3
 	    #endif
-            @callproc doVsum @(k)
-            @callproc doCsum @(k)
-            @callproc stVC @(k)
-            @iexp k @(k) 8 +
-	 @endiwhile
-            #ifndef BETA0
-               lxv rA0, 48*ELTSZ(pC)
-            #endif
-            ATL_vvrsum1(rC66, rA4)
-            #ifndef BETA0
-                ADD2C rC66, rC66, rA0
-            #endif
-            stxv rC66, 48*ELTSZ(pC)
-	 #endif
+	    stxv rC00, 0*VECSZ(pC)
+	    stxv rC40, 1*VECSZ(pC)
+	    stxv rC11, 2*VECSZ(pC)
+	    stxv rC51, 3*VECSZ(pC)
+	    #ifndef BETA0
+	       lxv rA0, 4*VECSZ(pC)
+	       lxv rA1, 5*VECSZ(pC)
+	       lxv rA2, 6*VECSZ(pC)
+	       lxv rA3, 7*VECSZ(pC)
+	    #endif
+	    ATL_vvrsum4(rC22, rC32, rC42, rC52, rA4, rA5)
+	    ATL_vvrsum4(rC62, rC03, rC13, rC23, rA4, rA5)
+	    ATL_vvrsum4(rC33, rC43, rC53, rC63, rA4, rA5)
+	    ATL_vvrsum4(rC04, rC14, rC24, rC34, rA4, rA5)
+	    #ifndef BETA0
+               ADD2C rC22, rC22, rA0
+               ADD2C rC62, rC62, rA1
+               ADD2C rC33, rC33, rA2
+               ADD2C rC04, rC04, rA3
+	    #endif
+	    stxv rC22, 4*VECSZ(pC)
+	    stxv rC62, 5*VECSZ(pC)
+	    stxv rC33, 6*VECSZ(pC)
+	    stxv rC04, 7*VECSZ(pC)
+	    #ifndef BETA0
+	       lxv rA0, 8*VECSZ(pC)
+	       lxv rA1, 9*VECSZ(pC)
+	       lxv rA2, 10*VECSZ(pC)
+	       lxv rA3, 11*VECSZ(pC)
+	    #endif
+	    ATL_vvrsum4(rC44, rC54, rC64, rC05, rA4, rA5)
+	    ATL_vvrsum4(rC15, rC25, rC35, rC45, rA4, rA5)
+	    ATL_vvrsum4(rC55, rC65, rC06, rC16, rA4, rA5)
+	    ATL_vvrsum4(rC26, rC36, rC46, rC56, rA4, rA5)
+	    #ifndef BETA0
+               ADD2C rC44, rC44, rA0
+               ADD2C rC15, rC15, rA1
+               ADD2C rC55, rC55, rA2
+               ADD2C rC26, rC26, rA3
+	    #endif
+	    stxv rC44, 8*VECSZ(pC)
+	    stxv rC15, 9*VECSZ(pC)
+	    stxv rC55, 10*VECSZ(pC)
+	    stxv rC26, 11*VECSZ(pC)
+	 #else   /* double precision code */
+	    #ifndef BETA0
+	       lxv rA0, 0*VECSZ(pC)
+	       lxv rA1, 1*VECSZ(pC)
+	       lxv rA2, 2*VECSZ(pC)
+	       lxv rA3, 3*VECSZ(pC)
+	    #endif
+	    ATL_vvrsum2(rC00, rC10, rA4)
+	    ATL_vvrsum2(rC20, rC30, rA6)
+	    ATL_vvrsum2(rC40, rC50, rA5)
+	    ATL_vvrsum2(rC60, rC01, rA4)
+	    #ifndef BETA0
+               ADD2C rC00, rC00, rA0
+               ADD2C rC20, rC20, rA1
+               ADD2C rC40, rC40, rA2
+               ADD2C rC60, rC60, rA3
+	    #endif
+	    stxv rC00, 0*VECSZ(pC)
+	    stxv rC20, 1*VECSZ(pC)
+	    stxv rC40, 2*VECSZ(pC)
+	    stxv rC60, 3*VECSZ(pC)
+	    #ifndef BETA0
+	       lxv rA0, 4*VECSZ(pC)
+	       lxv rA1, 5*VECSZ(pC)
+	       lxv rA2, 6*VECSZ(pC)
+	       lxv rA3, 7*VECSZ(pC)
+	    #endif
+	    ATL_vvrsum2(rC11, rC21, rA4)
+	    ATL_vvrsum2(rC31, rC41, rA6)
+	    ATL_vvrsum2(rC51, rC61, rA5)
+	    ATL_vvrsum2(rC02, rC12, rA4)
+	    #ifndef BETA0
+               ADD2C rC11, rC11, rA0
+               ADD2C rC31, rC31, rA1
+               ADD2C rC51, rC51, rA2
+               ADD2C rC02, rC02, rA3
+	    #endif
+	    stxv rC11, 4*VECSZ(pC)
+	    stxv rC31, 5*VECSZ(pC)
+	    stxv rC51, 6*VECSZ(pC)
+	    stxv rC02, 7*VECSZ(pC)
+	    #ifndef BETA0
+	       lxv rA0, 8*VECSZ(pC)
+	       lxv rA1, 9*VECSZ(pC)
+	       lxv rA2, 10*VECSZ(pC)
+	       lxv rA3, 11*VECSZ(pC)
+	    #endif
+	    ATL_vvrsum2(rC22, rC32, rA4)
+	    ATL_vvrsum2(rC42, rC52, rA6)
+	    ATL_vvrsum2(rC62, rC03, rA5)
+	    ATL_vvrsum2(rC13, rC23, rA4)
+	    #ifndef BETA0
+               ADD2C rC22, rC22, rA0
+               ADD2C rC42, rC42, rA1
+               ADD2C rC62, rC62, rA2
+               ADD2C rC13, rC13, rA3
+	    #endif
+	    stxv rC22, 8*VECSZ(pC)
+	    stxv rC42, 9*VECSZ(pC)
+	    stxv rC62, 10*VECSZ(pC)
+	    stxv rC13, 11*VECSZ(pC)
+	    #ifndef BETA0
+	       lxv rA0, 12*VECSZ(pC)
+	       lxv rA1, 13*VECSZ(pC)
+	       lxv rA2, 14*VECSZ(pC)
+	       lxv rA3, 15*VECSZ(pC)
+	    #endif
+	    ATL_vvrsum2(rC33, rC43, rA4)
+	    ATL_vvrsum2(rC53, rC63, rA6)
+	    ATL_vvrsum2(rC04, rC14, rA5)
+	    ATL_vvrsum2(rC24, rC34, rA4)
+	    #ifndef BETA0
+               ADD2C rC33, rC33, rA0
+               ADD2C rC53, rC53, rA1
+               ADD2C rC04, rC04, rA2
+               ADD2C rC24, rC24, rA3
+	    #endif
+	    stxv rC33, 12*VECSZ(pC)
+	    stxv rC53, 13*VECSZ(pC)
+	    stxv rC04, 14*VECSZ(pC)
+	    stxv rC24, 15*VECSZ(pC)
+	    #ifndef BETA0
+	       lxv rA0, 16*VECSZ(pC)
+	       lxv rA1, 17*VECSZ(pC)
+	       lxv rA2, 18*VECSZ(pC)
+	       lxv rA3, 19*VECSZ(pC)
+	    #endif
+	    ATL_vvrsum2(rC44, rC54, rA4)
+	    ATL_vvrsum2(rC64, rC05, rA6)
+	    ATL_vvrsum2(rC15, rC25, rA5)
+	    ATL_vvrsum2(rC35, rC45, rA4)
+	    #ifndef BETA0
+               ADD2C rC44, rC44, rA0
+               ADD2C rC64, rC64, rA1
+               ADD2C rC15, rC15, rA2
+               ADD2C rC35, rC35, rA3
+	    #endif
+	    stxv rC44, 16*VECSZ(pC)
+	    stxv rC64, 17*VECSZ(pC)
+	    stxv rC15, 18*VECSZ(pC)
+	    stxv rC35, 19*VECSZ(pC)
+	    #ifndef BETA0
+	       lxv rA0, 20*VECSZ(pC)
+	       lxv rA1, 21*VECSZ(pC)
+	       lxv rA2, 22*VECSZ(pC)
+	       lxv rA3, 23*VECSZ(pC)
+	    #endif
+	    ATL_vvrsum2(rC55, rC65, rA4)
+	    ATL_vvrsum2(rC06, rC16, rA6)
+	    ATL_vvrsum2(rC26, rC36, rA5)
+	    ATL_vvrsum2(rC46, rC56, rA4)
+	    #ifndef BETA0
+               ADD2C rC55, rC55, rA0
+               ADD2C rC06, rC06, rA1
+               ADD2C rC26, rC26, rA2
+               ADD2C rC46, rC46, rA3
+	    #endif
+	    stxv rC55, 20*VECSZ(pC)
+	    stxv rC06, 21*VECSZ(pC)
+	    stxv rC26, 22*VECSZ(pC)
+	    stxv rC46, 23*VECSZ(pC)
+         #endif
+/*
+ *       Handle 49th register; could do with scalar ops, but vec allowed 
+ */
+         #ifndef BETA0
+            lxv rA0, 48*ELTSZ(pC)
+         #endif
+         ATL_vvrsum1(rC66, rA4)
+         #ifndef BETA0
+             ADD2C rC66, rC66, rA0
+         #endif
+         stxv rC66, 48*ELTSZ(pC)
+/*
+ *       Go to next loop iteration
+ */
          #ifdef SREAL
             addi  pC, pC, 52*ELTSZ
          #else
             addi  pC, pC, 50*ELTSZ
          #endif
          mr pA, pA0
-         addi pB, pB, 2*7*ELTSZ /* pB += peel*nu*sizeof */
          addic. NNU, NNU, -1
       bne+ NLOOP
       mr pB, pB0
