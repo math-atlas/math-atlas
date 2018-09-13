@@ -169,7 +169,10 @@ ID=53 MU=8 NU=6 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x256_vsx.S' \
       KMAJ=2 KVEC=1 VLEN=2 KBMAX=258 ASM=GAS_PPC \
       COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
 ID=54 MU=8 NU=6 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x16_vsx.S' \
-      KMAJ=2 KVEC=1 VLEN=2 ASM=GAS_PPC \
+      KMAJ=2 KVEC=1 VLEN=2 ASM=GAS_PPC KRUNTIME=1 \
+      COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
+ID=55 MU=7 NU=7 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_kmm7x7xVLv16_vsx.S' \
+      KMAJ=2 KVEC=1 VLEN=2 ASM=GAS_PPC KRUNTIME=1 \
       COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 VLEN=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_samm16x4x1_av.c' \
@@ -258,9 +261,11 @@ ID=53 MU=8 NU=6 KU=4 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x256_vsx.S' \
      KMAJ=4 KVEC=1 VLEN=4 KBMAX=516 ASM=GAS_PPC \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
 ID=54 MU=8 NU=6 KU=4 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x16_vsx.S' \
-     KMAJ=4 KVEC=1 VLEN=4 KBMAX=516 ASM=GAS_PPC \
+     KMAJ=4 KVEC=1 VLEN=4 KBMAX=516 ASM=GAS_PPC KRUNTIME=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
-@ROUT samcases.idx
+ID=55 MU=7 NU=7 KU=4 AUTH='R. Clint Whaley' ROUT='ATL_kmm7x7xVLv16_vsx.S' \
+      KMAJ=4 KVEC=1 VLEN=4 ASM=GAS_PPC KRUNTIME=1 \
+      COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
 @ROUT atlas_gnuvec.h
 #ifndef ATLAS_GNUVEC
    #define ATLAS_GNUVEC 1
@@ -38693,14 +38698,42 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
 
    for (bv=0,ret=bkb; ret && ret->blask == ATL_KSYRK; ret = ret->next, bv++);
    assert(bv == 2 || bv == 4);
-   for (rp=bkb; rp && (rp->mu != rp->nu); rp = rp->next);
+/*
+ * BKB should come in with first pair mu == nu, 2nd pair mu%nu=0 or nu%mu=0
+ */
+   assert(bkb && bkb->next && bkb->next->next && bkb->next->next->next);
+@skip   for (rp=bkb; rp && (rp->mu != rp->nu); rp = rp->next);
+   rp=bkb->next->next;
    assert(rp);
+   assert(!(rp->mu % rp->nu) || !(rp->nu % rp->mu));
    assert(rp->blask == ATL_KSYRK);
-   for (cp=rp->next; cp && (cp->mu != cp->nu); cp = cp->next);
+@skip   for (cp=rp->next; cp && (cp->mu != cp->nu); cp = cp->next);
+   cp = rp->next;
    assert(cp);
+   assert(!(cp->mu % cp->nu) || !(cp->nu % cp->mu));
    assert(cp->blask == ATL_KSYRK);
-   for (rU=bkb; rU && (rU->mu == rU->nu); rU = rU->next);
+@skip   for (rU=bkb; rU && (rU->mu == rU->nu); rU = rU->next);
+   rU = bkb;
    assert(rU);
+   cU = rU->next;
+   assert(cU);
+   if (!FLAG_IS_SET(cp->flag, MMF_COMPLEX))
+   {
+      ATL_mmnode_t *tp=rp;
+      rp = cp;
+      cp = tp;
+   }
+   if (!FLAG_IS_SET(cU->flag, MMF_COMPLEX))
+   {
+      ATL_mmnode_t *tp=rU;
+      rU = cU;
+      cU = tp;
+   }
+   assert(FLAG_IS_SET(cp->flag, MMF_COMPLEX));
+   assert(FLAG_IS_SET(cU->flag, MMF_COMPLEX));
+   assert(!FLAG_IS_SET(rp->flag, MMF_COMPLEX));
+   assert(!FLAG_IS_SET(rU->flag, MMF_COMPLEX));
+   @BEGINSKIP
    if (rU)
    {
       for (cU=rU->next; cU && (cU->mu == cU->nu); cU = cU->next);
@@ -38732,6 +38765,7 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
    {
       assert(FLAG_IS_SET(cp->flag, MMF_COMPLEX));
    }
+   @ENDSKIP
    bv = MMKernsPerfSame(rp, cp);
    GenSyrkH(pre, outd, rp, bv);
    GenSyrkH(cpr, outd, cp, bv);
