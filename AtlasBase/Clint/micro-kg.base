@@ -62,6 +62,14 @@
          @abort "mu (@(mu)) must be multiple of or divisible by ku (@(ku))!"
       @endiif
    @endiif
+   @ifdef PBINC
+      @abort "PBINC cannot be defined!"
+   @endifdef
+   @define PBINC @0@
+   @ifdef PBLHOIST
+      @abort "PBLHOIST cannot be defined!"
+   @endifdef
+   @define PBLHOIST @0@
 @endiif
 @iif TRMMR ! 0
    @iexp nku @(nu) @(ku) %
@@ -335,7 +343,6 @@ During tuning, think about several regions for prefetch:
    @endiif
 @endiif
 @VEC !
-@skip @iif TRMM = 0
 @iif kb > 0
 #define ATL_KBCONST 1
 #ifndef ATL_MM_KB
@@ -370,7 +377,6 @@ During tuning, think about several regions for prefetch:
    #endif
 #endif
 @endiif
-@skip @endiif
 @VEC ! NO
 #ifdef BETA1
    #define ATL_vbeta(p_, d_) \
@@ -389,6 +395,17 @@ During tuning, think about several regions for prefetch:
       ATL_vst(p_, d_); \
    }
 #endif
+@SKIP special pB inc at the last K iteration
+@iif TRMML ! 0
+@BEGINPROC lKpBinc
+   @iif PBLHOIST ! 0
+      @ifdef LAST_ITER
+   pB += incBn;
+         @undef LAST_ITER 
+      @endifdef
+   @endiif
+@ENDPROC
+@endiif 
 @VEC MDIM
    @iif bc = 0
       @BEGINPROC ldB spc d i_
@@ -438,6 +455,11 @@ During tuning, think about several regions for prefetch:
    ATL_vbcast(@(d), pB+@(i_));
             @endiif
             @iif i_ = 0
+            @SKIP *************************************************************
+               @iif TRMML ! 0
+                  @callproc lKpBinc
+               @endiif
+            @SKIP *************************************************************
    ATL_vbcast(@(d), pB);
             @endiif
          @endiif
@@ -446,6 +468,11 @@ During tuning, think about several regions for prefetch:
    ATL_vbcast(@(d), pB+@(ib));
              @endiif
             @iif ib = 0
+            @SKIP *************************************************************
+               @iif TRMML ! 0
+                  @callproc lKpBinc
+               @endiif
+            @SKIP *************************************************************
    ATL_vbcast(@(d), pB);
              @endiif
             @iexp ib @(ib) 1 +
@@ -503,6 +530,11 @@ ASSUMES: mu, nu, exreg
    ATL_vld(@(d), pB+@(i_));
          @endiif
          @iif i_ = 0
+         @SKIP *************************************************************
+            @iif TRMML ! 0
+               @callproc lKpBinc
+            @endiif
+         @SKIP *************************************************************
    ATL_vld(@(d), pB);
          @endiif
       @endiif
@@ -511,6 +543,11 @@ ASSUMES: mu, nu, exreg
    ATL_vld(@(d), pB+@(ib));
          @endiif
          @iif ib = 0
+         @SKIP *************************************************************
+            @iif TRMML ! 0
+               @callproc lKpBinc
+            @endiif
+         @SKIP *************************************************************
    ATL_vld(@(d), pB);
          @endiif
          @iexp ib @(ib) @(vl) +
@@ -1095,15 +1132,13 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
 @SKIP 1-D with NU=1
    @iif vnu = 1
       @iexp DN 1 0 +
+         @SKIP *************** LAST_ITER: increment pB before 1st pB Loading 
+         @iif TRMML ! 0
+            @callproc lKpBinc
+         @endiif
+         @SKIP **********************************************************
             @(ldB)(rB0, pB);
             pB += @(incBk);
-         @iif TRMML ! 0
-            @iif B1R = 0
-               @ifdef LAST_ITER
-            pB += incBn;
-               @endifdef
-            @endiif
-         @endiif
          @iexp i 0 0 +
          @iwhile i < @(vmu)
             @iexp kk @(i) @(vl) *
@@ -1133,17 +1168,17 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @iif kk ! 0
                @iexp kk @(vl) @(j) / -1 +
                @iexp jj @(kk) @(vl) *
+         @SKIP *************** LAST_ITER: increment pB before Loading *********
+         @iif TRMML ! 0
+            @iif jj = 0
+               @callproc lKpBinc
+            @endiif 
+         @endiif
+         @SKIP **************************************************************
              ATL_vld(vB@(kk), pB+@(jj));
             @endiif
          @endiwhile
             pB += @(incBk);
-         @iif TRMML ! 0
-            @iif B1R = 0
-               @ifdef LAST_ITER
-            pB += incBn;
-               @endifdef
-            @endiif
-         @endiif
       @endiif
    @endiif
 @SKIP 2-D case assumes all but last rB already loaded
@@ -1168,23 +1203,18 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                @callproc ldB 12 rB@(jl) @(jl)
                   @ifdef lb
                      @iexp kk @(lb) @(vl) *
+                  @SKIP **********************incBn before load of pB[0]
+                  @iif kk = 0 
+                     @iif TRMML ! 0
+                        @callproc lKpBinc
+                     @endiif 
+                  @endiif 
+                  @SKIP ************************************************
                ATL_vld(vB@(lb), pB+@(kk));
                      @undef lb
                      @iexp mo 1 0 +
                   @endifdef
                pB += @(incBk);
-               @SKIP ***** special pB increment for last iteration of TRMML 
-               @iif TRMML ! 0
-                  @iif B1R = 0
-                     @ifdef LAST_ITER
-                     @skip if (j == vnu-1 && i == vmu-1)
-                        @iif @iexp @(j) = @(vnu) 1 - & @(i) = @(vmu) 1 -        
-               pB += incBn;
-                        @endiif
-                     @endifdef 
-                  @endiif
-               @endiif
-               @SKIP *****************************************************
             @endiif
             @iif j = jl
                @iexp kk @(i) @(vl) *
@@ -1202,6 +1232,13 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @iif mo = 0
                @ifdef lb
                   @iexp kk @(lb) @(vl) *
+                  @SKIP *********************incBn before load of pB[0]
+                  @iif kk = 0 
+                     @iif TRMML ! 0
+                        @callproc lKpBinc
+                     @endiif 
+                  @endiif 
+                  @SKIP ***********************************************
                ATL_vld(vB@(lb), pB+@(kk));
                   @undef lb
                   @iexp mo 1 0 +
@@ -1221,12 +1258,15 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
    @undef kk
 @ENDPROC
 @BEGINPROC ReloadlB
+   @define kk @0@
    @define mo0 @0@ 
+   @define i @0@ 
+   @define j @0@ 
    @iif bc = 0
       @iexp j 0 0 +
       @iwhile j < @(vnu)
          @iexp kk @(vl) @(j) /
-      ATL_vld(vB@(kk), pB+@(j));
+               ATL_vld(vB@(kk), pB+@(j));
          @iexp j @(j) @(vl) +
       @endiwhile
    @endiif
@@ -1235,14 +1275,14 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
       @iexp mo0 @(mo) =
       @iexp j 0 0 +
       @iwhile j < @(jl)
-         @callproc ldB 9 rB@(j) @(j)
+         @callproc ldB 12 rB@(j) @(j)
          @ifdef lb
             @iif ib < 0
                @iexp kk @(vl) @(lb) *
-      ATL_vld(vB@(lb), pB+@(kk)); 
+               ATL_vld(vB@(lb), pB+@(kk)); 
             @endiif
             @iif ib > -1 
-      ATL_vld(vB@(lb), pB+@(ib));  
+               ATL_vld(vB@(lb), pB+@(ib));  
                @iexp ib @(ib) @(vl) +
             @endiif
             @undef lb
@@ -1252,7 +1292,10 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
       @SKIP **restore previous mo **
       @iexp mo @(mo0) =
    @endiif
+   @undef j
+   @undef i
    @undef mo0
+   @undef kk
 @ENDPROC
 void ATL_USERMM
 (
@@ -1435,6 +1478,11 @@ void ATL_USERMM
          @iexp ib @(ib) @(nu) +
       @endiif
       @iif NOKLOOP = 0
+      @SKIP ********* TRMML: to keep track of inc of pB before NLOOP   
+         @iif TRMML ! 0
+            @iexp PBINC 1 0 + 
+         @endiif
+      @SKIP ***********************************************************
       pB += @(incBk);
       @endiif
    @endiif
@@ -1456,6 +1504,20 @@ void ATL_USERMM
          @iexp j @(j) 1 +
       @endiwhile
    @endiif
+@SKIP ************* TRMML: to keep track whether ld of pB actually hoisted  
+@iif TRMML ! 0
+   @iif bc = 0
+      @iif vnu > 0
+         @iexp PBLHOIST 0 1 +
+      @endiif
+   @endiif
+   @iif @iexp 1 @(vmu) > 0 @(B1R) = &
+      @iif jl > 0
+         @iexp PBLHOIST 0 1 +
+      @endiif
+   @endiif
+@endiif
+@SKIP *****************************************************************
    @iif @iexp @(DONLOOP)
       @iif TRI = 0
          @iif TRMMR = 0 /* For Left TRMM or GEMM */
@@ -1502,7 +1564,7 @@ void ATL_USERMM
       @endiwhile
    @endiif
    @iif NOKLOOP = 0
-      @SKIP ********* to manage loop bound of TRMM ********
+      @SKIP ********* TRMM: to manage loop bound of TRMM ********
       @iif TRMM = 1 /* Left-lower */
          @iif mu < @(ku)
          KK = I-off+@(ku) ; 
@@ -1531,13 +1593,23 @@ void ATL_USERMM
          @endiif
          @iif TRMM = 1  
          if (KK <= @(kk))
-      @SKIP ***** TRMM=1 B1R=0 case *********   
-      @iif B1R = 0
+      @SKIP ***** TRMM=1 and ld of pB hoisted case ***   
+      @iif PBLHOIST ! 0
          {
-            pB += incBn;
-            @callproc ReloadlB
+            if (incBn)
+            {
+            @iif PBINC = 1
+               pB += (incBn-@(incBk));
+               @callproc ReloadlB
+               pB += @(incBk);
+            @endiif
+            @iif PBINC = 0
+               pB += incBn;
+               @callproc ReloadlB
+            @endiif 
+            }
       @endiif
-      @SKIP ********************************   
+      @SKIP ******************************************   
          @endiif
          @iif TRMM = 2
             @iif mu < @(ku)
@@ -1546,13 +1618,23 @@ void ATL_USERMM
             @iif mu } @(ku)
          if ((I+@(kk)) >= K)
             @endiif
-      @SKIP ***** TRMM=2 B1R=0 case *********   
-      @iif B1R = 0
+      @SKIP ***** TRMM=2 ld of pB hoisted case ******   
+      @iif PBLHOIST ! 0
          {
-            pB += incBn;
-            @callproc ReloadlB
+            if (incBn)
+            {
+            @iif PBINC = 1
+               pB += (incBn-@(incBk));
+               @callproc ReloadlB
+               pB += @(incBk);
+            @endiif 
+            @iif PBINC = 0
+               pB += incBn;
+               @callproc ReloadlB
+            @endiif 
+            }
       @endiif
-      @SKIP ********************************   
+      @SKIP **************************************   
          @endiif
          @iif TRMM = 3
             @iif nu < @(ku)
@@ -1567,7 +1649,7 @@ void ATL_USERMM
          @endiif
             goto KDONE;
          @iif TRMML ! 0
-            @iif B1R = 0
+            @iif PBLHOIST ! 0
          }
             @endiif
          @endiif
@@ -1589,14 +1671,24 @@ void ATL_USERMM
          @endiif
          @iif TRMM = 1  
          if (KK <= @(kk))
-      @SKIP ***** TRMM=1 B1R=0 case *********   
-      @iif B1R = 0
-         {            
-            pB += incBn;
-            @callproc ReloadlB
+      @SKIP ***** TRMM=1 ld of pB hoisted case *********   
+            @iif PBLHOIST ! 0
+         {           
+            if (incBn)
+            {
+            @iif PBINC = 1
+               pB += (incBn-@(incBk));
+               @callproc ReloadlB
+               pB += @(incBk);
+            @endiif
+            @iif PBINC = 0
+               pB += incBn;
+               @callproc ReloadlB
+            @endiif
+            }
             @endiif
       @endiif
-      @SKIP ********************************   
+      @SKIP *********************************************   
          @iif TRMM = 2
             @iif mu < @(ku)
          if ((I-off+@(kk)) >= K)
@@ -1604,13 +1696,23 @@ void ATL_USERMM
             @iif mu } @(ku)
          if ((I+@(kk)) >= K)
             @endiif
-      @SKIP ***** TRMM=2 B1R=0 case *********   
-      @iif B1R = 0
+      @SKIP ***** TRMM=2 ld of pB hoisted case *********   
+      @iif PBLHOIST ! 0
          {
-            pB += incBn;
-            @callproc ReloadlB
+            if (incBn)
+            {
+            @iif PBINC = 1
+               pB += (incBn-@(incBk));
+               @callproc ReloadlB
+               pB += @(incBk);
+            @endiif
+            @iif PBINC = 0
+               pB += incBn;
+               @callproc ReloadlB
+            @endiif
+            }
       @endiif
-      @SKIP ********************************   
+      @SKIP *******************************************   
          @endiif
          @iif TRMM = 3
             @iif nu < @(ku)
@@ -1624,13 +1726,13 @@ void ATL_USERMM
          if (KK <= @(kk))
          @endiif
             goto KDONE;
-      @SKIP ***** TRMM left,  B1R=0 ********   
+      @SKIP ***** TRMM left,  B1R=0 ******************   
          @iif TRMML ! 0
-            @iif B1R = 0
+            @iif PBLHOIST ! 0
          }
             @endiif 
          @endiif
-      @SKIP ********************************  
+      @SKIP ****************************************** 
             @CALLPROC DoIter
             @iexp npeel @(npeel) 1 +
             @iexp ii @(ii) 1 +
@@ -1639,11 +1741,21 @@ void ATL_USERMM
          @iexp kk @(kmul) @(npeel) *
       @iif TRMM = 1 /* Left-lower */
          @SKIP ****NOTE: extra checking needed if kloop not executes   
-         @iif B1R = 0
+         @iif PBLHOIST ! 0
          if (KK == @(kk))
          {
-            pB += incBn;
-            @callproc ReloadlB
+            if (incBn)
+            {
+            @iif PBINC = 1
+               pB += (incBn-@(incBk));
+               @callproc ReloadlB
+               pB += @(incBk);
+            @endiif
+            @iif PBINC = 0
+               pB += incBn;
+               @callproc ReloadlB
+            @endiif
+            }
             goto KDONE;
          }
          KK -= @(ku); /* to keep epilogue for kloop */
@@ -1652,7 +1764,7 @@ void ATL_USERMM
       @endiif
       @iif TRMM = 2 /* Left-upper */
          @SKIP ****NOTE: extra checking needed if kloop not executes   
-         @iif B1R = 0
+         @iif PBLHOIST ! 0 
             @iif mu < @(ku)
          if ((I-off+@(kk)) >= K)
             @endiif
@@ -1660,8 +1772,19 @@ void ATL_USERMM
          if ((I+@(kk)) >= K)
             @endiif
          {
-            pB += incBn;
-            @callproc ReloadlB
+            if (incBn)
+            {
+            @iif PBINC = 1
+               pB += (incBn-@(incBk));
+               @callproc ReloadlB
+               pB += @(incBk);
+            @endiif
+            @iif PBINC = 0
+               pB += incBn;
+               @callproc ReloadlB
+               @SKIP pB += @(incBk);
+            @endiif 
+            }
             goto KDONE;
          }
          KK = K - @(ku); /* to keep epilogue for kloop */
@@ -1672,7 +1795,7 @@ void ATL_USERMM
          for (k=I+@(kk); k < KK; k += @(ku))
             @endiif
          @endiif
-         @iif B1R ! 0
+         @iif PBLHOIST = 0
             @iif mu < @(ku)
          for (k=I-off+@(kk); k < K; k += @(ku))
             @endiif
@@ -1706,9 +1829,9 @@ void ATL_USERMM
                @iexp kk @(kk) 1 +
             @endiwhile
          }
-      @SKIP ******* special for TRMML *************************
+      @SKIP *******TRMML: special for TRMML ******************
       @iif TRMML ! 0
-         @iif B1R = 0
+         @iif PBLHOIST ! 0 
       @SKIP ****** handle last iteration differently *********
       @iexp IN_K 0 1 +
       @iexp kk 0
@@ -1721,12 +1844,12 @@ void ATL_USERMM
 /*    last iteration : need to update pB accordingly */   
             @define LAST_ITER @1@
             @CALLPROC DoIter 
-            @undef LAST_ITER
+            @SKIP @undef LAST_ITER
          @endiif
       @endiwhile
 KDONE:
          @endiif
-            @iif B1R ! 0
+            @iif PBLHOIST = 0
          @iif npeel > 1
 KDONE:
          @endiif
@@ -1754,7 +1877,7 @@ KDONE:
    @endiif
       @iif TRMM ! 0
          @iif TRMML ! 0
-            @iif B1R ! 0 
+            @iif PBLHOIST = 0
          pB += incBn;
             @endiif
          @SKIP /*pB += incBn;*/
