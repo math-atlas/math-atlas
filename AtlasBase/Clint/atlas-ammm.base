@@ -37870,9 +37870,51 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
    char *sfx[2] = {"", "_L2UT"};
    char *hfx[2] = {"", "_L2UH"};
 
-
+/*
+ * um may be same as sq, in which case we gen a file using um's info
+ */
    if (!mb)
+   {
+      if (UM)
+      {
+         fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "umsyrk", NULL);
+         fprintf(fp, "   #include atlas_%camm_sqsyrk.h", pre);
+         @whiledef nm VLEN KVEC MU NU
+         fprintf(fp, "#define ATL_UMSYRKK_@(nm) ATL_SQSYRKK_@(nm)\n");
+         @endwhile
+         fprintf(fp, "#define ATL_%cumsyrkK_b0 ATL_%csqsyrkK_b0\n", pre, pre);
+         fprintf(fp, "#define ATL_%cumsyrkK_b1 ATL_%csqsyrkK_b1\n", pre, pre);
+         fprintf(fp, "#define ATL_%cumsyrkK_bn ATL_%csqsyrkK_bn\n", pre, pre);
+         fprintf(fp, "#define ATL_%ca2blk_umsyrkN ATL_%ca2blk_sqsyrkN\n", 
+                 pre, pre);
+/*
+ *       redefine C cpy routs: ATL_<pre>[sq,um]SyrkIntoC_a<alp>_b<bet>
+ */
+         for (ial=0; ial < 3; ial++)
+         {
+            for (ibe=0; ibe < 4; ibe++)
+            {
+               int is;
+               for (is=0; is < 2; is++)
+               {
+                  fprintf(fp, "#ifdef Conj_\n");
+                  fprintf(fp, "   #define ATL_%cumHerkIntoC_a%cb%c%s "
+                          "ATL_%csqHerkIntoC_a%cb%c%s\n", 
+                           pre, bes[ial], bes[ibe], sfx[is],
+                           pre, bes[ial], bes[ibe], hfx[is]);
+                  fprintf(fp, "#endif\n");
+                  fprintf(fp, "#define ATL_%cumSyrkIntoC_a%cb%c%s", 
+                          " ATL_%csqSyrkIntoC_a%cb%c%s",
+                          pre, bes[ial], bes[ibe], sfx[is],
+                          pre, bes[ial], bes[ibe], sfx[is] 
+                         );
+               }
+            }
+         }
+         CloseGenHeader(fp);
+      }
       return;
+   }
    fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", UM?"umsyrk":"sqsyrk", NULL);
    fprintf(fp, "#define ATL_%sSYRKK_VLEN %d\n", SH, mb->vlen);
    fprintf(fp, "#define ATL_%sSYRKK_KVEC %d\n", SH,
@@ -38733,39 +38775,6 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
    assert(FLAG_IS_SET(cU->flag, MMF_COMPLEX));
    assert(!FLAG_IS_SET(rp->flag, MMF_COMPLEX));
    assert(!FLAG_IS_SET(rU->flag, MMF_COMPLEX));
-   @BEGINSKIP
-   if (rU)
-   {
-      for (cU=rU->next; cU && (cU->mu == cU->nu); cU = cU->next);
-      assert(cU);
-      if (FLAG_IS_SET(rU->flag, MMF_COMPLEX)) /* cplx first */
-      {
-         ATL_mmnode_t *tp;
-         assert(!FLAG_IS_SET(cU->flag, MMF_COMPLEX));
-         tp = cU;
-         cU = rU;
-         rU = tp;
-      }
-      else /* real first */
-      {
-         assert(FLAG_IS_SET(cU->flag, MMF_COMPLEX));
-      }
-   }
-   else
-      cU = NULL;
-   if (FLAG_IS_SET(rp->flag, MMF_COMPLEX)) /* cplx first */
-   {
-      ATL_mmnode_t *tp;
-      assert(!FLAG_IS_SET(cp->flag, MMF_COMPLEX));
-      tp = cp;
-      cp = rp;
-      rp = tp;
-   }
-   else /* real first */
-   {
-      assert(FLAG_IS_SET(cp->flag, MMF_COMPLEX));
-   }
-   @ENDSKIP
    bv = MMKernsPerfSame(rp, cp);
    GenSyrkH(pre, outd, rp, bv);
    GenSyrkH(cpr, outd, cp, bv);
@@ -38776,16 +38785,44 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
       bkb = RemoveMMNodeFromQ(bkb, cp);
       KillMMNode(cp);
    }
+/*
+ * HERE HERE RCW: not sure how this handles same kernel for some combos
+ */
    if (rU)
    {
       unsigned int bvU;
       bvU = MMKernsPerfSame(rU, cU) | 2;
-      GenSyrkH(pre, outd, rU, bvU);
-      GenSyrkH(cpr, outd, cU, bvU);
-      if (bvU & 1)
+      if (MMKernsPerfSame(rU, rp)) /* is this real kernel same as mu=nu kern? */
       {
+         bkb = RemoveMMNodeFromQ(bkb, rU);
+         GenSyrkH(pre, outd, NULL, bvU);
+         KillMMNode(rU);
+         if (MMKernsPerfSame(cU, cp))
+         {
+            bkb = RemoveMMNodeFromQ(bkb, cU);
+            KillMMNode(cU);
+            cU = NULL;
+         }
+         GenSyrkH(cpr, outd, cU, bvU);
+      }
+      else if (MMKernsPerfSame(cU, cp)) /* is cplx kernel same as mu=nu kern? */
+      {
+         GenSyrkH(pre, outd, rU, bvU);
+         GenSyrkH(cpr, outd, NULL, bvU);
          bkb = RemoveMMNodeFromQ(bkb, cU);
          KillMMNode(cU);
+         cU = NULL;
+      }
+      else
+      {
+         bvU = MMKernsPerfSame(rU, cU) | 2;
+         GenSyrkH(pre, outd, rU, bvU);
+         GenSyrkH(cpr, outd, cU, bvU);
+         if (bvU & 1)
+         {
+            bkb = RemoveMMNodeFromQ(bkb, cU);
+            KillMMNode(cU);
+         }
       }
    }
    *BKB = bkb;
