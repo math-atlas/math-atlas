@@ -17,8 +17,22 @@
 @ifdef ! TRI
    @iexp TRI 0
 @endifdef
-@SKIP TRI = 1 means lower triangular C (SYRK)
+@SKIP TRI = 1 means lower triangular C (SYRK), 
+@SKIP mEn:mu==nu, mMn: mu/nu mult of each other; mUn: mu/nu unrelated
+@iexp SYRKU 0
 @iif TRI = 1
+   @iexp mEn @(mu) @(nu) = 
+   @iexp mMn @(mu) @(nu) % 0 =
+   @iexp na @(mu) @(nu) /
+   @iexp ma 1
+   @iif @(mMn) = 0
+      @iexp mMn @(nu) @(mu) % 0 =
+      @iexp ma @(nu) @(mu) /
+   @endiif
+   @iexp mUm @(mMn) @(mEn) | 0 =
+   @iexp SYRKU @(mUm)
+   @PRINT SYRKKU=@(SYRKU) mMn=@(mMn) mEn=@(mEn) U=(@(mu),@(nu))
+   @BEGINSKIP
    @define ma @1@
    @define na @1@
    @iif mu ! nu
@@ -26,7 +40,7 @@
          @iexp ma @(nu) @(mu) / 
          @iexp mma @(ma) @(nu) *
          @iif mu ! mma
-           @abort "mu (@(mu)) must be mupliple of nu (@(nu))"  
+           @abort "mu (@(mu)) must be multiple of nu (@(nu))"  
          @endiif
          @skip @print ************ma = @(ma)
       @endiif
@@ -34,7 +48,7 @@
          @iexp na @(mu) @(nu) / 
          @iexp nna @(na) @(mu) *
          @iif nu ! nna
-           @abort "nu (@(nu)) must be mupliple of mu (@(mu))"  
+           @abort "nu (@(nu)) must be multiple of mu (@(mu))"  
          @endiif
          @skip @print ************na = @(na)
       @endiif
@@ -43,6 +57,7 @@
    @iif mu = nu
       @define mEn @1@
    @endiif
+   @ENDSKIP
 @endiif
 @SKIP TRMM=1,2,3,4; 1=Left Lower, 2=Left Upper, 3=Right Lower, 4=Right Upper
 @ifdef ! TRMM
@@ -249,9 +264,9 @@ During tuning, think about several regions for prefetch:
       @iif ku ! vl
          @abort "ku (@(ku)) must equal vlen (@(vl))!"
       @endiif
-   @VEC JJJJJ
-      @iif ku ! 1
-         @abort "ku must be 1, but it is @(ku)!"
+   @VEC MDIM
+      @iif ku > 4
+         @abort "ku must be <= 4, but it is @(ku)!"
       @endiif
    @VEC !
 @endiif
@@ -1381,6 +1396,9 @@ void ATL_USERMM
    @endiif
 @skip   const @(typ) *pfA;
    int i, j, k;
+   @iif SYRKU = 1
+   const unsigned int MM=nmu*@(mu);
+   @endiif
    @iif TRMML ! 0
    int I, KK; /* Used for K-loop bounds */
       @iexp koff @(mu)
@@ -1451,12 +1469,20 @@ void ATL_USERMM
    @iexp jpf 0 -1 +
 @iif @iexp @(DOMLOOP)
    @iif TRMML = 0
+      @iif SYRKU = 1
+   for (i=0; i < MM; i += mu)
+      @endiif
+      @iif SYRKU = 0
    for (i=0; i < nmus; i++)
+      @endiif
    @endiif
    @iif TRMML ! 0
    for (i=0, I=0; i < nmus; i++, I+=@(mu))
    @endiif
    {
+   @iif SYRKU = 1
+      int in = i + @(mu);
+   @endiif
    @iif TRMM = 3
       int Aoff = 0;
    @endiif
@@ -1531,12 +1557,17 @@ void ATL_USERMM
          @iif mEn = 1
       for (j=0; j <= i; j++)
          @endiif
-         @iif mEn ! 1
-            @iif ma > 1
+         @iif SYRKU = 1
+         for (j=0; j < in; j += @(nu))
+         @endiif
+         @iif SYRKU = 0
+            @iif mEn ! 1
+               @iif ma > 1
       for (j=0; j < @(ma)*(i+1); j++)
-            @endiif
-            @iif na > 1
+               @endiif
+               @iif na > 1
       for (j=0; j <= i/@(na); j++)
+               @endiif
             @endiif
          @endiif
       @endiif
