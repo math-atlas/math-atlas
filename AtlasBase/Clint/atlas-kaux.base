@@ -1756,7 +1756,7 @@ void Mjoin(Mjoin(PATL,amL2skLNB),BNM)
    (ATL_iptr_t N, ATL_CUINT MU, ATL_CUINT NU, ATL_CUINT shVL, 
     const TYPE *W, const SCALAR beta, TYPE *C, ATL_iptr_t ldc)
 {
-#ifndef TCPLX
+#if 0
    ATL_CUINT incW = ((MU*NU+(1<<shVL)-1)>>shVL)<<shVL;
    ATL_UINT i, in;
 
@@ -1793,6 +1793,63 @@ void Mjoin(Mjoin(PATL,amL2skLNB),BNM)
                }
             }
          }
+      }
+   }
+#else
+   ATL_CUINT blksz = MU*NU;
+   ATL_UINT j, jn, cinc;
+   const TYPE *rW=W, *rw;
+   const ATL_iptr_t incC = ldc*NU;
+   for (cinc=j=0; j < N; j = jn, C += incC, cinc += blksz)
+   {
+      ATL_UINT i, in, nu = N-j, nd;
+      nu = (nu >= NU) ? NU : nu;
+      jn = j + nu;
+      i = (j/MU)*MU;
+/*
+ *    Diagonal presently at (j,j), compute how many blocks of i diag crosses,
+ *    crossing should happen at (jn,jn)
+ */
+      rw = rW;
+      for(nd=i+((jn+MU-1)/MU); i < nd; i = in)
+      {
+         ATL_UINT mu=N-i, ii, jj, nblks;
+         const TYPE *w = rw + cinc;
+         TYPE *c = C + i;
+         mu = (mu >= MU) ? MU : mu;
+         in = i + mu;
+         for (jj=0; jj < nu; jj++, c += ldc, w += MU)
+         {
+            ATL_CUINT J=j+jj;
+            for (ii=0; ii < mu; ii++)
+            {
+               ATL_CUINT I=i+ii;
+               if (I >= J)
+                  c[ii] = w[ii];
+            }
+         }
+         nblks = (in+nu-1) / nu;  /* # of row blocks in this panel */
+         rw += nblks*blksz; /* finished all blocks in rowpanel */
+/*
+ *       Diagonal blocks may finish rows, if so increment rW
+ */
+         rW = (in <= jn) ? rw : rW;
+      }
+/*
+ *    Diagonal above any remaining blocks
+ */
+      for (; i < N; i = in)
+      {
+         ATL_UINT mu=N-i, ii, jj, nblks;
+         const TYPE *w = rw + cinc;
+         TYPE *c = C + i;
+         mu = (mu >= MU) ? MU : mu;
+         in = i + mu;
+         for (jj=0; jj < nu; jj++, c += ldc, w += MU)
+            for (ii=0; ii < mu; ii++)
+               c[ii] = w[ii];
+         nblks = (in+nu-1) / nu;  /* # of row blocks in this panel */
+         rw += nblks*blksz;
       }
    }
 #endif
