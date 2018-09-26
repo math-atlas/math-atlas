@@ -16054,46 +16054,27 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #define K0 r5
 #define KK r11
 #define pA0 r12
-#define pBn r30
-#define incAm r29
-#define incBn r28
+#define pBn r14
+#define incAm r15
+#define incBn r16
 #define ADDA add
 #define ADDB add
+   @iexp nisv 3
 @ROUT ATL_kmm8x6x256_vsx.S
+   @iexp nisv 0
 #define ADDA addi
 #define ADDB addi
 #define incAm KB*8*ELTSZ    /* KB*mu*sizeof */
 #define incBn KB*6*ELTSZ    /* KB*nu*sizeof */
 @ROUT ATL_kmm8x6x256_vsx.S ATL_kmm8x6x16_vsx.S
-@beginskip
-#if KB*6*ELTSZ > 32767
-   #define incBn r5
-   #define incAm r11
-   #define pA1 r12
-   #define pB1 r13
-   #define ADDA add
-   #define ADDB add
-#elif KB*8*ELTSZ > 32767
-   #define incAm r5
-   #define pA1 r11
-   #define ADDA add
-   #define ADDB addi
-   #define incBn KB*6*ELTSZ    /* KB*nu*sizeof */
-#else
-   #define ADDA addi
-   #define ADDB addi
-   #define incAm KB*8*ELTSZ    /* KB*mu*sizeof */
-   #define incBn KB*6*ELTSZ    /* KB*nu*sizeof */
-#endif
-@endskip
 #define i128_0 0
 @iexp ii 1
 @iwhile ii < 3
-   @iexp kk @(ii) 13 +
+   @iexp kk 14 @(nisv) +
 #define i128_@(ii) r@(kk)
    @iexp ii @(ii) 1 +
+   @iexp nisv @(nisv) 1 +
 @endiwhile
-/* #define Kb0 r14 */
 #if defined(__BIG_ENDIAN__)
    #define BIGENDIEN 1
 #elif defined(__ORDER_BIG_ENDIAN__) && defined(__BYTE_ORDER__)
@@ -16149,8 +16130,12 @@ ATL_asmdecor(ATL_USERMM):
  *    f14-f31 -> vsr14-vsr31 -> 18*8 = 144 bytes
  *    v20-v31 -> vsr52-vsr63 -> 12*16 = 192 bytes
  */
-@ROUT ATL_kmm8x6x256_vsx.S `#define ISZ 12*3`
-@ROUT ATL_kmm8x6x16_vsx.S  `#define ISZ 12*4`
+@iif @iexp @(nisv) 2 2 @(nisv) / * =
+#define ISZ @(nisv)*8
+@endiif
+@iif @iexp @(nisv) 2 2 @(nisv) / * !
+#define ISZ (@(nisv)+1)*8 /* +1 keeps 16-byte aligned stack frame */
+@endiif
 #define FSZ 0
 #define VSZ 12*16
 #define LSZ 0
@@ -16178,17 +16163,20 @@ ATL_asmdecor(ATL_USERMM):
  * Save iregs, and initialize fixed 16-increment indices for pC
  */
    std r2, 24(r1)        /* TOC reg always at 24(sp) */
+   mfcr r0
+   stw r0, 8(r1)         /* CR must be 4-byte saved 8(sp) */
+@iexp ii 0
+@iwhile ii < @(nisv)
+   @iexp kk 14 @(ii) +
+   std r@(kk), IOFF+8*@(ii)(r1)
+   @iexp ii @(ii) 1 +
+@endiwhile
 @iexp ii 1
 @iwhile ii < 3
-   std i128_@(ii), IOFF+8*@(ii)(r1)
+   @iexp kk @(ii) 31 -
    li  i128_@(ii), 128*@(ii)
    @iexp ii @(ii) 1 +
 @endiwhile
-@ROUT ATL_kmm8x6x16_vsx.S 
-@whiledef sv pBn incAm incBn
-   std @(sv), IOFF+8*@(ii)(r1)
-   @iexp ii @(ii) 1 +
-@endwhile
 @ROUT ATL_kmm8x6x256_vsx.S ATL_kmm8x6x16_vsx.S
 /*
  * Save vec regs
@@ -16723,8 +16711,8 @@ KDONE:
       mtctr NNU
       mr pB, pB0
 @ROUT ATL_kmm8x6x16_vsx.S
-      mr pA, pA0
       ADDA pA0, pA0, incAm        /* pA += KB*mu*sizeof */
+      mr pA, pA0
       add pBn, pB0, incBn
 @ROUT ATL_kmm8x6x256_vsx.S 
       ADDA pA, pA, incAm        /* pA += KB*mu*sizeof */
@@ -16744,16 +16732,14 @@ KDONE:
  * Restore iregs
  */
    ld r2, 24(r1)        /* TOC reg always at 24(sp) */
-@iexp ii 1
-@iwhile ii < 3
-   ld i128_@(ii), IOFF+8*@(ii)(r1)
+   lwz r0, 8(r1)        /* CR must be 4-byte saved 8(sp) */
+   mtcr r0
+@iexp ii 0
+@iwhile ii < @(nisv)
+   @iexp kk 14 @(ii) +
+   ld r@(kk), IOFF+8*@(ii)(r1)
    @iexp ii @(ii) 1 +
 @endiwhile
-@ROUT ATL_kmm8x6x16_vsx.S 
-@whiledef sv pBn incAm incBn
-   ld @(sv), IOFF+8*@(ii)(r1)
-   @iexp ii @(ii) 1 +
-@endwhile
 @ROUT ATL_kmm8x6x16_vsx.S ATL_kmm8x6x256_vsx.S 
 /*
  * Dealloc stack frame & return
@@ -16973,8 +16959,8 @@ ATL_asmdecor(ATL_USERMM):
    srdi K16, K16, VSH     /* K16 now has number of vector K after peel */
    andi. KR, K16, 0xF     /* KR = K%16 */
    srdi K16, K16, 4       /* K16 = K/16 */
-   cmpdi cr2, KR, 0       /* check if all we do is K=2 peeled iterations */
-   cmpdi cr3, K16, 0      /* check if we do any 16-vec unroll its */
+   cmpdi cr6, KR, 0       /* check if all we do is K=2 peeled iterations */
+   cmpdi cr5, K16, 0      /* check if we do any 16-vec unroll its */
    mr pA0, pA
    mr pB0, pB
 
@@ -17065,7 +17051,7 @@ ATL_asmdecor(ATL_USERMM):
             lxv rA6, 13*VECSZ(pA)
          addi pA, pA, 7*VECSZ       /* pA += mu*sizeof */
          addi pB, pB, 7*VECSZ       /* pB += mu*sizeof */
-         beq cr3, KCLEAN            /* if (K16==0) skip to cleanup loop */
+         beq cr5, KCLEAN            /* if (K16==0) skip to cleanup loop */
          mtctr K16                  /* move # of 16*vlen K its to ctr */
          KLOOP16:
             /* Vector unroll=0 */
@@ -18113,7 +18099,7 @@ ATL_asmdecor(ATL_USERMM):
          bdnz KLOOP16
 
          KCLEAN:
-         beq cr2, KDONE             /* if (KR==0) done with K loop */
+         beq cr6, KDONE             /* if (KR==0) done with K loop */
          mtctr KR  /* move rolled VLEN K its to do to KR */
          KLOOP1:
             xvmaddadp rC00, rA0, rB0
