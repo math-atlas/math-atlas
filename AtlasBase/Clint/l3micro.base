@@ -6944,7 +6944,42 @@ void Mjoin(PATL,symm)
       Mjoin(PATL,symmL_rec)(bv, M, N, alpha, A, lda, B, ldb, beta, C, ldc);
    }
    else                   /* Right: K=N, A is GEMM's B */
+   {
+      #if !defined(TCPLX)
+      if (M == 1) /* really HEMV/SYMV */
+      {
+/*
+ *       Form C^H = S^H B^H (getting symm on left for hemv), 
+ *       then convert C by conjugating.  This code works, but the
+ *       extra work makes usually it slower than refblas or gemm.
+ *       So, above outside cpp if doesn't allow this case.
+ */
+         #ifdef Conj_
+         {
+            void *vp;
+            const TYPE CALP[2]={*alpha,-alpha[1]}, 
+                       ONE[3]={ATL_rone, ATL_rzero, ATL_rzero};
+            const ATL_iptr_t N2 = N+N;
+            TYPE *x, *y;
+            vp = malloc(ATL_MulBySize(N2)+ATL_Cachelen*2);
+            ATL_assert(vp);
+            x = ATL_AlignPtr(vp);
+            y = x + N2;
+            y = ATL_AlignPtr(y);
+            Mjoin(PATL,moveConj)(N, CALP, B, ldb, x, 1);
+            Mjoin(PATL,hemv)(Uplo, N, ONE, A, lda, x, 1, ONE+1, y, 1);
+            Mjoin(PATL,axpbyConj)(N, ONE, y, 1, beta, C, ldc);
+            free(vp);
+            return;
+         }
+         #else
+            Mjoin(PATL,symv)(Uplo, N, alpha, A, lda, B, ldb, beta, C, ldc);
+            return;
+         #endif
+      }
+      #endif
       Mjoin(PATL,symmR_rec)(bv, M, N, alpha, A, lda, B, ldb, beta, C, ldc);
+   }
 }
 @ROUT trmmview
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2018
