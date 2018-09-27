@@ -8612,25 +8612,84 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
  * RETURNS: mflop for best MB,NB, which is given in mp->mbB, mp->nbB.
  */
 {
-   const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku; 
-   unsigned int MB0=mp->mbB, NB0=mp->nbB, KB0=mp->kbB; 
+   const unsigned int mu=mp->mu, nu=mp->nu; 
+   unsigned int MB0=mp->mbB, NB0=mp->nbB, KB0=mp->kbB, ku=mp->ku;
    unsigned int KBMAX = mp->kbmax ? mp->kbmax : 512;
+   unsigned int KBMIN = mp->kbmin ? mp->kbmin : 1;
+   unsigned int ADJKUKB=0;
    unsigned int MU, NU;
    const int NK=(tflag>>31)&1;
    int kb=mp->kbB, mbB, nbB, kbB, mb, nb, maxD, maxDB;
    int FASTER=0, nfut=0;
    double mfB, penB=B1PEN;
-
+   if (mp->flag & (1<<MMF_KUISKB))
+   {
+      if (!mp->ID)
+         ADJKUKB= ku = 1;
+      else if (!mp->kbmax || mp->kbmax > mp->kbmin)
+         ADJKUKB = 1;
+   }
    if (NK)
    {
-      NU = nb = kb = ATL_iLCM(nu, ku);
+
+      if (ADJKUKB)
+      {
+         if (!mp->ID)
+         {
+            kb = nu;
+            mp->kbB = mp->ku = nu;
+         }
+         else /* user contributed kernel */
+         {
+            if (mp->kbmin)
+            {
+               ku = ((mp->kbmin+nu-1)/nu)*nu;
+               kb = ku;
+            }
+            else 
+            {
+               ku = 1;
+               kb = nu;
+            }
+            if (mp->kbmax)
+               assert(ku < mp->kbmax);
+         }
+      }
+      else
+         kb = ATL_iLCM(nu, ku);
+      NU = nb = kb;
       MU = mb = mu;
       if (NB0 != KB0)
          MB0 = NB0 = KB0 = 0;
    }
    else
    {
-      MU = mb = kb = ATL_iLCM(mu, ku);
+      if (ADJKUKB)
+      {
+         if (!mp->ID)
+         {
+            kb = nu;
+            mp->kbB = mp->ku = nu;
+         }
+         else /* user contributed kernel */
+         {
+            if (mp->kbmin)
+            {
+               ku = ((mp->kbmin+nu-1)/nu)*nu;
+               kb = ku;
+            }
+            else 
+            {
+               ku = 1;
+               kb = nu;
+            }
+            if (mp->kbmax)
+               assert(ku < mp->kbmax);
+         }
+      }
+      else
+         kb = ATL_iLCM(mu, ku);
+      MU = mb = kb;
       NU = nb = nu;
       if (MB0 != KB0)
          MB0 = NB0 = KB0 = 0;
@@ -8656,12 +8715,20 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
          @callproc setFast M kbm
          @callproc setFast N kbn
          if (kbn <= KBMAX)
+         {
+            if (ADJKUKB)
+               mp->kbB = mp->ku = kbn;
             mfN = TimeMMKernel(verb, tflag, mp, pre, mb, nbN, kbn, beta, 0, -1);
+         }
          else
             mfN = 0;
          printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,mb, nbN,kbn,mfN);
          if (kbm <= KBMAX)
+         {
+            if (ADJKUKB)
+               mp->kbB = mp->ku = kbn;
             mfM = TimeMMKernel(verb, tflag, mp, pre, mbN, nb, kbm, beta, 0, -1);
+         }
          else
             mfM = 0;
          printf("      ID=%d ': B=(%d,%d,%d) mf=%.2f",  mp->ID,mbN,nb, kbm,mfM);
@@ -8716,6 +8783,8 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
        (KB0/ku)*ku == KB0)
    {
       double mf;
+      if (ADJKUKB)
+         mp->kbB = mp->ku = KB0;
       mf = TimeMMKernel(verb, tflag|1, mp, pre, MB0, NB0, KB0, beta, 0, -1);
       printf("      ID=%d : B=(%d,%d,%d) mf=%.2f\n", mp->ID,MB0,NB0,KB0,mf);
       if (mf > mfB)
@@ -8729,6 +8798,8 @@ double MMExpandNK(int verb, char pre, int tflag, int beta, ATL_mmnode_t *mp)
    mp->mbB = mbB;
    mp->nbB = nbB;
    mp->kbB = kbB;
+   if (ADJKUKB)
+      mp->ku = kbB;
    mp->mflop[0] = mfB;
    return(mfB);
 }

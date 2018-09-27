@@ -35874,7 +35874,7 @@ void do_ipdek(int verb, char pre, int NEK)
 {
    ATL_mmnode_t *mp, *mb=NULL;
    int tflag = 0;
-   unsigned int i, U, N;
+   unsigned int i, U, N, ADJKUKB=0;
    const char ch=NEK?'N':'M';
    char *fn=NEK?"ipnek.sum":"ipmek.sum";
 
@@ -35889,6 +35889,15 @@ void do_ipdek(int verb, char pre, int NEK)
    while (mp->next)
       mp = KillMMNode(mp);
    mp->flag = (mp->flag&(~MMF_MVSET)) | ((1<<MMF_MVA)|(1<<MMF_MVB));
+   if (mp->flag & (1<<MMF_KUISKB))
+   {
+      if (!mp->ID)
+         ADJKUKB= ku = 1;
+      else if (!mp->kbmax || mp->kbmax > mp->kbmin)
+         ADJKUKB = 1;
+      else
+        assert(0);  /* need gen a file/retime user here */
+   }
    if (NEK)
       tflag |= 1<<31;
    mp->mflop[0] = 0;
@@ -35897,8 +35906,14 @@ void do_ipdek(int verb, char pre, int NEK)
    MMExpandNK(verb, pre, tflag, 1, mp);
    printf("BEST %c=K: ID=%u, B=(%u,%u,%u), mf=.2f\n\n", ch, mp->ID, 
           mp->mbB, mp->nbB, mp->kbB);
-   U = mp->ku;
-   if (NEK)
+   if (ADJKUKB)
+   {
+      U = (NEK) ? mp->nu : mp->mu;
+      if (U < mp->kbmin)
+         U = ((mp->kbmin+U-1)/U)*U;
+      N = (NEK) ? mp->nbB : mp->mbB;
+   }
+   else if (NEK)
    {
       U = ATL_iLCM(U, mp->nu);
       N = mp->nbB;
@@ -35925,6 +35940,8 @@ void do_ipdek(int verb, char pre, int NEK)
          p->nbB = p->kbB = i;
       else
          p->mbB = p->kbB = i;
+      if (ADJKUKB)
+         p->ku = i;
       MMExpandMorN(verb, pre, tflag, 1, p, !NEK, 512);
       printf("   BEST CASE FOR %c=K=%u: B=(%u,%u,%u), mf=%.2f\n", ch, i, 
              p->mbB, p->nbB, p->kbB, p->mflop[0]);
