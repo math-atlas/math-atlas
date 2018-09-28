@@ -5651,8 +5651,32 @@ ATL_UINT findMaxKB              /* RETURNS: best performing KB */
 }
 
 @SKIP #include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_blk.h))
+ATL_UINT fastopIdxInRange(ATL_UINT minIdx, ATL_UINT maxIdx)
+/*
+ * RETURNS: index of smallest SPF in opgen_view within idx range [min,max]
+ */
+{
+   unsigned int i, idx, imin=minIdx;
+   float minSPF=2e16;
+
+   for (i=minIdx; i <= maxIdx i++)
+   {
+      const unsigned int *ip;
+      const unsigned int idx = ATL_VWopgen_IDXMUL(i);
+      float spf;
+      ip = ATL_VIEW_opgen + idx;
+      spf = *((float*)ip);
+      if (spf < minSPF)
+      {
+         minSPF = spf;
+         imin = i;
+      }
+   }
+   assert(minSPF != 2e16);
+   return(imin);
+}
 #if 0
-int opfindNB 
+int ipfindNB  /* RETURNS: opgen KB to use for this problem */
 (
    int rout,                    /* routine to time */
    int nreps,                   /* # of times to repeat timing */
@@ -5661,18 +5685,180 @@ int opfindNB
    int mflopF,                  /* mflops to force in one timing*/
    int uplo, int side,
    int M, int N, int lda,       /* prob dims */
-   int minIdx, int maxIdx,      /* view index of min & max KB to try */
-   double *tLeft,               /* % time minNB took for this problem size */
-   double *tRight               /* time maxNB took for this problem size */
+   int minKB, int maxKB         /* min/max KB to try with opgen range */
+)
+{
+   ATL_UINT i, kbB = Mmin(M,N)>>1;
+   double tim, timB=0.0;
+   maxKB = Mmin(maxKB, kbB);
+   maxKB = Mmin(maxKB, 1024);
+   kbB = 0;
+   if (minKB < ATL_VWipgen_BEST_KB)
+   {
+      for (i=0; i < ATL_VWipgen_NCASES; i++)
+      {
+         ATL_UINT kb;
+         kb = ATL_GetVWipgenKB(i);
+         if (kb+kb >= minKB) 
+            break;
+      }
+      for (; i < ATL_VWipgen_NCASES; i++)
+      {
+         ATL_UINT kb;
+         kb = ATL_GetVWipgenKB(i);
+         kb += kb;
+         if (kb > maxKB)
+            break;
+         tim = GetMultSampleTimes(0, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                   uplo, side, M, N, lda, kb);
+         printf("      nb=%d: %.2f MFLOP.\n", kb,Time2Flops(rout,uplo,M,N,tim));
+         if (!kbB || tim < timB)
+         {
+            kbB = kb;
+            timB = tim;
+         }
+         tim0 = tim1;
+         tim1 = tim;
+      }
+   }
+   if (3*ATL_VWipgen_BEST_KB <= maxKB)
+   {
+      ATL_UINT kb;
+      kb=ATL_VWipgen_BEST_KB*3;
+      do
+      {
+         kb += ATL_VWipgen_BEST_KB;
+         tim = GetMultSampleTimes(0, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                   uplo, side, M, N, lda, kb);
+         printf("      nb=%d: %.2f MFLOP.\n", kb,Time2Flops(rout,uplo,M,N,tim));
+         if (!kbB || tim < timB)
+         {
+            kbB = kb;
+            timB = tim;
+         }
+         else if (tim > tim1 && tim > tim0 && tim > timB*1.03 && tim0 != 0.0)
+             break;
+         tim0 = tim1;
+         tim1 = tim;
+      }
+      while (kb <= maxKB);
+   }
+   return(kbB);
+}
+int opfindNB  /* RETURNS: opgen KB to use for this problem */
+(
+   int rout,                    /* routine to time */
+   int nreps,                   /* # of times to repeat timing */
+   int nsecs,                   /* max # secs to spend repeating */
+   int flshszKB,                /* KB to flush */
+   int mflopF,                  /* mflops to force in one timing*/
+   int uplo, int side,
+   int M, int N, int lda,       /* prob dims */
+   int minKB, int maxKB         /* min/max KB to try with opgen range */
 )
 /*
  * RETURNS: best KB for this problem size in KBs within [minIdx,maxIdx] range.
  * IDEA: scope view
  */
 {
+   unsigned int kb = Mmin(M,N)>>1, kbB=0, inc, i;
+   double tim, tim0=0.0, tim1=0.0, timB = 0.0;
+   if (!kb)
+      return(1);
+   maxKB = Mmin(kb, maxKB);
+   printf("   FINDING KB FOR M=%d, N=%d, LDA=%d:\n", M, N, lda);
+   
+/*
+ * Check KB=1,2, which are GER & GER2 respectively
+ */
+   if (minKB < 3)
+   {
+      kbB = 1;
+      timB = GetMultSampleTimes(0, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                uplo, side, M, N, lda, 1);
+      printf("      nb=%d: %.2f MFLOP.\n", 1, Time2Flops(rout,uplo,M,N,timB));
+      tim0 = timB;
+      tim1 = GetMultSampleTimes(0, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                uplo, side, M, N, lda, 2);
+      printf("      nb=%d: %.2f MFLOP.\n", 2, Time2Flops(rout,uplo,M,N,tim1));
+      if (tim1 < timB)
+      {
+         timB = tim1;
+         kbB = 2;
+      }
+   }
+   assert(maxKB > minKB);
+   minKB = (minKB <= 3) ? 0 : minKB-3;
+   maxKB = (maxKB > 3) ? maxKB-3 : 0;
+/*
+ * See how course to do initial search
+ */
+   inc = maxKB - minKB;
+   if (inc <= 4)
+      inc = 1;
+   else if (inc <= 8)
+      inc = 2;
+   else if (inc <= 32)
+      inc = 4;
+   else if (inc <= 64)
+      inc = 8;
+   else (inc <= 128)
+      inc = 16;
+   else
+      inc = 32;
 
+   for (i=minKB; i < maxKB; i += inc)
+   {
+      unsigned int idx;
+      idx = fastopIdxInRange(i, i+inc);
+      kb = i+3;
+      tim = GetMultSampleTimes(0, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                               uplo, side, M, N, lda, kb);
+      printf("      nb=%d: %.2f MFLOP.\n", kb, Time2Flops(rout,uplo,M,N,tim));
+      if (tim < timB)
+      {
+         timB = tim;
+         kbB = kb;
+      }
+/*
+ *    Bail if present time noticably slower than best, and we have been going
+ *    down in performance for last 3 tries
+ */
+      if (tim > 1.03*timB && tim > tim1 && tim > tim0)
+         if (timB > 0.0 && tim1 > 0.0 && tim0 > 0.0)
+            break;
+      tim0 = tim1;
+      tim1 = tim;
+   }
+/*
+ * Refine inc
+ */
+   while (inc > 1)
+   {
+      minKB = kbB-3;
+      maxKB = minKB + inc;
+      minKB = (minKB >= inc) ? minKB-inc : 0;
+      inc = (inc >= 16) ? (inc>>2) : (inc>>1);
+      for (i=minKB; i < maxKB; i += inc)
+      {
+         unsigned int idx;
+         idx = fastopIdxInRange(i, i+inc);
+         kb = i+3;
+         tim = GetMultSampleTimes(0, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                  uplo, side, M, N, lda, kb);
+         printf("      nb=%d: %.2f MFLOP.\n", kb,Time2Flops(rout,uplo,M,N,tim));
+         if (tim < timB)
+         {
+            timB = tim;
+            kbB = kb;
+         }
+      }
+   }
+   return(kb);
 }
+#endif
 
+#if 0
 int findNB
 (
    int rout,                    /* routine to time */
