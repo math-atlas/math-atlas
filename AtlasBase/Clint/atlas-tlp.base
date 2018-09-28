@@ -5641,7 +5641,7 @@ ATL_UINT findMaxKB              /* RETURNS: best performing KB */
          timB = tim;
          kbB = kb;
       }
-      if (tim > tim0 && tim > tim1)
+      if (i > 4 && tim > tim0 && tim > tim1 && tim > timB*1.03)
          break;
       tim0 = tim1;
       tim1 = timB;
@@ -5659,7 +5659,7 @@ ATL_UINT fastopIdxInRange(ATL_UINT minIdx, ATL_UINT maxIdx)
    unsigned int i, idx, imin=minIdx;
    float minSPF=2e16;
 
-   for (i=minIdx; i <= maxIdx i++)
+   for (i=minIdx; i <= maxIdx; i++)
    {
       const unsigned int *ip;
       const unsigned int idx = ATL_VWopgen_IDXMUL(i);
@@ -5675,7 +5675,7 @@ ATL_UINT fastopIdxInRange(ATL_UINT minIdx, ATL_UINT maxIdx)
    assert(minSPF != 2e16);
    return(imin);
 }
-#if 0
+
 int ipfindNB  /* RETURNS: opgen KB to use for this problem */
 (
    int rout,                    /* routine to time */
@@ -5685,11 +5685,12 @@ int ipfindNB  /* RETURNS: opgen KB to use for this problem */
    int mflopF,                  /* mflops to force in one timing*/
    int uplo, int side,
    int M, int N, int lda,       /* prob dims */
-   int minKB, int maxKB         /* min/max KB to try with opgen range */
+   int minKB, int maxKB,        /* min/max KB to try with opgen range */
+   double *TIMB                 /* if non-NULL OUTPUT: min time */
 )
 {
    ATL_UINT i, kbB = Mmin(M,N)>>1;
-   double tim, timB=0.0;
+   double tim, timB=0.0, tim0=0.0, tim1=0.0;
    maxKB = Mmin(maxKB, kbB);
    maxKB = Mmin(maxKB, 1024);
    kbB = 0;
@@ -5743,8 +5744,11 @@ int ipfindNB  /* RETURNS: opgen KB to use for this problem */
       }
       while (kb <= maxKB);
    }
+   if (TIMB)
+      *TIMB = timB;
    return(kbB);
 }
+
 int opfindNB  /* RETURNS: opgen KB to use for this problem */
 (
    int rout,                    /* routine to time */
@@ -5754,7 +5758,8 @@ int opfindNB  /* RETURNS: opgen KB to use for this problem */
    int mflopF,                  /* mflops to force in one timing*/
    int uplo, int side,
    int M, int N, int lda,       /* prob dims */
-   int minKB, int maxKB         /* min/max KB to try with opgen range */
+   int minKB, int maxKB,        /* min/max KB to try with opgen range */
+   double *TIMB                 /* if non-NULL OUTPUT: min time */
 )
 /*
  * RETURNS: best KB for this problem size in KBs within [minIdx,maxIdx] range.
@@ -5802,7 +5807,7 @@ int opfindNB  /* RETURNS: opgen KB to use for this problem */
       inc = 4;
    else if (inc <= 64)
       inc = 8;
-   else (inc <= 128)
+   else if (inc <= 128)
       inc = 16;
    else
       inc = 32;
@@ -5835,7 +5840,6 @@ int opfindNB  /* RETURNS: opgen KB to use for this problem */
  */
    while (inc > 1)
    {
-      minKB = kbB-3;
       maxKB = minKB + inc;
       minKB = (minKB >= inc) ? minKB-inc : 0;
       inc = (inc >= 16) ? (inc>>2) : (inc>>1);
@@ -5843,7 +5847,7 @@ int opfindNB  /* RETURNS: opgen KB to use for this problem */
       {
          unsigned int idx;
          idx = fastopIdxInRange(i, i+inc);
-         kb = i+3;
+         kb = idx+3;
          tim = GetMultSampleTimes(0, 0, nreps, nsecs, flshszKB, mflopF, rout,
                                   uplo, side, M, N, lda, kb);
          printf("      nb=%d: %.2f MFLOP.\n", kb,Time2Flops(rout,uplo,M,N,tim));
@@ -5854,11 +5858,12 @@ int opfindNB  /* RETURNS: opgen KB to use for this problem */
          }
       }
    }
-   return(kb);
+   if (TIMB)
+      *TIMB = timB;
+   assert(kbB);
+   return(kbB);
 }
-#endif
 
-#if 0
 int findNB
 (
    int rout,                    /* routine to time */
@@ -5868,9 +5873,7 @@ int findNB
    int mflopF,                  /* mflops to force in one timing*/
    int uplo, int side,
    int M, int N, int lda,       /* prob dims */
-   int minKB, int maxKB,        /* smallest & largest KB to try */
-   double *tLeft,               /* % time minNB took for this problem size */
-   double *tRight               /* time maxNB took for this problem size */
+   int minKB, int maxKB         /* smallest & largest KB to try */
 )
 /*
  * tLeft is the time minNB took for this problem size as a percentage of
@@ -5878,69 +5881,33 @@ int findNB
  * used to determine if the blocking factors are really different
  */
 {
-   int kb;
-   double tmin, timeL, timeR;
-/*
- * Time smallest case to compute timeL & initial tmin
- */
-   printf("   FINDING NB FOR M=%d, N=%d, LDA=%d:\n", M, N, lda);
-   kb = minNB;
-   printf("      nb=%d:", i);
-   tmin = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
-                             uplo, side, M, N, lda, i);
-   timeL = tmin;
-   printf("--> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, tmin));
-/* 
- * Right now, lanbsrch only use for QR, which is rank-K.  For other lapack
- * operations, may need to use dim other than KB!
- */
-   for (i=minNB+1; i < maxNB; i++)
+   int kb=0;
+   double tmin, timeL=0.0;
+   if (minKB <= ATL_VWopgen_MAX_KB)
+      kb = opfindNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, M, N, lda,
+                    minKB, maxKB, &timeL);
+   if (maxKB > ATL_VWopgen_MAX_KB)
    {
-      int nb = ATL_AMM_KBs[i];
-      double t0;
-
-      if (nb > (Mmin(M,N)>>1))
-         break;
-      printf("      nb=%d:", nb);
-      t0 = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
-                              uplo, side, M, N, lda, nb);
-      printf("--> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, t0));
-/*
- *    Quit if problem has gotten noticiably slower
- */
-      if (nb > 64 && t0 > 1.05*tmin)
-         break;
-      if (t0*1.005 < tmin || i < imin)
+      int kbR;
+      kbR = ipfindNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, M, N, 
+                     lda, minKB, maxKB, &tmin);
+      if (kb)
       {
-         imin = i;
-         tmin = t0;
+         if (!kbR || tmin > timeL)
+            tmin = timeL;
+         else
+            kb = kbR;
       }
+      else
+         kb = kbR;
    }
-/*
- * Time largest case to compute timeR
- */
-   i = ATL_AMM_KBs[maxNB];
-   if (i+i <= Mmin(M,N))
-   {
-      printf("      nb=%d:", i);
-      timeR = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
-                                 uplo, side, M, N, lda, i);
-      printf("--> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, timeR));
-      if (timeR*1.005 < tmin)
-      {
-         imin = maxNB;
-         tmin = timeR;
-      }
-   }
-   else 
-      timeR = 2*tmin;
-   printf("   FOR M=%d, N=%d, LDA=%d, BEST NB=%d\n\n", 
-          M, N, lda, ATL_AMM_KBs[imin]);
-   *tLeft = timeL / tmin;
-   *tRight = timeR / tmin;
-   return(imin);
+   else
+      tmin = timeL;
+   assert(kb);
+   return(kb);
 }
 
+#if 0
 int *FindAllNBs
 (
    int rout,                    /* routine to time */
@@ -6039,18 +6006,19 @@ int *FindNBByN
    m = (restM) ? restM : maxN;
    n = (restN) ? restN : maxN;
    kbmax = findMaxKB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side,m,n,lda);
-   return(NULL);
-   #if 0
 /*
  * Find best NB for minimum problem (dimension 4)
  */
    nnb = malloc(sizeof(int)*4000);
+   nnb[0] = 4000;   /* length of array in pos 0 */
+   nnb[1] = 4;      /* number of entries used so far in pos 1 */
    nnb[2] = 25;
    m = (restM) ? restM : 24;
    n = (restN) ? restN : 24;
    lda = m + ldagap;
    nnb[3] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
-                   m, n, lda, 0, ATL_AMM_NCASES-1, &percL, &percR);
+                   m, n, lda, 1, kbmax);
+   #if 0
 /*
  * Find best NB for maximum size problem
  */
@@ -6061,7 +6029,6 @@ int *FindNBByN
    nnb[5] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, m, n, lda, 
                    nnb[3], ATL_AMM_NCASES-1, &percL, &percR);
 
-   nnb[0] = 4000;   /* length of array in pos 0 */
    nnb[1] = 6;      /* number of entries used so far in pos 1 */
    nnb = FindAllNBs(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
                     restM, restN, ldagap, 2, 4, nnb);
@@ -6074,8 +6041,8 @@ int *FindNBByN
       assert(j >= 0 && j < ATL_AMM_NCASES);
       nnb[i] = ATL_AMM_KBs[j];
    }
-   return(nnb);
 #endif
+   return(nnb);
 }
 @beginskip
 int findNB
@@ -6346,6 +6313,7 @@ int *FindNBByN
    lda = m + ldagap;
    nnb[3] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
                    m, n, lda, 1, 12, &percL, &percR);
+   #if 0
 /*
  * Find best NB for maximum size problem
  */
@@ -6360,6 +6328,7 @@ int *FindNBByN
    nnb[1] = 6;      /* number of entries used so far in pos 1 */
    nnb = FindAllNBs(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
                     restM, restN, ldagap, 2, 4, nnb);
+   #endif
    return(nnb);
 }
 @endskip
