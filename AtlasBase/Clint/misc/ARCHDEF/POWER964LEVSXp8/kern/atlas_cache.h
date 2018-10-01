@@ -63,8 +63,8 @@
 #define LLPC_LVL 1
 #define LLPC_SZ  L1C_SZ
 #define LLPC_ELTS  L1C_ELTS
-#define LLC_LVL 2
-#define LLC_SZ  L2C_SZ
-#define LLC_ELTS  L2C_ELTS
+#define LLC_LVL 3
+#define LLC_SZ  L3C_SZ
+#define LLC_ELTS  L3C_ELTS
 
 #endif /* end multiple inclusion guard */
