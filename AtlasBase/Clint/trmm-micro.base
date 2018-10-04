@@ -73,11 +73,6 @@ int ATL_utrmmR
    tcm2am_t r2a; 
    ablk2cmat_t blk2c = Mjoin(PATL,trmm_blk2c_a1b0);
 /*
- * fails if N is greater than KB, need to recurse with smaller value
- */
-   if (N > ATL_TRMM_KB)
-      return(2);
-/*
  * Selecting copy routines...
  * multiplying with alpha in copy routines:
  *    MxM/2, MXN
@@ -273,11 +268,6 @@ int ATL_utrmmL
    tcm2am_t l2a; 
    cm2am_t r2a;
    ablk2cmat_t blk2c = Mjoin(PATL,trmm_blk2c_a1b0);
-/*
- * fails if M is greater than KB to recurse with smaller value
- */
-   if (M > ATL_TRMM_KB)
-      return(2);
 /*
  * Selecting copy routines...
  * multiplying with alpha in copy routines:
@@ -1799,6 +1789,7 @@ int trmmR_LTUN
 #include "atlas_lvl3.h" 
 
 #ifdef Right_
+   #include Mstr(Mjoin(ATLAS_PRE,trmmRU_view.h)) 
    #define INCR 1
    #define ATL_iptrmm Mjoin(PATL,iptrmmR)
    #define ATL_trmm_ST Mjoin(PATL,trmmR_ST)
@@ -1814,6 +1805,7 @@ int trmmR_LTUN
    #define ATL_trmm_LNUT Mjoin(PATL,trmmR_LNUT)
    #define ATL_trmm_LTUN Mjoin(PATL,trmmR_LTUN)
 #else
+   #include Mstr(Mjoin(ATLAS_PRE,trmmLU_view.h)) 
    #define INCR ldb
    #define ATL_iptrmm Mjoin(PATL,iptrmmL)
    #define ATL_trmm_ST Mjoin(PATL,trmmL_ST)
@@ -1870,14 +1862,15 @@ int ATL_iptrmm
       return(0);
    }
 /*
- * General case: 
- * Try to apply trmm_ST first, will return nonzero if it fails due to small KB  
+ * if NT (KB) is not greater than MAX_KB, apply trmm_ST code 
  */
-   else if (ATL_trmm_ST(bv, NT, NR, alpha, A, lda, B, ldb)) 
-   {
+   else if (NT <= ATL_VIEW_MAX_KB)
+      return(ATL_trmm_ST(bv, NT, NR, alpha, A, lda, B, ldb));
 /*
- *    MB / NB is large (larger than KB). so apply outer loop for trmm  
+ * NT (KB) is large, so apply outer loop for trmm
  */
+   else 
+   {
       int res;
       unsigned int ctu; /* Conj Trans Upper*/
       ATL_SZT Tsz, Rsz, Csz; /* workspace size for TRMM */
@@ -1936,12 +1929,8 @@ int ATL_iptrmm
       else if (ctu == 7)
          tminfo = ATL_tminfoUC;
       #endif
-      else
-      {
-           fprintf(stderr,"**** Unknown TRMM Right case!!\n");
-           /*assert(0);*/
-           return(1);
-      }
+      else /* unknown trmm case! */
+           ATL_assert(0);
       if (!ctu || ctu==3 || ctu == 7)
          ammtrmm = ATL_trmm_LNUT;
       else
