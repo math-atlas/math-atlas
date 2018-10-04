@@ -16136,7 +16136,7 @@ ATL_asmdecor(ATL_USERMM):
 @iif @iexp @(nisv) 2 2 @(nisv) / * !
 #define ISZ (@(nisv)+1)*8 /* +1 keeps 16-byte aligned stack frame */
 @endiif
-#define FSZ 0
+#define FSZ 18*8
 #define VSZ 12*16
 #define LSZ 0
 #define MSZ 32      /* mandatory 32 bytes for stack frame tail */
@@ -16179,14 +16179,27 @@ ATL_asmdecor(ATL_USERMM):
 @endiwhile
 @ROUT ATL_kmm8x6x256_vsx.S ATL_kmm8x6x16_vsx.S
 /*
- * Save vec regs
+ * Save vec regs using AltiVec instructions
  */
-@iexp ii 0
-@iwhile ii < 12
-   @iexp kk @(ii) 20 +
-   stxv @(kk), VOFF+16*@(ii)(r1)
-   @iexp ii @(ii) 1 +
-@endiwhile
+   addi pfA, r1, VOFF   /* pfA points to start of vector save area */
+   @iexp k 20
+   @iwhile k < 32
+      @iexp i @(k) -20 +
+   stvx @(k), r0, pfA
+      @iif k ! 31
+      addi pfA, pfA, 16
+      @endiif
+      @iexp k @(k) 1 +
+   @endiwhile
+/*
+ * f14-31 aliased with VSX 14-31, so they must be saved!
+ */
+   @iexp k 14
+   @iwhile k < 32
+      @iexp i @(k) -14 +
+   stfd f@(k), FOFF+@(i)*8(r1)
+      @iexp k @(k) 1 +
+   @endiwhile
 /*
  * PWR addresses take a 16 bit signed offset, so we can double the length
  * of our possible unrolling by adding 2^15-1 to ptrs, and counting offsets
@@ -16720,14 +16733,27 @@ KDONE:
       addic. NMU, NMU, -1
    bne+ MLOOP
 /*
- * Restore vec regs
+ * Restore vec regs using Altivec instructions
  */
-@iexp ii 0
-@iwhile ii < 12
-   @iexp kk @(ii) 20 +
-   lxv @(kk), VOFF+16*@(ii)(r1)
-   @iexp ii @(ii) 1 +
-@endiwhile
+   addi pfA, r1, VOFF   /* pfA points to start of vector save area */
+   @iexp k 20
+   @iwhile k < 32
+      @iexp i @(k) -20 +
+   lvx @(k), r0, pfA
+      @iif k ! 31
+      addi pfA, pfA, 16
+      @endiif
+      @iexp k @(k) 1 +
+   @endiwhile
+/*
+ * restore f14-31
+ */
+   @iexp k 14
+   @iwhile k < 32
+      @iexp i @(k) -14 +
+   lfd f@(k), FOFF+@(i)*8(r1)
+      @iexp k @(k) 1 +
+   @endiwhile
 /*
  * Restore iregs
  */
@@ -16897,8 +16923,8 @@ ATL_asmdecor(ATL_USERMM):
  *    f14-f31 -> vsr14-vsr31 -> 18*8 = 144 bytes
  *    v20-v31 -> vsr52-vsr63 -> 12*16 = 192 bytes
  */
-#define ISZ 12*7
-#define FSZ 0
+#define ISZ 8*8     /* only need 7, but need 8 for 16-byte stack alignment */
+#define FSZ 18*8
 #define VSZ 12*16
 #define LSZ 0
 #define MSZ 32      /* mandatory 32 bytes for stack frame tail */
@@ -16935,20 +16961,27 @@ ATL_asmdecor(ATL_USERMM):
       @iexp k @(k) 1 +
    @endwhile
 /*
- * Save vec regs
+ * Save vec regs using AltiVec instructions
  */
-   stxv 20, VOFF+16*0(r1)
-   stxv 21, VOFF+16*1(r1)
-   stxv 22, VOFF+16*2(r1)
-   stxv 23, VOFF+16*3(r1)
-   stxv 24, VOFF+16*4(r1)
-   stxv 25, VOFF+16*5(r1)
-   stxv 26, VOFF+16*6(r1)
-   stxv 27, VOFF+16*7(r1)
-   stxv 28, VOFF+16*8(r1)
-   stxv 29, VOFF+16*9(r1)
-   stxv 30, VOFF+16*10(r1)
-   stxv 31, VOFF+16*11(r1)
+   addi pA0, r1, VOFF   /* pA0 points to start of vector save area */
+   @iexp k 20
+   @iwhile k < 32
+      @iexp i @(k) -20 +
+   stvx @(k), r0, pA0
+      @iif k ! 31
+      addi pA0, pA0, 16
+      @endiif
+      @iexp k @(k) 1 +
+   @endiwhile
+/*
+ * f14-31 aliased with VSX 14-31, so they must be saved!
+ */
+   @iexp k 14
+   @iwhile k < 32
+      @iexp i @(k) -14 +
+   stfd f@(k), FOFF+@(i)*8(r1)
+      @iexp k @(k) 1 +
+   @endiwhile
 /*
  * incAm = mu*K*sizeof = 7*(K<<SSH); tmp = K<<SSH; incAm=8*tmp-tmp;
  */
@@ -18380,12 +18413,25 @@ ATL_asmdecor(ATL_USERMM):
       addic. NMU, NMU, -1
    bne+ MLOOP
 /*
- * Restore vec regs
+ * Restore vec regs using Altivec instructions
  */
+   addi pA0, r1, VOFF   /* pA0 points to start of vector save area */
    @iexp k 20
    @iwhile k < 32
       @iexp i @(k) -20 +
-   lxv @(k), VOFF+@(i)*16(r1)
+   lvx @(k), r0, pA0
+      @iif k ! 31
+      addi pA0, pA0, 16
+      @endiif
+      @iexp k @(k) 1 +
+   @endiwhile
+/*
+ * restore f14-31
+ */
+   @iexp k 14
+   @iwhile k < 32
+      @iexp i @(k) -14 +
+   lfd f@(k), FOFF+@(i)*8(r1)
       @iexp k @(k) 1 +
    @endiwhile
 /*
