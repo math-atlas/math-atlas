@@ -196,15 +196,17 @@ void Mjoin(PATL,rotg)(TYPE *a, const TYPE *b, TYPE *c, TYPE *s)
 #include "atlas_misc.h"
 #include "atlas_level1.h"
 
+/* #define ATL_DODIV 1 */
+
 void Mjoin(PATL,rotmg)(TYPE *D1, TYPE *D2, TYPE *X1, const TYPE y1, TYPE *P)
 {
    TYPE flag = *P;
    TYPE d1=(*D1), d2=(*D2), x1=(*X1);
    TYPE h11, h21, h12, h22, tmp, u, p1, p2, q1, q2;
-   static const TYPE gam=ATL_typify(4096.0); 
+   static const TYPE gam=ATL_typify(4096.0);
    static const TYPE gamsq = ATL_typify(4096.0) * ATL_typify(4096.0);
    static const TYPE rgam = ATL_rone / ATL_typify(4096.0);
-   static const TYPE rgamsq = ATL_rone / 
+   static const TYPE rgamsq = ATL_rone /
                               (ATL_typify(4096.0) * ATL_typify(4096.0));
 
    if (d1 < ATL_rzero)
@@ -217,7 +219,7 @@ void Mjoin(PATL,rotmg)(TYPE *D1, TYPE *D2, TYPE *X1, const TYPE y1, TYPE *P)
    p2 = d2 * y1;
    if (p2 == ATL_rzero)
    {
-      *P = -2.0;
+      *P = ATL_typify(-2.0);
       return;
    }
 
@@ -229,16 +231,13 @@ void Mjoin(PATL,rotmg)(TYPE *D1, TYPE *D2, TYPE *X1, const TYPE y1, TYPE *P)
       h21 = -y1 / x1;
       h12 = p2 / p1;
       u = ATL_rone - h12 * h21;
-      if (u <= ATL_rzero)
+      if (u > ATL_rzero)
       {
-         *P = ATL_rnone;
-         *D1 = *D2 = *X1 = P[1] = P[2] = P[3] = P[4] = ATL_rzero;
-         return;
+         flag = ATL_rzero;
+         d1 /= u;
+         d2 /= u;
+         x1 *= u;
       }
-      flag = ATL_rzero;
-      d1 = d1 / u;
-      d2 = d2 / u;
-      x1 = x1 * u;  
    }
    else
    {
@@ -249,13 +248,14 @@ void Mjoin(PATL,rotmg)(TYPE *D1, TYPE *D2, TYPE *X1, const TYPE y1, TYPE *P)
          return;
       }
       flag = ATL_rone;
-      h11 = p1 / p2;
-      h22 = x1 / y1;
-      u = ATL_rone + h11 * h22;
+      h11 = p1/p2;
+      h22 = x1/y1;
+      u = ATL_rone + h11*h22;
       tmp = d2 / u;
       d2 = d1 / u;
       d1 = tmp;
-      x1 = y1 * u;
+      x1 = y1*u;
+
    }
 
    if (d1 <= rgamsq)
@@ -263,29 +263,45 @@ void Mjoin(PATL,rotmg)(TYPE *D1, TYPE *D2, TYPE *X1, const TYPE y1, TYPE *P)
       if (d1 != ATL_rzero)
       {
          if (flag == ATL_rzero) { flag = ATL_rnone; h11 = h22 = ATL_rone; }
-         else if (flag > ATL_rzero) { flag = h21 = ATL_rnone; h12 = ATL_rone; }
-         do
+         else { flag = h21 = ATL_rnone; h12 = ATL_rone; }
+         while(1)
          {
             d1 *= gamsq;
-            x1 *= rgam;
-            h11 *= rgam;
-            h12 *= rgam;
+            #ifndef ATL_DODIV
+               x1 *= rgam;
+               h11 *= rgam;
+               h12 *= rgam;
+            #else
+               x1 /= gam;
+               h11 /= gam;
+               h12 /= gam;
+            #endif
+            if (d1 > rgamsq)
+               break;
+            h21 = ATL_rnone;
+            h12 = ATL_rone;
          }
-         while (d1 <= gamsq);
       }
    }
    else if (d1 >= gamsq)
    {
       if (flag == ATL_rzero) { flag = ATL_rnone; h11 = h22 = ATL_rone; }
-      else if (flag > ATL_rzero) { flag = h21 = ATL_rnone; h12 = ATL_rone; }
-      do
+      else { flag = h21 = ATL_rnone; h12 = ATL_rone; }
+      while (1)
       {
-         d1 *= rgamsq;
+         #ifndef ATL_DODIV
+            d1 *= rgamsq;
+         #else
+            d1 /= gamsq;
+         #endif
          x1 *= gam;
          h11 *= gam;
          h12 *= gam;
+         if (d1 < gamsq)
+            break;
+         h21 = ATL_rnone;
+         h12 = ATL_rone;
       }
-      while (d1 >= gamsq);
    }
 
    tmp = Mabs(d2);
@@ -294,54 +310,82 @@ void Mjoin(PATL,rotmg)(TYPE *D1, TYPE *D2, TYPE *X1, const TYPE y1, TYPE *P)
       if (d2 != ATL_rzero)
       {
          if (flag == ATL_rzero) { flag = ATL_rnone; h11 = h22 = ATL_rone; }
-         else if (flag > ATL_rzero) { flag = h21 = ATL_rnone; h12 = ATL_rone; }
-         if (d2 > ATL_rzero)
+         else { flag = h21 = ATL_rnone; h12 = ATL_rone; }
+         if (d2 >= ATL_rzero)
+         while (1)
          {
-            do
-            {
-               d2 *= gamsq;
+            d2 *= gamsq;
+            #ifndef ATL_DODIV
                h21 *= rgam;
                h22 *= rgam;
-            }
-            while(d2 <= rgamsq);
+            #else
+               h21 /= gam;
+               h22 /= gam;
+            #endif
+            if (d2 > rgamsq)
+               break;
+            h21 = ATL_rnone;
+            h12 = ATL_rone;
          }
          else /* d2 < ATL_rzero */
          {
             tmp = -rgamsq;
-            do
+            while(1)
             {
                d2 *= gamsq;
-               h21 *= rgam;
-               h22 *= rgam;
+               #ifndef ATL_DODIV
+                  h21 *= rgam;
+                  h22 *= rgam;
+               #else
+                  h21 /= gam;
+                  h22 /= gam;
+               #endif
+               if (d2 < tmp)
+                  break;
+               h21 = ATL_rnone;
+               h12 = ATL_rone;
             }
-            while(d2 >= tmp);
          }
       }
    }
    else if (tmp >= gamsq)
    {
       if (flag == ATL_rzero) { flag = ATL_rnone; h11 = h22 = ATL_rone; }
-      else if (flag > ATL_rzero) { flag = h21 = ATL_rnone; h12 = ATL_rone; }
+      else { flag = h21 = ATL_rnone; h12 = ATL_rone; }
       if (d2 > ATL_rzero)
       {
-         do
+         while (1)
          {
-            d2 *= rgamsq;
+            #ifndef ATL_DODIV
+               d2 *= rgamsq;
+            #else
+               d2 /= gamsq;
+            #endif
             h21 *= gam;
             h22 *= gam;
+            if (d2 < gamsq)
+               break;
+            h21 = ATL_rnone;
+            h12 = ATL_rone;
          }
-         while(d2 >= gamsq);
       }
       else /* d2 < ATL_rzero */
       {
          tmp = -gamsq;
-         do
+         while(1)
          {
-            d2 *= rgamsq;
+            #ifndef ATL_DODIV
+               d2 *= rgamsq;
+            #else
+               d2 /= gamsq;
+            #endif
             h21 *= gam;
             h22 *= gam;
+            if (d2 > tmp)
+               break;
+            h21 = ATL_rnone;
+            h12 = ATL_rone;
          }
-         while(d2 <= tmp);
       }
    }
    *D1 = d1;
