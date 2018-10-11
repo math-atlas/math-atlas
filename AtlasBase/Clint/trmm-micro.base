@@ -1,174 +1,123 @@
 @ROUT ATL_utrmmR
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Majedul Sujon" -def contrib "Rakib Hasan"
 #include "atlas_misc.h"
+#include "atlas_amm.h"
+#include "atlas_lvl3.h"
 
-/* cases: LN, UT, LT, UN ... LC/UC included */
-#ifdef Upper_
-   #ifdef Trans_
-#include Mstr(Mjoin(ATLAS_PRE,utrmmR_LN.h)) /* LN & UT share same header */
-      #ifdef Conj_
-         #define ATL_utrmmR Mjoin(PATL,utrmmR_UC)
-         #define RUC 1
-      #else
-         #define ATL_utrmmR Mjoin(PATL,utrmmR_UT)
-         #define RUT 1
-      #endif
-   #else
-#include Mstr(Mjoin(ATLAS_PRE,utrmmR_LT.h)) /* LT & UN share same header */
-      #define ATL_utrmmR Mjoin(PATL,utrmmR_UN)
-      #define RUN 1
-   #endif
-#else /* lower */
-   #ifdef Trans_
-#include Mstr(Mjoin(ATLAS_PRE,utrmmR_LT.h)) /* LT & UN share same header */
-      #ifdef Conj_
-         #define ATL_utrmmR Mjoin(PATL,utrmmR_LC)
-         #define RLC 1
-      #else
-         #define ATL_utrmmR Mjoin(PATL,utrmmR_LT)
-         #define RLT 1
-      #endif
-   #else
-#include Mstr(Mjoin(ATLAS_PRE,utrmmR_LN.h)) /* LN & UT share same header */
-      #define ATL_utrmmR Mjoin(PATL,utrmmR_LN)
-      #define RLN 1
-   #endif
-#endif
+#define ATL_utrmmRBlk Mjoin(PATL,utrmmRBlk)
+#define ATL_utrmmR Mjoin(PATL,utrmmR)
 
-int ATL_utrmmR
+void ATL_utrmmRBlk
 (
-   const enum ATLAS_DIAG Diag,
-   ATL_CSZT M,         /* it's actually M */
-   ATL_CSZT N,         /* it's actually N*/
-   const SCALAR alpha, 
-   const TYPE *A,      /* A is always tri-matrix: here left one */ 
+   tminfo_t *ip,        /* trmm info */
+   ATL_UINT M,          /* MB */
+   ATL_UINT N,          /* NB */
+   const SCALAR alpha,
+   const TYPE *A,       /* if non-NULL, base A ptr to copy */
    ATL_CSZT lda,
-   TYPE *X,            /* it's B: the output and full matrix*/
-   ATL_CSZT ldx
+   TYPE *B,             /* if non-NULL, base B ptr to copy */
+   ATL_CSZT ldb,
+   TYPE *C,             /* if non-NULL, base C ptr to copy */
+   ATL_CSZT ldc,
+   TYPE *wA,            /* workspace for A */
+   TYPE *wB,            /* workspace for B */
+   TYPE *rC,            /* workspace for C real */
+   TYPE *wC,            /* workspace for C, used only in complex */
+   ATL_UINT szA,        /* workspace size of iA */
+   ATL_UINT szB         /* workspace size of iB */
 )
 {
-   void *vp=NULL;
-   TYPE *pt, *pr, *pc;
-   ATL_SZT sz, szC, szT, szR;
-   ATL_SZT szFull, szPan, szCorner;
-   int tnu, tku, tuu, ntfu, tKr;
-   const int MU = ATL_TRMMK_MU, 
-             NU = ATL_TRMMK_NU, 
-             KU = ATL_TRMMK_KU,
-             VLEN = ATL_TRMMK_VLEN; 
-   ATL_CSZT K = ((N+KU-1)/KU)*KU; 
-   ATL_SZT nmu = (M+MU-1)/MU, nnu=(N+NU-1)/NU; 
-   ATL_SZT mb=nmu*MU, nb=nnu*NU;
-   ammkern_t trmmK_b0 = Mjoin(PATL,trmmK_b0);
-   ammkern_t trmmK_b1 =  Mjoin(PATL,trmmK_b1);
+   int nmu = (M+ip->mu-1)/ip->mu, nnu=(N+ip->nu-1)/ip->nu;
+   int K = ((N+ip->ku-1)/ip->ku)*ip->ku;
+   tcm2am_t t2a = ip->t2blk;
+   cm2am_t r2a = ip->r2blk;
+   ablk2cmat_t blk2c = ip->blk2c;
+   ammkern_t trmmK_b0 = ip->amm_b0;
+   ammkern_t trmmK_b1 = ip->amm_b1;
    #ifdef TCPLX
-      ammkern_t trmmK_bn = Mjoin(PATL,trmmK_bn);
+      ammkern_t trmmK_bn = ip->amm_bn;
       TYPE ONE[2] = {ATL_rone, ATL_rzero}, ZERO[2] = {ATL_rzero, ATL_rzero};
+      TYPE *rA = wA + szA;
+      TYPE *rB = wB + szB;
    #else
       #define ONE ATL_rone
       #define ZERO ATL_rzero
       #define NONE ATL_rnone
    #endif
-   cm2am_t l2a; 
-   tcm2am_t r2a; 
-   ablk2cmat_t blk2c = Mjoin(PATL,trmm_blk2c_a1b0);
-/*
- * Selecting copy routines...
- * multiplying with alpha in copy routines:
- *    MxM/2, MXN
- */
-   if (SCALAR_IS_ONE(alpha))
-   {
-      #ifdef Upper_
-         if (Diag == AtlasUnit)
-            r2a = Mjoin(PATL,trmm_a2blk_Up_diagU_a1);
-         else
-            r2a = Mjoin(PATL,trmm_a2blk_Up_a1);
-      #else
-         if (Diag == AtlasUnit)
-            r2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_a1);
-         else
-            r2a = Mjoin(PATL,trmm_a2blk_Lo_a1);
-      #endif 
-      l2a = Mjoin(PATL,trmm_b2blk_a1);
-   }
-   else
-   {
-      if (M > N/2) /* multiply alpha in tri-copy*/
-      {
-         l2a = Mjoin(PATL,trmm_b2blk_a1);
-         if (SCALAR_IS_NONE(alpha))
-         {
-         #ifdef Upper_
-            if (Diag == AtlasUnit)
-               r2a = Mjoin(PATL,trmm_a2blk_Up_diagU_aN);
-            else
-               r2a = Mjoin(PATL,trmm_a2blk_Up_aN);
-         #else
-            if (Diag == AtlasUnit)
-               r2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_aN);
-            else   
-               r2a = Mjoin(PATL,trmm_a2blk_Lo_aN);
-         #endif 
-         }
-         else /* alphaX, since alpha can't be 0 here */
-         {
-         #ifdef Upper_
-            if (Diag == AtlasUnit)
-               r2a = Mjoin(PATL,trmm_a2blk_Up_diagU_aX);
-            else   
-               r2a = Mjoin(PATL,trmm_a2blk_Up_aX);
-         #else
-            if (Diag == AtlasUnit)
-               r2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_aX);
-            else   
-               r2a = Mjoin(PATL,trmm_a2blk_Lo_aX);
-         #endif 
-         }
-      }
-      else /* multiply alpha in gemm copy */
-      {
-         #ifdef Upper_
-            if (Diag == AtlasUnit)
-               r2a = Mjoin(PATL,trmm_a2blk_Up_diagU_a1);
-            else
-               r2a = Mjoin(PATL,trmm_a2blk_Up_a1);
-         #else
-            if (Diag == AtlasUnit)
-               r2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_a1);
-            else
-               r2a = Mjoin(PATL,trmm_a2blk_Lo_a1);
-         #endif 
-         if (SCALAR_IS_NONE(alpha))
-            l2a = Mjoin(PATL,trmm_b2blk_aN);
-         else
-            l2a = Mjoin(PATL,trmm_b2blk_aX);
-
-      }
-   }
-/*
- * calculate and allocate memory for workspace 
- * NOTE: This calculation is used from Rakib's TRMM tester: trmmKtst.c
- */
-   tnu = NU, tku = KU;
-   tuu = Mmax(tnu, tku);
-   /* first do full blocks */
-   ntfu = N/tuu;
-   tKr = N - ntfu*tuu;
-   szFull = (ntfu*(ntfu+1)/2) * tuu * tuu;
-   /* now the partial panel */
-   #if ( (!defined(Upper_) && !defined(Trans_)) || \
-            (defined(Upper_) && defined(Trans_)) )
-      szPan = ((tKr+tku-1)/tku)*ntfu * tuu * tku;
+   #ifdef TCPLX
+      if (B) r2a(N, M, alpha, B, ldb, rB, wB);
+      if (A) t2a(N, alpha, A, lda, rA, wA);
+      trmmK_b0(nmu, nnu, K, wB, wA, rC, rB, wB, wC);
+      trmmK_b0(nmu, nnu, K, rB, wA, wC, rB, rA, rC);
+      trmmK_bn(nmu, nnu, K, rB, rA, rC, wB, rA, wC);
+      trmmK_b1(nmu, nnu, K, wB, rA, wC, wB, wA, rC);
+      if (C) blk2c(M, N, ONE, rC, wC, ZERO, C, ldc);
    #else
-      szPan = ((tKr+tnu-1)/tnu)*ntfu * tuu * tnu;
+      if (B) r2a(N, M, alpha, B, ldb, wB);
+      if (A) t2a(N, alpha, A, lda, wA);
+      trmmK_b0(nmu, nnu, K, wB, wA, rC, wB, wA, rC);
+      if (C) blk2c(M, N, ONE, rC, ZERO, C, ldc);
    #endif
-   /* finally the partial block */
-   szCorner = ((tKr + tnu - 1)/tnu) * ((tKr + tku - 1)/tku) * tnu * tku;
+}
+
+int ATL_utrmmR
+(
+   tminfo_t *ip,                  /* trmm info */
+   const enum ATLAS_DIAG Diag,    /* diagonal: unit/non-unit */
+   ATL_CSZT M,                    /* value of M */ 
+   ATL_CSZT N,                    /* value of N: normally small for ST */
+   const SCALAR alpha,            /* alpha */
+   const TYPE *A,                 /* triangular A matrix */ 
+   ATL_CSZT lda,                  /* lda */
+   TYPE *X,                       /* B matrix, also output of TRMM */
+   ATL_CSZT ldx                   /* ldb */
+)
+{
+   int i;
+   void *vp=NULL;
+   TYPE *pt, *pr, *pc, *rC, *wC, *x;
+   ATL_UINT sz, szC, szT, szR;
+   ATL_UINT szFull, szPan, szCorner;
+   int tnu, tku, tuu, ntfu, tKr;
+   const int MU=ip->mu, NU=ip->nu, KU=ip->ku, VLEN=ip->vlen;
+   ATL_UINT K, nmu, nnu; ;
+   ATL_UINT KB=ip->kb, NB=ip->kb, MB=ip->rb, mb, nb, tmb, tnb;
+   ATL_UINT bv = ip->bv; 
+/*
+ * want to use less space for very small value of M and N
+ */   
+   nb = Mmin(NB, N);
+   mb = Mmin(MB, M);
+/*
+ * needed for workspace calc 
+ */
+   nmu = (mb+MU-1)/MU;    
+   nnu = (nb+NU-1)/NU;  
+   tmb = nmu * MU;
+   tnb = nnu * NU;
+   K = ((nb+KU-1)/KU)*KU;
+/*
+ * calculate and allocate memory for workspace
+ * This calculation is used from Rakib's TRMM tester: trmmKtst.c
+ */
+   tuu = Mmax(NU, KU);
+   ntfu = tnb/tuu;
+   tKr = tnb - ntfu*tuu;
+   szFull = (ntfu*(ntfu+1)/2) * tuu * tuu;
+/*
+ * bit : 1, 2 ===>  0 0 X ||  1 1 X  
+ * !Lower && notrans || upper && trans
+ */
+   if (!((bv&2)^(bv&4))) 
+      szPan = ((tKr+KU-1)/KU)*ntfu * tuu * KU;
+   else
+      szPan = ((tKr+NU-1)/NU)*ntfu * tuu * NU;
+   szCorner = ((tKr + NU - 1)/NU) * ((tKr + KU - 1)/KU) * NU * KU;
+   
    szT = szFull + szPan + szCorner;
-   szR = mb*K;
+   szR = tmb*K;
    szC = (((MU*NU+VLEN-1)/VLEN)*VLEN)*nmu*nnu;
-   sz = ATL_MulBySize(szT + NU*KU + szR + MU*KU + szC + (MU+MU)*NU + 
+   sz = ATL_MulBySize(szT + NU*KU + szR + MU*KU + szC + (MU+MU)*NU +
                       3*ATL_Cachelen);
    if (sz < ATL_MaxMalloc)
       vp = malloc(sz);
@@ -178,195 +127,160 @@ int ATL_utrmmR
    pr = ATL_AlignPtr(pr);
    pc = pr + (szR SHIFT);
    pc = ATL_AlignPtr(pc);
-   #ifdef TCPLX
-      l2a(N, M, alpha, X, ldx, pr, pr+szR);
-      r2a(N, alpha, A, lda, pt, pt+szT);
-      trmmK_b0(nmu, nnu, K, pr+szR, pt+szT, pc,     pr,     pt+szT, pc+szC);
-      trmmK_b0(nmu, nnu, K, pr,     pt+szT, pc+szC, pr,     pt,     pc);
-      trmmK_bn(nmu, nnu, K, pr,     pt,     pc,     pr+szR, pt,     pc+szC);
-      trmmK_b1(nmu, nnu, K, pr+szR, pt,     pc+szC, pr+szR, pt+szT, pc);
-      blk2c(M, N, ONE, pc, pc+szC, ZERO, X, ldx);
+
+   #ifdef TCPLX 
+      wC = pc; rC = pc + szC;
    #else
-      l2a(N, M, alpha, X, ldx, pr);
-      r2a(N, alpha, A, lda, pt);
-      trmmK_b0(nmu, nnu, K, pr, pt, pc, pr, pt, pc);
-      blk2c(M, N, ATL_rone, pc, ATL_rzero, X, ldx);
+      rC= wC = pc;
    #endif
-   free(vp); 
+/*
+ * copy A only at the first call of TRMM   
+ */
+   x = X;
+   ATL_utrmmRBlk(ip,  mb, nb, alpha, A, lda, x, ldx, x, ldx, pt, pr, rC, wC, 
+            szT, szR);
+/*
+ * more than one MB blocks 
+ */
+   if (M > MB)
+   {
+      x += (MB SHIFT);
+/*
+ *    MB blocking, reuse copy of A 
+ */
+      for (i=MB+MB; i <= M; i += MB, x += (MB SHIFT))
+         ATL_utrmmRBlk(ip, MB, nb, alpha, NULL, lda, x, ldx, x, ldx, pt, pr, rC, 
+            wC, szT, szR);
+/*
+ *    for cleanup at the end
+ */
+      if ((mb = M % MB)!=0)
+         ATL_utrmmRBlk(ip, mb, nb, alpha, NULL, lda, x, ldx, x, ldx, pt, pr, rC, 
+            wC, szT, szR);
+   }   
+   free(vp);
    return(0);
 }
 @ROUT ATL_utrmmL
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Majedul Sujon" -def contrib "Rakib Hasan"
 #include "atlas_misc.h"
-/* cases: LN, UT, LT, UN ... LC/UC included */
-#ifdef Upper_
-   #ifdef Trans_
-#include Mstr(Mjoin(ATLAS_PRE,utrmmL_LN.h)) /* LN & UT share same header file*/
-      #ifdef Conj_
-         #define ATL_utrmmL Mjoin(PATL,utrmmL_UC)
-         #define LUC 1
-      #else
-         #define ATL_utrmmL Mjoin(PATL,utrmmL_UT)
-         #define LUT 1
-      #endif
-   #else
-#include Mstr(Mjoin(ATLAS_PRE,utrmmL_LT.h)) /* LT & UN share same header file*/
-      #define ATL_utrmmL Mjoin(PATL,utrmmL_UN)
-      #define LUN 1
-   #endif
-#else /* lower */
-   #ifdef Trans_
-#include Mstr(Mjoin(ATLAS_PRE,utrmmL_LT.h))
-      #ifdef Conj_
-         #define ATL_utrmmL Mjoin(PATL,utrmmL_LC)
-         #define LLC 1
-      #else
-         #define ATL_utrmmL Mjoin(PATL,utrmmL_LT)
-         #define LLT 1
-      #endif
-   #else
-#include Mstr(Mjoin(ATLAS_PRE,utrmmL_LN.h))
-      #define ATL_utrmmL Mjoin(PATL,utrmmL_LN)
-      #define LLN 1
-   #endif
-#endif
+#include "atlas_amm.h"
+#include "atlas_lvl3.h"
 
-int ATL_utrmmL
+#define ATL_utrmmLBlk Mjoin(PATL,utrmmLBlk)
+#define ATL_utrmmL Mjoin(PATL,utrmmL)
+
+void ATL_utrmmLBlk
 (
-   const enum ATLAS_DIAG Diag,
-   ATL_CSZT M,         /* it's actually M */
-   ATL_CSZT N,         /* it's actually N*/
-   const SCALAR alpha, 
-   const TYPE *A,      /* A is always tri-matrix: here left one */ 
+   tminfo_t *ip,        /* trmm info */
+   ATL_UINT M,          /* MB */
+   ATL_UINT N,          /* NB */
+   const SCALAR alpha,
+   const TYPE *A,       /* if non-NULL, base A ptr to copy */
    ATL_CSZT lda,
-   TYPE *X,            /* it's B: the output and full matrix*/
-   ATL_CSZT ldx
+   TYPE *B,             /* if non-NULL, base B ptr to copy */
+   ATL_CSZT ldb,
+   TYPE *C,             /* if non-NULL, bac C ptr to copy */
+   ATL_CSZT ldc,
+   TYPE *wA,            /* workspace for A */
+   TYPE *wB,            /* workspace for B */
+   TYPE *rC,            /* workspace for C for real */
+   TYPE *wC,            /* workspace for C for complex, unused in real */
+   ATL_UINT szA,        /* workspace size of iA */
+   ATL_UINT szB         /* workspace size of iB */
 )
 {
-   void *vp=NULL;
-   TYPE *pt, *pr, *pc;
-   ATL_SZT sz, szC, szT, szR;
-   ATL_SZT szFull, szPan, szCorner;
-   int tmu, tku, tuu, ntfu, tKr;
-   const int MU = ATL_TRMMK_MU, 
-             NU = ATL_TRMMK_NU, 
-             KU = ATL_TRMMK_KU,
-             VLEN = ATL_TRMMK_VLEN; 
-   ATL_CSZT K = ((M+KU-1)/KU)*KU; 
-   ATL_SZT nmu = (M+MU-1)/MU, nnu=(N+NU-1)/NU; 
-   ATL_SZT mb=nmu*MU, nb=nnu*NU;
-   ammkern_t trmmK_b0 = Mjoin(PATL,trmmK_b0);
-   ammkern_t trmmK_b1 =  Mjoin(PATL,trmmK_b1);
+   int nmu = (M+ip->mu-1)/ip->mu, nnu=(N+ip->nu-1)/ip->nu;
+   int K = ((M+ip->ku-1)/ip->ku)*ip->ku;
+   tcm2am_t t2a = ip->t2blk;
+   cm2am_t r2a = ip->r2blk;
+   ablk2cmat_t blk2c = ip->blk2c;
+   ammkern_t trmmK_b0 = ip->amm_b0;
+   ammkern_t trmmK_b1 = ip->amm_b1;
    #ifdef TCPLX
-      ammkern_t trmmK_bn = Mjoin(PATL,trmmK_bn);
+      ammkern_t trmmK_bn = ip->amm_bn;
       TYPE ONE[2] = {ATL_rone, ATL_rzero}, ZERO[2] = {ATL_rzero, ATL_rzero};
+      TYPE *rA = wA + szA;
+      TYPE *rB = wB + szB;
    #else
       #define ONE ATL_rone
       #define ZERO ATL_rzero
       #define NONE ATL_rnone
    #endif
-   tcm2am_t l2a; 
-   cm2am_t r2a;
-   ablk2cmat_t blk2c = Mjoin(PATL,trmm_blk2c_a1b0);
-/*
- * Selecting copy routines...
- * multiplying with alpha in copy routines:
- *    MxM/2, MXN
- */
-   if (SCALAR_IS_ONE(alpha))
-   {
-      #ifdef Upper_
-         if (Diag == AtlasUnit)
-            l2a = Mjoin(PATL,trmm_a2blk_Up_diagU_a1);
-         else
-            l2a = Mjoin(PATL,trmm_a2blk_Up_a1);
-      #else
-         if (Diag == AtlasUnit)
-            l2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_a1);
-         else
-            l2a = Mjoin(PATL,trmm_a2blk_Lo_a1);
-      #endif 
-      r2a = Mjoin(PATL,trmm_b2blk_a1);
-   }
-   else
-   {
-      if (N > M/2) /* multiply alpha in tri-copy*/
-      {
-         r2a = Mjoin(PATL,trmm_b2blk_a1);
-         if (SCALAR_IS_NONE(alpha))
-         {
-         #ifdef Upper_
-            if (Diag == AtlasUnit)
-               l2a = Mjoin(PATL,trmm_a2blk_Up_diagU_aN);
-            else
-               l2a = Mjoin(PATL,trmm_a2blk_Up_aN);
-         #else
-            if (Diag == AtlasUnit)
-               l2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_aN);
-            else   
-               l2a = Mjoin(PATL,trmm_a2blk_Lo_aN);
-         #endif 
-         }
-         else /* alphaX, since alpha can't be 0 here */
-         {
-         #ifdef Upper_
-            if (Diag == AtlasUnit)
-               l2a = Mjoin(PATL,trmm_a2blk_Up_diagU_aX);
-            else
-               l2a = Mjoin(PATL,trmm_a2blk_Up_aX);
-         #else
-            if (Diag == AtlasUnit)
-               l2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_aX);
-            else   
-               l2a = Mjoin(PATL,trmm_a2blk_Lo_aX);
-         #endif 
-         }
-      }
-      else /* multiply alpha in gemm copy */
-      {
-         #ifdef Upper_
-            if (Diag == AtlasUnit)
-               l2a = Mjoin(PATL,trmm_a2blk_Up_diagU_a1);
-            else
-               l2a = Mjoin(PATL,trmm_a2blk_Up_a1);
-         #else
-            if (Diag == AtlasUnit)
-               l2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_a1);
-            else
-               l2a = Mjoin(PATL,trmm_a2blk_Lo_a1);
-         #endif 
-         if (SCALAR_IS_NONE(alpha))
-            r2a = Mjoin(PATL,trmm_b2blk_aN);
-         else
-            r2a = Mjoin(PATL,trmm_b2blk_aX);
-      }
-   }
-/*
- * calculate and allocate memory for workspace 
- * NOTE: This calculation is used from Rakib's TRMM tester: trmmKtst.c
- */
-#if EXTRA_SPACE
-   szT = mb * K;
-#else
-   tmu = MU, tku = KU;
-   tuu = Mmax(tmu, tku);
-   /* first do full blocks */
-   ntfu = M/tuu;
-   tKr = M - ntfu*tuu;
-   szFull = (ntfu*(ntfu+1)/2) * tuu * tuu;
-   #if ( (!defined(Upper_) && !defined(Trans_)) || \
-         (defined(Upper_) && defined(Trans_)) )
-      szPan = ((tKr+tmu-1)/tmu)*ntfu * tuu * tmu;
+   #ifdef TCPLX
+      if (A) t2a(M, alpha, A, lda, rA, wA);
+      if (B) r2a(M, N, alpha, B, ldb, rB, wB);
+      trmmK_b0(nmu, nnu, K, wA, wB, rC, rA, wB, wC);
+      trmmK_b0(nmu, nnu, K, rA, wB, wC, rA, rB, rC);
+      trmmK_bn(nmu, nnu, K, rA, rB, rC, wA, rB, wC);
+      trmmK_b1(nmu, nnu, K, wA, rB, wC, wA, wB, rC);
+      if (C) blk2c(M, N, ONE, rC, wC, ZERO, C, ldc);
    #else
-      szPan = ((tKr+tku-1)/tku)*ntfu * tuu * tku;
+      if (A) t2a(M, alpha, A, lda, wA);
+      if (B) r2a(M, N, alpha, B, ldb, wB);
+      trmmK_b0(nmu, nnu, K, wA, wB, rC, wA, wB, rC);
+      if (C) blk2c(M, N, ONE, rC, ZERO, C, ldc);
    #endif
-   /* finally the partial block */
-   szCorner = ((tKr + tmu - 1)/tmu) * ((tKr + tku - 1)/tku) * tmu * tku;
+}
+
+int ATL_utrmmL
+(
+   tminfo_t *ip,                 /* trmm info */
+   const enum ATLAS_DIAG Diag,   /* diagonal: unit/non-unit */
+   ATL_CSZT M,                   /* value of M: normally small for ST */
+   ATL_CSZT N,                   /* value of N */
+   const SCALAR alpha,
+   const TYPE *A,                /* triangular A matrix */
+   ATL_CSZT lda,                 /* lda */
+   TYPE *X,                      /* B matrix, output of TRMM */
+   ATL_CSZT ldx                  /* ldb */
+)
+{
+   int j; 
+   void *vp=NULL;
+   TYPE *pt, *pr, *pc, *rC, *wC, *x;
+   ATL_SZT sz, szC, szT, szR;
+   ATL_UINT szFull, szPan, szCorner;
+   ATL_UINT nmu, nnu, K;
+   int tuu, ntfu, tKr;
+   const int MU=ip->mu, NU=ip->nu, KU=ip->ku, VLEN=ip->vlen;
+   int KB=ip->kb, MB=ip->kb, NB=ip->rb, mb, nb, tmb, tnb;
+   ATL_UINT bv = ip->bv;  
+/*
+ * want to use less space for very small value of M and N
+ */   
+   mb = Mmin(MB, M);
+   nb = Mmin(NB, N);
+/*
+ * needed for workspace calc 
+ */
+   nmu = (mb+MU-1)/MU;    
+   nnu=(nb+NU-1)/NU;  
+   tmb = nmu * MU;
+   tnb = nnu * NU;
+   K = ((mb+KU-1)/KU)*KU;
+/*
+ * calculate and allocate memory for workspace
+ * This calculation is used from Rakib's TRMM tester: trmmKtst.c
+ */
+   tuu = Mmax(MU, KU);
+   ntfu = tmb/tuu;
+   tKr = tmb - ntfu*tuu;
+   szFull = (ntfu*(ntfu+1)/2) * tuu * tuu;
+/*
+ * bit : 1, 2 ===>  0 0 X ||  1 1 X  
+ * !Lower && notrans || upper && trans
+ */
+   if ( !((bv&2)^(bv&4)))
+      szPan = ((tKr+MU-1)/MU)*ntfu * tuu * MU;
+   else
+      szPan = ((tKr+KU-1)/KU)*ntfu * tuu * KU;
+   szCorner = ((tKr + MU - 1)/MU) * ((tKr + KU - 1)/KU) * MU * KU;
+   
    szT = szFull + szPan + szCorner;
-#endif
-   szR = nb*K;
-   szC = (((MU*NU+VLEN-1)/VLEN)*VLEN)*nmu*nnu; 
-   sz = ATL_MulBySize(szT + MU*KU + szR + NU*KU + szC + (MU+MU)*NU + 
+   szR = tnb*K;
+   szC = (((MU*NU+VLEN-1)/VLEN)*VLEN)*nmu*nnu;
+   sz = ATL_MulBySize(szT + MU*KU + szR + NU*KU + szC + (MU+MU)*NU +
                       3*ATL_Cachelen);
    if (sz < ATL_MaxMalloc)
       vp = malloc(sz);
@@ -376,21 +290,38 @@ int ATL_utrmmL
    pr = ATL_AlignPtr(pr);
    pc = pr + (szR SHIFT);
    pc = ATL_AlignPtr(pc);
+
    #ifdef TCPLX
-      l2a(M, alpha, A, lda, pt, pt+szT);
-      r2a(M, N, alpha, X, ldx, pr, pr+szR);
-      trmmK_b0(nmu, nnu, K, pt+szT, pr+szR, pc,     pt,     pr+szR, pc+szC);
-      trmmK_b0(nmu, nnu, K, pt,     pr+szR, pc+szC, pt,     pr,     pc);
-      trmmK_bn(nmu, nnu, K, pt,     pr,     pc,     pt+szT, pr,     pc+szC);
-      trmmK_b1(nmu, nnu, K, pt+szT, pr,     pc+szC, pt+szT, pr+szR, pc);
-      blk2c(M, N, ONE, pc, pc+szC, ZERO, X, ldx);
+      wC = pc; rC = pc + szC;
    #else
-      l2a(M, alpha, A, lda, pt);
-      r2a(M, N, alpha, X, ldx, pr);
-      trmmK_b0(nmu, nnu, K, pt, pr, pc, pt, pr, pc);
-      blk2c(M, N, ONE, pc, ZERO, X, ldx);
+      rC= wC = pc;
    #endif
-   free(vp); 
+/*
+ * copy A only at the first call of TRMM 
+ */
+   x = X;
+   ATL_utrmmLBlk(ip,  mb, nb, alpha, A, lda, x, ldx, x, ldx, pt, pr, rC, wC, 
+            szT, szR);
+/*
+ * more than one NB blocks 
+ */
+   if (N > NB)
+   {
+      x += (NB SHIFT)*ldx;
+/*
+ *    NB blocking, reuse copy of A 
+ */
+      for (j=NB+NB; j <= N; j += NB, x += (NB SHIFT)*ldx)
+         ATL_utrmmLBlk(ip,  mb, NB, alpha, NULL, lda, x, ldx, x, ldx, pt, pr, 
+                       rC, wC, szT, szR);
+/*
+ *    cleanup at the end 
+ */
+      if ((nb = N % NB)!=0)  
+         ATL_utrmmLBlk(ip,  mb, nb, alpha, NULL, lda, x, ldx, x, ldx, pt, pr, 
+                       rC, wC, szT, szR);
+   }
+   free(vp);
    return(0);
 }
 @ROUT ATL_tminfo
@@ -399,10 +330,9 @@ int ATL_utrmmL
 #include "atlas_amm.h"
 #include "atlas_lvl3.h"
 
-#include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
-
 /* cases: LN, UT, LT, UN ... LC/UC included */
 #ifdef Right_
+#include Mstr(Mjoin(ATLAS_PRE,trmmRU_view.h))
    #ifdef Upper_
       #ifdef Trans_
 #include Mstr(Mjoin(ATLAS_PRE,utrmmR_LN.h)) /* LN & UT share same header file*/
@@ -429,6 +359,7 @@ int ATL_utrmmL
       #endif
    #endif
 #else /* left side */
+#include Mstr(Mjoin(ATLAS_PRE,trmmLU_view.h))
    #ifdef Upper_
       #ifdef Trans_
 #include Mstr(Mjoin(ATLAS_PRE,utrmmL_LN.h)) /* LN & UT share same header file*/
@@ -458,140 +389,73 @@ int ATL_utrmmL
 
 void ATL_tminfo
 (
-   tminfo_t *ip, 
-   ipinfo_t *gip,
+   ATL_UINT flag,     /* 1: update cpy routines according to gemm due to share*/
+   ATL_UINT bv,       /* bitvec to save the case in tminfo */
+   tminfo_t *ip,      /* tminfo */
+   ipinfo_t *gip,     /* ipinfo for gemm */
    const enum ATLAS_DIAG Diag,
-   ATL_CSZT M, 
+   ATL_CSZT M,
    ATL_CSZT N,
-   const SCALAR alpha, 
-   ATL_CSZT lda, 
+   const SCALAR alpha,
+   ATL_CSZT lda,
    ATL_CSZT ldb
 )
 {
-#ifdef TCPLX
-   TYPE *alpL, *alpR, *alpC;
-#else
-   TYPE alpL, alpR, alpC;
-#endif
    tcm2am_t *t2a = (tcm2am_t *)&(ip->t2blk);
    cm2am_t *r2a = (cm2am_t *)&(ip->r2blk);
    ablk2cmat_t *blk2c = (ablk2cmat_t *)&(ip->blk2c);
-   
-   ip->mu = ATL_TRMMK_MU;
-   ip->nu = ATL_TRMMK_NU;
-   ip->ku = ATL_TRMMK_KU;
-   ip->vlen = ATL_TRMMK_VLEN;
-   ip->kvec = ATL_TRMMK_KVEC;
-   ip->kb = ATL_TRMM_KB; 
-   ip->flg = 0;
-   #ifdef Right_
-      #ifdef Trans_
-         ip->incA = lda SHIFT; 
-      #else
-         ip->incA = 1 SHIFT;
-      #endif
-   #else
-      #ifdef Trans_
-         ip->incA = 1 SHIFT;
-      #else
-         ip->incA = lda SHIFT;
-      #endif
-   #endif
-/*
- * TRMM Kernel
- */
-   ip->amm_b0 = Mjoin(PATL,trmmK_b0);
-   ip->amm_b1 =  Mjoin(PATL,trmmK_b1);
-   #ifdef TCPLX
-      ip->amm_bn = Mjoin(PATL,trmmK_bn);
-   #endif
-/*
- * check whether the kernel matches with gemm
- */
-   if (gip->mu == ip->mu && gip->nu == ip->nu 
-         && gip->ku == ip->ku && gip->vlen == ip->vlen)
+
+   if (!flag)   /* set tminfo with TRMM only info */
    {
+      ATL_SZT K;  
+      ATL_UINT idx=ATL_VIEW_BEST_IDX;
+      ip->mu = ATL_TRMMK_MU;
+      ip->nu = ATL_TRMMK_NU;
+      ip->ku = ATL_TRMMK_KU;
+      ip->vlen = ATL_TRMMK_VLEN;
+      ip->kvec = ATL_TRMMK_KVEC;
+      ip->bv = bv;
+      ip->flg = 0; /* by default not sharing */
 /*
- *    check mdim of both kernels 
+ *    TRMM Kernel
  */
-      if (ip->kvec == ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(gip->idxK)))
-         ip->flg |= 1;
-   }
-/*
- * TRMM copy routines.... 
- */
-   if (ip->flg & 1) /* trmm kernel similar to gemm */
-   {
-      alpC = gip->alpC;
+      ip->amm_b0 = Mjoin(PATL,trmmK_b0);
+      ip->amm_b1 =  Mjoin(PATL,trmmK_b1);
+      #ifdef TCPLX
+         ip->amm_bn = Mjoin(PATL,trmmK_bn);
+      #endif
       #ifdef Right_
-         alpL = gip->alpB;
-         alpR = gip->alpA;
+         K = N;
+         #ifdef Trans_
+            ip->incA = lda SHIFT;
+         #else
+            ip->incA = 1 SHIFT;
+         #endif
       #else
-         alpL = gip->alpA;
-         alpR = gip->alpB;
+         K = M;
+         #ifdef Trans_
+            ip->incA = 1 SHIFT;
+         #else
+            ip->incA = lda SHIFT;
+         #endif
+      #endif
+      #if ATL_VIEW_NCASES > 1
+      if (K < ATL_VIEW_BEST_KB)
+      {
+         for (idx=0; idx < ATL_VIEW_LAST_IDX; idx++)
+            if (ATL_GetViewKB(idx) >= K)
+               break;
+      }
+      #endif
+      ip->kb = ATL_GetViewKB(idx); /* MB=KB for trmmL, NB=KB for trmmR */
+      #ifdef Right_
+         ip->rb = ATL_GetViewMB(idx);
+      #else
+         ip->rb = ATL_GetViewNB(idx);
       #endif
 /*
- *    l2a 
+ *    optimize alpha in copy routine considering size of both matrix 
  */
-      #ifdef Upper_
-         if (SCALAR_IS_ONE(alpL))
-         {
-            if (Diag == AtlasUnit)
-               *t2a = Mjoin(PATL,trmm_a2blk_Up_diagU_a1);
-            else
-               *t2a = Mjoin(PATL,trmm_a2blk_Up_a1);
-         }
-         else
-         {
-            if (Diag == AtlasUnit)
-               *t2a = SCALAR_IS_NONE(alpL)? Mjoin(PATL,trmm_a2blk_Up_diagU_aN): 
-                  Mjoin(PATL,trmm_a2blk_Up_diagU_aX); 
-            else
-               *t2a = SCALAR_IS_NONE(alpL)? Mjoin(PATL,trmm_a2blk_Up_aN): 
-                  Mjoin(PATL,trmm_a2blk_Up_aX); 
-         }
-      #else /* lower */
-         if (SCALAR_IS_ONE(alpL))
-         {
-            if (Diag == AtlasUnit)
-               *t2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_a1);
-            else
-               *t2a = Mjoin(PATL,trmm_a2blk_Lo_a1);
-         }
-         else
-         {
-            if (Diag == AtlasUnit)
-               *t2a = SCALAR_IS_NONE(alpL)? Mjoin(PATL,trmm_a2blk_Lo_diagU_aN): 
-                  Mjoin(PATL,trmm_a2blk_Lo_diagU_aX);
-            else
-               *t2a = SCALAR_IS_NONE(alpL)? Mjoin(PATL,trmm_a2blk_Lo_aN): 
-                  Mjoin(PATL,trmm_a2blk_Lo_aX);
-         }
-      #endif
-/*
- *    r2a: using gemm's alpha distribution  
- */
-      if (SCALAR_IS_ONE(alpR))
-         *r2a = Mjoin(PATL,trmm_b2blk_a1);
-      else
-         *r2a = SCALAR_IS_NONE(alpR) ? Mjoin(PATL,trmm_b2blk_aN) : 
-            Mjoin(PATL,trmm_b2blk_aX);
-/*
- *    blk2c: using gemm's alpha distribution
- *    NOTE: beta is always zero for trmm  
- */
-      if (SCALAR_IS_ONE(alpC))
-         *blk2c = Mjoin(PATL,trmm_blk2c_a1b0);
-      else
-         *blk2c = SCALAR_IS_NONE(alpR) ? Mjoin(PATL,trmm_blk2c_aNb0) : 
-            Mjoin(PATL,trmm_blk2c_aXb0);
-   }
-/*
- * TRMM uses different kernel, no copies can be shared
- * so optimize copy routine considering TRMM 
- */
-   else
-   {
       *blk2c = Mjoin(PATL,trmm_blk2c_a1b0);
       if (SCALAR_IS_ONE(alpha))
       {
@@ -610,11 +474,23 @@ void ATL_tminfo
       }
       else  /* alpha is not one */
       {
-   #ifdef Right_ 
-      if (N > (M>>1)) /* multiply alpha in tri-copy*/
-   #else
-      if (M > (N>>1)) /* multiply alpha in tri-copy*/
-   #endif
+         int KK, RR;
+/*
+ *    actual size for copy routine = min (black fatcor, actual size)
+ */
+      #ifdef Right_
+         KK = (N > ip->kb) ? ip->kb : N;
+         RR = (M > ip->rb) ? ip->rb : M;
+      #else
+         KK = (M > ip->kb) ? ip->kb : M;
+         RR = (N > ip->rb) ? ip->rb : N;
+      #endif
+/*
+ *    element in triangle A is less than that of B, multiply alpha with A
+ *    Left : K*K/2 < K*N => K < 2*N 
+ *    Right: K*K/2 < K*M => K < 2*M
+ */
+      if (KK < (RR<<1)) 
       {
          *r2a = Mjoin(PATL,trmm_b2blk_a1);
          if (SCALAR_IS_NONE(alpha))
@@ -666,6 +542,82 @@ void ATL_tminfo
          }
       }
    }
+/*
+ * select copy routines according to gemm's alpha since trmm and gemm share 
+ * same copy for B
+ */
+   else   /* update copy routines according to gemm's alpha */
+   {
+      #ifdef TCPLX
+         TYPE *alpL, *alpR, *alpC;
+      #else
+         TYPE alpL, alpR, alpC;
+      #endif
+      ip->flg |= 1; /* 0 bit: share copy with gemm */
+      alpC = gip->alpC;
+      #ifdef Right_
+         alpL = gip->alpB;
+         alpR = gip->alpA;
+      #else
+         alpL = gip->alpA;
+         alpR = gip->alpB;
+      #endif
+/*
+ *    l2a
+ */
+      #ifdef Upper_
+         if (SCALAR_IS_ONE(alpL))
+         {
+            if (Diag == AtlasUnit)
+               *t2a = Mjoin(PATL,trmm_a2blk_Up_diagU_a1);
+            else
+               *t2a = Mjoin(PATL,trmm_a2blk_Up_a1);
+         }
+         else
+         {
+            if (Diag == AtlasUnit)
+               *t2a = SCALAR_IS_NONE(alpL)? Mjoin(PATL,trmm_a2blk_Up_diagU_aN):
+                  Mjoin(PATL,trmm_a2blk_Up_diagU_aX);
+            else
+               *t2a = SCALAR_IS_NONE(alpL)? Mjoin(PATL,trmm_a2blk_Up_aN):
+                  Mjoin(PATL,trmm_a2blk_Up_aX);
+         }
+      #else /* lower */
+         if (SCALAR_IS_ONE(alpL))
+         {
+            if (Diag == AtlasUnit)
+               *t2a = Mjoin(PATL,trmm_a2blk_Lo_diagU_a1);
+            else
+               *t2a = Mjoin(PATL,trmm_a2blk_Lo_a1);
+         }
+         else
+         {
+            if (Diag == AtlasUnit)
+               *t2a = SCALAR_IS_NONE(alpL)? Mjoin(PATL,trmm_a2blk_Lo_diagU_aN):
+                  Mjoin(PATL,trmm_a2blk_Lo_diagU_aX);
+            else
+               *t2a = SCALAR_IS_NONE(alpL)? Mjoin(PATL,trmm_a2blk_Lo_aN):
+                  Mjoin(PATL,trmm_a2blk_Lo_aX);
+         }
+      #endif
+/*
+ *    r2a: using gemm's alpha distribution
+ */
+      if (SCALAR_IS_ONE(alpR))
+         *r2a = Mjoin(PATL,trmm_b2blk_a1);
+      else
+         *r2a = SCALAR_IS_NONE(alpR) ? Mjoin(PATL,trmm_b2blk_aN) :
+            Mjoin(PATL,trmm_b2blk_aX);
+/*
+ *    blk2c: using gemm's alpha distribution
+ *    NOTE: beta is always zero for trmm
+ */
+      if (SCALAR_IS_ONE(alpC))
+         *blk2c = Mjoin(PATL,trmm_blk2c_a1b0);
+      else
+         *blk2c = SCALAR_IS_NONE(alpR) ? Mjoin(PATL,trmm_blk2c_aNb0) :
+            Mjoin(PATL,trmm_blk2c_aXb0);
+   }
 }
 @ROUT ATL_trmm_alloc
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Majedul Sujon" -def contrib "Rakib Hasan"
@@ -694,7 +646,7 @@ void* ATL_trmm_alloc
 )
 {
    void *vp;
-   size_t szL, szR, szW;
+   size_t szL, szR, szW, sz;
    const int mu = ip->mu, nu = ip->nu, ku = ip->ku;
    const int mb = ip->mb;
    const int nb = ip->nb;
@@ -702,7 +654,6 @@ void* ATL_trmm_alloc
    const size_t nmb = (N + mb - 1) / mb;
    const size_t nnb = (N + nb-1) / nb;
    const unsigned int szA = ip->szA, szB = ip->szB, szC = ip->szC;
-
    const int tvlen = si->vlen;
    const int tmu = si->mu; 
    const int tnu = si->nu; 
@@ -759,8 +710,9 @@ void* ATL_trmm_alloc
       szW = Mmax(szC,mb*nb);
       exsz = tmu*tku + Mmax(mu*ku,tmu*tku) + (mu+mu)*nu;
    #endif
-   vp = malloc( ATL_MulBySize( (*Rsz) + (*Csz) + szL + szR + szW + exsz )    
-                  + 4*ATL_Cachelen );
+   sz = ATL_MulBySize((*Rsz) + (*Csz) + szL + szR + szW + exsz+4*ATL_Cachelen);    
+   if (sz < ATL_MaxMalloc)
+      vp = malloc(sz);
    if (!vp) return(NULL); /* not enough memory */
    
    *bw = ATL_AlignPtr(vp);
@@ -1788,36 +1740,45 @@ int trmmR_LTUN
 #include "atlas_amm.h"
 #include "atlas_lvl3.h" 
 
+#include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #ifdef Right_
-   #include Mstr(Mjoin(ATLAS_PRE,trmmRU_view.h)) 
+   #define ATL_DECL_ 1
+   #include Mstr(Mjoin(ATLAS_PRE,trmmRU_view.h))
+   #undef ATL_DECL_ 
    #define INCR 1
    #define ATL_iptrmm Mjoin(PATL,iptrmmR)
-   #define ATL_trmm_ST Mjoin(PATL,trmmR_ST)
+   #define ATL_utrmm  Mjoin(PATL,utrmmR)
+   
    #define ATL_trmm_alloc Mjoin(PATL,trmmR_alloc)
    #define ATL_tminfoLN Mjoin(PATL,tminfoR_LN)
    #define ATL_tminfoLT Mjoin(PATL,tminfoR_LT)
    #define ATL_tminfoUN Mjoin(PATL,tminfoR_UN)
    #define ATL_tminfoUT Mjoin(PATL,tminfoR_UT)
-   #ifdef TCPLX 
+   #ifdef TCPLX
       #define ATL_tminfoLC Mjoin(PATL,tminfoR_LC)
       #define ATL_tminfoUC Mjoin(PATL,tminfoR_UC)
    #endif
+   
    #define ATL_trmm_LNUT Mjoin(PATL,trmmR_LNUT)
    #define ATL_trmm_LTUN Mjoin(PATL,trmmR_LTUN)
 #else
-   #include Mstr(Mjoin(ATLAS_PRE,trmmLU_view.h)) 
+   #define ATL_DECL_ 1
+   #include Mstr(Mjoin(ATLAS_PRE,trmmLU_view.h))
+   #undef ATL_DECL_ 
    #define INCR ldb
    #define ATL_iptrmm Mjoin(PATL,iptrmmL)
-   #define ATL_trmm_ST Mjoin(PATL,trmmL_ST)
+   #define ATL_utrmm  Mjoin(PATL,utrmmL)
+   
    #define ATL_trmm_alloc Mjoin(PATL,trmmL_alloc)
    #define ATL_tminfoLN Mjoin(PATL,tminfoL_LN)
    #define ATL_tminfoLT Mjoin(PATL,tminfoL_LT)
    #define ATL_tminfoUN Mjoin(PATL,tminfoL_UN)
    #define ATL_tminfoUT Mjoin(PATL,tminfoL_UT)
-   #ifdef TCPLX 
+   #ifdef TCPLX
       #define ATL_tminfoLC Mjoin(PATL,tminfoL_LC)
       #define ATL_tminfoUC Mjoin(PATL,tminfoL_UC)
    #endif
+   
    #define ATL_trmm_LNUT Mjoin(PATL,trmmL_LNUT)
    #define ATL_trmm_LTUN Mjoin(PATL,trmmL_LTUN)
 #endif
@@ -1834,7 +1795,7 @@ int ATL_iptrmm
 )
 {
 /*
- * Handle degerated cases 
+ * Handle degerated cases
  */
    if (NT == 1)
    {
@@ -1861,62 +1822,27 @@ int ATL_iptrmm
          Mjoin(PATL,scal)(NR, alpha, B, INCR);
       return(0);
    }
-/*
- * if NT (KB) is not greater than MAX_KB, apply trmm_ST code 
- */
-#ifdef Right_
-   else if (NT <= ATL_VIEW_MAX_KB && NR <= ATL_VIEW_MAX_MB)
-#else
-   else if (NT <= ATL_VIEW_MAX_KB && NR <= ATL_VIEW_MAX_NB)
-#endif
-      return(ATL_trmm_ST(bv, NT, NR, alpha, A, lda, B, ldb));
-/*
- * NT (KB) is large, so apply outer loop for trmm
- */
-   else 
+   else
    {
-      int res;
-      unsigned int ctu; /* Conj Trans Upper*/
-      ATL_SZT Tsz, Rsz, Csz; /* workspace size for TRMM */
-      TYPE *BW, *L, *R, *w;
-      void *vp=NULL;
-      ipinfo_t gip;
+/*
+ *    General case:
+ *    if K is not greater than MAX_KB, apply trmm_ST code, otherwise outer loop
+ */
       tminfo_t si;
-   #ifdef TCPLX
-      TYPE ONE[2] = {ATL_rone, ATL_rzero};
-      TYPE ZERO[2] = {ATL_rzero, ATL_rzero};
-   #else
-      #define ONE ATL_rone
-      #define ZERO ATL_rzero
-   #endif
-      enum ATLAS_TRANS TA;
-      #ifdef TCPLX
-         if ((bv&12)==12)
-            TA = AtlasConjTrans;
-         else
-      #endif
-      TA = (bv&4) ? AtlasTrans:AtlasNoTrans;
-/*
- *    Get ipinfo for the GEMM
- */
-      if (bv & 1) /* Right*/
-         Mjoin(PATL,ipnekInfo)(&gip, AtlasNoTrans, TA, NR, NT, NT, ldb, lda, ldb, 
-                               alpha, ZERO);
-      else  /* Left */
-         Mjoin(PATL,ipmekInfo)(&gip, TA, AtlasNoTrans, NT,NR,NT, lda, ldb, ldb, 
-                               alpha, ZERO);
-/*
- *    select tminfo and one of four variation of outer loops
- */
-      void (*tminfo) (tminfo_t *ip, ipinfo_t *gip, const enum ATLAS_DIAG Diag, 
-            ATL_CSZT N, ATL_CSZT R, const SCALAR alpha, ATL_CSZT lda, 
+      unsigned int ctu; /* Conj Trans Upper*/
+      void (*tminfo) (ATL_UINT flag, ATL_UINT bv, tminfo_t *ip, ipinfo_t *gip, 
+            const enum ATLAS_DIAG Diag,
+            ATL_CSZT N, ATL_CSZT R, const SCALAR alpha, ATL_CSZT lda,
             ATL_CSZT ldb);
-      int (*ammtrmm)(ipinfo_t *ip, tminfo_t *si,  
-            ATL_CSZT M, ATL_CSZT N, const SCALAR alpha, const TYPE *A, 
+      int (*ammtrmm)(ipinfo_t *ip, tminfo_t *si,
+            ATL_CSZT M, ATL_CSZT N, const SCALAR alpha, const TYPE *A,
             ATL_CSZT lda, TYPE *X, ATL_CSZT ldx, ATL_CSZT Tsz, ATL_CSZT Rsz,
             ATL_CSZT Csz, TYPE *tbw, TYPE *L, TYPE *R, TYPE *w );
-      
+         
       ctu = (bv>>1)&7; /* masked three bits responsible for Conj Trans Upper*/
+/*
+ *    select tminfo based on the case  
+ */
       if (!ctu)
          tminfo = ATL_tminfoLN;
       else if (ctu == 2)
@@ -1934,144 +1860,82 @@ int ATL_iptrmm
          tminfo = ATL_tminfoUC;
       #endif
       else /* unknown trmm case! */
-           ATL_assert(0);
-      if (!ctu || ctu==3 || ctu == 7)
-         ammtrmm = ATL_trmm_LNUT;
-      else
-         ammtrmm = ATL_trmm_LTUN;
+         ATL_assert(0);
 /*
- *    Get TRMM info 
+ *    Get TRMM info only
  */
-      if (bv&1)
-         tminfo(&si, &gip, (bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, lda, 
-               ldb);
-      else
-         tminfo(&si, &gip, (bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, lda, 
-               ldb);
+      tminfo(0, bv, &si, NULL, (bv&16)?AtlasNonUnit:AtlasUnit, (bv&1)?NR:NT, 
+             (bv&1)?NT:NR, alpha, lda, ldb);
+/* 
+ *    ST case 
+ */
+      if (NT <= si.kb) /* ST case  */
+      {
+         return(ATL_utrmm(&si, (bv&16)?AtlasNonUnit:AtlasUnit, (bv&1)?NR:NT, 
+                  (bv&1)?NT:NR, alpha, A, lda, B, ldb));
+      }
 /*
- *    allocate workspace for trmm outer loop 
+ *    outer loop 
  */
-      vp = ATL_trmm_alloc(&gip, &si, NT, &Tsz, &Rsz, &Csz, &BW, &L, &R, &w);
-      if (!vp)
-         return(1); /* not enough memory, reucrse again  */
+      else /* NT (K) is large, so apply outer loop for trmm */
+      {
+         int res;
+         ATL_SZT Tsz, Rsz, Csz; /* workspace size for TRMM */
+         TYPE *BW, *L, *R, *w;
+         void *vp=NULL;
+         ipinfo_t gip;
+         #ifdef TCPLX
+            TYPE ONE[2] = {ATL_rone, ATL_rzero};
+            TYPE ZERO[2] = {ATL_rzero, ATL_rzero};
+         #else
+            #define ONE ATL_rone
+            #define ZERO ATL_rzero
+         #endif
+         enum ATLAS_TRANS TA;
+         #ifdef TCPLX
+            if ((bv&12)==12)
+               TA = AtlasConjTrans;
+            else
+         #endif
+         TA = (bv&4) ? AtlasTrans:AtlasNoTrans;
 /*
- *    apply trmm outer-loop
+ *       Get ipinfo for the GEMM
  */
-      if (bv & 1)
-         res = ammtrmm(&gip, &si, NR, NT, alpha, A, lda, B, ldb, Tsz, Rsz, Csz, 
-               BW, L, R, w);
-      else
-         res = ammtrmm(&gip, &si, NT, NR, alpha, A, lda, B, ldb, Tsz, Rsz, Csz, 
-               BW, L, R, w);
-      
-      free(vp);
-      return(res);
+         if (bv & 1) /* Right*/
+            Mjoin(PATL,ipnekInfo)(&gip, AtlasNoTrans, TA, NR, NT, NT, ldb, lda, 
+                                  ldb, alpha, ZERO);
+         else  /* Left */
+            Mjoin(PATL,ipmekInfo)(&gip, TA, AtlasNoTrans, NT,NR,NT, lda, ldb, 
+                                  ldb, alpha, ZERO);
+/*
+ *       check if gemm and trmm use similar kernel, update copy routine 
+ *       accordingly to share copies with gemm 
+ */
+         if (gip.mu == si.mu && gip.nu == si.nu && gip.ku == si.ku 
+               && gip.vlen == si.vlen 
+               && si.kvec == ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(gip.idxK)))
+            tminfo(1, bv, &si, &gip, (bv&16)?AtlasNonUnit:AtlasUnit, (bv&1)?NR:NT, 
+                   (bv&1)?NT:NR, alpha, lda, ldb);
+/*
+ *       allocate workspace for trmm outer loop
+ */
+         vp = ATL_trmm_alloc(&gip, &si, NT, &Tsz, &Rsz, &Csz, &BW, &L, &R, &w);
+         if (!vp)
+            return(1); /* not enough memory, reucrse again  */
+/*
+ *       apply trmm outer-loop
+ */
+         if (!ctu || ctu==3 || ctu == 7)
+            ammtrmm = ATL_trmm_LNUT;
+         else
+            ammtrmm = ATL_trmm_LTUN;
+         res = ammtrmm(&gip, &si, (bv&1)?NR:NT, (bv&1)?NT:NR, alpha, A, lda, B, 
+                       ldb, Tsz, Rsz, Csz, BW, L, R, w);
+         free(vp);
+         return(res);
+      }
    }
    return(0);
-}
-@ROUT ATL_trmm_ST
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def cwauth "Majedul Sujon"
-#include "atlas_misc.h"
-#include "atlas_lvl3.h"
-#ifdef Right_
-   #define ATL_trmm_ST Mjoin(PATL,trmmR_ST)
-   #define ATL_utrmm_LN Mjoin(PATL,utrmmR_LN)
-   #define ATL_utrmm_LT Mjoin(PATL,utrmmR_LT)
-   #define ATL_utrmm_UN Mjoin(PATL,utrmmR_UN)
-   #define ATL_utrmm_UT Mjoin(PATL,utrmmR_UT)
-   #ifdef TCPLX
-      #define ATL_utrmm_LC Mjoin(PATL,utrmmR_LC)
-      #define ATL_utrmm_UC Mjoin(PATL,utrmmR_UC)
-   #endif
-#else
-    #define ATL_trmm_ST Mjoin(PATL,trmmL_ST)
-   #define ATL_utrmm_LN Mjoin(PATL,utrmmL_LN)
-   #define ATL_utrmm_LT Mjoin(PATL,utrmmL_LT)
-   #define ATL_utrmm_UN Mjoin(PATL,utrmmL_UN)
-   #define ATL_utrmm_UT Mjoin(PATL,utrmmL_UT)
-   #ifdef TCPLX
-      #define ATL_utrmm_LC Mjoin(PATL,utrmmL_LC)
-      #define ATL_utrmm_UC Mjoin(PATL,utrmmL_UC)
-   #endif
-#endif
-/*#define DEBUG 1*/
-/*
- * This is basically a wrapper function to TRMM of small triangle 
- */
-int ATL_trmm_ST
-(
-   ATL_UINT bv,  /* 0:Right, 1:Upper, 2:TransA, 3: Conj, 4:NonUnit */
-   ATL_CSZT               NT,  /* number of diagonals in triangle */
-   ATL_CSZT               NR,  /* number of right hand sides */
-   const SCALAR           alpha,
-   const TYPE             *A,
-   ATL_CSZT               lda,
-   TYPE                   *B,
-   ATL_CSZT               ldb
-)
-{
-   unsigned int ctu; /* bits for conj-trans-upper */
-   int res;
-/*
- * prototypes for trmm micro-kernels
- */
-   int (*utrmm)(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
-         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
-      
-   int ATL_utrmm_LN(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
-         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
-   int ATL_utrmm_UT(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
-         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
-   int ATL_utrmm_LT(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
-         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
-   int ATL_utrmm_UN(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
-         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
-   #ifdef TCPLX
-   int ATL_utrmm_UC(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
-         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
-   int ATL_utrmm_LC(const enum ATLAS_DIAG,ATL_CINT N, ATL_CINT R,
-         const SCALAR alpha, const TYPE *A, ATL_CSZT lda,TYPE *X, ATL_CSZT ldx);
-   #endif
-/*
- *       C T U
- * LNUT  0 0 0 -- LN = 0
- *       0 1 1 -- UT = 3
- *       1 1 1 -- UC = 7
- *
- * LTUN  0 1 0 -- LT = 2
- *       1 1 0 -- LC = 6
- *       0 0 1 -- UN = 1
- *
- */
-      ctu = (bv >> 1) & 7;
- 
-      if (!ctu)
-         utrmm = ATL_utrmm_LN;
-      else if (ctu == 2)
-         utrmm = ATL_utrmm_LT;
-      #ifdef TCPLX
-         else if (ctu == 6)
-            utrmm = ATL_utrmm_LC;
-      #endif
-      else if (ctu == 1)
-         utrmm = ATL_utrmm_UN;
-      else if (ctu == 3)
-         utrmm = ATL_utrmm_UT;
-      #ifdef TCPLX
-      else if (ctu == 7)
-         utrmm = ATL_utrmm_UC;
-      #endif
-      else
-      {
-           fprintf(stderr,"**** Unknown TRMM case!!\n");
-           /*assert(0);*/
-           return(1);
-      }
-   if (bv & 1)
-      res = utrmm((bv&16)?AtlasNonUnit:AtlasUnit, NR, NT, alpha, A, lda, B, ldb);
-   else
-      res = utrmm((bv&16)?AtlasNonUnit:AtlasUnit, NT, NR, alpha, A, lda, B, ldb);
-   return(res);
 }
 @ROUT ATL_trmm
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2018 -def contrib "Majedul Sujon"
