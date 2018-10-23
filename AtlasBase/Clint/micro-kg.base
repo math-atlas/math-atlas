@@ -70,6 +70,10 @@
       @abort "PBLHOIST cannot be defined!"
    @endifdef
    @define PBLHOIST @0@
+   @ifdef PBFLD
+      @abort "PBFLD cannot be defined!"
+   @endifdef
+   @define PBFLD @0@
 @endiif
 @iif TRMMR ! 0
    @iexp nku @(nu) @(ku) %
@@ -377,14 +381,82 @@ During tuning, think about several regions for prefetch:
    #endif
 #endif
 @endiif
-@SKIP special pB inc at the last K iteration
 @iif TRMML ! 0
+@BEGINSKIP
+*  This func is used to increment pB (and reload all vBs for specific case) at 
+*  the peeled last K-iteration for TRMML. Normally, it's done before the load 
+*  of pB[0]. So, it is called from different places from where load of pB[0] is
+*  essentially generated.
+@ENDSKIP
 @BEGINPROC lKpBinc
+   @define j @0@ 
+   @define kk @0@ 
    @iif PBLHOIST ! 0
       @ifdef LAST_ITER
-   pB += incBn;
+      @BEGINSKIP 
+      *  TRMM=2: Left upper
+      *  incBn is incremented by mu*nu at the end of each NLOOP. 
+      *  so, it will load invalid memory since incBn is getting large. 
+      *  Looks like: we will need mu*nu*nnus extra memory to overcome this. 
+      *  for now, I'm adding a branch (which is not a great choice, but we have
+      *  branch for KDONE at NLOOP anyway). 
+      @ENDSKIP
+      @iif TRMM = 2 
+      if (j != nnus-1) 
+      @endiif
+         pB += incBn;
+         @iif PBFLD ! 0
+            @iexp j 0 0 +
+            @iwhile j < @(vnu)
+               @iexp kk @(vl) @(j) /
+            ATL_vld(vB@(kk), pB+@(j));
+               @iexp j @(j) @(vl) +
+            @endiwhile
+         @endiif 
          @undef LAST_ITER 
       @endifdef
+   @endiif
+   @undef kk
+   @undef j
+@ENDPROC
+@BEGINSKIP
+*  this proc is used in TRMML to increment pB  (and reload VBs) when K (KK) 
+*  is too small to execute kloop. We need to jump to KDONE at the end
+@ENDSKIP
+@SKIP ****************** to pB inc and reload before Kloop to goto kdone
+@BEGINPROC toKdone
+   @iif PBLHOIST ! 0
+         {
+      @iif TRMM = 1
+            if (incBn)
+      @endiif
+      @BEGINSKIP 
+         *  TRMM=2: Left upper
+         *  incBn is incremented by mu*nu at the end of each NLOOP. 
+         *  so, it will load invalid memory since incBn is getting large. 
+         *  Looks like: we will need mu*nu*nnus extra memory to overcome this. 
+         *  for now, I'm adding a branch (which is not a great choice, but we 
+         *  have branch for KDONE at NLOOP anyway). 
+      @ENDSKIP
+      @iif TRMM = 2
+            if (incBn && j != nnus-1)
+      @endiif 
+            {
+      @iif PBINC = 1
+               pB += (incBn-@(incBk));
+               @callproc ReloadlB
+               /*pB += @(incBk);*/
+      @endiif
+      @iif PBINC = 0
+               pB += incBn;
+               @callproc ReloadlB
+      @endiif 
+            }
+            goto KDONE;
+         }
+   @endiif
+   @iif PBLHOIST = 0
+         goto KDONE;
    @endiif
 @ENDPROC
 @endiif 
@@ -1184,9 +1256,11 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
 @SKIP 2-D case assumes all but last rB already loaded
    @iif DN = 0
       @define jb @0@
+      @print "********2D case in DoIter"
       @iexp j 0 0 +
       @iwhile j < @(vnu)
          @iexp jb 0 @(B1R) = @(j) *
+         @SKIP **************** B1R case ***
          @iif B1R ! 0
             @callproc ldB 12 rB0 @(j)
             @iif jl = j
@@ -1204,16 +1278,24 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                   @ifdef lb
                      @iexp kk @(lb) @(vl) *
                   @SKIP **********************incBn before load of pB[0]
-                  @iif kk = 0 
-                     @iif TRMML ! 0
+                  @iif TRMML ! 0
+                     @iif PBFLD = 0
+                        @iif kk = 0 
+                           @callproc lKpBinc
+                        @endiif 
+                     @endiif 
+                  @endiif
+               ATL_vld(vB@(lb), pB+@(kk));
+                  @iif TRMML ! 0
+                     @iif PBFLD ! 0
                         @callproc lKpBinc
                      @endiif 
-                  @endiif 
+                  @endiif
                   @SKIP ************************************************
-               ATL_vld(vB@(lb), pB+@(kk));
                      @undef lb
                      @iexp mo 1 0 +
                   @endifdef
+               /* pB inc */
                pB += @(incBk);
             @endiif
             @iif j = jl
@@ -1269,10 +1351,12 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                ATL_vld(vB@(kk), pB+@(j));
          @iexp j @(j) @(vl) +
       @endiwhile
+      @SKIP "IN TRMM, NOKLOOP is always 0"
+      pB += @(incBk);
    @endiif
    @iif @iexp 1 @(vmu) > 0 @(B1R) = &
       @SKIP **NOTE: don't want to affect the 'mo' calc
-      @iexp mo0 @(mo) =
+      @SKIP @iexp mo0 @(mo) =
       @iexp j 0 0 +
       @iwhile j < @(jl)
          @callproc ldB 12 rB@(j) @(j)
@@ -1290,7 +1374,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @iexp j @(j) 1 +
       @endiwhile
       @SKIP **restore previous mo **
-      @iexp mo @(mo0) =
+      @SKIP @iexp mo @(mo0) =
    @endiif
    @undef j
    @undef i
@@ -1471,6 +1555,11 @@ void ATL_USERMM
       @iexp j 0 0 +
       @iwhile j < @(vnu)
          @iexp kk @(vl) @(j) /
+         @SKIP ********* TRMML: to keep track PBLHOIST   
+            @iif TRMML ! 0
+               @iexp PBLHOIST @(PBLHOIST) 1 + 
+            @endiif
+         @SKIP ***********************************************************
       ATL_vld(vB@(kk), pB+@(j));
          @iexp j @(j) @(vl) +
       @endiwhile
@@ -1482,7 +1571,7 @@ void ATL_USERMM
          @iif TRMML ! 0
             @iexp PBINC 1 0 + 
          @endiif
-      @SKIP ***********************************************************
+      @SKIP ********************************************************
       pB += @(incBk);
       @endiif
    @endiif
@@ -1493,18 +1582,37 @@ void ATL_USERMM
          @ifdef lb
             @iif ib < 0
                @iexp kk @(vl) @(lb) *
+               @SKIP ********* TRMML: to keep track PBLHOIST   
+                  @iif TRMML ! 0
+                     @iexp PBLHOIST @(PBLHOIST) 1 + 
+                  @endiif
+               @SKIP *************************************************
       ATL_vld(vB@(lb), pB+@(kk)); 
             @endiif
             @iif ib > -1 
+               @SKIP ********* TRMML: to keep track PBLHOIST   
+                  @iif TRMML ! 0
+                     @iexp PBLHOIST @(PBLHOIST) 1 + 
+                  @endiif
+               @SKIP *************************************************
       ATL_vld(vB@(lb), pB+@(ib));  
                @iexp ib @(ib) @(vl) +
             @endiif
             @undef lb
+            @SKIP ****************TRMML ******************************
+            @SKIP *** to keep track pB ld after pB increment  
+            @iif TRMML ! 0
+               @iif PBINC ! 0
+                  @iexp PBFLD @(PBFLD) 1 + 
+               @endiif
+            @endiif
+            @SKIP ****************************************************
          @endifdef
          @iexp j @(j) 1 +
       @endiwhile
    @endiif
-@SKIP ************* TRMML: to keep track whether ld of pB actually hoisted  
+@SKIP ************* TRMML: to keep track whether ld of pB actually hoisted 
+@BEGINSKIP 
 @iif TRMML ! 0
    @iif bc = 0
       @iif vnu > 0
@@ -1517,6 +1625,7 @@ void ATL_USERMM
       @endiif
    @endiif
 @endiif
+@ENDSKIP 
 @SKIP *****************************************************************
    @iif @iexp @(DONLOOP)
       @iif TRI = 0
@@ -1575,6 +1684,7 @@ void ATL_USERMM
       @endiif
       @iif TRMM = 4 /* Right-upper */
          KK = K < (J+@(nu)) ? K : (J+@(nu));
+         KK = KK < @(ku) ? @(ku) : KK; /* special checking to be at least ku */ 
       @endiif
       @SKIP ************************************************
          /* Peel K=0 iteration to avoid zero of rCxx and extra add  */
@@ -1588,29 +1698,23 @@ void ATL_USERMM
  *       Peel K=@(npeel) iter to allow prefetch of C or next blocks of A&B
  */
          @iexp kk @(kmul) @(npeel) *
+@BEGINSKIP
+*        redesigned to make it simple to understand... may not have compact code
+*        like before. 
+@ENDSKIP 
          @iif TRMM = 0  
          if (K == @(kk))
+            goto KDONE;
          @endiif
-         @iif TRMM = 1  
+         @SKIP ***** TRMM=1 case ********************
+         @iif TRMM = 1
+            @iif @(kk) } @(ku)
          if (KK <= @(kk))
-      @SKIP ***** TRMM=1 and ld of pB hoisted case ***   
-      @iif PBLHOIST ! 0
-         {
-            if (incBn)
-            {
-            @iif PBINC = 1
-               pB += (incBn-@(incBk));
-               @callproc ReloadlB
-               pB += @(incBk);
+            @callproc toKdone
             @endiif
-            @iif PBINC = 0
-               pB += incBn;
-               @callproc ReloadlB
-            @endiif 
-            }
-      @endiif
-      @SKIP ******************************************   
          @endiif
+         @SKIP ****************************************
+         @SKIP ***** TRMM=2 case ********************
          @iif TRMM = 2
             @iif mu < @(ku)
          if ((I-off+@(kk)) >= K)
@@ -1618,24 +1722,9 @@ void ATL_USERMM
             @iif mu } @(ku)
          if ((I+@(kk)) >= K)
             @endiif
-      @SKIP ***** TRMM=2 ld of pB hoisted case ******   
-      @iif PBLHOIST ! 0
-         {
-            if (incBn)
-            {
-            @iif PBINC = 1
-               pB += (incBn-@(incBk));
-               @callproc ReloadlB
-               pB += @(incBk);
-            @endiif 
-            @iif PBINC = 0
-               pB += incBn;
-               @callproc ReloadlB
-            @endiif 
-            }
-      @endiif
-      @SKIP **************************************   
+            @callproc toKdone
          @endiif
+         @SKIP **************************************   
          @iif TRMM = 3
             @iif nu < @(ku)
          if ((J-off+@(kk)) >= K)
@@ -1643,15 +1732,11 @@ void ATL_USERMM
             @iif nu } @(ku)
          if ((J+@(kk)) >= K)
             @endiif
+            goto KDONE;
          @endiif
          @iif TRMM = 4
          if (KK <= @(kk))
-         @endiif
             goto KDONE;
-         @iif TRMML ! 0
-            @iif PBLHOIST ! 0
-         }
-            @endiif
          @endiif
             @CALLPROC DoIter
          @iexp npeel @(npeel) 1 +
@@ -1668,26 +1753,13 @@ void ATL_USERMM
          @iexp kk @(kmul) @(npeel) *
          @iif TRMM = 0
          if (K == @(kk))
+            goto KDONE;
          @endiif
+         @SKIP **************** TRMML **************************
          @iif TRMM = 1  
          if (KK <= @(kk))
-      @SKIP ***** TRMM=1 ld of pB hoisted case *********   
-            @iif PBLHOIST ! 0
-         {           
-            if (incBn)
-            {
-            @iif PBINC = 1
-               pB += (incBn-@(incBk));
-               @callproc ReloadlB
-               pB += @(incBk);
-            @endiif
-            @iif PBINC = 0
-               pB += incBn;
-               @callproc ReloadlB
-            @endiif
-            }
-            @endiif
-      @endiif
+            @callproc toKdone 
+         @endiif
       @SKIP *********************************************   
          @iif TRMM = 2
             @iif mu < @(ku)
@@ -1696,24 +1768,9 @@ void ATL_USERMM
             @iif mu } @(ku)
          if ((I+@(kk)) >= K)
             @endiif
-      @SKIP ***** TRMM=2 ld of pB hoisted case *********   
-      @iif PBLHOIST ! 0
-         {
-            if (incBn)
-            {
-            @iif PBINC = 1
-               pB += (incBn-@(incBk));
-               @callproc ReloadlB
-               pB += @(incBk);
-            @endiif
-            @iif PBINC = 0
-               pB += incBn;
-               @callproc ReloadlB
-            @endiif
-            }
-      @endiif
-      @SKIP *******************************************   
+            @callproc toKdone 
          @endiif
+      @SKIP *********************************************   
          @iif TRMM = 3
             @iif nu < @(ku)
          if ((J-off+@(kk)) >= K)
@@ -1721,16 +1778,13 @@ void ATL_USERMM
             @iif nu } @(ku)
          if ((J+@(kk)) >= K)
             @endiif
+            goto KDONE;
          @endiif
          @iif TRMM = 4
+            @iif @(kk) } @(ku)
          if (KK <= @(kk))
-         @endiif
             goto KDONE;
-      @SKIP ***** TRMM left,  B1R=0 ******************   
-         @iif TRMML ! 0
-            @iif PBLHOIST ! 0
-         }
-            @endiif 
+            @endiif
          @endiif
       @SKIP ****************************************** 
             @CALLPROC DoIter
@@ -1744,19 +1798,7 @@ void ATL_USERMM
          @iif PBLHOIST ! 0
          if (KK == @(kk))
          {
-            if (incBn)
-            {
-            @iif PBINC = 1
-               pB += (incBn-@(incBk));
-               @callproc ReloadlB
-               pB += @(incBk);
-            @endiif
-            @iif PBINC = 0
-               pB += incBn;
-               @callproc ReloadlB
-            @endiif
-            }
-            goto KDONE;
+            @callproc toKdone
          }
          KK -= @(ku); /* to keep epilogue for kloop */
          @endiif
@@ -1772,20 +1814,7 @@ void ATL_USERMM
          if ((I+@(kk)) >= K)
             @endiif
          {
-            if (incBn)
-            {
-            @iif PBINC = 1
-               pB += (incBn-@(incBk));
-               @callproc ReloadlB
-               pB += @(incBk);
-            @endiif
-            @iif PBINC = 0
-               pB += incBn;
-               @callproc ReloadlB
-               @SKIP pB += @(incBk);
-            @endiif 
-            }
-            goto KDONE;
+            @callproc toKdone 
          }
          KK = K - @(ku); /* to keep epilogue for kloop */
             @iif mu < @(ku)
@@ -1829,10 +1858,9 @@ void ATL_USERMM
                @iexp kk @(kk) 1 +
             @endiwhile
          }
-      @SKIP *******TRMML: special for TRMML ******************
+      @SKIP *******TRMML: special for TRMML: peeling last iter off ************
       @iif TRMML ! 0
          @iif PBLHOIST ! 0 
-      @SKIP ****** handle last iteration differently *********
       @iexp IN_K 0 1 +
       @iexp kk 0
       @iwhile kk < @(vku)
