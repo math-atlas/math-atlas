@@ -1811,8 +1811,22 @@ void Mjoin(Mjoin(PATL,amL2skLNB),BNM)
  *    crossing should happen at (jn-1,jn-1)
  */
       rw = rW;
-      nd = i + ((jn-1-i+MU-1)/MU)*MU;
-      for(nd=Mmin(nd,N); i < nd; i = in)
+      in = i + MU;
+/*
+ *    NOTE: 
+ *    diagonal intersecting a block can be represented as following graph 
+ *    problem: for any rectangle (x0,y0), (x1,y1) where x1>x0 and y1>y0, is 
+ *    there any (k,k) point inside the rectangle? 
+ *    => can be reduced to numerical problem: is there any intersection between
+ *    the interval [x0,x1] and [y0,y1]? 
+ *       There is no intersection between these two intervals if y0>x1 or, x0>y1
+ *          y0>x1: means 2nd interval starts after finishing 1st one
+ *          x0>y1: means 1st interval starts after finishing 2nd interval
+ *       For lower triangle (x>=y): no intersection if x0>y1 
+ *                                                     => i > jn-1 => i >= jn 
+ *                                  intersection occurs if i < jn 
+ */
+      for(; i < jn ; i = in)
       {
          ATL_UINT mu=N-i, ii, jj, nblks;
          const TYPE *w = rw + cinc;
@@ -1829,7 +1843,7 @@ void Mjoin(Mjoin(PATL,amL2skLNB),BNM)
                   c[ii] = w[ii];
             }
          }
-         nblks = (in-1+nu) / NU;  /* # of row blocks in this panel */
+         nblks = (in-1+NU) / NU;  /* # of row blocks in this panel */
          rw += nblks*blksz; /* finished all blocks in rowpanel */
 /*
  *       Diagonal blocks may finish rows, if so increment rW
@@ -1849,9 +1863,71 @@ void Mjoin(Mjoin(PATL,amL2skLNB),BNM)
          for (jj=0; jj < nu; jj++, c += ldc, w += MU)
             for (ii=0; ii < mu; ii++)
                c[ii] = w[ii];
-         nblks = (in-1+nu) / NU;  /* # of row blocks in this panel */
+         nblks = (in-1+NU) / NU;  /* # of row blocks in this panel */
          rw += nblks*blksz;
       }
    }
 #endif
+}
+/*
+ * L2UT with columnwise accesss for C 
+ */   
+void Mjoin(Mjoin(Mjoin(PATL,amL2skLNB),BNM),_L2UT)
+   (ATL_iptr_t N, ATL_CUINT MU, ATL_CUINT NU, ATL_CUINT shVL,
+    const TYPE *W, const SCALAR beta, TYPE *C, ATL_iptr_t ldc)
+{
+   ATL_CUINT incW = ((MU*NU+(1<<shVL)-1)>>shVL)<<shVL;
+   ATL_UINT j, jn;
+/*
+ * since it's upper transpose case, the direction of MU and NU interchanged 
+ */
+   for (j=0; j < N; j = jn)
+   {
+      ATL_UINT i, in, mu = N-j, nu;
+      mu = Mmin(mu, MU);
+      jn = j + mu;  
+      nu = NU; 
+/*
+ *    for upper triangle, blocks whose do not intersect with diagonal follow: 
+ *               y0 > x1 => j > (in-1)
+ *                       => j > i+nu-1
+ *    access of C-workspace is consecutive
+ */
+      for (i=0; j < i+nu-1; i=in, W += incW )
+      {
+         const TYPE *w0 = W;
+         ATL_UINT ii, jj;
+         TYPE *c = C+i+j*ldc;
+         nu = Mmin(NU, N-i);
+         in = i + nu;
+         for (jj=0; jj < mu; jj++, c += ldc, w0++)
+         {
+            const TYPE *w = w0;
+            for (ii=0; ii < nu; ii++, w += MU)
+               c[ii] = *w;
+         }
+      }
+/*
+ *    intersection occurs at later blocks
+ */
+      for ( ; i < jn; i=in, W+=incW)
+      {
+         const TYPE *w0 = W;
+         ATL_UINT ii, jj;
+         TYPE *c = C+i+j*ldc;
+         nu = Mmin(NU, N-i);
+         in = i + nu;
+         for (jj=0; jj < mu; jj++, c += ldc, w0++)
+         {
+            const TYPE *w = w0;
+            ATL_CUINT J=j+jj;
+            for (ii=0; ii < nu; ii++, w += MU)
+            {
+               ATL_CUINT I=i+ii;
+               if (I <= J)
+                  c[ii] = *w;
+            }
+         }
+      }
+   }
 }
