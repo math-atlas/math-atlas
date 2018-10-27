@@ -1836,8 +1836,22 @@ void Mjoin(Mjoin(PATL,geput1T),BEN)
       #define applyAlpBet(c_, w_) c_ = applyAlpha(w_) + beta*(c_)
    #endif
 #endif
-void amL2skLNB(ATL_iptr_t N, ATL_CUINT MU, ATL_CUINT NU, ATL_CUINT shVL, 
-               const TYPE *W, const SCALAR beta, TYPE *C, ATL_iptr_t ldc)
+
+void amL2skLNB
+( 
+   ATL_iptr_t N, 
+   ATL_CUINT MU, 
+   ATL_CUINT NU, 
+   ATL_CUINT shVL, 
+   const SCALAR alpha, 
+   const TYPE *rC, 
+#ifdef TCPLX
+   const TYPE *iC, 
+#endif
+   const SCALAR beta, 
+   TYPE *C, 
+   ATL_iptr_t ldc
+)
 {
 #if 0
    ATL_CUINT incW = ((MU*NU+(1<<shVL)-1)>>shVL)<<shVL;
@@ -1880,9 +1894,15 @@ void amL2skLNB(ATL_iptr_t N, ATL_CUINT MU, ATL_CUINT NU, ATL_CUINT shVL,
    }
 #else
    ATL_CUINT blksz = ((MU*NU+(1<<shVL)-1)>>shVL)<<shVL;
-   ATL_UINT j, jn, cinc;
-   const TYPE *rW=W, *rw;
-   const ATL_iptr_t incC = ldc*NU;
+   ATL_UINT j, jn, cinc, rwpan;
+   const TYPE *rW=rC, *rw;
+   #ifdef TCPLX 
+   const TYPE *iW=iC, *iw;
+   #endif
+   const ATL_iptr_t LDC = (ldc SHIFT);
+   const ATL_iptr_t incC = LDC*NU;
+
+
    for (cinc=j=0; j < N; j = jn, C += incC, cinc += blksz)
    {
       ATL_UINT i, in, nu = N-j, nd;
@@ -1894,6 +1914,9 @@ void amL2skLNB(ATL_iptr_t N, ATL_CUINT MU, ATL_CUINT NU, ATL_CUINT shVL,
  *    crossing should happen at (jn-1,jn-1)
  */
       rw = rW;
+      #ifdef TCPLX 
+         iw = iW;
+      #endif
 /*
  *    NOTE: 
  *    diagonal intersecting a block can be represented as following graph 
@@ -1911,26 +1934,48 @@ void amL2skLNB(ATL_iptr_t N, ATL_CUINT MU, ATL_CUINT NU, ATL_CUINT shVL,
       for(; i < jn ; i = in)
       {
          ATL_UINT mu=N-i, ii, jj, nblks;
-         const TYPE *w = rw + cinc;
-         TYPE *c = C + i;
+         const TYPE *pr = rw + cinc;
+         #ifdef TCPLX
+            const TYPE *pi = iw + cinc;
+         #endif
+         TYPE *c = C + (i SHIFT);
          mu = (mu >= MU) ? MU : mu;
          in = i + mu;
-         for (jj=0; jj < nu; jj++, c += ldc, w += MU)
+/*
+ *       copying subblock with diagonal 
+ */
+         for (jj=0; jj < nu; jj++, c += LDC, pr += MU)
          {
             ATL_CUINT J=j+jj;
             for (ii=0; ii < mu; ii++)
             {
                ATL_CUINT I=i+ii;
                if (I >= J)
-                  applyAlpBet(c[ii], w[ii]);
+               {
+                  ATL_CUINT kk = (ii SHIFT);
+                  applyAlpBet(c[kk], pr[ii]);
+                  #ifdef TCPLX
+                     applyAlpBet(c[kk+1], pi[ii]);
+                  #endif 
+               }
             }
+            #ifdef TPCLX
+               pi += MU;
+            #endif
          }
          nblks = (in-1+NU) / NU;  /* # of row blocks in this panel */
-         rw += nblks*blksz; /* finished all blocks in rowpanel */
+         rwpan = nblks*blksz;
+         rw += rwpan; /* finished all blocks in rowpanel */
+         #ifdef TCPLX
+            iw += rwpan; /* finished all blocks in rowpanel */
+         #endif
 /*
  *       Diagonal blocks may finish rows, if so increment rW
  */
          rW = (in <= jn) ? rw : rW;
+         #ifdef TCPLX
+            iW = (in <= jn) ? iw : iW;
+         #endif
       }
 /*
  *    Diagonal above any remaining blocks
@@ -1938,15 +1983,30 @@ void amL2skLNB(ATL_iptr_t N, ATL_CUINT MU, ATL_CUINT NU, ATL_CUINT shVL,
       for (; i < N; i = in)
       {
          ATL_UINT mu=N-i, ii, jj, nblks;
-         const TYPE *w = rw + cinc;
-         TYPE *c = C + i;
+         const TYPE *pr = rw + cinc;
+         #ifdef TCPLX
+            const TYPE *pi = iw + cinc;
+         #endif
+         TYPE *c = C + (i SHIFT);
          mu = (mu >= MU) ? MU : mu;
          in = i + mu;
          for (jj=0; jj < nu; jj++, c += ldc, w += MU)
+         {
             for (ii=0; ii < mu; ii++)
-               applyAlpBet(c[ii], w[ii]);
+            {
+               ATL_CUINT kk = (ii SHIFT);
+               applyAlpBet(c[kk], pr[ii]);
+               #ifdef TCPLX
+                  applyAlpBet(c[kk+1], pi[ii]);
+               #endif
+            }
+         }
          nblks = (in-1+NU) / NU;  /* # of row blocks in this panel */
-         rw += nblks*blksz;
+         rwpan = nblks*blksz;
+         rw += rwpan;
+         #ifdef TCPLX
+            iw += rwpan;
+         #endif
       }
    }
 #endif
