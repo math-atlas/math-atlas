@@ -1668,7 +1668,8 @@ int syrk
 #include "atlas_level3.h"
 #include Mstr(Mjoin(ATLAS_PRE,sysinfo.h))
 #include Mstr(Mjoin(ATLAS_PRE,opgen_view.h))
-#include Mstr(Mjoin(ATLAS_PRE,amm_umsyrk.h))
+@ROUT ATL_ursyrk `#include Mstr(Mjoin(ATLAS_PRE,amm_ursyrk.h))` 
+@ROUT ATL_umsyrk `#include Mstr(Mjoin(ATLAS_PRE,amm_umsyrk.h))` 
 /*
  * Service routine, particularly for parallel.  Takes its blocking from ip
  * (assuming that is what is being used below diagonal blocks
@@ -2497,20 +2498,45 @@ int syrk_amm
  * We will decide between sqsyrk and umsyrk based on the pref data from 
  * amm_syrkPerf.h.  
  */
-#if 1  /* apply umsyrk*/ 
-   Mjoin(PATL,ipmenUMInfo)(&ipmen, TA,TB, N,N,K, lda,lda,ldc, alpha,beta); 
-   #ifdef Conj_
-      ierr = umsyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
-   #else
-      ierr = umsyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+#if 1
+   #if 1  /* apply umsyrk*/ 
+      Mjoin(PATL,ipmenUMInfo)(&ipmen, TA,TB, N,N,K, lda,lda,ldc, alpha,beta); 
+      #ifdef Conj_
+         ierr = umsyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         ierr = umsyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+      #endif
+   #else /* sqsyrk */
+      Mjoin(PATL,ipmenInfo)(&ipmen, TA,TB, N,N,K, lda,lda,ldc, alpha,beta); 
+      #ifdef Conj_
+         ierr = sqsyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         ierr = sqsyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+      #endif
    #endif
-#else /* sqsyrk */
-   Mjoin(PATL,ipmenInfo)(&ipmen, TA,TB, N,N,K, lda,lda,ldc, alpha,beta); 
-   #ifdef Conj_
-      ierr = sqsyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
-   #else
-      ierr = sqsyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
-   #endif
+#else
+/*
+ * applying ursyrk code
+ * FIXME: need extra checking for kvec:
+ *        ipmen.vlen == ATL_URSYRK_VLEN 
+ *          && ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(ipmen.idxK) == ATL_URSYRK_KVEC 
+ */
+      Mjoin(PATL,ipmenInfo)(&ipmen, TA,TB, N,N,K, lda,lda,ldc, alpha,beta);
+      if (ipmen.mu == ATL_URSYRK_MU && ipmen.nu == ATL_URSYRK_NU 
+            && ipmen.ku == ATL_URSYRK_KU)
+      #ifdef Conj_
+         ierr = ursyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         ierr = ursyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+      #endif
+      else
+      #ifdef Conj_
+         ierr = sqsyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
+      #else
+         ierr = sqsyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
+      #endif
+
+
 #endif
    return(ierr);
 }
