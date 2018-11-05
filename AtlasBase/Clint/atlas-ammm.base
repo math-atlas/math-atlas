@@ -973,8 +973,8 @@ int Mjoin(PATL,@(rt)her2k)
    @undef rtsy
    @undef rthk
 @endwhile
-@SKIP prototypes for sq/um syrk
-@whiledef rt sq um
+@SKIP prototypes for sq/ur syrk
+@whiledef rt sq ur
 int Mjoin(PATL,@(rt)syrk)
    (ipinfo_t *ip, const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT, 
     ATL_CSZT, const SCALAR, const TYPE*, ATL_CSZT, const SCALAR, TYPE*,
@@ -37913,6 +37913,9 @@ void prepSyrkAmm(char pre, ATL_mmnode_t *kb)
       cu = tp;
    }
    assert((cs->flag&(1<<MMF_COMPLEX))&&(cu->flag&(1<<MMF_COMPLEX)));
+/*
+ * NOTE: MMF_RIGHT used for umsyrk before, used for ursyrk now
+ */
    ru->flag |= 1<<MMF_RIGHT;
    cu->flag |= 1<<MMF_RIGHT;
 }
@@ -37946,6 +37949,12 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
       switch(mp->blask)
       {
       case ATL_KSYRK:  /* SYRK needs C copies for all alpha,beta */
+/*
+ *       don't need to be generated copies for ursyrk anymore
+ *       so, skip if ursyrk
+ */
+         if (FLAG_IS_SET(mp->flag, MMF_RIGHT)) 
+            continue; 
          cpflag |= (1<<CPF_SYRK) | (1<<CPF_CBLK);
          cp = GetCopyNodeFromMM(cpflag, mp, NULL);
 /*
@@ -37966,11 +37975,13 @@ ATL_cpnode_t *GetKernCopies(char pre, char *outd, ATL_mmnode_t *kb)
                   fn[5] = 's';
                   fn[6] = 'q';
                }
+            #if 0
                else
                {
                   fn[5] = 'u';
                   fn[6] = 'm';
                }
+            #endif
                fn[18] = bn[ia];
                fn[20] = bn[ib];
                p->genstr = GetCopyGenStr(p);
@@ -38001,9 +38012,15 @@ void GenSyrkPerfH(char pre, char *outd, ATL_mmnode_t *sq, ATL_mmnode_t *um)
    if (um)
    {
       double syMF=*um->mflop, mmMF=um->mflop[1];
+   #if 0
       fprintf(fp, "   #define ATL_umsyrkMF %e\n", syMF);
       fprintf(fp, "   #define ATL_umgemmMF %e\n", mmMF);
       fprintf(fp, "   #define ATL_umratio %f\n", syMF/mmMF);
+   #else
+      fprintf(fp, "   #define ATL_ursyrkMF %e\n", syMF);
+      fprintf(fp, "   #define ATL_urgemmMF %e\n", mmMF);
+      fprintf(fp, "   #define ATL_urratio %f\n", syMF/mmMF);
+   #endif
    }
    CloseGenHeader(fp);
 }
@@ -38016,9 +38033,15 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
    FILE *fp;
    const int RCSAME=bv&1, UM=bv&2;
    const int ntr = (pre == 'd' || pre == 's') ? 2 : 4;
+#if 0
    const char *sh = (UM) ? "um" : "sq";
    const char *SH = (UM) ? "UM" : "SQ";
    const char *ums = (UM) ? "UM":"";
+#else
+   const char *sh = (UM) ? "ur" : "sq";
+   const char *SH = (UM) ? "UR" : "SQ";
+   const char *ums = (UM) ? "UR":"";
+#endif
    int ial, ibe, itr, flg;
    const char be[3] = {'0', '1', 'n'};
    char bes[4] = {'1', 'N', 'X', '0'};
@@ -38035,15 +38058,15 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
    {
       if (UM)
       {
-         fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "umsyrk", NULL);
+         fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "ursyrk", NULL);
          fprintf(fp, "   #include atlas_%camm_sqsyrk.h", pre);
          @whiledef nm VLEN KVEC MU NU
-         fprintf(fp, "#define ATL_UMSYRKK_@(nm) ATL_SQSYRKK_@(nm)\n");
+         fprintf(fp, "#define ATL_URSYRKK_@(nm) ATL_SQSYRKK_@(nm)\n");
          @endwhile
-         fprintf(fp, "#define ATL_%cumsyrkK_b0 ATL_%csqsyrkK_b0\n", pre, pre);
-         fprintf(fp, "#define ATL_%cumsyrkK_b1 ATL_%csqsyrkK_b1\n", pre, pre);
-         fprintf(fp, "#define ATL_%cumsyrkK_bn ATL_%csqsyrkK_bn\n", pre, pre);
-         fprintf(fp, "#define ATL_%ca2blk_umsyrkN ATL_%ca2blk_sqsyrkN\n", 
+         fprintf(fp, "#define ATL_%cursyrkK_b0 ATL_%csqsyrkK_b0\n", pre, pre);
+         fprintf(fp, "#define ATL_%cursyrkK_b1 ATL_%csqsyrkK_b1\n", pre, pre);
+         fprintf(fp, "#define ATL_%cursyrkK_bn ATL_%csqsyrkK_bn\n", pre, pre);
+         fprintf(fp, "#define ATL_%ca2blk_ursyrkN ATL_%ca2blk_sqsyrkN\n", 
                  pre, pre);
 /*
  *       redefine C cpy routs: ATL_<pre>[sq,um]SyrkIntoC_a<alp>_b<bet>
@@ -38056,12 +38079,12 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
                for (is=0; is < 2; is++)
                {
                   fprintf(fp, "#ifdef Conj_\n");
-                  fprintf(fp, "   #define ATL_%cumHerkIntoC_a%cb%c%s "
+                  fprintf(fp, "   #define ATL_%curHerkIntoC_a%cb%c%s "
                           "ATL_%csqHerkIntoC_a%cb%c%s\n", 
                            pre, bes[ial], bes[ibe], sfx[is],
                            pre, bes[ial], bes[ibe], hfx[is]);
                   fprintf(fp, "#endif\n");
-                  fprintf(fp, "#define ATL_%cumSyrkIntoC_a%cb%c%s "
+                  fprintf(fp, "#define ATL_%curSyrkIntoC_a%cb%c%s "
                           "ATL_%csqSyrkIntoC_a%cb%c%s",
                           pre, bes[ial], bes[ibe], sfx[is],
                           pre, bes[ial], bes[ibe], sfx[is] 
@@ -38073,7 +38096,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
       }
       return;
    }
-   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", UM?"umsyrk":"sqsyrk", NULL);
+   fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", UM?"ursyrk":"sqsyrk", NULL);
    fprintf(fp, "#define ATL_%sSYRKK_VLEN %d\n", SH, mb->vlen);
    fprintf(fp, "#define ATL_%sSYRKK_KVEC %d\n", SH,
            FLAG_IS_SET(mb->flag, MMF_KVEC) ? mb->vlen:0);
@@ -38149,36 +38172,75 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
 /*
  * Prototype all C cpy routs: ATL_<pre>[sq,um]SyrkIntoC_a<alp>_b<bet>
  */
-   for (ial=0; ial < 3; ial++)
+   if (!UM)
    {
-      for (ibe=0; ibe < 4; ibe++)
+      for (ial=0; ial < 3; ial++)
       {
-         int is;
-         for (is=0; is < 2; is++)
+         for (ibe=0; ibe < 4; ibe++)
          {
-            fprintf(fp, "#ifdef Conj_\n");
-            fprintf(fp, "#define ATL_%c%sSyrkIntoC_a%cb%c%s "
-                    "ATL_%c%sHerkIntoC_a%cb%c%s\n", 
-                     pre, sh, bes[ial], bes[ibe], sfx[is],
-                     pre, sh, bes[ial], bes[ibe], hfx[is]);
-            fprintf(fp, "#endif\n");
-            fprintf(fp, "void ATL_%c%sSyrkIntoC_a%cb%c%s\n", pre, sh, bes[ial],
-                    bes[ibe], sfx[is]);
-            if (pre == 's' || pre == 'd')
-               fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
-            else
-               fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,"
-                       "const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+            int is;
+            for (is=0; is < 2; is++)
+            {
+               fprintf(fp, "#ifdef Conj_\n");
+               fprintf(fp, "#define ATL_%c%sSyrkIntoC_a%cb%c%s "
+                       "ATL_%c%sHerkIntoC_a%cb%c%s\n", 
+                        pre, sh, bes[ial], bes[ibe], sfx[is],
+                        pre, sh, bes[ial], bes[ibe], hfx[is]);
+               fprintf(fp, "#endif\n");
+               fprintf(fp, "void ATL_%c%sSyrkIntoC_a%cb%c%s\n", pre, sh, bes[ial],
+                       bes[ibe], sfx[is]);
+               if (pre == 's' || pre == 'd')
+                  fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+               else
+                  fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,"
+                          "const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
 
-            fprintf(fp, "#ifndef ATL_%cSyrkIntoC_a%cb%c%s\n   #define "
-            "ATL_%cSyrkIntoC_a%cb%c%s ATL_%c%sSyrkIntoC_a%cb%c%s\n#endif\n",  
-               pre, bes[ial], bes[ibe], sfx[is],
-               pre, bes[ial], bes[ibe], sfx[is],
-               pre, sh, bes[ial], bes[ibe], sfx[is]);
+               fprintf(fp, "#ifndef ATL_%cSyrkIntoC_a%cb%c%s\n   #define "
+               "ATL_%cSyrkIntoC_a%cb%c%s ATL_%c%sSyrkIntoC_a%cb%c%s\n#endif\n",  
+                  pre, bes[ial], bes[ibe], sfx[is],
+                  pre, bes[ial], bes[ibe], sfx[is],
+                  pre, sh, bes[ial], bes[ibe], sfx[is]);
+            }
          }
       }
    }
-   
+   else /* for URSYRK */
+   {
+      for (ial=0; ial < 3; ial++)
+      {
+         for (ibe=0; ibe < 4; ibe++)
+         {
+            int is;
+            for (is=0; is < 2; is++)
+            {
+               fprintf(fp, "#ifdef Conj_\n");
+               fprintf(fp, "#define ATL_%camL2skLNB_a%cb%c%s "
+                    "ATL_%camL2hkLNB_a%cb%c%s\n",
+                     pre, bes[ial], bes[ibe], sfx[is],
+                     pre, bes[ial], bes[ibe], hfx[is]);
+               fprintf(fp, "#endif\n");
+               fprintf(fp, "void ATL_%camL2skLNB_a%cb%c%s\n", pre, bes[ial],
+                    bes[ibe], sfx[is]);
+               if (pre == 's' || pre == 'd')
+                  fprintf(fp, "   (ATL_CSZT,ATL_CUINT,ATL_CUINT,ATL_CUINT,const SCALAR,const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+               else
+                  fprintf(fp, "   (ATL_CSZT,ATL_CUINT,ATL_CUINT,ATL_CUINT,const SCALAR,const TYPE*,"
+                       "const TYPE*,const SCALAR, TYPE *,ATL_CSZT);\n");
+
+               fprintf(fp, "#ifndef ATL_%c%sSyrkIntoC_a%cb%c%s\n   #define "
+            "ATL_%c%sSyrkIntoC_a%cb%c%s ATL_%camL2skLNB_a%cb%c%s\n#endif\n",
+               pre, sh, bes[ial], bes[ibe], sfx[is],
+               pre, sh, bes[ial], bes[ibe], sfx[is],
+               pre,  bes[ial], bes[ibe], sfx[is]);
+               fprintf(fp, "#ifndef ATL_%cSyrkIntoC_a%cb%c%s\n   #define "
+            "ATL_%cSyrkIntoC_a%cb%c%s ATL_%c%sSyrkIntoC_a%cb%c%s\n#endif\n",
+               pre, bes[ial], bes[ibe], sfx[is],
+               pre, bes[ial], bes[ibe], sfx[is],
+               pre,  sh, bes[ial], bes[ibe], sfx[is]);
+            }
+         }
+      }
+   }
    CloseGenHeader(fp);
 }
 
@@ -38935,8 +38997,10 @@ ATL_mmnode_t *GenAllSyrkH(char pre, char *outd, ATL_mmnode_t **BKB)
    assert(!FLAG_IS_SET(rp->flag, MMF_RIGHT)&&!FLAG_IS_SET(cp->flag, MMF_RIGHT));
    assert((rp->mu == rp->nu) && (cp->nu == cp->mu));
    assert(rp->blask == ATL_KSYRK);
+#if 0 /* no need for the restriction anymore */
    assert(!(rU->mu % rU->nu) || !(rU->nu % rU->mu));
    assert(!(cU->mu % cU->nu) || !(cU->nu % cU->mu));
+#endif
    bv = MMKernsPerfSame(rp, cp);
    GenSyrkH(pre, outd, rp, bv);
    GenSyrkH(cpr, outd, cp, bv);
@@ -40360,7 +40424,7 @@ void Mjoin(PATL,@(vwf)Info)
 #include "atlas_amm.h"
 #include Mstr(Mjoin(ATLAS_UPR,amm_kern.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_sqsyrk.h))
-#include Mstr(Mjoin(ATLAS_PRE,amm_umsyrk.h))
+#include Mstr(Mjoin(ATLAS_PRE,amm_ursyrk.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipmen_view.h))
 #include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
