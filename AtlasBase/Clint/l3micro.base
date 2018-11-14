@@ -2514,7 +2514,7 @@ int syrk_amm
  */
    if (ipmen.mu == ATL_URSYRKK_MU && ipmen.nu == ATL_URSYRKK_NU
          && ipmen.ku == ATL_URSYRKK_KU && ipmen.vlen == ATL_URSYRKK_VLEN
-         && ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(ipmen.idxK) == ATL_URSYRKK_KVEC) )
+         && ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(ipmen.idxK)) == ATL_URSYRKK_KVEC )
       #ifdef Conj_
          ierr = ursyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
       #else
@@ -3461,7 +3461,7 @@ int opsyrk
    ATL_CSZT ldc
 )
 {
-   int i, ismul;
+   int i;
    int ierr;
    #ifdef Conj_
       TYPE alpha[2]={ralpha, ATL_rzero}, beta[2]={rbeta, ATL_rzero};
@@ -3485,17 +3485,15 @@ int opsyrk
            op.pmb, op.pnb, op.kb);
    #endif
 /*
- * mu,nu,ku, must match with amm_umsyrk.h to apply ursyrk until we manage 
- * to have opgenview for UR
+ * apply ursyrk when possible
+ * FIXME: opinfo_t doesn't have idxK to point the kernel. How can we verify
+ * whether the mdim of the gemm kernel is match with syrk? MVEC kernel may have 
+ * KU > 1 (and match with KVEC) for the unrolling! If we have idxK in opinfo_t,
+ * we can add following test to make sure mdim matched as well: 
+ * ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(op.idxK)) == ATL_URSYRKK_KVEC
  */
-   ismul = 1;
-   if (op.mu != ATL_URSYRKK_MU || op.nu != ATL_URSYRKK_NU 
-         || op.ku !=ATL_URSYRKK_KU )
-      ismul = 0;
-/*
- * try to use ursyrk first if possible 
- */
-   if (ismul)
+   if (op.mu == ATL_URSYRKK_MU && op.nu == ATL_URSYRKK_NU 
+         && op.ku ==ATL_URSYRKK_KU && op.vlen == ATL_URSYRKK_VLEN)
       ierr = opursyrk(&op, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
    else
       ierr = opsqsyrk(&op, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
