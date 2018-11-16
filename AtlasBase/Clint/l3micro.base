@@ -2333,6 +2333,7 @@ int syrk_amm
    double timG;
    int nb, nbS, flg, idx;
    int i, k, ierr;
+   unsigned short kmaj;
    #ifdef Conj_
       TYPE alpha[2]={ralpha, ATL_rzero}, beta[2]={rbeta, ATL_rzero};
       const enum ATLAS_TRANS TB=(TA==AtlasNoTrans)?AtlasConjTrans:AtlasNoTrans;
@@ -2512,20 +2513,25 @@ int syrk_amm
  * We want not only to match mu-nu-ku but also vlen and kvec to make sure 
  * ursyrk can share A/B copies with gemm as well 
  */
+   kmaj = ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(ipmen.idxK));
    if (ipmen.mu == ATL_URSYRKK_MU && ipmen.nu == ATL_URSYRKK_NU
          && ipmen.ku == ATL_URSYRKK_KU && ipmen.vlen == ATL_URSYRKK_VLEN
-         && ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(ipmen.idxK)) == ATL_URSYRKK_KVEC )
+         && ((!kmaj && !ATL_URSYRKK_KVEC) || (kmaj && ATL_URSYRKK_KVEC)) )
+   {
       #ifdef Conj_
          ierr = ursyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
       #else
          ierr = ursyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       #endif
+   }
    else
+   {
       #ifdef Conj_
          ierr = sqsyrk(&ipmen, Uplo, TA, N, K, ralpha, A, lda, rbeta, C, ldc);
       #else
          ierr = sqsyrk(&ipmen, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
       #endif
+   }
    
    return(ierr);
 }
@@ -3461,8 +3467,8 @@ int opsyrk
    ATL_CSZT ldc
 )
 {
-   int i;
-   int ierr;
+   int i, ierr;
+   unsigned short kmaj;
    #ifdef Conj_
       TYPE alpha[2]={ralpha, ATL_rzero}, beta[2]={rbeta, ATL_rzero};
       const enum ATLAS_TRANS TB=(TA==AtlasNoTrans)?AtlasConjTrans:AtlasNoTrans;
@@ -3487,9 +3493,10 @@ int opsyrk
 /*
  * apply ursyrk when gemm and syrk can share copies 
  */
+   kmaj = ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(op.idxK));
    if (op.mu == ATL_URSYRKK_MU && op.nu == ATL_URSYRKK_NU 
          && op.ku ==ATL_URSYRKK_KU && op.vlen == ATL_URSYRKK_VLEN 
-         && ATL_AMM_KMAJOR(ATL_AMM_GetFLAG(op.idxK)) == ATL_URSYRKK_KVEC )
+         && ((!kmaj && !ATL_URSYRKK_KVEC) || (kmaj && ATL_URSYRKK_KVEC)) ) 
       ierr = opursyrk(&op, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
    else
       ierr = opsqsyrk(&op, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc);
