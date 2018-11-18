@@ -17595,16 +17595,41 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
           ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 1)
          #define ATL_FRCGNUVEC
       #endif
-@multidef vl    2   2    4      4    8      2
-@whiledef sv SSE1 SSE2 AVX AVXMAC AVXZ VECARM1
-   @iexp vl2 @(vl) @(vl) +
-   #elif defined(ATL_@(sv))
-      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != @(vl2)) || \
-          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != @(vl))
+   #elif defined(ATL_VECARM1)
+      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != 4) || \
+          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2)
          #define ATL_FRCGNUVEC
       #endif
-   @undef vl
-@endwhile
+   #elif defined(ATL_AVXZ) || defined(ATL_AVXMAC)
+      #if defined(SREAL) || defined(SCPLX)
+         #if ATL_VLEN != 16 && ATL_VLEN != 8 && ATL_VLEN != 4
+            #define ATL_FRCGNUVEC
+          #endif
+      #elif defined(DREAL) || defined(DCPLX)
+         #if ATL_VLEN != 8 && ATL_VLEN != 4 && ATL_VLEN != 2
+            #define ATL_FRCGNUVEC
+          #endif
+      #endif
+   #elif defined(ATL_AVX) || defined(ATL_AVXMAC)
+      #if defined(SREAL) || defined(SCPLX)
+         #if ATL_VLEN != 8 && ATL_VLEN != 4
+            #define ATL_FRCGNUVEC
+          #endif
+      #elif defined(DREAL) || defined(DCPLX)
+         #if ATL_VLEN != 4 && ATL_VLEN != 2
+            #define ATL_FRCGNUVEC
+          #endif
+      #endif
+   #elif defined(ATL_SSE2)
+      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != 4) || \
+          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2)
+         #define ATL_FRCGNUVEC
+      #endif
+   #elif defined(ATL_SSE1)
+      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != 4) || \
+          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2)
+         #define ATL_FRCGNUVEC
+      #endif
    #endif
 /*
  * Compute ATL_VLEN based on SIMD extension & TYPE, if not already set
@@ -18377,7 +18402,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(d_, 1), 1)); \
       }
    #endif
-#elif defined(ATL_AVXMAC) || defined(ATL_AVX)
+#elif ATL_VLENb == 32 && (defined(ATL_AVXMAC) || defined(ATL_AVX) || \
+      defined(ATL_AVXZ))
    #include <immintrin.h>
    #if defined(SREAL) || defined(SCPLX)
       #if ATL_VLEN == 8
@@ -18579,9 +18605,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,1), 0); \
       }
    #endif
-#elif defined(ATL_SSE2) && (defined(DREAL) || defined(DCPLX))
+#elif ATL_VLENb == 16 &&(defined(DREAL) || defined(DCPLX)) && \
+      (defined(ATL_SSE2) || defined(ATL_AVX) || defined(ATL_AVXMAC) \
+       || defined(ATL_AVXZ))
    #include <xmmintrin.h>
-   #if defined(ATL_SSE3)
+   #ifdef ATL_AVXMAC
+      #include <immintrin.h>
+   #endif
+   #if defined(ATL_SSE3) || defined(ATL_AVXMAC) || defined(ATL_AVXZ) ||\
+       defined(ATL_AVX)
       #include <pmmintrin.h>
       #include <tmmintrin.h>
    #endif
@@ -18598,12 +18630,17 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #define ATL_vadd(d_, s1_, s2_) d_ =  _mm_add_pd(s1_, s2_)
    #define ATL_vsub(d_, s1_, s2_) d_ =  _mm_sub_pd(s1_, s2_)
    #define ATL_vmul(d_, s1_, s2_) d_ =  _mm_mul_pd(s1_, s2_)
-   #define ATL_vmac(d_, s1_, s2_) \
-   { ATL_VTYPE t_; \
-      t_ = _mm_mul_pd(s1_, s2_); \
-      d_ = _mm_add_pd(t_, d_); \
-   }
-   #ifdef ATL_SSE3
+   #ifdef ATL_AVXMAC
+      #define ATL_vmac(d_, s1_, s2_) d_ = _mm_fmadd_pd(s1_, s2_, d_)
+   #else
+      #define ATL_vmac(d_, s1_, s2_) \
+      { ATL_VTYPE t_; \
+         t_ = _mm_mul_pd(s1_, s2_); \
+         d_ = _mm_add_pd(t_, d_); \
+      }
+   #endif
+   #if defined(ATL_SSE3) || defined(ATL_AVXMAC) || defined(ATL_AVXZ) || \
+          defined(ATL_AVX)
       #define ATL_vrsum1(d_, s_) d_ = _mm_cvtsd_f64(_mm_hadd_pd(s_, s_))
       #define ATL_vvrsum2(s0_, s1_) s0_ = _mm_hadd_pd(s0_, s1_)
       #define ATL_vvrsum1(s0_) s0_ = _mm_hadd_pd(s0_, s0_)
@@ -18636,9 +18673,14 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_vsplat3(d_, s_) d_ = (ATL_VTYPE) \
          _mm_shuffle_epi32((__m128i)(s_), 0xFF)
    #endif
-#elif defined(ATL_SSE1)
+#elif ATL_VLENb == 16 && (defined(ATL_SSE1) || defined(ATL_AVX) || \
+      defined(ATL_AVXMAC) || defined(ATL_AVXZ))
    #include <xmmintrin.h>
-   #if defined(ATL_SSE3)
+   #ifdef ATL_AVXMAC
+      #include <immintrin.h>
+   #endif
+   #if defined(ATL_SSE3) || defined(ATL_AVX) || \
+       defined(ATL_AVXMAC) || defined(ATL_AVXZ)
       #include <tmmintrin.h>
    #endif
    #define ATL_VTYPE __m128
@@ -18656,12 +18698,17 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #define ATL_vadd(d_, s1_, s2_) d_ =  _mm_add_ps(s1_, s2_)
    #define ATL_vsub(d_, s1_, s2_) d_ =  _mm_sub_ps(s1_, s2_)
    #define ATL_vmul(d_, s1_, s2_) d_ =  _mm_mul_ps(s1_, s2_)
-   #define ATL_vmac(d_, s1_, s2_) \
-   { ATL_VTYPE t_; \
-      t_ = _mm_mul_ps(s1_, s2_); \
-      d_ = _mm_add_ps(t_, d_); \
-   }
-   #ifdef ATL_SSE3
+   #ifdef ATL_AVXMAC
+      #define ATL_vmac(d_, s1_, s2_) d_ = _mm_fmadd_ps(s1_, s2_, d_)
+   #else
+      #define ATL_vmac(d_, s1_, s2_) \
+      { ATL_VTYPE t_; \
+         t_ = _mm_mul_ps(s1_, s2_); \
+         d_ = _mm_add_ps(t_, d_); \
+      }
+   #endif
+   #if defined(ATL_SSE3) || defined(ATL_AVX) || \
+       defined(ATL_AVXMAC) || defined(ATL_AVXZ)
       #define ATL_vrsum1(d_, s_) \
       {  ATL_VTYPE t_; \
          t_ = _mm_hadd_ps(s_, s_); \
