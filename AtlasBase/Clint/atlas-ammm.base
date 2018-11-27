@@ -40668,3 +40668,176 @@ double Mjoin(PATL,ipsyrkInfo)
                              npnblks, nb, pnb);
    return(timB);
 }
+@ROUT ublassrch
+#include "atlas_mmtesttime.h"
+/*
+ * This routine searches for user-generated kernels for SYRK,TRMM,TRSM.
+ * For each one, they will be compiled with ATL_K<NAME>_=1, so that the
+ * same kernel can potentially be a gemm kernel with #ifdef.
+ * SYRK: Xsyrktst, xPsyktime_pt
+ * TRSM: use amm test with M=mu & N=nu, Xtrsmcase
+ * TRMM: no test, Xtrmmcase
+ * NOTE: TimeMMKernel handles TRMM,SYRK,TRSM
+ * NOTE: MMKernelFailsTest handles syrk,ammm directly, TRSM by using ammm.
+ *
+ * Blocking factors can be obtained by:
+ *    SYRK: dipmen.sum
+ *    TRMM -- Left: dipmek.sum; Right: dipmen.sum
+ *    TRSM -- Left: dtrsmL_LN.sum; Right: dtrsmR_LN.sum
+ *
+ * The main kernel search should invoke this routine with proper blocking
+ * and then incorporate the results into full search.
+ */
+ATL_mmnode_t *GetWorkingKerns
+   (char pre, int blask, int RIGHT, int M, int N, int K)
+{
+   ATL_mmnode_t *bp, *p;
+   char *nm;
+   char fnm[128], wnm[128];
+   switch(blask)
+   {
+   ATL_KTRSM:
+      nm = "trsm";
+      break;
+   ATL_KTRMM:
+      nm = "trmm";
+      break;
+   ATL_KSYRK:
+      nm = "syrk";
+      break;
+   }
+   if (blask == ATL_KTRMM)
+      sprintf(wnm, "%c%s%cWORK.idx", pre, nm, RIGHT?'R':'L');
+   else
+      sprintf(wnm, "%c%sWORK.idx", pre, nm);
+   bp = ReadMMFileWithPath(pre, "res", wnm);
+   if (bp)
+      return(bp);
+   if (blask == ATL_KTRMM)
+      sprintf(fnm, "AMMCASES/%c%s%ccases.idx", pre, nm, RIGHT?'R':'L');
+   else
+      sprintf(fnm, "AMMCASES/%c%scases.idx", pre, nm);
+   printf("TESTING USER CONTRIB CASES FROM '%s':\n", fnm);
+   p = bp = ReadMMFile(fnm);
+   while (p)
+   {
+      ATL_mmnode_t *next = p->next;
+      int FAIL=0;
+      int m=M, n=N;
+      if (blask == ATL_KTRSM)  /* must test with M=mu, N=nu! */
+      {
+         m = p->mu;
+         n = p->nu;
+      }
+      else
+         p->blask = blask;
+      if ((blask == ATL_KTRMM || blask == ATL_KTRSM) && RIGHT)
+         p->flag |= (1<<MMF_RIGHT);
+      if (blask == ATL_KTRMM)  /* no test for TRMM yet! */
+         continue;             /* so just declare everything works */
+      FAIL = MMKernelFailsTest(pre, m, n, K, 1, p);
+      if (!FAIL)
+      {
+         FAIL = MMKernelFailsTest(pre, m, n, K, 0, p);
+         if (!FAIL)
+            FAIL = MMKernelFailsTest(pre, m, n, K, -1, p);
+      }
+      if (FAIL)
+      {
+         printf("   DELETING NONWORKING KERNEL %d, '%s', p->ID, p->rout);
+         bp = KillMMNodeFromQ(bp, p);
+      }
+      else
+      {
+         printf("   ACCEPTING WORKING KERNEL %d, '%s', p->ID, p->rout);
+         if (blask == ATL_TRSM)
+            bp->blask = ATL_TRSM;
+      }
+   }
+   WriteMMFileWithPath(pre, "res", wnm, bp);
+}
+
+ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *BLASK, 
+                       int *M, int *N, int *K)
+{
+   int blask=ATL_KTRSM, d1=240, d2=240, RIGHT=0;
+   char *kern=NULL;
+   char pre = 'd';
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'p':  /* -p <prefix> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         pre = tolower(args[i][0]);
+         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 'k': /* -k [trsm,trmm,syrk] */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         if (strcmp(args[i], "trsm")
+            blask = ATL_KTRSM;
+         else if (strcmp(args[i], "trmm"))
+            blask = ATL_KTRMM;
+         else if (strcmp(args[i], "syrk"))
+            blask = ATL_KSYRK;
+         else
+         {
+            fprintf(stderr,"UNKNOWN BLAS NAME: '%s', expect [trsm,trmm,syrk]\n",
+                    args[i]);
+            PrintUsage(args[0], i, args[i]);
+         }
+         break;
+      case 'S': /* -S [L/R] */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         if (args[i][0] == 'L' || args[i][0] == 'l')
+            RIGHT = 0;
+         else if (args[i][0] == 'R' || args[i][0] == 'r')
+            RIGHT = 1;
+         else
+         {
+            fprintf(stderr,"UNKNOWN SIDE: '%c', expect 'L' or 'R'\n",
+            PrintUsage(args[0], i, args[i]);
+         }
+         break;
+      case 'D':  /* -D <dim1> <dim2> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         d1 = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         d2 = atoi(args[i]);
+         assert(d1 >= 1 && d2 >= 1);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   switch(blask)
+   {
+   case ATL_KTRSM:
+   case ATL_KTRMM:
+      if (RIGHT)
+      {
+         *M = d1;
+         *N = *K = d2;
+      }
+      else
+      {
+         *M = *K = d1;
+         *N = d2;
+      }
+   case ATL_KSYRK:
+      *M = *N = d1;
+      *K = d2;
+      break;
+   }
+   *PRE = pre;
+   *BLASK = blask;
+   return(GetWorkingKerns(pre, blask, RIGHT, *M, *N, *K));
+}
