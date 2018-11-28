@@ -1,4 +1,4 @@
-@ROUT damcases.idx samcases.idx
+@ROUT damcases.idx samcases.idx dsyrkcases.idx dtrsmcases.idx dtrmmLcases.idx dtrmmRcases.idx
 #
 # In this file, any line beginning with a '#' is ignored, but the # must be in
 # column 0.  All multiple whitespace is reduced to one space (i.e. used only
@@ -15,6 +15,9 @@
 # ASM defaults to no assembly dialect required.
 # If NU/MU is negative, then the routine can only handle multiples of NU/MU.
 #
+@ROUT dsyrkcases.idx dtrsmcases.idx dtrmmLcases.idx dtrmmRcases.idx
+ID=1 MU=3 NU=2 KU=1 AUTH='R. Clint Whaley' ROUT='ublaskern3x2.c' \
+     VLEN=1 KRUNTIME=1
 @ROUT damcases.idx
 ID=1 MU=4 NU=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_dammm2x4x1_sse2.S' \
      SSE=3 VLEN=2 KRUNTIME=1 ASM=GAS_x8664 \
@@ -40669,6 +40672,7 @@ double Mjoin(PATL,ipsyrkInfo)
    return(timB);
 }
 @ROUT ublassrch
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2018
 #include "atlas_mmtesttime.h"
 /*
  * This routine searches for user-generated kernels for SYRK,TRMM,TRSM.
@@ -40694,15 +40698,16 @@ ATL_mmnode_t *GetWorkingKerns
    ATL_mmnode_t *bp, *p;
    char *nm;
    char fnm[128], wnm[128];
+
    switch(blask)
    {
-   ATL_KTRSM:
+   case ATL_KTRSM:
       nm = "trsm";
       break;
-   ATL_KTRMM:
+   case ATL_KTRMM:
       nm = "trmm";
       break;
-   ATL_KSYRK:
+   case ATL_KSYRK:
       nm = "syrk";
       break;
    }
@@ -40744,78 +40749,95 @@ ATL_mmnode_t *GetWorkingKerns
       }
       if (FAIL)
       {
-         printf("   DELETING NONWORKING KERNEL %d, '%s', p->ID, p->rout);
+         printf("   DELETING NONWORKING KERNEL %d, '%s'\n", p->ID, p->rout);
          bp = KillMMNodeFromQ(bp, p);
       }
       else
       {
-         printf("   ACCEPTING WORKING KERNEL %d, '%s', p->ID, p->rout);
-         if (blask == ATL_TRSM)
-            bp->blask = ATL_TRSM;
+         printf("   ACCEPTING WORKING KERNEL %d, '%s'\n", p->ID, p->rout);
+         if (blask == ATL_KTRSM)
+            bp->blask = ATL_KTRSM;
       }
+      p = next;
    }
    WriteMMFileWithPath(pre, "res", wnm, bp);
 }
 
-ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *BLASK, 
+void printUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -p [s,d]: set precision prefix (d) \n");
+   fprintf(stderr, "   -k [syrk,trmm,trsm] : blas kern to search\n");
+   fprintf(stderr, "   -S U/L : Left or Right side (trmm/trsm only)\n");
+   fprintf(stderr, "   -D <d1> <d2> : paired dims for kern.  "
+                   "First dim M for tr, N for syrk\n");
+   exit(ierr ? ierr : -1);
+}
+ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BLASK, 
                        int *M, int *N, int *K)
 {
-   int blask=ATL_KTRSM, d1=240, d2=240, RIGHT=0;
+   int i, blask=ATL_KTRSM, d1=240, d2=240, RIGHT=0;
    char *kern=NULL;
    char pre = 'd';
 
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
-         PrintUsage(args[0], i, args[i]);
+         printUsage(args[0], i, args[i]);
       switch(args[i][1])
       {
       case 'p':  /* -p <prefix> */
          if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
+            printUsage(args[0], i-1, NULL);
          pre = tolower(args[i][0]);
          assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
          break;
       case 'k': /* -k [trsm,trmm,syrk] */
          if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-         if (strcmp(args[i], "trsm")
+            printUsage(args[0], i-1, NULL);
+         if (!strcmp(args[i], "trsm"))
             blask = ATL_KTRSM;
-         else if (strcmp(args[i], "trmm"))
+         else if (!strcmp(args[i], "trmm"))
             blask = ATL_KTRMM;
-         else if (strcmp(args[i], "syrk"))
+         else if (!strcmp(args[i], "syrk"))
             blask = ATL_KSYRK;
          else
          {
             fprintf(stderr,"UNKNOWN BLAS NAME: '%s', expect [trsm,trmm,syrk]\n",
                     args[i]);
-            PrintUsage(args[0], i, args[i]);
+            printUsage(args[0], i, args[i]);
          }
          break;
       case 'S': /* -S [L/R] */
          if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
+            printUsage(args[0], i-1, NULL);
          if (args[i][0] == 'L' || args[i][0] == 'l')
             RIGHT = 0;
          else if (args[i][0] == 'R' || args[i][0] == 'r')
             RIGHT = 1;
          else
          {
-            fprintf(stderr,"UNKNOWN SIDE: '%c', expect 'L' or 'R'\n",
-            PrintUsage(args[0], i, args[i]);
+            fprintf(stderr, "UNKNOWN SIDE: '%c', expect 'L' or 'R'\n", 
+                    args[i][0]);
+            printUsage(args[0], i, args[i]);
          }
          break;
       case 'D':  /* -D <dim1> <dim2> */
          if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
+            printUsage(args[0], i-1, NULL);
          d1 = atoi(args[i]);
          if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
+            printUsage(args[0], i-1, NULL);
          d2 = atoi(args[i]);
          assert(d1 >= 1 && d2 >= 1);
          break;
       default:
-         PrintUsage(args[0], i, args[i]);
+         printUsage(args[0], i, args[i]);
       }
    }
    switch(blask)
@@ -40840,4 +40862,64 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *BLASK,
    *PRE = pre;
    *BLASK = blask;
    return(GetWorkingKerns(pre, blask, RIGHT, *M, *N, *K));
+}
+
+int main(int nargs, char **args)
+{
+   ATL_mmnode_t *bp;
+   int blask, MB, NB, KB;
+   char pre;
+   bp = getFlags(nargs, args, &pre, &blask, &MB, &NB, &KB);
+   return(0);
+}
+@ROUT ublaskern3x2.c
+#define SZT size_t
+#ifndef TYPE
+   #define TYPE double
+#endif
+#define CTYPE const TYPE
+#define RTYPE register TYPE
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn)
+{
+   CTYPE *pB0 = pB;
+   const SZT M=nmu*3, N=nnu*2, incA=3*K; /* Mu=3, Nu=2 */
+   int m, n;
+
+   for (m=0; m != M; m += 3)
+   {
+   #ifdef ATL_KSYRK_
+      for (n=0; n <= m; n += 2, pC += 6)
+   #else
+      for (n=0; n != N; n += 2, pC += 6)
+   #endif
+      {
+         RTYPE rC00=0.0, rC10=0.0, rC20=0.0;
+         RTYPE rC01=0.0, rC11=0.0, rC21=0.0;
+         for (k=0; k < K; k++, pA += 3, pB += 2)
+         {
+            RTYPE rA0=(*pA), rA1=pA[1], rA2=pA[2];
+            RTYPE rB0=(*pB), rB1=pB[1];
+            rC00 += rA0 * rB0;
+            rC10 += rA1 * rB0;
+            rC20 += rA2 * rB0;
+            rC01 += rA0 * rB1;
+            rC11 += rA1 * rB1;
+            rC21 += rA2 * rB1;
+         }
+         pA -= incA;  /* rewind 3 cols traversed in K-loop */
+         #ifdef BETA0
+            *pC   = rC00; pC[1] = rC10; pC[2] = rC20;
+            pC[3] = rC01; pC[4] = rC11; pC[5] = rC21;
+         #elif defined BETA1
+            *pC   += rC00; pC[1] += rC10; pC[2] += rC20;
+            pC[3] += rC01; pC[4] += rC11; pC[5] += rC21;
+         #else /* BETA = -1 */
+            *pC = C00 - *pC;  pC[1]=rC10-pC[1]; pC[2]=rC20-pC[2];
+            pC[3]=rC00-pC[3]; pC[4]=rC10-pC[4]; pC[5]=rC20-pC[5];
+         #endif
+      }
+      pB = pB0;   /* rewind pB to beginning */
+      pA += incA; /* done with these 3 cols of A */
+   }
 }
