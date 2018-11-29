@@ -40692,8 +40692,10 @@ double Mjoin(PATL,ipsyrkInfo)
  * The main kernel search should invoke this routine with proper blocking
  * and then incorporate the results into full search.
  */
+#define BV_TEST 0
+#define BV_TIME 1
 ATL_mmnode_t *GetWorkingKerns
-   (char pre, int blask, int RIGHT, int M, int N, int K)
+   (char pre, int bv, int blask, int RIGHT, int M, int N, int K)
 {
    ATL_mmnode_t *bp, *p;
    char *nm;
@@ -40722,7 +40724,8 @@ ATL_mmnode_t *GetWorkingKerns
       sprintf(fnm, "AMMCASES/%c%s%ccases.idx", pre, nm, RIGHT?'R':'L');
    else
       sprintf(fnm, "AMMCASES/%c%scases.idx", pre, nm);
-   printf("TESTING USER CONTRIB CASES FROM '%s':\n", fnm);
+   if (bv&(1<<BV_TEST))
+      printf("TESTING USER CONTRIB CASES FROM '%s':\n", fnm);
    p = bp = ReadMMFile(fnm);
    while (p)
    {
@@ -40738,7 +40741,7 @@ ATL_mmnode_t *GetWorkingKerns
          p->blask = blask;
       if ((blask == ATL_KTRMM || blask == ATL_KTRSM) && RIGHT)
          p->flag |= (1<<MMF_RIGHT);
-      if (blask == ATL_KTRMM)  /* no test for TRMM yet! */
+      if (!(bv&(1<<BV_TEST)) || blask == ATL_KTRMM)  /* no test for TRMM yet! */
          continue;             /* so just declare everything works */
       FAIL = MMKernelFailsTest(pre, m, n, K, 1, p);
       if (!FAIL)
@@ -40760,7 +40763,9 @@ ATL_mmnode_t *GetWorkingKerns
       }
       p = next;
    }
-   WriteMMFileWithPath(pre, "res", wnm, bp);
+   if (bv&(1<<BV_TEST))
+      WriteMMFileWithPath(pre, "res", wnm, bp);
+   return(bp);
 }
 
 void printUsage(char *name, int ierr, char *flag)
@@ -40776,17 +40781,21 @@ void printUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -S U/L : Left or Right side (trmm/trsm only)\n");
    fprintf(stderr, "   -D <d1> <d2> : paired dims for kern.  "
                    "First dim M for tr, N for syrk\n");
+   fprintf(stderr, "   -t [1,0] : do/do not time kernels\n");
+   fprintf(stderr, "   -T [1,0] : do/do not test kernels\n");
    exit(ierr ? ierr : -1);
 }
-ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BLASK, 
+ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BV, int *BLASK, 
                        int *M, int *N, int *K)
 {
-   int i, blask=ATL_KTRSM, d1=240, d2=240, RIGHT=0;
+   int i, k, bv, blask=ATL_KTRSM, d1=240, d2=240, RIGHT=0;
    char *kern=NULL;
    char pre = 'd';
 
+   bv = (1<<BV_TEST)|(1<<BV_TIME);
    for (i=1; i < nargs; i++)
    {
+      int FLG=BV_TEST;
       if (args[i][0] != '-')
          printUsage(args[0], i, args[i]);
       switch(args[i][1])
@@ -40796,6 +40805,19 @@ ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BLASK,
             printUsage(args[0], i-1, NULL);
          pre = tolower(args[i][0]);
          assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 't': /* -t [0,1] : don't/do time kernels */
+         FLG=BV_TIME;
+      case 'T': /* -T [0,1] : don't/do test kernels */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         k = atoi(args[i]);
+         if (k)
+            k = 1;
+         if (k)  /* turn on bit */
+            bv |= 1<<FLG;
+         else
+            bv &= ~(1<<FLG);
          break;
       case 'k': /* -k [trsm,trmm,syrk] */
          if (++i >= nargs)
@@ -40861,15 +40883,59 @@ ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BLASK,
    }
    *PRE = pre;
    *BLASK = blask;
-   return(GetWorkingKerns(pre, blask, RIGHT, *M, *N, *K));
+   *BV = bv;
+   return(GetWorkingKerns(pre, bv, blask, RIGHT, *M, *N, *K));
+}
+
+void doTime(char pre, int bv, int blask, int M, int N, int K, ATL_mmnode_t *bp)
+{
+   ATL_mmnode_t *p, *pB=NULL;
+   char fn[64];
+   char *blnm;
+   double mfB=0.0;
+   
+   if (blask == ATL_KTRSM)
+      blnm = "trsm";
+   else 
+      blnm = (blask == ATL_KTRMM) ? "trmm" : "syrk";
+   printf("TIMING %s KERNELS:\n", blnm);
+   for (p=bp; p; p = p->next)
+   {
+      double mf;
+      if (blask == ATL_KTRSM)
+      { M = p->mu; N = p->nu; }
+      mf = TimeMMKernel(0, 0, p, pre, M, N, K, 1, 0, -1);
+      printf("   %d '%s' D=(%u,%u,%u), MFLOPS=%.2f\n", 
+             p->ID, p->rout, M, N, K, mf);
+      p->mflop[0] = mf;
+      if (mf > mfB)
+      {
+         mfB = mf;
+         pB = p;
+      }
+   }
+   if (!pB)
+   {
+      printf("No kernels, no timing.\n");
+      return;
+   }
+   printf("DONE TIMING, BEST IS: %d '%s' MFLOPS=%.2f\n", pB->ID, pB->rout, mfB);
+   p = pB->next;
+   pB->next = NULL;
+   sprintf(fn, "u%s.sum", blnm);
+   WriteMMFileWithPath(pre, "res", fn, pB);
+   pB->next = p;
 }
 
 int main(int nargs, char **args)
 {
    ATL_mmnode_t *bp;
-   int blask, MB, NB, KB;
+   int blask, bv, MB, NB, KB;
    char pre;
-   bp = getFlags(nargs, args, &pre, &blask, &MB, &NB, &KB);
+   bp = getFlags(nargs, args, &pre, &bv, &blask, &MB, &NB, &KB);
+   if (bv&(1<<BV_TIME))
+      doTime(pre, bv, blask, MB, NB, KB, bp);
+   KillAllMMNodes(bp);
    return(0);
 }
 @ROUT ublaskern3x2.c 
