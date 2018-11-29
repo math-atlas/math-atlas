@@ -16,7 +16,7 @@
 # If NU/MU is negative, then the routine can only handle multiples of NU/MU.
 #
 @ROUT dsyrkcases.idx dtrsmcases.idx dtrmmLcases.idx dtrmmRcases.idx
-ID=1 MU=3 NU=2 KU=1 AUTH='R. Clint Whaley' ROUT='ublaskern3x2.c' \
+ID=1 MU=4 NU=2 KU=1 AUTH='R. Clint Whaley' ROUT='ublaskern4x2.c' \
      VLEN=1 KRUNTIME=1
 @ROUT damcases.idx
 ID=1 MU=4 NU=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_dammm2x4x1_sse2.S' \
@@ -40872,7 +40872,13 @@ int main(int nargs, char **args)
    bp = getFlags(nargs, args, &pre, &blask, &MB, &NB, &KB);
    return(0);
 }
-@ROUT ublaskern3x2.c
+@ROUT ublaskern3x2.c 
+   @iexp mu 3
+@ROUT ublaskern4x2.c 
+   @iexp mu 4
+@ROUT ublaskern3x2.c ublaskern4x2.c
+   @iexp nu 2
+#include <stdlib.h>
 #define SZT size_t
 #ifndef TYPE
    #define TYPE double
@@ -40883,31 +40889,56 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
                 CTYPE *pAn, CTYPE *pBn, CTYPE *pCn)
 {
    CTYPE *pB0 = pB;
-   const SZT M=nmu*3, N=nnu*2, incA=3*K; /* Mu=3, Nu=2 */
-   int m, n;
+   const SZT M=nmu*@(mu), N=nnu*@(nu), incA=@(mu)*K; /* Mu=@(mu), Nu=@(nu) */
+   @iexp szC @(mu) @(nu) *
+   SZT m, n, k;
 
-   for (m=0; m != M; m += 3)
+   for (m=0; m != M; m += @(mu))
    {
    #ifdef ATL_KSYRK_
-      for (n=0; n <= m; n += 2, pC += 6)
+      int MM=m+@(mu);
+      for (n=0; n < MM; n += @(nu), pC += @(szC))
    #else
-      for (n=0; n != N; n += 2, pC += 6)
+      for (n=0; n != N; n += @(nu), pC += @(szC))
    #endif
       {
-         RTYPE rC00=0.0, rC10=0.0, rC20=0.0;
-         RTYPE rC01=0.0, rC11=0.0, rC21=0.0;
-         for (k=0; k < K; k++, pA += 3, pB += 2)
+   @declare "         RTYPE " n n ";"
+      @iexp ii 0
+      @iwhile ii < mu
+         @iexp jj 0
+         @iwhile jj < nu
+            rC@(ii)@(jj)=0.0
+            @iexp jj @(jj) 1 +
+         @endiwhile
+         @iexp ii @(ii) 1 +
+      @endiwhile
+   @enddeclare
+         for (k=0; k < K; k++, pA += @(mu), pB += @(nu))
          {
-            RTYPE rA0=(*pA), rA1=pA[1], rA2=pA[2];
-            RTYPE rB0=(*pB), rB1=pB[1];
-            rC00 += rA0 * rB0;
-            rC10 += rA1 * rB0;
-            rC20 += rA2 * rB0;
-            rC01 += rA0 * rB1;
-            rC11 += rA1 * rB1;
-            rC21 += rA2 * rB1;
+   @declare "            RTYPE " n y ";"
+         @iexp jj 0
+         @iwhile jj < mu
+            rA@(jj)=pA[@(jj)]
+            @iexp jj @(jj) 1 +
+         @endiwhile
+         @iexp jj 0
+         @iwhile jj < nu
+            rB@(jj)=pB[@(jj)]
+            @iexp jj @(jj) 1 +
+         @endiwhile
+   @enddeclare
+      @iexp jj 0
+      @iwhile jj < nu
+         @iexp ii 0
+         @iwhile ii < mu
+            rC@(ii)@(jj) += rA@(ii) * rB@(jj);
+            @iexp ii @(ii) 1 +
+         @endiwhile
+         @iexp jj @(jj) 1 +
+      @endiwhile
          }
-         pA -= incA;  /* rewind 3 cols traversed in K-loop */
+         pA -= incA;  /* rewind @(mu) cols traversed in K-loop */
+@ROUT ublaskern3x2.c
          #ifdef BETA0
             *pC   = rC00; pC[1] = rC10; pC[2] = rC20;
             pC[3] = rC01; pC[4] = rC11; pC[5] = rC21;
@@ -40916,10 +40947,24 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
             pC[3] += rC01; pC[4] += rC11; pC[5] += rC21;
          #else /* BETA = -1 */
             *pC = C00 - *pC;  pC[1]=rC10-pC[1]; pC[2]=rC20-pC[2];
-            pC[3]=rC00-pC[3]; pC[4]=rC10-pC[4]; pC[5]=rC20-pC[5];
+            pC[3]=rC01-pC[3]; pC[4]=rC11-pC[4]; pC[5]=rC21-pC[5];
          #endif
+@ROUT ublaskern4x2.c
+         #ifdef BETA0
+            *pC   = rC00; pC[1] = rC10; pC[2] = rC20; pC[3] = rC30;
+            pC[4] = rC01; pC[5] = rC11; pC[6] = rC21; pC[7] = rC31;
+         #elif defined BETA1
+            *pC   += rC00; pC[1] += rC10; pC[2] += rC20; pC[3] += rC30;
+            pC[4] += rC01; pC[5] += rC11; pC[6] += rC21; pC[7] += rC31;
+         #else /* BETA = -1 */
+            *pC = C00 - *pC;  pC[1]=rC10-pC[1]; pC[2]=rC20-pC[2]; 
+            pC[3]=rC30-pC[3]; pC[4]=rC01-pC[4]; pC[5]=rC11-pC[5]; 
+            pC[6]=rC21-pC[6]; pC[7]=rC31-pC[7];
+         #endif
+@ROUT ublaskern3x2.c ublaskern4x2.c
       }
+      for (; n < N; n += @(nu), pA += @(mu)*K);
       pB = pB0;   /* rewind pB to beginning */
-      pA += incA; /* done with these 3 cols of A */
+      pA += incA; /* done with these @(mu) cols of A */
    }
 }
