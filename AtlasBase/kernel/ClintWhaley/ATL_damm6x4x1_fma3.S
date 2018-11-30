@@ -236,7 +236,7 @@ KDONE:
         add $4, nnu
         cmp nnu0, nnu
       jl NLOOP
-      xor nnu0, nnu0
+      xor nnu, nnu
       add $6, nnu0
    #else
          sub $1, nnu
