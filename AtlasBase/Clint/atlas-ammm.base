@@ -40702,7 +40702,7 @@ double Mjoin(PATL,ipsyrkInfo)
 #define BV_MNMUL 3  /* M%N==0 or N%M == 0 */
 #define BV_ALLRESTRICT ((1<<BV_MENU)|(1<<BV_MNMUL))
 ATL_mmnode_t *GetWorkingKerns
-   (char pre, int bv, int blask, int RIGHT, int M, int N, int K)
+   (char *inf, char pre, int bv, int blask, int RIGHT, int M, int N, int K)
 {
    ATL_mmnode_t *bp, *p;
    char *nm;
@@ -40720,17 +40720,22 @@ ATL_mmnode_t *GetWorkingKerns
       nm = "syrk";
       break;
    }
-   if (blask == ATL_KTRMM)
-      sprintf(wnm, "u%s%cWORK.idx", nm, RIGHT?'R':'L');
+   if (!inf)
+   {
+      if (blask == ATL_KTRMM)
+         sprintf(wnm, "u%s%cWORK.idx", nm, RIGHT?'R':'L');
+      else
+         sprintf(wnm, "u%sWORK.idx", nm);
+      bp = ReadMMFileWithPath(pre, "res", wnm);
+      if (bp)
+         return(bp);
+      if (blask == ATL_KTRMM)
+         sprintf(fnm, "AMMCASES/%c%s%ccases.idx", pre, nm, RIGHT?'R':'L');
+      else
+         sprintf(fnm, "AMMCASES/%c%scases.idx", pre, nm);
+   }
    else
-      sprintf(wnm, "u%sWORK.idx", nm);
-   bp = ReadMMFileWithPath(pre, "res", wnm);
-   if (bp)
-      return(bp);
-   if (blask == ATL_KTRMM)
-      sprintf(fnm, "AMMCASES/%c%s%ccases.idx", pre, nm, RIGHT?'R':'L');
-   else
-      sprintf(fnm, "AMMCASES/%c%scases.idx", pre, nm);
+     strcpy(fnm, inf);
    if (bv&(1<<BV_TEST))
       printf("TESTING USER CONTRIB CASES FROM '%s':\n", fnm);
    p = bp = ReadMMFile(fnm);
@@ -40770,7 +40775,7 @@ ATL_mmnode_t *GetWorkingKerns
       }
       p = next;
    }
-   if (bv&(1<<BV_TEST))
+   if (!inf && (bv&(1<<BV_TEST)))
       WriteMMFileWithPath(pre, "res", wnm, bp);
    return(bp);
 }
@@ -40784,6 +40789,7 @@ void printUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags]:\n", name);
    fprintf(stderr, "   -p [s,d]: set precision prefix (d) \n");
+   fprintf(stderr, "   -i <infile> : list of kernels to search\n");
    fprintf(stderr, "   -k [syrk,trmm,trsm] : blas kern to search\n");
    fprintf(stderr, "   -S U/L : Left or Right side (trmm/trsm only)\n");
    fprintf(stderr, "   -D <d1> <d2> : paired dims for kern.  "
@@ -40797,7 +40803,7 @@ ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BV, int *BLASK,
                        int *M, int *N, int *K)
 {
    int i, k, bv, blask=ATL_KTRSM, d1=240, d2=240, RIGHT=0;
-   char *kern=NULL;
+   char *kern=NULL, *inf=NULL;
    char pre = 'd';
 
    bv = (1<<BV_TEST)|(1<<BV_TIME);
@@ -40813,6 +40819,11 @@ ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BV, int *BLASK,
             printUsage(args[0], i-1, NULL);
          pre = tolower(args[i][0]);
          assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 'i': /* -i <infile> */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         inf = args[i];
          break;
       case 't': /* -t [0,1] : don't/do time kernels */
          FLG=BV_TIME;
@@ -40892,7 +40903,7 @@ ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BV, int *BLASK,
    *PRE = pre;
    *BLASK = blask;
    *BV = bv;
-   return(GetWorkingKerns(pre, bv, blask, RIGHT, *M, *N, *K));
+   return(GetWorkingKerns(inf, pre, bv, blask, RIGHT, *M, *N, *K));
 }
 
 void doTime(char pre, int bv, int blask, int M, int N, int K, ATL_mmnode_t *bp)
