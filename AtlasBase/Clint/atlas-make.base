@@ -2765,7 +2765,12 @@ $(BINdir)/xextract :
    @endwhile
 @endwhile
 
+@multidef upr d s
 @whiledef pre z c
+res/@(pre)usyrktime.sum : res/@(upr)usyrkWORK.idx
+	$(MAKE) xublassrch
+	$(ATLRUN) $(MMTdir) xublassrch -o res/@(pre)usyrktime.sum \
+           -p @(pre) -k syrk -r alltime -D $(mb) $(kb)
    @whiledef rt am2cm am2rm cm2am rm2am
 ATL_@(pre)@(rt)_a$(al)_$(UR).c : $(basf) force_build
 	$(extC) -def mu "${UR}" -def nu "${UR}" -def alpha "${alpha}" \
@@ -2780,6 +2785,7 @@ ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c : $(basf) force_build
 	$(extC) -def mu "${mu}" -def nu "${nu}" -def alpha "${alpha}" \
                 -def beta "${beta}" rout=ATL_ccmat2ablk \
                 -o ATL_@(pre)cmat2ablk_${mu}x${nu}_a$(al)_b$(be).c
+   @undef upr
 @endwhile
 @multidef rt2 blk2C C2blk syblk2C
 @whiledef rt  blk2C C2blk syblk2C
@@ -2867,6 +2873,15 @@ gen_@(pr)t@(tg) : $(trmmbasf) force_build
 @endwhile
 @endwhile
 @whiledef pre d s
+res/@(pre)usyrkWORK.idx : AMMCASES/@(pre)syrkcases.idx
+	$(MAKE) xublassrch
+	- rm -f res/@(pre)usyrkWORK.idx
+	$(ATLRUN) $(MMTdir) xublassrch -o res/@(pre)usyrktime.sum \
+           -p @(pre) -k syrk -t 0
+res/@(pre)usyrktime.sum : res/@(pre)usyrkWORK.idx
+	$(MAKE) xublassrch
+	$(ATLRUN) $(MMTdir) xublassrch -o res/@(pre)usyrktime.sum \
+           -p @(pre) -k syrk -r alltime -D $(mb) $(kb)
    @whiledef rt am2cm am2rm cm2am rm2am
 ATL_@(pre)@(rt)_a$(al)_$(UR).c : $(basf) force_build
 	$(extC) -def mu "${UR}" -def nu "${UR}" -def alpha "${alpha}" \
@@ -2905,6 +2920,7 @@ xemit_uamm : $(mySRCdir)/emit_uamm.c $(parsedeps)
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/emit_uamm.c -lm
 @multidef rt 
    ipsrch opsrch trsmgen trmmview trsmsrch bfisrch ammk1srch addKClean ublassrch
+   blasksrch
 @endmultidef
 @whiledef rt ammsearch uammsearch gmmsearch uammsrch cpysearch 
 x@(rt) : $(mySRCdir)/@(rt).c $(parsedeps)
@@ -3040,6 +3056,9 @@ xvmmf_gccsub : $(mySRCdir)/vmmf_gccsub.c
 @multidef typ DCPLX SCPLX DREAL SREAL
 @whiledef pre z c d s
    @addkeys ptyp=@(pre)
+res/@(pre)sqsyrk.sum : res/@(pre)ursyrk.sum
+res/@(pre)ursyrk.sum : res/@(pre)gAMSYRK.sum res/@(upr)usyrkWORK.idx xblasksrch
+	$(ATLRUN) $(MMTdir) xblasksrch -p @(pre) -k syrk
 @(pre)mflops.frc : xgmmsearch
 	./xgmmsearch -p @(pre) -f 16
 res/@(pre)nreg : xgmmsearch @(pre)mflops.frc
@@ -3080,10 +3099,10 @@ res/@(pre)@(rt) : xgmmsearch
 @ENDSKIP
 @(pre)views=-V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipgen res/@(pre)ipgen.sum \
     -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipmen res/@(pre)ipmen.sum \
-    -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipmenUM res/@(pre)ipmenUM.sum \
     -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipmek res/@(pre)ipmek.sum \
     -V Cd=I Ca=1,N,X Cb=0,1,N,X Ad=F Aa=1,N,X ipnek res/@(pre)ipnek.sum \
-    -V Ad=F Aa=1 S=C,M,U K=0 syrk res/@(pre)SYRKFNL.sum \
+    -V Ad=F Aa=1 S=C,M,U K=0 sqsyrk res/@(pre)sqsyrk_view.sum \
+    -V Ad=F Aa=1 S=C,M,U K=0 ursyrk res/@(pre)ursyrk_view.sum \
     -V S=C Cd=I Ca=1 Cb=1 Ad=F Aa=1,N K=0 trsmLN res/@(pre)trsmL_LN.sum \
     -V S=C Cd=I Ca=1 Cb=1 Ad=F Aa=1,N K=0 trsmRN res/@(pre)trsmR_LN.sum \
     -V S=C Cd=I Ca=1 Cb=1 Ad=F Aa=1,N K=0 trsmLT res/@(pre)trsmL_LT.sum \
@@ -3158,8 +3177,6 @@ $(AMMdir)/KERNEL/@up@(pre)COPY:
       @define cpr @z@
       @multidef pp z d
    @ptyp s d c z
-res/@(pre)SYRKFNL.sum : xgmmsearch
-	./xgmmsearch -p @(pre)
 @multidef dp gAMMRES gSYRKUM
 @whiledef rt ipgen ipbestUM
 res/@(pre)@(rt).sum : res/@(pre)@(dp).sum xipsrch xbfisrch
@@ -3174,14 +3191,14 @@ res/@(pre)@(rt).sum : res/@(pre)opFNL.sum
 @endwhile
 res/@(pre)K1.sum : xaddKClean res/@(pre)ipgen.sum res/@(cpr)ipgen.sum \
    res/@(pre)ipmen.sum res/@(cpr)ipmen.sum \
-   res/@(pre)ipmenUM.sum res/@(cpr)ipmenUM.sum \
+@skip   res/@(pre)ipmenUM.sum res/@(cpr)ipmenUM.sum \
    res/@(pre)ipmek.sum res/@(cpr)ipmek.sum \
    res/@(pre)ipnek.sum res/@(cpr)ipnek.sum \
    res/@(pre)opmek.sum res/@(cpr)opmek.sum \
    res/@(pre)opnek.sum res/@(cpr)opnek.sum
 	./xaddKClean -i res/@(pre)ipgen.sum -i res/@(cpr)ipgen.sum \
            -i res/@(pre)ipmen.sum -i res/@(cpr)ipmen.sum -o res/@(pre)K1.sum \
-           -i res/@(pre)ipmenUM.sum -i res/@(cpr)ipmenUM.sum \
+@skip           -i res/@(pre)ipmenUM.sum -i res/@(cpr)ipmenUM.sum \
            -i res/@(pre)ipmek.sum -i res/@(cpr)ipmek.sum \
            -i res/@(pre)ipnek.sum -i res/@(cpr)ipnek.sum \
            -i res/@(pre)opmek.sum -i res/@(cpr)opmek.sum \
@@ -3239,11 +3256,12 @@ res/@(pr)trmm@(sd)@(tr).sum : res/@(pr)trmmK@(sd)@(tr).sum xtrmmview
       @endwhile
    @endwhile
 @endwhile
-res/@(pre)AMSYRKFNL.sum : res/@(pre)gAMSYRK.sum res/@(cpr)gAMSYRK.sum \
-                     res/@(pre)ipsyrk.sum res/@(cpr)ipsyrk.sum
+res/@(pre)AMSYRKFNL.sum : res/@(pre)sqsyrk.sum res/@(cpr)sqsyrk.sum \
+                     res/@(pre)ursyrk.sum res/@(cpr)ursyrk.sum
 	- rm -f res/@(pre)AMSYRKFNL.sum
-	cat res/[@(pre),@(cpr)]gAMSYRK.sum > res/@(pre)AMSYRKFNL.sum
-	cat res/[@(pre),@(cpr)]ipsyrk.sum >> res/@(pre)AMSYRKFNL.sum
+	cat res/[@(pre),@(cpr)]sqsyrk.sum > res/@(pre)AMSYRKFNL.sum
+@skip	cat res/[@(pre),@(cpr)]gAMSYRK.sum > res/@(pre)AMSYRKFNL.sum
+	cat res/[@(pre),@(cpr)]ursyrk.sum >> res/@(pre)AMSYRKFNL.sum
 @(pre)install_amm: xammkgen xbfisrch res/@(upr)FNLK1.sum force_build \
    res/@(pre)AMSYRKFNL.sum res/@(pre)trsmL_LN.sum res/@(pre)trsmL_LT.sum \
    res/@(pre)trsmR_LN.sum res/@(pre)trsmR_LT.sum \
@@ -9179,7 +9197,7 @@ clean : dclean sclean cclean zclean
 @skip   ATL_@(pre)syrk_amm.o ATL_@(pre)syrk_IP.o ATL_@(pre)syrk_OP.o
 @skip   @PTYP z c `ATL_@(pre)herk_IP.o ATL_@(pre)herk_amm.o ATL_@(pre)herk_OP.o`
    ATL_@(pre)ammm.o ATL_@(pre)opinfo.o ATL_@(pre)ipinfo.o 
-   ATL_@(pre)ipmeninfo.o ATL_@(pre)ipmenUMinfo.o
+   ATL_@(pre)ipmeninfo.o 
    ATL_@(pre)ipmekinfo.o ATL_@(pre)ipnekinfo.o
    ATL_@(pre)ipsyrkinfo.o ATL_@(pre)opsyrkInfo.o  
    ATL_@(pre)opsyr2kInfo.o ATL_@(pre)opsymmInfo.o 
@@ -9211,7 +9229,7 @@ ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt).c \
 @endwhile
 @whiledef rt ipsyrkinfo opsyrkInfo
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt).c \
-   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCAdir)/atlas_@(pre)syrk_view.h \
+   $(INCAdir)/atlas_@(pre)amm_sum.h \
    $(INCAdir)/atlas_@(pre)amm_sqsyrk.h $(INCAdir)/atlas_@(pre)amm_ursyrk.h 
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt).c
 @endwhile
@@ -9230,8 +9248,7 @@ ATL_@(pre)@(fn)_@(vw).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(fn)_rkK.c
    @whiledef fn GetInfo
 ATL_@(pre)@(fn)_@(vw).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(fn)_rkK.c
 	$(@(UPR)KC) -D@(typ)=1 -DATL_@(vw)_=1 -o $@ -c $(@(pre)KCFLAGS) \
-                     $(mySRCdir)/ATL_@(fn)_rkK.c
-   @endwhile
+                     $(mySRCdir)/ATL_@(fn)_rkK.c @endwhile
 @endwhile
 @(pre)trsmK: ATL_@(pre)trsm_ammLL.o
 	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) ATL_@(pre)trsm_ammLL.o
@@ -9243,7 +9260,7 @@ ATL_@(pre)trsm_ammLL.o : $(@(pre)INCdep) $(mySRCdir)/ATL_trsm_ammLL.c
    @multidef rt2 ipsyrkinfo
    @whiledef rt ipherkinfo
 ATL_@(pre)@(rt).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rt2).c \
-   $(INCAdir)/atlas_@(pre)amm_sum.h $(INCAdir)/atlas_@(pre)syrk_view.h \
+   $(INCAdir)/atlas_@(pre)amm_sum.h \
    $(INCAdir)/atlas_@(pre)amm_sqsyrk.h $(INCAdir)/atlas_@(pre)amm_ursyrk.h 
 	$(@(UPR)KC) -D@(typ)=1 -DConj_=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(rt2).c
       @undef rt2
@@ -9273,12 +9290,12 @@ ATL_@(pre)@(pp)info.o : \
 @iif @iexp @len@(pp) 2 =
    $(INCAdir)/atlas_@(upr)@(pp)gen_view.h $(INCAdir)/atlas_@(upr)amm_kern.h \
 @endiif
-@MIF pp = "ipmenUM
+@MIF pp = "ipmenUR
    $(mySRCdir)/ATL_ipmeninfo.c 
 	$(@(UPR)KC) -D@(typ)=1 -DMUNUMUL_=1 -o $@ -c $(@(pre)KCFLAGS) \
            $(mySRCdir)/ATL_ipmeninfo.c
 @ENDMIF
-@MIF pp ! "ipmenUM
+@MIF pp ! "ipmenUR
    $(mySRCdir)/ATL_@(pp)info.c 
 	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(pre)KCFLAGS) $(mySRCdir)/ATL_@(pp)info.c
 @ENDMIF
