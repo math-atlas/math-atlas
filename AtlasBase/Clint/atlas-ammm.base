@@ -13764,6 +13764,46 @@ void DoBlock(char pre, int flg, int verb)
    KillAllMMNodes(mmb);
 }
 
+void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp, 
+                    int nb, int kb)
+/* 
+ * This kernel is designed to do an inner-product syrk.  This means we actually
+ * reuse workspace for both A & C all the time, so it doesn't make sense to
+ * prefetch anything from outside the block.
+ */
+{
+   double mf0, mfB;
+   int i, ipf, ils;
+   const int thsA[3] = {8|8192, 8, 8|2048};
+   const int thsC[3] = {1|256, 1, 1|32};
+@skip   const int nxtA[3] = {2|512, 2, 2|64};
+   printf("PREFETCH TUNING NB=%d, KB=%d, U=%d, KVEC=%d, SPLAT=%d:\n", nb, kb, 
+          mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
+          FLAG_IS_SET(mp->flag, MMF_NOBCAST));
+   mp->pref = 0; mp->pfLS=64;
+   mf0 = mfB = TimeMMKernel(vrb, 0, mp, pre, nb, nb, kb, 1, 0, -1);
+   mp->mflop[0] = mf0;
+   printf("   No prefetch, MFLOP=%.0f\n", mf0);
+   printf("   TRY PREFETCH A:\n");
+/*
+ * Try K-loop A/At pref for LS=64 & 128, since it's N^3 cost
+ */
+   for (i=0; i < 3; i++)
+   {
+      TryPref(pre, vrb, 1, mp, 1, 0, thsA[i], 64);
+      TryPref(pre, vrb, 1, mp, 1, 0, thsA[i], 128);
+   }
+/*
+ * Now try C prefetch (N^2 cost)
+ */
+  printf("   TRY PREFETCH C:\n");
+  ipf = mp->pref;
+  ils = mp->pfLS;
+  for (i=0; i < 3; i++)
+     TryPref(pre, vrb, 1, mp, 1, 0, ipf|thsC[i], ils);
+  printf("DONE PREFETCH=(%d,%d), FINAL MFLOP=%.0f, SPEEDUP=%.3f\n",
+         mp->pref, mp->pfLS, mp->mflop[0], mp->mflop[0] / mf0);
+}
 void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
 /*
  * Find best generated ammm kernel to use for SYRK with restriction that MU
@@ -13771,7 +13811,7 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
  */
 {
    ATL_mmnode_t *mb, *mD, *pT;
-   ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB;
+   ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB, ku;
    double mfB = 0.0;
 
    mb = TimeMMFileWithPath(pre, "res", "gursyrk.sum", 0, verb|1, 0, 1, 0, -1);
@@ -13787,6 +13827,17 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
    mD = FindMaxMflopMMQ(mb, 0);
    mb = RemoveMMNodeFromQ(mb, mD);
    KillAllMMNodes(mb);
+/*
+ * Get asymptotic NB from ipmen.sum
+ */
+   mb = TimeMMFileWithPath(pre, "res", "ipmen.sum", 0, verb|1, 0, 1, 0, -1);
+   assert(mb);
+   while(mb->next)
+      mb = KillMMNode(mb);
+   NB = mb->nbB;
+   KB = mb->kbB;
+   KillMMNode(mb);
+
    #if 0  /* best case may have too big desc between mu & nu for syrk perf */
 /*
  * If mu already a multiple of nu (or vice versa), no need to search!
@@ -13799,8 +13850,6 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
    }
    #endif
    VL = mD->vlen;
-   NB = (mD->mbB + mD->nbB)>>1;
-   KB = (mD->kbB);
    flg = mD->flag;
    KVEC = ((flg>>MMF_KVEC)&1)*VL;
    flg &= ~(1<<MMF_KUISKB);
@@ -13857,11 +13906,20 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
                      mD->pref, mD->pfLS, NULL);
    pT->mbB = (NB/muB)*muB;
    pT->nbB = (NB/nuB)*nuB;
-   pT->mbB = mD->kbB;
+   pT->kbB = KB;
    pT->blask = ATL_KSYRK;
    printf("BEST URSYRK B=(%u,%u,%u), U=(%u,%u), MFLOP=%.2f\n", 
           pT->mbB, pT->nbB, pT->kbB, muB, nuB, mfB);
    KillMMNode(mD);
+   DoSyrkKU(verb, pre, pT);
+   printf("BEST KU URSYRK B=(%u,%u,%u), U=(%u,%u,%u), MFLOP=%.2f\n", 
+          pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->ku, mfB);
+   ku = pT->ku;
+   pT->kbB = (pT->kbB / ku)/ku;
+   assert(pT->kbB);
+   TryAllSyrkPref(flag, verb, pre, pT, pT->nbB, pT->kbB);
+   printf("BEST PREF URSYRK B=(%u,%u,%u), U=(%u,%u,%u), MFLOP=%.2f\n", 
+          pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->ku, mfB);
    WriteRefreshedMMFileWithPath(pre, "res", "gursyrk.sum", pT);
    KillMMNode(pT);
 }
@@ -13878,46 +13936,6 @@ int getSzA(ATL_mmnode_t *mp, int nb, int kb)
    return(nnu*nku*nu*ku);
 }
 
-void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp, 
-                    int nb, int kb)
-/* 
- * This kernel is designed to do an inner-product syrk.  This means we actually
- * reuse workspace for both A & C all the time, so it doesn't make sense to
- * prefetch anything from outside the block.
- */
-{
-   double mf0, mfB;
-   int i, ipf, ils;
-   const int thsA[3] = {8|8192, 8, 8|2048};
-   const int thsC[3] = {1|256, 1, 1|32};
-@skip   const int nxtA[3] = {2|512, 2, 2|64};
-   printf("PREFETCH TUNING NB=%d, KB=%d, U=%d, KVEC=%d, SPLAT=%d:\n", nb, kb, 
-          mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
-          FLAG_IS_SET(mp->flag, MMF_NOBCAST));
-   mp->pref = 0; mp->pfLS=64;
-   mf0 = mfB = TimeMMKernel(vrb, 0, mp, pre, nb, nb, kb, 1, 0, -1);
-   mp->mflop[0] = mf0;
-   printf("   No prefetch, MFLOP=%.0f\n", mf0);
-   printf("   TRY PREFETCH A:\n");
-/*
- * Try K-loop A/At pref for LS=64 & 128, since it's N^3 cost
- */
-   for (i=0; i < 3; i++)
-   {
-      TryPref(pre, vrb, 1, mp, 1, 0, thsA[i], 64);
-      TryPref(pre, vrb, 1, mp, 1, 0, thsA[i], 128);
-   }
-/*
- * Now try C prefetch (N^2 cost)
- */
-  printf("   TRY PREFETCH C:\n");
-  ipf = mp->pref;
-  ils = mp->pfLS;
-  for (i=0; i < 3; i++)
-     TryPref(pre, vrb, 1, mp, 1, 0, ipf|thsC[i], ils);
-  printf("DONE PREFETCH=(%d,%d), FINAL MFLOP=%.0f, SPEEDUP=%.3f\n",
-         mp->pref, mp->pfLS, mp->mflop[0], mp->mflop[0] / mf0);
-}
 double TimeSyrkKBs(int flg, int vrb, char pre, ATL_mmnode_t *mp, int nb)
 {
    const unsigned int ku=mp->ku, kb=(nb+ku-1)/ku;
@@ -40694,6 +40712,7 @@ char *getFlags(int nargs, char **args, char *PRE, int *BV, int *BLASK)
    return(outf);
 }
 
+#define URISMNMUL 1
 ATL_mmnode_t *doGenSyrkSrch(char pre, int blask, int bv, ATL_mmnode_t *mp)
 /*
  * RETURNS: ptr to best generated case matching unrestricted SYRK kernel
@@ -40738,7 +40757,7 @@ ATL_mmnode_t *doGenSyrkSrch(char pre, int blask, int bv, ATL_mmnode_t *mp)
    gp->mflop[0] = mf;
    p = CloneMMNode(gp);
    p->flag |= (1<<MMF_BREG1);
-   p->mflop[0] = TimeMMKernel(0, 0, gp, pre, MB, NB, KB, 1, 0, -1);
+   p->mflop[0] = TimeMMKernel(0, 0, p, pre, MB, NB, KB, 1, 0, -1);
    printf("         BREG1 mf=%.2f, rat=%.4f\n", 
           p->mflop[0], p->mflop[0]/mp->mflop[0]);
    if (p->mflop[0] > gp->mflop[0]) /* BREG1 got faster! */
@@ -40755,7 +40774,7 @@ ATL_mmnode_t *doGenSyrkSrch(char pre, int blask, int bv, ATL_mmnode_t *mp)
    if (p->vlen > 1 && (p->nu % p->vlen == 0))
    {
       p->flag |= 1<<MMF_NOBCAST;
-      p->mflop[0] = TimeMMKernel(0, 0, gp, pre, MB, NB, KB, 1, 0, -1);
+      p->mflop[0] = TimeMMKernel(0, 0, p, pre, MB, NB, KB, 1, 0, -1);
       printf("         SPLAT mf=%.2f, rat=%.4f\n", 
              p->mflop[0], p->mflop[0]/mp->mflop[0]);
       if (p->mflop[0] > gp->mflop[0]) /* BREG1 got faster! */
@@ -40766,6 +40785,22 @@ ATL_mmnode_t *doGenSyrkSrch(char pre, int blask, int bv, ATL_mmnode_t *mp)
       }
    }
    KillMMNode(p);
+/*
+ * Take fastest of ipmen code and best generated SYRK kernel
+ */
+   #ifndef URISMNMUL
+      p = ReadMMFileWithPath(pre, "res", "gursyrk.sum");
+      printf("         gusyrk U=(%u,%u,%u) mf=%.2f, rat=%.4f\n", 
+             p->mu, p->nu, p->ku, p->mflop[0], p->mflop[0]/mp->mflop[0]);
+      p->mflop[0] = TimeMMKernel(0, 0, p, pre, MB, NB, KB, 1, 0, -1);
+      if (p->mflop[0] > gp->mflop[0])
+      {                               /* keep fastest in gp */
+         ATL_mmnode_t *p0=p;
+         p = gp;
+         gp = p0;
+      }
+      KillMMNode(p);
+   #endif
    printf("   UNRESTRICTED SYRK SEARCH DONE\n");
    return(gp);
 }
@@ -40790,7 +40825,9 @@ void doSyrkSrch(char pre, int blask, int bv, ATL_mmnode_t *mp, ATL_mmnode_t *ub)
          else if (p->mflop[0] > sq->mflop[0])
             sq = p;
       }
-      else if (p->mu == MU && p->nu == NU)
+      #ifdef URISMNMUL
+      if (p->mu == MU && p->nu == NU)
+      #endif
       {
          if (!ur)
             ur = p;
