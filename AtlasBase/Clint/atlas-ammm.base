@@ -13811,7 +13811,7 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
  */
 {
    ATL_mmnode_t *mb, *mD, *pT;
-   ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB, ku;
+   ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB, kvecB=0, ku;
    double mfB = 0.0;
 
    mb = TimeMMFileWithPath(pre, "res", "gursyrk.sum", 0, verb|1, 0, 1, 0, -1);
@@ -13875,9 +13875,11 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
             pT->flag |= 1<<MMF_BREG1;
          else
             pT->flag &= ~(1<<MMF_BREG1);
-         pT->mu = mu = (KVEC) ? i : i*VL;
+@skip         pT->mu = mu = (KVEC) ? i : i*VL;
+         pT->flag |= (1<<MMF_KVEC);
+         pT->mu = mu = i;
          pT->nu = nu = j;
-         pT->ku = (KVEC) ? KVEC : 1;
+         pT->ku = pT->vlen;
          mb = (NB/mu)*mu;
          nb = (NB/nu)*nu;
          #if 0
@@ -13890,37 +13892,65 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
             free(pT->genstr);
          pT->genstr = MMGetGenString(pre, pT);
          mf = TimeMMKernel(verb, 0, pT, pre, mb, nb, KB, 1, 0, -1);
-         printf("   MU=%2u/%2u, NU=%2u, MFLOP=%.2f\n", i, mu, j, mf);
+         printf("   KVEC MU=%2u, NU=%2u, MFLOP=%.2f\n", mu, nu, mf);
          if (mf > mfB)
          {
             muB = mu;
             nuB = nu;
             mfB = mf;
+            kvecB = pT->vlen;
+            flgB = pT->flag;
+         }
+/*
+ *       Now try mvec kernel
+ */
+         pT->mu = mu = i*VL;
+         pT->ku = 1;
+         mb = (NB/mu)*mu;
+         if (!mb)
+            continue;
+         pT->flag &= ~(1<<MMF_KVEC);
+         if (pT->genstr)
+            free(pT->genstr);
+         pT->genstr = MMGetGenString(pre, pT);
+         mf = TimeMMKernel(verb, 0, pT, pre, mb, nb, KB, 1, 0, -1);
+         printf("   MVEC MU=%2u, NU=%2u, MFLOP=%.2f\n", mu, nu, mf);
+         if (mf > mfB)
+         {
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+            kvecB = 0;
             flgB = pT->flag;
          }
       }
    }
    assert(mfB > 0.0);
    KillMMNode(pT);
-   pT = MMGetNodeGEN(pre, flgB, mD->kbB, muB, nuB, mD->ku, VL, KVEC, 
+   pT = MMGetNodeGEN(pre, flgB, mD->kbB, muB, nuB, kvecB?kvecB:1, VL, kvecB, 
                      mD->pref, mD->pfLS, NULL);
+   pT->flag = flgB;
    pT->mbB = (NB/muB)*muB;
    pT->nbB = (NB/nuB)*nuB;
    pT->kbB = KB;
    pT->blask = ATL_KSYRK;
-   printf("BEST URSYRK B=(%u,%u,%u), U=(%u,%u), MFLOP=%.2f\n", 
-          pT->mbB, pT->nbB, pT->kbB, muB, nuB, mfB);
+   pT->mflop[0] = TimeMMKernel(verb, 0, pT, pre, pT->mbB, pT->nbB, KB, 1, 0,-1);
+   printf("BEST URSYRK B=(%u,%u,%u), U=(%u,%u), MFLOP=%.2f (%.2f)\n", 
+          pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->mflop[0], mfB);
    KillMMNode(mD);
-   DoSyrkKU(verb, pre, pT);
-   printf("BEST KU URSYRK B=(%u,%u,%u), U=(%u,%u,%u), MFLOP=%.2f\n", 
-          pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->ku, mfB);
+   if (!kvecB)
+   {
+      DoSyrkKU(verb|1, pre, pT);
+      printf("BEST KU URSYRK B=(%u,%u,%u), U=(%u,%u,%u), MFLOP=%.2f\n", 
+             pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->ku, mfB);
+   }
    ku = pT->ku;
-   pT->kbB = (pT->kbB / ku)/ku;
+   pT->kbB = (pT->kbB / ku)*ku;
    assert(pT->kbB);
-   TryAllSyrkPref(flag, verb, pre, pT, pT->nbB, pT->kbB);
+   TryAllSyrkPref(flag|1, verb, pre, pT, pT->nbB, pT->kbB);
    printf("BEST PREF URSYRK B=(%u,%u,%u), U=(%u,%u,%u), MFLOP=%.2f\n", 
           pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->ku, mfB);
-   WriteRefreshedMMFileWithPath(pre, "res", "gursyrk.sum", pT);
+   WriteMMFileWithPath(pre, "res", "gursyrk.sum", pT);
    KillMMNode(pT);
 }
 
