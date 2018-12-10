@@ -79,10 +79,17 @@ ATL_asmdecor(ATL_USERMM):
  * Load paramaters
  */
    mov %rdi, nmu
-   mov %rsi, nnu
+   #ifndef ATL_KSYRK_
+      mov %rsi, nnu
+   #endif
    mov %r8, pB
    mov %r9, pC
-   mov nnu, nnu0
+   #ifdef ATL_KSYRK_
+      xor nnu, nnu  /* nnu = 0, used as j counter for SYRK */
+      mov $6, nnu0  /* nnu0 = mu = i+mu for outer loop diag */
+   #else
+      mov nnu, nnu0
+   #endif
    movq 8(%rsp), pfB      /* pfB = pAn */
    movq 16(%rsp), pfA     /* pf = pBn */
    cmp pfA, pB
@@ -225,9 +232,17 @@ KDONE:
          #endif
          movapd rC23, 48(pC)
          add $192, pC
+   #ifdef ATL_KSYRK_
+        add $4, nnu
+        cmp nnu0, nnu
+      jl NLOOP
+      xor nnu, nnu
+      add $6, nnu0
+   #else
          sub $1, nnu
       jnz NLOOP
       mov nnu0, nnu
+   #endif
       add incAm, pA0
       mov pA0, pA
       mov pB0, pB

@@ -1,0 +1,475 @@
+@BEGINPROC vvrsum4 s0 s1 s2 s3 t0 t1 spc
+   @beginindent 3 @(spc)
+   vhaddpd @(s1), @(s0), @(s0)
+   vhaddpd @(s3), @(s2), @(s2)
+   vperm2f128 $0x31, @(s2), @(s0), @(s1)
+   vperm2f128 $0x20, @(s2), @(s0), @(s0)
+   vaddpd @(s1), @(s0), @(s0)
+   @endindent
+@ENDPROC
+@BEGINPROC vvrsum4z s0 s1 s2 s3 t0 t1 t2 t3 spc
+   @beginindent 4 @(spc)
+   vextractf64x4 $1, @(s0), @(t0)y
+   vaddpd @(t0)y, @(s0)y, @(t0)y
+   vextractf64x4 $1, @(s1), @(t1)y
+   vaddpd @(t1)y, @(s1)y, @(t1)y
+   vextractf64x4 $1, @(s2), @(t2)y
+   vaddpd @(t2)y, @(s2)y, @(t2)y
+   vextractf64x4 $1, @(s3), @(t3)y
+   vaddpd @(t3)y, @(s3)y, @(t3)y
+   @SKIP
+   vhaddpd @(t1)y, @(t0)y, @(t0)y
+   vhaddpd @(t3)y, @(t2)y, @(t2)y
+   vperm2f128 $0x31, @(t2)y, @(t0)y, @(t1)y
+   vperm2f128 $0x20, @(t2)y, @(t0)y, @(t0)y
+   vaddpd @(t1)y, @(t0)y, @(s0)y /*@(s0)y={@(s3),@(s2),@(s1),@(s0)}*/
+   @endindent
+@ENDPROC
+@SKIP d0 *= II, using temporary t0 (only II=7,11)
+@BEGINPROC MulByImm d0 II t0 spc
+   @iif II == 1
+   @endiif
+   @iif II == 2
+   add @(d0), @(d0)
+   @endiif
+   @iif II == 3
+   lea (@(d0), @(d0), 2), @(d0)
+   @endiif
+   @iif II == 4
+   shl $2, @(d0)
+   @endiif
+   @iif II == 5
+   lea (@(d0), @(d0), 4), @(d0)
+   @endiif
+   @iif II == 6
+   lea (@(d0), @(d0), 2), @(d0)  /* 3*X */
+   add @(d0), @(d0)              /* (3X+3X)* = 6*X */
+   @endiif
+   @iif II == 7
+   lea (@(d0), @(d0), 4), @(t0)  /* 5*X */
+   lea (@(t0), @(d0), 2), @(d0)  /* (5+2)X = 7*X */
+   @endiif
+   @iif II == 8
+   shl $3, @(d0)
+   @endiif
+   @iif II == 9
+   lea (@(d0), @(d0), 8), @(d0)
+   @endiif
+   @iif II == 10
+   lea (@(d0), @(d0), 4), @(d0)  /* 5*X */
+   add @(d0), @(d0)              /* 5*X + 5*X = 10*X */
+   @endiif
+   @iif II == 11
+   lea (@(d0), @(d0), 8), @(t0)  /* 9*X */
+   lea (@(t0), @(d0), 2), @(d0)  /* 9*X + 2*X = 11*X */
+   @endiif
+   @iif II == 12
+   lea (@(d0), @(d0), 2), @(d0)  /* 3*X */
+   add @(d0), @(d0)              /* 3*X+3*X = 6*X */
+   add @(d0), @(d0)              /* 6*X+6*X = 12*X */
+   @endiif
+   @iif II > 12
+      @error "MulByImm not supported > 12 so far!"
+   @endif
+   @endindent
+@ENDPROC
+@ROUT ATL_kmm_fma.S
+@skip @extract -b @(topd)/gen.inc what=crsetup
+@skip @extract -b @(topd)/cw.inc lang=c -define cwdate 2018
+#include "atlas_amm.h"
+#if ATL_VLENB == 16
+   #define vmovapd movaps
+   #define vmovaps movaps
+#endif
+#if defined(SREAL) || defined(SCPLX)
+   #define shSZ 2
+   #define SZ 4
+@whiledef ins vmovap vmulp vsubp vaddp vfmadd231p vbroadcasts
+   #define @(ins)d @(ins)s
+@endwhile
+#else
+   #define vmovapd vmovaps
+   #define movapd movaps
+   #define SZ 8
+   #define shSZ 3
+#endif
+#define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
+@iexp nCr @(nu) @(mu) *
+@iexp nBr @(nCr) @(mu) + 32 -
+@iif nBr > nu
+   @iexp nBr @(nu)
+@endiif
+@iif nBr < 1
+   @error "Out of registers, mu=@(mu), nu=@(nu), nr[C,A,B]=@(nCr),@(mu),@(nBr)"
+@endiif
+@ISA AVXZ
+@ISA !
+#if ATL_VLENB == 64
+@iexp k 0
+@iexp i 0
+@iwhile i < @(nBr)
+   #define rB@(i) %zmm@(k)
+      #define rB@(i)y %ymm@(k)
+      #define rB@(i)x %xmm@(k)
+   @iexp i @(i) 1 +
+   @iexp k @(k) 1 +
+@endiwhile
+@iexp i 0
+@iwhile i < @(mu)
+   #define rA@(i) %zmm@(k)
+      #define rA@(i)y %ymm@(k)
+      #define rA@(i)x %xmm@(k)
+   @iexp i @(i) 1 +
+   @iexp k @(k) 1 +
+@endiwhile
+@iexp j 0
+@iwhile j < @(nu)
+   @iexp i 0
+   @iwhile i < @(mu)
+   #define rC@(i)_@(j) %zmm@(k)
+      #define rC@(i)_@(j)y %ymm@(k)
+      #define rC@(i)_@(j)x %xmm@(k)
+      @iexp i @(i) 1 +
+      @iexp k @(k) 1 +
+   @endiwhile
+   @iexp j @(j) 1 +
+@endiwhile
+#elif ATL_VLENB == 32
+@iexp k 0
+@iexp i 0
+@iwhile i < @(nBr)
+   #define rB@(i) %ymm@(k)
+      #define rB@(i)x %xmm@(k)
+   @iexp i @(i) 1 +
+   @iexp k @(k) 1 +
+@endiwhile
+@iexp i 0
+@iwhile i < @(mu)
+   #define rA@(i) %ymm@(k)
+      #define rA@(i)x %xmm@(k)
+   @iexp i @(i) 1 +
+   @iexp k @(k) 1 +
+@endiwhile
+@iexp j 0
+@iwhile j < @(nu)
+   @iexp i 0
+   @iwhile i < @(mu)
+   #define rC@(i)_@(j) %ymm@(k)
+      #define rC@(i)_@(j)x %xmm@(k)
+      @iexp i @(i) 1 +
+      @iexp k @(k) 1 +
+   @endiwhile
+   @iexp j @(j) 1 +
+@endiwhile
+#else
+@iexp k 0
+@iexp i 0
+@iwhile i < @(nBr)
+   #define rB@(i) %xmm@(k)
+   @iexp i @(i) 1 +
+   @iexp k @(k) 1 +
+@endiwhile
+@iexp i 0
+@iwhile i < @(mu)
+   #define rA@(i) %xmm@(k)
+   @iexp i @(i) 1 +
+   @iexp k @(k) 1 +
+@endiwhile
+@iexp j 0
+@iwhile j < @(nu)
+   @iexp i 0
+   @iwhile i < @(mu)
+   #define rC@(i)_@(j) %xmm@(k)
+      @iexp i @(i) 1 +
+      @iexp k @(k) 1 +
+   @endiwhile
+   @iexp j @(j) 1 +
+@endiwhile
+#endif
+/*
+ * Prioritize original registers for inner-loop operations, but inc regs
+ * can be anything w/o changing opcode size, so use new regs for those
+ */
+#define KK      %rdx  /* API reg */
+#define pA      %rcx  /* API reg */
+#define pB      %rax  /* comes in as r9 */
+#define r256    %r9   /* set after mov r9 to pC () */
+/*
+ * Then N-loop variables much less important, so use any orig regs left
+ */
+#define pA0     %r8   /* set after mov r8 to pB (rax) */
+#define pC      %rsi  /* set after mov rsi to nnu () */
+#define iC      %r10  /* comes in as rsi */
+#define pfA     %rbx
+#define incB    %rbp
+#define r192    %r12
+#define KK0     %rdi
+/*
+ * We could give a rat's ass about what registers used in outer (M-) loop
+ */
+#define nmu     %r11  /* comes in as rdi */
+#define incAm   %r13
+#define iC0     %r14
+#define pB0     %r15
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+#define PFBDIST 128
+#define PFADIST 128
+#ifdef ATL_ARCH_XeonPHI
+   #define prefA(m_) vprefetch0 m_
+   #define prefB(m_) vprefetch0 m_
+   #define prefC(m_) vprefetche0 m_
+#else
+   #define prefA(m_) prefetcht0 m_
+   #define prefB(m_) prefetcht0 m_
+   #define prefC(m_) prefetchw m_
+#endif
+#if defined(BETAN) || defined(BETAn)
+   #define BETAN1
+#endif
+#ifdef BETAN1
+   #define VCOP vsubpd
+#else
+   #define VCOP vaddpd
+#endif
+.text
+ALIGN16
+.globl ATL_asmdecor(ATL_USERMM)
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   movq %rbp, -8(%rsp)
+   movq %rbx, -16(%rsp)
+   movq %r12, -24(%rsp)
+   movq %r13, -32(%rsp)
+   movq %r14, -40(%rsp)
+   movq %r15, -48(%rsp)
+/*
+ * Load paramaters
+ */
+   mov %rdi, nmu
+     prefA((pA))
+   #ifndef ATL_KSYRK_
+      mov %rsi, iC
+   #endif
+   mov %r8, pB
+     prefA(64(pA))
+   mov %r9, pC
+     prefA(128(pA))
+   movq 8(%rsp), pfA      /* pfA = pAn */
+   mov KK, incAm
+      prefB((pB))
+   mov KK, KK0
+   sub $-128, pC
+   sub $-128, pA
+   sub $-128, pB
+/*   sub $-128, pfA */
+   mov $256, r256
+      prefA(192-128(pA))
+   mov $192, r192
+   mov pA, pA0
+      prefA(-128(pA,r256))
+   mov pB, pB0
+/*
+ * incAm = MU*K*sizeof = 32*8*K = 256*K
+ * incB = NU*sizeof*K = 6*8*K = 16*3*K
+ */
+   shl $shSZ, KK           /* KK = K*sizeof */
+   mov KK, incB
+   @iif mu ! nu
+      @callproc MulByImm KK @(mu) iC0 0
+      @callproc MulByImm incB @(nu) iC0 0
+   @endiif
+   @iif mu = nu
+      @callproc MulByImm KK @(mu) iC0 0
+      mov KK, incB
+   @endiif
+   #ifdef ATL_KSYRK_
+      xor iC, iC         /* nnu = 0, used as j counter for SYRK */
+      mov $@(mu), iC0   /* nnu0 = mu = i+mu for outer loop diag */
+   #else
+   @SKIP compute shift and mul, for floats & doubles
+   @iexp bsz 64 @(mu) @(nu) * 8 *  63 + / 64 *
+   @iexp bszS 64 @(mu) @(nu) * 4 *  63 + / 64 *
+   @iexp shS 0
+   @iexp bszN 2 @(bszS) / 2 *
+   @iwhile bszS = bszN
+      @iexp shS @(shS) 1 +
+      @iexp bszS 2 @(bszS) /
+      @iexp bszN 2 @(bszS) / 2 *
+   @endiwhile
+   @iexp sh 0
+   @iexp bszN 2 @(bsz) / 2 *
+   @iwhile bsz = bszN
+      @iexp sh @(sh) 1 +
+      @iexp bsz 2 @(bsz) /
+      @iexp bszN 2 @(bsz) / 2 *
+   @endiwhile
+   @iexp bszN 64 @(mu) @(nu) * 8 *  63 + / 64 *
+/*
+ *    blksz = ((mu*nu*sizeof+VLENB-1)/VLENB)*VLENB=((@(mu)*@(nu)*8+63)/64)*64=@(bszN);
+ *    blksz = @(bszN) = @(bsz) * 2^{@(sh)}
+ *    iC = -nblks*blksz = -nnu*blksz = (nnu*@(bsz))*2^{@(sh)};
+ */
+      #ifdef SREAL
+         @callproc MulByImm iC @(bszS) iC0 6
+         shl $@(shS), iC
+      #else
+         @callproc MulByImm iC @(bsz) iC0 6
+         shl $@(sh), iC
+      #endif
+   #endif
+   @iexp bszS 64 @(mu) @(nu) * 4 *  63 + / 64 *
+   add iC, pC
+   neg iC
+   mov iC, iC0
+   @iexp bsz @(bszN)
+
+   @iexp nuM1 @(nu) -1 +
+   @iexp muM1 @(mu) -1 +
+   @iexp ia @(mu)
+   @iexp ib 0
+   @iexp rbf 0
+   @iexp rbu 1
+   mov KK, KK0
+   ALIGN16
+   MLOOP:
+         vmovapd -128(pB), rB0
+         @iexp ib @(ib) 1
+         @iexp rbf @(nBr) @(ib) %
+      NLOOP:
+/*
+ *       Peel K=1 iteration to zero rCxx
+ */
+   @iexp i 0
+   @iwhile i < mu
+            vmovapd -128+@(i)*ATL_VLENB(pA,KK), rA@(i)
+         vmulpd rA@(i), rB0, rC@(i)_0
+      @iexp i @(i) 1 +
+   @endiwhile
+   @iif nBr = 1
+            vmovapd -128+@(ib)*ATL_VLENB(pB), rB0
+         @iexp ib @(ib) 1
+   @endiif
+   @iexp j 1
+   @iwhile j < nuM1
+      @iexp jb @(nBr) @(j) %
+      @iexp i 0
+      @iwhile i < mu
+         vmulpd rA@(i), rB@(jb), rC@(i)_@(j)
+         @iif ib < nBr
+            @iexp rbf @(nBr) @(ib) %
+            vmovapd -128+@(ib)*ATL_VLENB(pB), rB@(rbf)
+            @iexp ib @(ib) 1 +
+         @endiif
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iexp j @(j) 1 +
+   @endiwhile
+   @iexp i 0
+   @iwhile i < mu
+      @iexp jb @(nBr) @(j) %
+         vmulpd rA@(i), rB@(jb), rC@(i)_@(j)
+            vmovapd -128+@(ia)*ATL_VLENB(pA, KK), rA@(i)
+         @iexp ia @(ia) 1
+      @iexp i @(i) 1 +
+   @endiwhile
+
+         KLOOP:
+   @iexp j 1
+   @iwhile j < nuM1
+      @iexp jb @(nBr) @(j) %
+      @iexp i 0
+      @iwhile i < mu
+            FMAC rA@(i), rB@(jb), rC@(i)_@(j)
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iexp j @(j) 1 +
+   @endiwhile
+   @iexp jb @(nBr) @(j) %
+   @iexp i 0
+   @iwhile i < mu
+            FMAC rA@(i), rB@(jb), rC@(i)_@(j)
+               vmovapd -128+@(i)*ATL_VLENB(pA,KK), rA@(i)
+         @iexp ia @(ia) 1
+      @iexp i @(i) 1 +
+   @endiwhile
+
+         @iexp kk @(mu) 64 *
+         @iif kk ! 128
+            add $@(mu)*64, KK
+         @endiif
+         @iif kk = 128
+            sub $-@(mu)*64, KK
+         @endiif
+         jnz KLOOP
+KDONE:
+         mov KK0, KK
+   @iexp kk 4 @(mu) @(nu) * / 4 *
+   @iexp kr @(kk) @(mu) @(nu) * -
+   @iexp k 0
+   @iwhile k < kk
+      @iexp j0 @(mu) @(k) /
+      @iexp i0 @(mu) @(k) %
+      @iexp k @(k) 1 +
+      @iexp j1 @(mu) @(k) /
+      @iexp i1 @(mu) @(k) %
+      @iexp k @(k) 1 +
+      @iexp j2 @(mu) @(k) /
+      @iexp i2 @(mu) @(k) %
+      @iexp k @(k) 1 +
+      @iexp j3 @(mu) @(k) /
+      @iexp i3 @(mu) @(k) %
+      @iexp k @(k) 1 +
+/*
+ *       Reduce rC@(i0)_@(j0)y={rC@(i3)_@(j3),rC@(i2)_@(j2),rC@(i1)_@(j1),rC@(i0)_@(j0)}
+ */
+   @callproc vvrsum4z rC@(i0)_@(j0) rC@(i1)_@(j1) rC@(i2)_@(j2) rC@(i3)_@(j3) rA0 rA1 rA2 rA3 6
+   @endiwhile
+
+   @iexp k 0
+   @iwhile k < kk
+      @iexp j0 @(mu) @(k) /
+      @iexp i0 @(mu) @(k) %
+      @iexp j1 @(mu) @(k) 4 + /
+      @iexp i1 @(mu) @(k) 4 + %
+         vinsertf64x4 $1, rC@(i1)_@(j1)y, rC@(i0)_@(j0), rC@(i0)_@(j0)
+      @iexp j 8 @(k) /
+         vmovapd rC@(i0)_@(j0), -128+@(j)*64(pC,iC)
+      @iexp k @(k) 8 +
+   @endiwhile
+      #ifdef SREAL
+   @iif bszS = 128
+         sub $-@(bszS), iC
+   @endiif
+   @iif bszS ! 128
+         add $@(bszS), iC
+   @endiif
+      #else
+   @iif bsz = 128
+         sub $-@(bsz), iC
+   @endiif
+   @iif bsz ! 128
+         add $@(bsz), iC
+   @endiif
+      #endif
+      jnz NLOOP
+      mov iC0, iC
+      add incAm, pA
+      mov pB0, pB0
+      dec nmu
+   jnz MLOOP
+
+ DONE:
+   movq -8(%rsp), %rbp
+   movq -16(%rsp), %rbx
+   movq -24(%rsp), %r12
+   movq -32(%rsp), %r13
+   movq -40(%rsp), %r14
+   movq -48(%rsp), %r15
+   ret

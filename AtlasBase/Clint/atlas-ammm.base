@@ -18,6 +18,15 @@
 @ROUT dsyrkcases.idx dtrsmcases.idx dtrmmLcases.idx dtrmmRcases.idx
 ID=1 MU=4 NU=2 KU=1 AUTH='R. Clint Whaley' ROUT='ublaskern4x2.c' \
      VLEN=1 KRUNTIME=1
+@ROUT dsyrkcases.idx
+ID=24 MU=6 NU=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_damm6x4x1_fma3.S' \
+     SSE=3 VLEN=2 ASM=GAS_x8664 KRUNTIME=1 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx -mfma'
+ID=52 MU=32 NU=6 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_damm32x6x1_avxz.S' \
+      ASM=GAS_x8664 VLEN=8 KRUNTIME=1
+@ROUT ssyrkcases.idx
+ID=1 MU=4 NU=2 KU=1 AUTH='R. Clint Whaley' ROUT='ublaskern4x2.c' \
+     VLEN=1 KRUNTIME=1
 @ROUT damcases.idx
 ID=1 MU=4 NU=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_dammm2x4x1_sse2.S' \
      SSE=3 VLEN=2 KRUNTIME=1 ASM=GAS_x8664 \
@@ -706,7 +715,7 @@ void Mjoin(PATL,ipmenInfo)
    (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
-void Mjoin(PATL,ipmenUMInfo)
+void Mjoin(PATL,ipmenURInfo)
    (ipinfo_t *ip, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
     size_t M, size_t N, size_t K, size_t lda, size_t ldb, size_t ldc,
     const SCALAR alpha, const SCALAR beta);
@@ -13755,114 +13764,6 @@ void DoBlock(char pre, int flg, int verb)
    KillAllMMNodes(mmb);
 }
 
-void DoSyrkAmmUM(char pre, int flag, int verb, int nreg)
-/*
- * Find best generated ammm kernel to use for SYRK with restriction that MU
- * must be a multiple of NU (or vice versa if NU > MU).
- */
-{
-   ATL_mmnode_t *mb, *mD, *pT;
-   ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB;
-   double mfB = 0.0;
-
-   mb = TimeMMFileWithPath(pre, "res", "gSYRKUM.sum", 0, verb|1, 0, 1, 0, -1);
-   if (mb)
-   {
-      KillAllMMNodes(mb);
-      return;
-   }
-/*
- * Should read in 5 kernels, we want only highest performing
- */
-   mb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
-   mD = FindMaxMflopMMQ(mb, 0);
-   mb = RemoveMMNodeFromQ(mb, mD);
-   KillAllMMNodes(mb);
-/*
- * If mu already a multiple of nu (or vice versa), no need to search!
- */
-   if (!(mD->mu % mD->nu) || !(mD->nu % mD->mu))
-   {
-      WriteMMFileWithPath(pre, "res", "gSYRKUM.sum", mD);
-      KillMMNode(mD);
-      return;
-   }
-   VL = mD->vlen;
-   NB = (mD->mbB + mD->nbB)>>1;
-   KB = (mD->kbB);
-   flg = mD->flag;
-   KVEC = ((flg>>MMF_KVEC)&1)*VL;
-   flg &= ~(1<<MMF_KUISKB);
-   flg |= (1<<MMF_KRUNTIME);
-   pT = MMGetNodeGEN(pre, 0, 0, VL, 1, 1, VL, 0, 0, 0,
-                     DupString("ATL_tmp.c"));
-   pT->flag = flg;
-   printf("FULL SEARCH FOR MU%%NU == 0 (or vice versa) AMM, NREG=%u, "
-          "B=(%u,%u), VLEN=%u:\n", nreg, NB, KB, VL);
-   for (i=1; i <= nreg; i++)
-   {
-      ATL_UINT j;
-      if (i > NB)
-         break;
-      for (j=1; j <= nreg; j++)
-      {
-         double mf;
-         ATL_UINT mu, nu, mb, nb;
-         if (j > NB || i*j+1 > nreg)
-            break;
-         if (i*j+i+j > nreg)
-            pT->flag |= 1<<MMF_BREG1;
-         else
-            pT->flag &= ~(1<<MMF_BREG1);
-         pT->mu = mu = (KVEC) ? i : i*VL;
-         pT->nu = nu = j;
-         pT->ku = (KVEC) ? KVEC : 1;
-         mb = (NB/mu)*mu;
-         nb = (NB/nu)*nu;
-         if (mu%nu && nu%mu)
-            continue;
-         if (!mb || !nb)
-            continue;
-         if (pT->genstr)
-            free(pT->genstr);
-         pT->genstr = MMGetGenString(pre, pT);
-         mf = TimeMMKernel(verb, 0, pT, pre, mb, nb, KB, 1, 0, -1);
-         printf("   MU=%2u/%2u, NU=%2u, MFLOP=%.2f\n", i, mu, j, mf);
-         if (mf > mfB)
-         {
-            muB = mu;
-            nuB = nu;
-            mfB = mf;
-            flgB = pT->flag;
-         }
-      }
-   }
-   assert(mfB > 0.0);
-   KillMMNode(pT);
-   pT = MMGetNodeGEN(pre, flgB, mD->kbB, muB, nuB, mD->ku, VL, KVEC, 
-                     mD->pref, mD->pfLS, NULL);
-   pT->mbB = (NB/muB)*muB;
-   pT->nbB = (NB/nuB)*nuB;
-   pT->mbB = mD->kbB;
-   printf("BEST MU%%NU==0 CASE is B=(%u,%u,%u), U=(%u,%u), MFLOP=%.2f\n", 
-          pT->mbB, pT->nbB, pT->kbB, muB, nuB, mfB);
-   KillMMNode(mD);
-   WriteRefreshedMMFileWithPath(pre, "res", "gSYRKUM.sum", pT);
-   KillMMNode(pT);
-}
-
-int getSzC(ATL_mmnode_t *mp, int nb)
-{
-   const int nu = mp->nu, nnu = (nb+nu-1)/nu;
-   const int vlen=mp->vlen, nvec=(nu*nu+vlen-1)/vlen, blksz=nvec*vlen;
-   return(nnu*nnu*blksz);
-}
-int getSzA(ATL_mmnode_t *mp, int nb, int kb)
-{
-   const int nu = mp->nu, nnu = (nb+nu-1)/nu, ku=mp->ku, nku=(kb+ku-1)/ku;
-   return(nnu*nku*nu*ku);
-}
-
 void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp, 
                     int nb, int kb)
 /* 
@@ -13903,6 +13804,168 @@ void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp,
   printf("DONE PREFETCH=(%d,%d), FINAL MFLOP=%.0f, SPEEDUP=%.3f\n",
          mp->pref, mp->pfLS, mp->mflop[0], mp->mflop[0] / mf0);
 }
+void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
+/*
+ * Find best generated ammm kernel to use for SYRK with restriction that MU
+ * must be a multiple of NU (or vice versa if NU > MU).
+ */
+{
+   ATL_mmnode_t *mb, *mD, *pT;
+   ATL_UINT KVEC, KB, NB, VL, i, flg, muB=1, nuB=1, flgB, kvecB=0, ku;
+   double mfB = 0.0;
+
+   mb = TimeMMFileWithPath(pre, "res", "gursyrk.sum", 0, verb|1, 0, 1, 0, -1);
+   if (mb)
+   {
+      KillAllMMNodes(mb);
+      return;
+   }
+/*
+ * Should read in 5 kernels, we want only highest performing
+ */
+   mb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   mD = FindMaxMflopMMQ(mb, 0);
+   mb = RemoveMMNodeFromQ(mb, mD);
+   KillAllMMNodes(mb);
+/*
+ * Get asymptotic NB from ipmen.sum
+ */
+   mb = TimeMMFileWithPath(pre, "res", "ipmen.sum", 0, verb|1, 0, 1, 0, -1);
+   assert(mb);
+   while(mb->next)
+      mb = KillMMNode(mb);
+   NB = mb->nbB;
+   KB = mb->kbB;
+   KillMMNode(mb);
+
+   #if 0  /* best case may have too big desc between mu & nu for syrk perf */
+/*
+ * If mu already a multiple of nu (or vice versa), no need to search!
+ */
+   if (!(mD->mu % mD->nu) || !(mD->nu % mD->mu))
+   {
+      WriteMMFileWithPath(pre, "res", "gSYRKUM.sum", mD);
+      KillMMNode(mD);
+      return;
+   }
+   #endif
+   VL = mD->vlen;
+   flg = mD->flag;
+   KVEC = ((flg>>MMF_KVEC)&1)*VL;
+   flg &= ~(1<<MMF_KUISKB);
+   flg |= (1<<MMF_KRUNTIME);
+   pT = MMGetNodeGEN(pre, 0, 0, VL, 1, 1, VL, 0, 0, 0,
+                     DupString("ATL_tmp.c"));
+   pT->blask = ATL_KSYRK;
+   pT->flag = flg;
+   printf("FULL SEARCH FOR URSYRK, NREG=%u, "
+          "B=(%u,%u), VLEN=%u:\n", nreg, NB, KB, VL);
+   for (i=2; i <= nreg; i++)
+   {
+      ATL_UINT j;
+      if (i > NB)
+         break;
+      for (j=2; j <= nreg; j++)
+      {
+         double mf;
+         ATL_UINT mu, nu, mb, nb;
+         if (j > NB || i*j+1 > nreg)
+            break;
+         if (i*j+i+j > nreg)
+            pT->flag |= 1<<MMF_BREG1;
+         else
+            pT->flag &= ~(1<<MMF_BREG1);
+@skip         pT->mu = mu = (KVEC) ? i : i*VL;
+         pT->flag |= (1<<MMF_KVEC);
+         pT->mu = mu = i;
+         pT->nu = nu = j;
+         pT->ku = pT->vlen;
+         mb = (NB/mu)*mu;
+         nb = (NB/nu)*nu;
+         #if 0
+         if (mu%nu && nu%mu)
+            continue;
+         #endif
+         if (!mb || !nb)
+            continue;
+         if (pT->genstr)
+            free(pT->genstr);
+         pT->genstr = MMGetGenString(pre, pT);
+         mf = TimeMMKernel(verb, 0, pT, pre, mb, nb, KB, 1, 0, -1);
+         printf("   KVEC MU=%2u, NU=%2u, MFLOP=%.2f\n", mu, nu, mf);
+         if (mf > mfB)
+         {
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+            kvecB = pT->vlen;
+            flgB = pT->flag;
+         }
+/*
+ *       Now try mvec kernel
+ */
+         pT->mu = mu = i*VL;
+         pT->ku = 1;
+         mb = (NB/mu)*mu;
+         if (!mb)
+            continue;
+         pT->flag &= ~(1<<MMF_KVEC);
+         if (pT->genstr)
+            free(pT->genstr);
+         pT->genstr = MMGetGenString(pre, pT);
+         mf = TimeMMKernel(verb, 0, pT, pre, mb, nb, KB, 1, 0, -1);
+         printf("   MVEC MU=%2u, NU=%2u, MFLOP=%.2f\n", mu, nu, mf);
+         if (mf > mfB)
+         {
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+            kvecB = 0;
+            flgB = pT->flag;
+         }
+      }
+   }
+   assert(mfB > 0.0);
+   KillMMNode(pT);
+   pT = MMGetNodeGEN(pre, flgB, mD->kbB, muB, nuB, kvecB?kvecB:1, VL, kvecB, 
+                     mD->pref, mD->pfLS, NULL);
+   pT->flag = flgB;
+   pT->mbB = (NB/muB)*muB;
+   pT->nbB = (NB/nuB)*nuB;
+   pT->kbB = KB;
+   pT->blask = ATL_KSYRK;
+   pT->mflop[0] = TimeMMKernel(verb, 0, pT, pre, pT->mbB, pT->nbB, KB, 1, 0,-1);
+   printf("BEST URSYRK B=(%u,%u,%u), U=(%u,%u), MFLOP=%.2f (%.2f)\n", 
+          pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->mflop[0], mfB);
+   KillMMNode(mD);
+   if (!kvecB)
+   {
+      DoSyrkKU(verb|1, pre, pT);
+      printf("BEST KU URSYRK B=(%u,%u,%u), U=(%u,%u,%u), MFLOP=%.2f\n", 
+             pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->ku, mfB);
+   }
+   ku = pT->ku;
+   pT->kbB = (pT->kbB / ku)*ku;
+   assert(pT->kbB);
+   TryAllSyrkPref(flag|1, verb, pre, pT, pT->nbB, pT->kbB);
+   printf("BEST PREF URSYRK B=(%u,%u,%u), U=(%u,%u,%u), MFLOP=%.2f\n", 
+          pT->mbB, pT->nbB, pT->kbB, muB, nuB, pT->ku, mfB);
+   WriteMMFileWithPath(pre, "res", "gursyrk.sum", pT);
+   KillMMNode(pT);
+}
+
+int getSzC(ATL_mmnode_t *mp, int nb)
+{
+   const int nu = mp->nu, nnu = (nb+nu-1)/nu;
+   const int vlen=mp->vlen, nvec=(nu*nu+vlen-1)/vlen, blksz=nvec*vlen;
+   return(nnu*nnu*blksz);
+}
+int getSzA(ATL_mmnode_t *mp, int nb, int kb)
+{
+   const int nu = mp->nu, nnu = (nb+nu-1)/nu, ku=mp->ku, nku=(kb+ku-1)/ku;
+   return(nnu*nku*nu*ku);
+}
+
 double TimeSyrkKBs(int flg, int vrb, char pre, ATL_mmnode_t *mp, int nb)
 {
    const unsigned int ku=mp->ku, kb=(nb+ku-1)/ku;
@@ -14951,7 +15014,7 @@ int main(int nargs, char **args)
    if (flg&4)     /* If I just wanted nreg calc */
       return(0);  /* then I'm done */
    DoBlock(pre, flg, verb);
-   DoSyrkAmmUM(pre, flg, verb, nreg);
+   DoSyrkAmmUR(pre, flg, verb, nreg);
    DoSyrk(flg, verb, pre, nreg, NB, VLEN);
    DoTrmm(pre, flg, verb, nreg);
    return(0);
@@ -17590,7 +17653,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          #define ATL_FRCGNUVEC
       #endif
    #elif defined(ATL_VXZ)
-      #if ATL_VLEN != 2;
+      #if ATL_VLEN != 2
          #define ATL_FRCGNUVEC
       #endif
    #elif defined(ATL_NEON)
@@ -17883,19 +17946,23 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_vld(v_, p_) v_ = vec_ld2f(p_);
       #define ATL_vst(p_, v_) vec_st2f(v_, p_);
    #endif
-   #define ATL_vzero(v_) v_ = vec_splats((TYPE)0.0)
+   #define ATL_vzero(v_) v_ = vec_splats((double)0.0)
    #define ATL_vcopy(d_, s_) d_ = s_
-   #define ATL_vbcast(v_, p_) v_ =  vec_splats(*((TYPE*)(p_)))
+   #define ATL_vbcast(v_, p_) v_ =  vec_splats((double)*((TYPE*)(p_)))
    #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
    #define ATL_vust(p_, v_) ATL_vst(p_, v_)
    #define ATL_vadd(d_, s1_, s2_) d_ =  s1_ + s2_
    #define ATL_vsub(d_, s1_, s2_) d_ =  s1_ - s2_
    #define ATL_vmul(d_, s1_, s2_) d_ =  s1_ * s2_
-   #define ATL_vmac(d_, s1_, s2_) d_ = vec_madd(s1_, s2_, d_)
+   #if 0
+      #define ATL_vmac(d_, s1_, s2_) d_ = vec_madd(s1_, s2_, d_)
+   #else
+      #define ATL_vmac(d_, s1_, s2_) d_ = __builtin_s390_vec_madd(s1_, s2_, d_)
+   #endif
    #define ATL_vvrsum1(s0_) \
-   {  ATL_VTYPE t_;\
+   {  ATL_VTYPE t_; \
       t_ = vec_splat(s0_, 1); \
-      s0 += t_; \
+      s0_ += t_; \
    }
    #define ATL_vsplat0(d_, s_) d_ = vec_splat(s_, 0)
    #define ATL_vsplat1(d_, s_) d_ = vec_splat(s_, 1)
@@ -33662,21 +33729,21 @@ int main(int nargs, char **args)
 @ROUT N2Idx
 static INLINE int N2Idx(const unsigned int N)
 /*
- * Uses Recursive halving to find smallest NB >= N in VWsyrk.
+ * Uses Recursive halving to find smallest NB >= N in VWsqsyrk.
  */
 {
-   unsigned int idxB=ATL_VWsyrk_NCASES-1, idxS=0, idxM;
-   unsigned int nbB, nbS=ATL_VWsyrk_MIN_NB, nbM;
-   if (N <= ATL_VWsyrk_MIN_NB)
+   unsigned int idxB=ATL_VWsqsyrk_NCASES-1, idxS=0, idxM;
+   unsigned int nbB, nbS=ATL_VWsqsyrk_MIN_NB, nbM;
+   if (N <= ATL_VWsqsyrk_MIN_NB)
       return(0);
-   nbB = ATL_GetVWsyrkMB(idxB);
+   nbB = ATL_GetVWsqsyrkMB(idxB);
    if (N >= nbB)
-      return(ATL_VWsyrk_NCASES-1);
+      return(ATL_VWsqsyrk_NCASES-1);
    KEEP_ON:
       idxM = ((idxB-idxS)>>1)+idxS;
       if (idxM == idxS)
          return((nbS >= N) ? idxS:idxB);
-      nbM = ATL_GetVWsyrkMB(idxM);
+      nbM = ATL_GetVWsqsyrkMB(idxM);
       if (nbM > N)
       {
          idxB = idxM;
@@ -36394,12 +36461,7 @@ void srch_men(char pre, int verb)
    bp = TimeMMFileWithPath(pre, "res", "ipmen.sum", 0, 1, 0, 1, 0, -1);
    if (bp)
    {
-      mmb = bp;
-      bp = TimeMMFileWithPath(pre, "res", "ipsyrk.sum", 0, 1, 0, 1, 0, -1);
-      if (!bp)
-         goto TIME_SYRK;
       KillAllMMNodes(bp);
-      KillAllMMNodes(mmb);
       return;
    }
    bp = ReadMMFileWithPath(pre, "res", "ipgen.sum");
@@ -36426,84 +36488,6 @@ void srch_men(char pre, int verb)
    mmb = ReverseMMQ(mmb);
    MMPruneMflopTol(mmb, 0, 1.0);
    WriteMMFileWithPath(pre, "res", "ipmen.sum", mmb);
-/*
- * Now create syrk kernel  
- */
-TIME_SYRK:
-   while (mmb->next)                      /* get rid of all but */
-      mmb = KillMMNode(mmb);              /* asymptotic case */
-   maxKU = FLAG_IS_SET(mmb->flag, MMF_KVEC) ? mmb->vlen : 4;
-/*
- * Try generating with straight params from search
- */
-   bp = MMGetNodeGEN(pre, 0, 0, mmb->mu, mmb->nu, mmb->ku, mmb->vlen,
-                     FLAG_IS_SET(mmb->flag, MMF_KVEC), mmb->pref, mmb->pfLS,
-                     NULL);
-   bp->flag = ((mmb->flag | (1<<MMF_KRUNTIME)) &
-               (~((1<<MMF_X87)|(1<<MMF_KUISKB))));
-   bp->mbB = mmb->mbB;
-   bp->nbB = mmb->nbB;
-   bp->kbB = mmb->kbB;
-   if (bp->ku > maxKU)
-   {
-      if (FLAG_IS_SET(bp->flag, MMF_KVEC))
-         bp->ku = maxKU;
-      else
-      {
-         unsigned int ku=maxKU, kb=mmb->kbB;
-         while((kb/ku)*ku != kb)
-            ku--;
-         bp->ku = ku;
-      }
-   }
-   bp->mflop[1] = mmb->mflop[0];
-   bp->blask = ATL_KSYRK;
-   if (bp->genstr)
-      free(bp->genstr);
-   bp->genstr = NULL;
-/*
- * Duplicate this node so we can try BREG1 & NOBCAST
- */
-   KillMMNode(mmb);
-   mmb = CloneMMNode(bp);
-   mmb->flag |= (1<<MMF_BREG1);
-   bp->mflop[0] = TimeMMKernel(verb, 0, bp, pre, bp->mbB, bp->nbB, bp->kbB,
-                               1, 0, -1);
-   printf("   SYRK/GEMM DEFAULT MFLOP=%.4f\n", bp->mflop[0]/bp->mflop[1]);
-   mmb->mflop[0] = TimeMMKernel(verb, 0, mmb, pre, bp->mbB, bp->nbB, bp->kbB,
-                                1, 0, -1);
-   printf("   SYRK/GEMM BREG1   MFLOP=%.4f\n", mmb->mflop[0]/mmb->mflop[1]);
-/*
- * bp is best found case so far
- */
-   if (mmb->mflop[0] >= bp->mflop[0])
-   {
-      ATL_mmnode_t *tp=mmb;
-      mmb = bp;
-      bp = tp;
-   }
-/*
- * If nu mult of vlen, try NOBCAST
- */
-   if (!bp->vlen || (bp->nu % bp->vlen) == 0)
-   {
-      mmb->flag = (mmb->flag | (1<<MMF_NOBCAST)) & (~(1<<MMF_BREG1));
-      mmb->mflop[0] = TimeMMKernel(verb, 0, mmb, pre, bp->mbB, bp->nbB, bp->kbB,
-                                   1, 0, -1);
-      printf("   SYRK/GEMM NOBCAST MFLOP=%.4f\n", mmb->mflop[0]/mmb->mflop[1]);
-      if (mmb->mflop[0] >= bp->mflop[0])
-      {
-         ATL_mmnode_t *tp=mmb;
-         mmb = bp;
-         bp = tp;
-      }
-   }
-   KillMMNode(mmb);
-   printf("SYRK/GEMM MFLOP=%.4f\n", bp->mflop[0]/bp->mflop[1]);
-   if (pre == 'c' || pre == 'z')
-      bp->flag |= 1<<MMF_COMPLEX;
-   WriteMMFileWithPath(pre, "res", "ipsyrk.sum", bp);
-   KillMMNode(bp);
 }
 
 int main(int nargs, char **args)
@@ -38947,14 +38931,16 @@ void GenMake(char pre, char *outd, ATL_mmnode_t *mb, ATL_mmnode_t *bkb,
    for (mp=MB; mp; mp = mp->next)
    {
       int ib;
-      char *comp, *flgs;
+      char *comp, *flgs, *exbd;
 
-      comp = GetMMKernComp(mp, dcomp, dflags, &flgs);
+      comp = GetMMKernComp(mp, dcomp, dflags, &flgs, &exbd);
       for (ib=0; ib < 3; ib++)
       {
          char *sp=" ";
          fprintf(fp, "%s_b%c.o : %s\n", mp->auth, bes[ib], mp->rout);
          fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1 \\\n", comp, fn, sbes[ib]);
+         if (exbd)
+            fprintf(fp, "        %s \\\n", exbd);
          if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
             fprintf(fp, "        -DMB=%d -DNB=%d -DKB=%d",
                     mp->mbB, mp->nbB, ((mp->kbB+mp->ku-1)/mp->ku)*mp->ku);
@@ -39290,9 +39276,9 @@ int main(int nargs, char **args)
 #define  ATL_DECL_ 1
 @ROUT ATL_ipmeninfo
 #ifdef MUNUMUL_
-   #include Mstr(Mjoin(ATLAS_PRE,@(vwf)UM_view.h))
-   #define ipInfo Mjoin(PATL,ipmenUMInfo)
-   #define ipPop  Mjoin(PATL,ipmenUMInfoPop)
+   #include Mstr(Mjoin(ATLAS_PRE,@(vwf)UR_view.h))
+   #define ipInfo Mjoin(PATL,ipmenURInfo)
+   #define ipPop  Mjoin(PATL,ipmenURInfoPop)
    #define ATL_GetVW@(vwf)Info ATL_GetVW@(vwf)UMInfo 
 #else
    #include Mstr(Mjoin(ATLAS_PRE,@(vwf)_view.h))
@@ -40566,7 +40552,7 @@ void Mjoin(PATL,@(vwf)Info)
 #include Mstr(Mjoin(ATLAS_PRE,amm_sqsyrk.h))
 #include Mstr(Mjoin(ATLAS_PRE,amm_ursyrk.h))
 #include Mstr(Mjoin(ATLAS_PRE,ipmen_view.h))
-#include Mstr(Mjoin(ATLAS_PRE,syrk_view.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqsyrk_view.h))
 #include Mstr(COPY/Mjoin(ATLAS_PRE,FromANg_a1.h))
 #ifdef TCPLX
    #include Mstr(COPY/Mjoin(ATLAS_PRE,FromAHg_a1.h))
@@ -40621,7 +40607,7 @@ double Mjoin(PATL,ipsyrkInfo)
       tim = nb*nb;
       tim *= K;
       tpf  = (float*)(ATL_VIEW_ipmen+ATL_VWipmen_IDXMUL(i));
-      stpf = (float*)(ATL_VIEW_syrk+ATL_VWsyrk_IDXMUL(i));
+      stpf = (float*)(ATL_VIEW_sqsyrk+ATL_VWsqsyrk_IDXMUL(i));
       tim *= (*tpf * 2.0*ngblk) + (*stpf * nfdiag);
 /*
  *    For partial block, guess performance poor (half normal) if pnb <= 3*U,
@@ -40690,12 +40676,12 @@ double Mjoin(PATL,ipsyrkInfo)
  * only syrk instead of both syrk+gemm.  Need to include copy cost in time
  * estimate, since syrk+gemm requires up to 3 A/B copies, while syrk 1.
  */
-   if (N <= ATL_VWsyrk_MAX_NB)
+   if (N <= ATL_VWsqsyrk_MAX_NB)
    {
       double timS;
       unsigned int nbS;
       float *tpf;
-      for (i=ATL_VWsyrk_NCASES-1; i; i--)
+      for (i=ATL_VWsqsyrk_NCASES-1; i; i--)
       {
          nbS = ATL_GetVWipmenNB(i);
          if (nbS <= N)
@@ -40710,7 +40696,7 @@ double Mjoin(PATL,ipsyrkInfo)
       }
       if (nbS >= N)
          return(-1.0);
-      tpf = (float*)(ATL_VIEW_syrk+ATL_VWsyrk_IDXMUL(i));
+      tpf = (float*)(ATL_VIEW_sqsyrk+ATL_VWsqsyrk_IDXMUL(i));
       timS = (*tpf*nbS)*nbS*K;
       #ifdef DEBUG
          printf("tim[G,S]=%e, %e\n", timB, timS);
@@ -40745,7 +40731,7 @@ double Mjoin(PATL,ipsyrkInfo)
             cpB = ATL_CpyFromANg_a1;
          }
          @ENDSKIP
-         cpT = (ATL_cpflt_t*)(cpA+ATL_VWsyrk_MIN_A2BLK+ATL_VWsyrk_MIN_A2BLK+1);
+         cpT = (ATL_cpflt_t*)(cpA+ATL_VWsqsyrk_MIN_A2BLK+ATL_VWsqsyrk_MIN_A2BLK+1);
          timCP = *cpT * nbS*K;
          #ifdef DEBUG
             printf("timS=%e+%e\n", timS, timCP);
@@ -40775,6 +40761,380 @@ double Mjoin(PATL,ipsyrkInfo)
                              npnblks, nb, pnb);
    return(timB);
 }
+@ROUT blasksrch
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2018
+#include <assert.h>
+#include "atlas_mmtesttime.h"
+const static char *blnms[5]={"gemm", "syrk", "symm", "trmm", "trsm"};
+/*
+ * This program searches for best-performing blas kernel for SYRK,TRMM,TRSM.
+ * It calls subsidiary searchs in gmmsearch and ublassrch
+ */
+void printUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -p [s,d]: set precision prefix (d) \n");
+   fprintf(stderr, "   -o <outfile> : filename to write best kernel\n");
+   fprintf(stderr, "   -k [syrk,trmm,trsm] : blas kern to search\n");
+   fprintf(stderr, "   -S U/L : Left or Right side (trmm/trsm only)\n");
+   exit(ierr ? ierr : -1);
+}
+
+#define BV_RIGHT 0
+char *getFlags(int nargs, char **args, char *PRE, int *BV, int *BLASK)
+{
+   int i, k, bv, blask=ATL_KTRSM, RIGHT=0;
+   char *kern=NULL, *outf=NULL;
+   char pre = 'd';
+
+   outf = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         printUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'p':  /* -p <prefix> */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         pre = tolower(args[i][0]);
+         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 'o': /* -o <outfile> */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         outf = args[i];
+         break;
+      case 'k': /* -k [trsm,trmm,syrk] */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         if (!strcmp(args[i], "trsm"))
+            blask = ATL_KTRSM;
+         else if (!strcmp(args[i], "trmm"))
+            blask = ATL_KTRMM;
+         else if (!strcmp(args[i], "syrk"))
+            blask = ATL_KSYRK;
+         else
+         {
+            fprintf(stderr,"UNKNOWN BLAS NAME: '%s', expect [trsm,trmm,syrk]\n",
+                    args[i]);
+            printUsage(args[0], i, args[i]);
+         }
+         break;
+      case 'S': /* -S [L/R] */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         if (args[i][0] == 'L' || args[i][0] == 'l')
+            RIGHT = 0;
+         else if (args[i][0] == 'R' || args[i][0] == 'r')
+            RIGHT = 1;
+         else
+         {
+            fprintf(stderr, "UNKNOWN SIDE: '%c', expect 'L' or 'R'\n",
+                    args[i][0]);
+            printUsage(args[0], i, args[i]);
+         }
+         break;
+      default:
+         printUsage(args[0], i, args[i]);
+      }
+   }
+   *PRE = pre;
+   *BLASK = blask;
+   *BV = RIGHT;
+   return(outf);
+}
+
+#define URISMNMUL 1
+ATL_mmnode_t *doGenSyrkSrch(char pre, int blask, int bv, ATL_mmnode_t *mp)
+/*
+ * RETURNS: ptr to best generated case matching unrestricted SYRK kernel
+ *   criteria.  Currently, generated kernel must have same mu/nu as mp
+ */
+{
+   ATL_mmnode_t *gp, *p;
+   unsigned int MB=mp->mbB, NB=mp->nbB, KB=mp->kbB, KU;
+   double mf;
+
+   printf("   UNRESTRICTED SYRK SEARCH:\n");
+   gp = CloneMMNode(mp);
+   gp->ID = 0;
+   gp->blask = ATL_KSYRK;
+   if (gp->genstr)
+      free(gp->genstr);
+   if (gp->comp)
+      free(gp->comp);
+   if (gp->cflags)
+      free(gp->cflags);
+   gp->comp = gp->cflags = gp->genstr = NULL;
+   if (gp->rout)
+      free(gp->rout);
+   gp->rout = DupString("ATL_tmp.c");
+   gp->flag = ((gp->flag|(1<<MMF_KRUNTIME)) & 
+               (~((1<<MMF_X87)|(1<<MMF_KUISKB))));
+   if (FLAG_IS_SET(gp->flag, MMF_KVEC))
+      gp->ku = gp->vlen;
+   else
+   {
+      unsigned ku=Mmin(gp->ku,4);
+      while (gp->kbB % ku)
+         ku--;
+      gp->ku = ku;
+   }
+/*
+ * Time this kernel, and then try with BREG1 & NOBCAST if appropriate
+ */
+   mf = TimeMMKernel(0, 0, gp, pre, MB, NB, KB, 1, 0, -1);
+   printf("      GEN B=(%u,%u,%u), U=(%u,%u,%u), mf=%.2f, rat=%.4f\n",
+          MB, NB, KB, gp->mu, gp->nu, gp->ku, mf, mf/mp->mflop[0]);
+   gp->mflop[0] = mf;
+   p = CloneMMNode(gp);
+   p->flag |= (1<<MMF_BREG1);
+   p->mflop[0] = TimeMMKernel(0, 0, p, pre, MB, NB, KB, 1, 0, -1);
+   printf("         BREG1 mf=%.2f, rat=%.4f\n", 
+          p->mflop[0], p->mflop[0]/mp->mflop[0]);
+   if (p->mflop[0] > gp->mflop[0]) /* BREG1 got faster! */
+   {                               /* keep fastest in gp */
+      ATL_mmnode_t *p0=p;
+      p = gp;
+      gp = p0;
+   }
+   else
+      p->flag &= ~(1<<MMF_BREG1);
+/*
+ * See if we can time using splat code
+ */
+   if (p->vlen > 1 && (p->nu % p->vlen == 0))
+   {
+      p->flag |= 1<<MMF_NOBCAST;
+      p->mflop[0] = TimeMMKernel(0, 0, p, pre, MB, NB, KB, 1, 0, -1);
+      printf("         SPLAT mf=%.2f, rat=%.4f\n", 
+             p->mflop[0], p->mflop[0]/mp->mflop[0]);
+      if (p->mflop[0] > gp->mflop[0]) /* BREG1 got faster! */
+      {                               /* keep fastest in gp */
+         ATL_mmnode_t *p0=p;
+         p = gp;
+         gp = p0;
+      }
+   }
+   KillMMNode(p);
+/*
+ * Take fastest of ipmen code and best generated SYRK kernel
+ */
+   #ifndef URISMNMUL
+      p = ReadMMFileWithPath(pre, "res", "gursyrk.sum");
+      printf("         gusyrk U=(%u,%u,%u) mf=%.2f, rat=%.4f\n", 
+             p->mu, p->nu, p->ku, p->mflop[0], p->mflop[0]/mp->mflop[0]);
+      p->mflop[0] = TimeMMKernel(0, 0, p, pre, MB, NB, KB, 1, 0, -1);
+      if (p->mflop[0] > gp->mflop[0])
+      {                               /* keep fastest in gp */
+         ATL_mmnode_t *p0=p;
+         p = gp;
+         gp = p0;
+      }
+      KillMMNode(p);
+   #endif
+   printf("   UNRESTRICTED SYRK SEARCH DONE\n");
+   return(gp);
+}
+
+void doSyrkSrch(char pre, int blask, int bv, ATL_mmnode_t *mp, ATL_mmnode_t *ub)
+/*
+ * mp: matmul that unrestricted kernel must match
+ * ub: base ptr to all user cases that have been timed
+ */
+{
+   ATL_mmnode_t *sq=NULL, *ur=NULL, *p, *gb;
+   unsigned int MU=mp->mu, NU=mp->nu, MB=mp->mbB, NB=mp->nbB, KB=mp->kbB;
+/*
+ * Find best mu=nu and mp-matching kernel in user cases
+ */
+   for (p=ub; p; p = p->next)
+   {
+      if (p->mu == p->nu)
+      {
+         if (!sq)
+            sq = p;
+         else if (p->mflop[0] > sq->mflop[0])
+            sq = p;
+      }
+      #ifdef URISMNMUL
+      if (p->mu == MU && p->nu == NU)
+      #endif
+      {
+         if (!ur)
+            ur = p;
+         else if (p->mflop[0] > ur->mflop[0])
+            ur = p;
+      }
+   }
+/*
+ * Get best square generated case, and retime with proper blocking, and
+ * write best-case out to sqsyrk.sum
+ */
+   printf("FINDING BEST MU=NU SYRK KERNEL:\n");
+   gb = ReadMMFileWithPath(pre, "res", "gAMSYRK.sum");
+   assert(gb);
+   gb->mflop[0] = TimeMMKernel(0, 0, gb, pre, MB, NB, KB, 1, 0, -1);
+   printf("   GEN U=(%u,%u,%u), mf=%.2f, rat=%.4f\n", gb->mu, gb->nu, gb->ku,
+          gb->mflop[0], gb->mflop[0]/mp->mflop[0]);
+   if (!sq)
+      sq = gb;
+   else 
+   {
+          printf("   ID=%u '%s', mf=%.2f, rat=%.4f\n", sq->ID,sq->rout,
+                 sq->mflop[0], sq->mflop[0]/mp->mflop[0]);
+      if (gb->mflop[0] > sq->mflop[0])
+         sq = gb;
+   }
+   printf("DONE MU=NU SYRK SEARCH, BEST=%u, %2.f\n", sq->ID, sq->mflop[0]);
+   sq = CloneMMNode(sq);
+   sq->mflop[1] = sq->mflop[0] / mp->mflop[0];
+   if (pre == 'c' || pre == 'z')
+      sq->flag |= 1<<MMF_COMPLEX;
+   WriteMMFileWithPath(pre, "res", "sqsyrk.sum", sq);
+   KillMMNode(sq);
+   KillMMNode(gb);
+
+   gb = doGenSyrkSrch(pre, blask, bv, mp);
+   if (!ur)
+      ur = gb;
+   else if (gb->mflop[0] > ur->mflop[0])
+      ur = gb;
+   ur = CloneMMNode(ur);
+   ur->mflop[1] = ur->mflop[0] / mp->mflop[0];
+   if (pre == 'c' || pre == 'z')
+      ur->flag |= 1<<MMF_COMPLEX;
+   WriteMMFileWithPath(pre, "res", "ursyrk.sum", ur);
+   KillMMNode(ur);
+   KillMMNode(gb);
+}
+
+double getMul(ATL_mmnode_t *mp, ATL_mmnode_t *p)
+/*
+ * Adjust mflop rate between different unrolling block factors
+ */
+{
+   double mul = 1.0;
+   if (mp->kbB != p->kbB)
+      mul = ((double)mp->kbB) / ((double)p->kbB);
+   if (mp->nbB != p->nbB)
+      mul *= ((double)mp->nbB) / ((double)p->nbB);
+   if (mp->kbB != p->kbB)
+      mul *= ((double)mp->nbB) / ((double)p->nbB);
+   return(mul);
+}
+
+void DoSyrkView(pre, blask, bv)
+{
+   ATL_mmnode_t *mb, *sq, *ur, *mp, *sqb=NULL, *urb=NULL, *sqp, *urp;
+   unsigned int sqnu, sqku, mu, nu, ku;
+/*
+ * Creates raw material for view, mflop entry: 0:sqsyrk, 1:ursyrk, 2:gemm
+ */
+   sq = ReadMMFileWithPath(pre, "res", "sqsyrk.sum");
+   ur = ReadMMFileWithPath(pre, "res", "ursyrk.sum");
+   mb = ReadMMFileWithPath(pre, "res", "ipmen.sum");
+   assert(sq && ur && mb);
+   sqnu = sq->nu;
+   sqku = sq->ku;
+   mu = ur->mu;
+   nu = ur->nu;
+   ku = ur->ku;
+   printf("TIMING FOR SYRK VIEWS:\n");
+   for (mp=mb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *p;
+      double mf;
+      p = CloneMMNode(sq);
+      p->mbB = p->nbB = ((mp->nbB+sqnu-1)/sqnu)*sqnu;
+      p->kbB = ((mp->kbB+sqku-1)/sqku)*sqku;
+      mf = TimeMMKernel(0, 0, p, pre, p->mbB, p->nbB, p->kbB, 1, 0, -1);
+      p->mflop[0] = mf * getMul(mp,p);
+      printf("   SQ B=(%u,%u,%u), amm=%.0f; SYRK=%.0f,(%.0f), rat=%.4f\n",
+             p->mbB, p->nbB, p->kbB, mp->mflop[0], p->mflop[0], mf, 
+             p->mflop[0]/mp->mflop[0]);
+      if (!sqb)
+         sqp = sqb = p;
+      else
+      {
+         sqp->next = p;
+         sqp = p;
+      }
+
+      p = CloneMMNode(ur);
+      p->mbB = ((mp->mbB+mu-1)/mu)*mu;
+      p->nbB = ((mp->nbB+nu-1)/nu)*nu;
+      p->kbB = ((mp->kbB+ku-1)/ku)*ku;
+      mf = TimeMMKernel(0, 0, p, pre, p->mbB, p->nbB, p->kbB, 1, 0, -1);
+      printf("   UR B=(%u,%u,%u), amm=%.0f; SYRK=%.0f,(%.0f), rat=%.4f\n",
+             p->mbB, p->nbB, p->kbB, mp->mflop[0], p->mflop[0], mf, 
+             p->mflop[0]/mp->mflop[0]);
+      p->mflop[0] = mf * getMul(mp,p);
+      if (!urb)
+         urp = urb = p;
+      else
+      {
+         urp->next = p;
+         urp = p;
+      }
+   }
+   WriteMMFileWithPath(pre, "res", "sqsyrk_view.sum", sqb);
+   WriteMMFileWithPath(pre, "res", "ursyrk_view.sum", urb);
+   printf("DONE TIMING FOR SYRK VIEWS:\n");
+}
+
+void doSearch(char pre, int blask, int bv)
+{
+   char ln[128];
+   ATL_mmnode_t *bp, *ub;
+/*
+ * Read gemm file with correct blocking
+ */
+   if (blask == ATL_KSYRK)
+      bp = ReadMMFileWithPath(pre, "res", "ipmen.sum");
+   else if (bv&(1<<BV_RIGHT))
+      bp = ReadMMFileWithPath(pre, "res", "ipnek.sum");
+   else
+      bp = ReadMMFileWithPath(pre, "res", "ipmek.sum");
+   assert(bp);
+   while (bp->next)
+      bp = KillMMNode(bp);
+/*
+ * Time all user cases with that blocking, and get timing results
+ */
+   assert(sprintf(ln, "make res/%cu%stime.sum pre=%c mb=%u nb=%u kb=%u", 
+                  pre, blnms[blask], pre, bp->mbB, bp->nbB, bp->kbB) < 128);
+   if (system(ln))
+   {
+      fprintf(stderr, "FAILED: '%s'!\n", ln);
+      assert(0);
+   }
+   ln[23] = '\0';
+   ub = ReadMMFile(ln+5);
+   if (blask == ATL_KSYRK)
+   {
+      doSyrkSrch(pre, blask, bv, bp, ub);
+      DoSyrkView(pre, blask, bv);
+   }
+
+   KillAllMMNodes(ub);
+   KillMMNode(bp);
+}
+
+int main(int nargs, char **args)
+{
+   char *outf;
+   unsigned int blask, bv;
+   char pre;
+   outf = getFlags(nargs, args, &pre, &bv, &blask);
+   doSearch(pre, blask, bv);
+}
 @ROUT ublassrch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2018
 #include "atlas_mmtesttime.h"
@@ -40796,13 +41156,23 @@ double Mjoin(PATL,ipsyrkInfo)
  * The main kernel search should invoke this routine with proper blocking
  * and then incorporate the results into full search.
  */
+#define BV_TEST 0
+#define BV_TIME 1
+#define BV_ALLTIME 2  /* write out all timing files, not just best */
+#define BV_MUENU 3    /* MU == NU restriction */
+#define BV_MUNUMUL 4  /* MU%NU==0 or NU%MU == 0 */
+#define BV_ALLRESTRICT ((1<<BV_MUENU)|(1<<BV_MUNUMUL))
 ATL_mmnode_t *GetWorkingKerns
-   (char pre, int blask, int RIGHT, int M, int N, int K)
+   (char *inf, char pre, int bv, int blask, int RIGHT, int M, int N, int K)
 {
    ATL_mmnode_t *bp, *p;
    char *nm;
    char fnm[128], wnm[128];
 
+   if (pre == 'z')
+      pre = 'd';
+   else if (pre == 'c')
+      pre = 's';
    switch(blask)
    {
    case ATL_KTRSM:
@@ -40815,18 +41185,24 @@ ATL_mmnode_t *GetWorkingKerns
       nm = "syrk";
       break;
    }
-   if (blask == ATL_KTRMM)
-      sprintf(wnm, "%s%cWORK.idx", nm, RIGHT?'R':'L');
+   if (!inf)
+   {
+      if (blask == ATL_KTRMM)
+         sprintf(wnm, "u%s%cWORK.idx", nm, RIGHT?'R':'L');
+      else
+         sprintf(wnm, "u%sWORK.idx", nm);
+      bp = ReadMMFileWithPath(pre, "res", wnm);
+      if (bp)
+         return(bp);
+      if (blask == ATL_KTRMM)
+         sprintf(fnm, "AMMCASES/%c%s%ccases.idx", pre, nm, RIGHT?'R':'L');
+      else
+         sprintf(fnm, "AMMCASES/%c%scases.idx", pre, nm);
+   }
    else
-      sprintf(wnm, "%sWORK.idx", nm);
-   bp = ReadMMFileWithPath(pre, "res", wnm);
-   if (bp)
-      return(bp);
-   if (blask == ATL_KTRMM)
-      sprintf(fnm, "AMMCASES/%c%s%ccases.idx", pre, nm, RIGHT?'R':'L');
-   else
-      sprintf(fnm, "AMMCASES/%c%scases.idx", pre, nm);
-   printf("TESTING USER CONTRIB CASES FROM '%s':\n", fnm);
+     strcpy(fnm, inf);
+   if (bv&(1<<BV_TEST))
+      printf("TESTING USER CONTRIB CASES FROM '%s':\n", fnm);
    p = bp = ReadMMFile(fnm);
    while (p)
    {
@@ -40842,7 +41218,7 @@ ATL_mmnode_t *GetWorkingKerns
          p->blask = blask;
       if ((blask == ATL_KTRMM || blask == ATL_KTRSM) && RIGHT)
          p->flag |= (1<<MMF_RIGHT);
-      if (blask == ATL_KTRMM)  /* no test for TRMM yet! */
+      if (!(bv&(1<<BV_TEST)) || blask == ATL_KTRMM)  /* no test for TRMM yet! */
          continue;             /* so just declare everything works */
       FAIL = MMKernelFailsTest(pre, m, n, K, 1, p);
       if (!FAIL)
@@ -40864,7 +41240,9 @@ ATL_mmnode_t *GetWorkingKerns
       }
       p = next;
    }
-   WriteMMFileWithPath(pre, "res", wnm, bp);
+   if (!inf && (bv&(1<<BV_TEST)))
+      WriteMMFileWithPath(pre, "res", wnm, bp);
+   return(bp);
 }
 
 void printUsage(char *name, int ierr, char *flag)
@@ -40875,22 +41253,34 @@ void printUsage(char *name, int ierr, char *flag)
    else if (ierr < 0)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags]:\n", name);
-   fprintf(stderr, "   -p [s,d]: set precision prefix (d) \n");
+   fprintf(stderr, "   -p [s,d,c,z]: set precision prefix (d) \n");
+   fprintf(stderr, "   -i <infile> : list of kernels to search\n");
+   fprintf(stderr, "   -o <outfile> : filename to write best kernel\n");
    fprintf(stderr, "   -k [syrk,trmm,trsm] : blas kern to search\n");
    fprintf(stderr, "   -S U/L : Left or Right side (trmm/trsm only)\n");
    fprintf(stderr, "   -D <d1> <d2> : paired dims for kern.  "
                    "First dim M for tr, N for syrk\n");
+   fprintf(stderr, "   -t [1,0] : do/do not time kernels\n");
+   fprintf(stderr, "   -T [1,0] : do/do not test kernels\n");
+   fprintf(stderr, "   -r [restrict] : restrict search to some kernels:\n");
+   fprintf(stderr,"      alltime    : output full time list, not just best.\n");
+   fprintf(stderr, "      MU=NU      : only try kerns with mu == nu\n");
+   fprintf(stderr, "      MUNUmul    : mu multiple of nu, or vice versa\n");
    exit(ierr ? ierr : -1);
 }
-ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BLASK, 
-                       int *M, int *N, int *K)
+
+ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BV, int *BLASK, 
+                       int *M, int *N, int *K, char **OUTF)
 {
-   int i, blask=ATL_KTRSM, d1=240, d2=240, RIGHT=0;
-   char *kern=NULL;
+   int i, k, bv, blask=ATL_KTRSM, d1=240, d2=240, RIGHT=0;
+   char *kern=NULL, *inf=NULL;
    char pre = 'd';
 
+   bv = (1<<BV_TEST)|(1<<BV_TIME);
+   *OUTF = NULL;
    for (i=1; i < nargs; i++)
    {
+      int FLG=BV_TEST;
       if (args[i][0] != '-')
          printUsage(args[0], i, args[i]);
       switch(args[i][1])
@@ -40900,6 +41290,29 @@ ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BLASK,
             printUsage(args[0], i-1, NULL);
          pre = tolower(args[i][0]);
          assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+         break;
+      case 'i': /* -i <infile> */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         inf = args[i];
+         break;
+      case 'o': /* -o <outfile> */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         *OUTF = args[i];
+         break;
+      case 't': /* -t [0,1] : don't/do time kernels */
+         FLG=BV_TIME;
+      case 'T': /* -T [0,1] : don't/do test kernels */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         k = atoi(args[i]);
+         if (k)
+            k = 1;
+         if (k)  /* turn on bit */
+            bv |= 1<<FLG;
+         else
+            bv &= ~(1<<FLG);
          break;
       case 'k': /* -k [trsm,trmm,syrk] */
          if (++i >= nargs)
@@ -40914,6 +41327,22 @@ ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BLASK,
          {
             fprintf(stderr,"UNKNOWN BLAS NAME: '%s', expect [trsm,trmm,syrk]\n",
                     args[i]);
+            printUsage(args[0], i, args[i]);
+         }
+         break;
+      case 'r': /* -r [MU=NU,MUNUmul] */
+         if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         if (!strcmp(args[i], "MU=NU"))
+            bv |= 1<<BV_MUENU;
+         else if (!strcmp(args[i], "MUNUmul"))
+            bv |= 1<<BV_MUNUMUL;
+         else if (!strcmp(args[i], "alltime"))
+            bv |= 1<<BV_ALLTIME;
+         else
+         {
+            fprintf(stderr,"UNKNOWN RESTRICTION: '%s', expect "
+                    "[MU=NU,MUNUmul,alltime]\n", args[i]);
             printUsage(args[0], i, args[i]);
          }
          break;
@@ -40965,15 +41394,99 @@ ATL_mmnode_t *getFlags(int nargs, char **args, char *PRE, int *BLASK,
    }
    *PRE = pre;
    *BLASK = blask;
-   return(GetWorkingKerns(pre, blask, RIGHT, *M, *N, *K));
+   *BV = bv;
+   return(GetWorkingKerns(inf, pre, bv, blask, RIGHT, *M, *N, *K));
+}
+
+ATL_mmnode_t *applyRestrict(ATL_mmnode_t *bp, int bv)
+{
+   ATL_mmnode_t *prev=NULL, *p=bp;
+   if ((bv&BV_ALLRESTRICT) == 0)
+      return(bp);
+   while(p)
+   {
+      ATL_mmnode_t *next=p->next;
+      int KILL=0;
+      if (bv&(1<<BV_MUENU))
+         KILL |= p->mu != p->nu;
+      if ((bv&(1<<BV_MUNUMUL)) && p->mu%p->nu && p->nu%p->mu)
+         KILL = 1;
+      if (KILL)
+      {
+         if (prev)
+            prev->next = KillMMNode(p);
+         else
+            bp = KillMMNode(p);
+      }
+      else
+         prev = p;
+      p = next;
+   }
+   return(bp);
+}
+
+void doTime(char pre, int bv, int blask, int M, int N, int K, ATL_mmnode_t *bp,
+            char *outf)
+{
+   ATL_mmnode_t *p, *pB=NULL;
+   char fn[64];
+   char *blnm;
+   double mfB=0.0;
+   
+   if (blask == ATL_KTRSM)
+      blnm = "trsm";
+   else 
+      blnm = (blask == ATL_KTRMM) ? "trmm" : "syrk";
+   printf("TIMING %s KERNELS:\n", blnm);
+   for (p=bp; p; p = p->next)
+   {
+      double mf;
+      p->mbB = M;
+      p->nbB = N;
+      p->kbB = K;
+      mf = TimeMMKernel(0, 0, p, pre, M, N, K, 1, 0, -1);
+      printf("   %d '%s' D=(%u,%u,%u), MFLOPS=%.2f\n", 
+             p->ID, p->rout, M, N, K, mf);
+      p->mflop[0] = mf;
+      if (mf > mfB)
+      {
+         mfB = mf;
+         pB = p;
+      }
+   }
+   if (!pB)
+   {
+      printf("No kernels, no timing.\n");
+      return;
+   }
+   printf("DONE TIMING, BEST IS: %d '%s' MFLOPS=%.2f\n", pB->ID, pB->rout, mfB);
+   if (!outf)
+   {
+      sprintf(fn, "res/%cu%s.sum", pre, blnm);
+      outf = fn;
+   }
+   if (bv&(1<<BV_ALLTIME))
+      WriteMMFile(outf, bp);
+   else
+   {
+      p = pB->next;
+      pB->next = NULL;
+      WriteMMFile(outf, pB);
+      pB->next = p;
+   }
 }
 
 int main(int nargs, char **args)
 {
    ATL_mmnode_t *bp;
-   int blask, MB, NB, KB;
+   char *outf;
+   int blask, bv, MB, NB, KB;
    char pre;
-   bp = getFlags(nargs, args, &pre, &blask, &MB, &NB, &KB);
+   bp = getFlags(nargs, args, &pre, &bv, &blask, &MB, &NB, &KB, &outf);
+   bp = applyRestrict(bp, bv);
+   if (bv&(1<<BV_TIME))
+      doTime(pre, bv, blask, MB, NB, KB, bp, outf);
+   KillAllMMNodes(bp);
    return(0);
 }
 @ROUT ublaskern3x2.c 

@@ -113,12 +113,16 @@ ATL_asmdecor(ATL_USERMM):
  */
    mov %rdi, nmu
      prefA((pA))
-   mov %rsi, nnu
+   #ifndef ATL_KSYRK_
+      mov %rsi, nnu
+   #endif
    mov %r8, pB
      prefA(64(pA))
    mov %r9, pC
      prefA(128(pA))
-   mov nnu, nnu0
+   #ifndef ATL_KSYRK_
+      mov nnu, nnu0
+   #endif
    movq 8(%rsp), pfA      /* pfA = pAn */
    mov KK, incAm
       prefB((pB))
@@ -142,6 +146,10 @@ ATL_asmdecor(ATL_USERMM):
       shl $3, incB
    #else
       shl $4, incB
+   #endif
+   #ifdef ATL_KSYRK_
+      xor nnu, nnu   /* nnu = 0, used as j counter for SYRK */
+      mov $32, nnu0  /* nnu0 = mu = i+mu for outer loop diag */
    #endif
 
    ALIGN16
@@ -324,10 +332,19 @@ KDONE:
 
          add $6*SZ, pB
          add $1536, pC  /* pC += MU*NU*sizeof = 32*6*8 = 1536 */
+   #ifdef ATL_KSYRK_
+         add $6, nnu
+         cmp nnu0, nnu
+         mov pA0, pA
+      jl NLOOP
+      xor nnu, nnu
+      add $32, nnu0
+   #else
          sub $1, nnu
          mov pA0, pA
       jnz NLOOP
       mov nnu0, nnu
+    #endif
       add incAm, pA0
       mov pB0, pB
       mov pA0, pA
