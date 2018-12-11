@@ -38060,7 +38060,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
    const char *sh = (UR) ? "ur" : "sq";
    const char *SH = (UR) ? "UR" : "SQ";
    const char *ums = (UR) ? "UR":"";
-   int ial, ibe, itr, flg;
+   int ial, ibe, itr, isd, flg;
    const char be[3] = {'0', '1', 'n'};
    char bes[4] = {'1', 'N', 'X', '0'};
    char trs[4] = {'N', 'T', 'C', 'H'};
@@ -38155,9 +38155,11 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
    }
 /*
  * Prototype/rename all A cpy routs: ATL_<pre>cm2am_syrk<TA>
- * UR case uses gemm's A/B copy, so no need for UR
+ * unrestricted UR can have mu==nu (like SQ). For mu==nu, we will need only 
+ * A copy with alpha1 variation. we need all-alpha versions of A/B copies 
+ * otherwise.
  */
-   if (!UR)
+   if (mb->mu == mb->nu)
    {
       flg = (1<<CPF_TOBLK)|(1<<CPF_AL1);
       flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
@@ -38186,6 +38188,108 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
          "ATL_%ca2blk_syrk%c ATL_%ca2blk_%ssyrk%c\n#endif\n",
             pre, tr,  pre, tr,  pre, sh, tr);
       }
+   }
+/*
+ * URSYRK can use different mu/nu/ku than gemm. They won't share the copies 
+ * then (unlike UM). 
+ * syrkN : TA --> noTrans           TB --> Trans/ConjTrans
+ * syrkT : TA --> Trans/ConjTrans   TB --> noTrans    
+ */
+   else /* UR with mu!=nu */
+   {
+      flg = (1<<CPF_TOBLK);
+      flg |= (pre == 'd' || pre == 's') ? (1<<CPF_REAL):0;
+      flg |= (pre == 'c' || pre == 's') ? (1<<CPF_SINGLE):0;
+      cb = GetCopyNodeFromMM(flg, mb, NULL);
+      assert(cb);
+      for (itr=0; itr < 2; itr++) /* syrkN, syrkT */
+      {
+         char tr = itr ? 'T' : 'N';
+         if (!itr) /* N case... both A & B: AT */
+            flg |= (1<<CPF_TRANS);
+         else
+            flg &= ~(1<<CPF_TRANS);
+         
+         fprintf(fp, "/* syrk%c case */\n", tr);
+         for (isd=0; isd < 2; isd++)
+         {
+            char sd = isd ? 'b' : 'a';
+            if (!isd) /* N case... both A & B: AT */
+               flg |= (1<<CPF_ABLK);
+            else
+               flg &= ~(1<<CPF_ABLK);
+            fprintf(fp, 
+               "/* %c2blk: mu=%d, nu=%d, ku=%d*/\n", sd, mb->mu,mb->nu,mb->ku);
+            for (ial=0; ial < 3; ial++) /* used bes as alp. so, skialp 4->0 */
+            {
+               if (bes[ial] == '1')
+               {
+                  cb->flag &= ~((1<<CPF_ALN)|(1<<CPF_ALX));
+                  cb->flag |= (1<<CPF_AL1);
+               }
+               else if (bes[ial] == 'N')
+               {
+                  cb->flag &= ~((1<<CPF_ALX)|(1<<CPF_AL1));
+                  cb->flag |= (1<<CPF_ALN);
+               }
+               else if (bes[ial] == 'X')
+               {
+                  cb->flag &= ~((1<<CPF_ALN)|(1<<CPF_AL1));
+                  cb->flag |= (1<<CPF_ALX);
+               }
+               if ( itr || isd || ial)  
+                  free(cb->rout);
+               if (pre == 'd' || pre == 's')
+               {
+                  cb->rout = GetCopyName(cb, 0);
+                  fprintf(fp, "#define ATL_%c%c2blk_%ssyrk%c_a%c %s\n",
+                              pre, sd, sh, tr, bes[ial], cb->rout);
+                  fprintf(fp, "void ATL_%c%c2blk_%ssyrk%c_a%c", 
+                        pre, sd, sh, tr, bes[ial]);
+                  fprintf(fp,
+               "(ATL_CSZT,ATL_CSZT,const TYPE,const TYPE*,ATL_CSZT,TYPE*);\n");
+               }
+               else /* complex... consider Conj_ */
+               {  
+/*
+ *                conj applied on syrkN && B2BLK or, syrkT && A2BLK 
+ */
+                  if ( (!itr && !isd) || (itr && isd) ) 
+                  {
+                     cb->rout = GetCopyName(cb, 0);
+                     fprintf(fp, "#define ATL_%c%c2blk_%ssyrk%c_a%c %s\n",
+                                 pre, sd, sh, tr, bes[ial], cb->rout);
+                  }
+                  else /* conj */
+                  {
+                     /* strkN B2blk --> AHg, syrkT A2blk --> ACg */
+                     cb->flag |= (1<<CPF_CONJ);
+                     cb->rout = GetCopyName(cb, 0);
+                     fprintf(fp, "#ifdef Conj_\n");
+                     fprintf(fp, "#define ATL_%c%c2blk_%ssyrk%c_a%c %s\n",
+                                 pre, sd, sh, tr, bes[ial], cb->rout);
+                     free(cb->rout);
+                     fprintf(fp, "#else\n");
+                     cb->flag &= ~(1<<CPF_CONJ);
+                     cb->rout = GetCopyName(cb, 0);
+                     fprintf(fp, "#define ATL_%c%c2blk_%ssyrk%c_a%c %s\n",
+                                 pre, sd, sh, tr, bes[ial], cb->rout);
+                     fprintf(fp, "#endif\n");
+                  }
+                  fprintf(fp, "void ATL_%c%c2blk_%ssyrk%c_a%c", 
+                           pre, sd, sh, tr, bes[ial]);
+                  fprintf(fp, "(ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,"
+                        "ATL_CSZT,TYPE*,TYPE*);\n"); 
+               }
+               fprintf(fp, "#ifndef ATL_%c%c2blk_syrk%c_a%c\n   #define "
+                  "ATL_%c%c2blk_syrk%c_a%c ATL_%c%c2blk_%ssyrk%c_a%c\n#endif\n",
+                  pre, sd, tr, bes[ial], pre, sd, tr, bes[ial], pre, sd,sh, tr, 
+                  bes[ial]);
+            
+            }
+         }
+      }
+      KillAllCopyNodes(cb);
    }
 /*
  * Prototype all C cpy routs: ATL_<pre>[sq,um]SyrkIntoC_a<alp>_b<bet>
