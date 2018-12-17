@@ -2768,3 +2768,78 @@ void ATL_amL2skLNB_L2UT
       }
    }
 }
+@ROUT ATL_ge2mvecU
+#include "atlas_aux.h"
+void ATL_ge2mvecU
+/*
+ * Copies Upper triangular NxN column-major matrix G into compressed
+ * (blocks strictly below diagonal not stored) into contiguous access-major
+ * storage: pB = alpha*G.
+ *
+ * This function is used to copy B of TRMM when a block of B is used only
+ * for TRMM (accesses only a triangular piece), and not for GEMM (needs full
+ * B block).
+ *
+ * This copy used for 'Left', 'Lower' 'NoTrans', or 'Left', 'Upper', 'Trans'.
+ */
+(
+   ATL_CUINT N,         /* KxN A^T, with K==N */
+   ATL_CUINT KU,        /* zero pad K dim to ceil(K/KU)*KU */
+   ATL_CUINT NU,        /* zero pad to NU, NU elts from N dim contig */
+   const SCALAR alpha,  /* scale factor during copy */
+   const TYPE *G,       /* column-major transposed Lower matrix */
+   ATL_iptr_t ldg,      /* leading dimension of A */
+   TYPE *pB,            /* ptr to access-major output storage */
+)
+{
+   ATL_UINT j;
+   ATL_CUINT nnu = N/NU, NN=nnu*NU, nku=N/KU, KK=nku*KU;
+   const ATL_iptr_t incN = ldg*NU;
+/*
+ * Copy NU wide panel with each pass
+ */
+   for (j=0; j < NN; j += NU, G += incN)
+   {
+      ATL_CUINT KL = j + NU;
+/*
+ *    Copy those blocks strictly above diagonal
+ */
+      for (k=0; k < j; k++)
+      {
+         const TYPE *gc=G+k;
+         ATL_UINT u;
+         for (u=0; u < NU; u++, gc += ldg)
+            *pB++ = ATL_MulByALPHA(*gc);
+      }
+/*
+ *    Final NUxNU block needs zeros below diagonal
+ */
+      do
+      {
+         const TYPE *gc=G+k;
+         ATL_UINT u;
+         for (u=j; u < KL; u++, gc += ldg)
+         {
+            if (u >= k)
+               *pB++ = ATL_MulByALPHA(*gc);
+            else
+               *pB++ = ATL_rzero;
+         }
+      }
+      while (++k < KL);
+   }
+   if (NN != N) /* last block of size N%nu is non-zero! */
+   {
+      ATL_CUINT nu=N-NN;
+      ATL_UINT k;
+      for (k=0; k < N; k++)
+      {
+         const TYPE *ac=A+k;
+         for (u=0; u < nu; u++, ac += lda)
+            *pB++ = ATL_MulByALPHA(*ac);
+         do
+            *pB++ = ATL_rzero;
+         while (++u < NU);
+      }
+   }
+}
