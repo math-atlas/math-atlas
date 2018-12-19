@@ -13764,6 +13764,225 @@ void DoBlock(char pre, int flg, int verb)
    KillAllMMNodes(mmb);
 }
 
+void getUB(unsigned int bv, unsigned int B, unsigned int nreg,
+           unsigned int *VLEN, unsigned int *MU, unsigned int *NU, 
+           unsigned int *KU)
+/*
+ * Finds best near-square vlen,mu,nu multiple of B, under constraints bv
+ * VLEN on input is maximum VLEN, on output it may have been shortened on
+ * systems that support it (x86).
+ * bv: 0:KVEC, 1:BREG1
+ */
+{
+   const unsigned int maxBR=(bv&2) ? 1 : nreg;
+   unsigned int mu, nu, vlen=(*VLEN);
+   if (bv&1 || vlen==1) /* trying KVEC */
+   {
+      if (B*B+B+Mmin(B,maxBR) <= nreg) /* can fit C,A,B fully in regs */
+         mu = nu = B;
+      else
+      {
+         unsigned int i, U=1;
+/*
+ *       First, find largest square blocking that is a common factor of B
+ */
+ 
+         for (i=2; i <= B && i*i+i+Mmin(i,maxBR) <= nreg; i++)
+            if ((B/i)*i == B)
+               U = i;
+         mu = nu = U;
+/*
+ *       See if we can increase at least one unroll factor
+ */
+         if (U*(U+1)+U+Mmin(U+1,maxBR) <= nreg)
+         {
+            for (i=U+1; i <= B; i++)
+            {
+               if ((B/i)*i == B)
+               {
+                  if (mu*i+mu+Mmin(i, maxBR) <= nreg)
+                     nu = i;
+                  else
+                     break;
+               }
+            }
+         }
+      }
+   }
+   else /* MVEC needs mu multiple of VLEN */
+   {
+      assert(0);
+   }
+   *MU = mu;
+   *NU = nu;
+   *VLEN = vlen;
+   *KU = (bv&1) ? vlen : 1;
+}
+
+ATL_mmnode_t *getBest(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * Kills worst-performing node
+ * RETURNS: best performing node
+ */
+{
+   if (p0->mflop[0] > p1->mflop[0])
+   {
+      p1->rout = NULL;
+      KillMMNode(p1);
+   }
+   else
+   {
+      p0->rout = NULL;
+      KillMMNode(p0);
+      p0 = p1;
+   }
+   return(p0);
+}
+ATL_mmnode_t *DosqB(char pre, int flg, int nreg, int VLEN, unsigned int B)
+/*
+ * Finds best generated case for MB=NB=KB=B, with restriction that all 
+ * unrollings must common multiples of B (i.e. no padding allowed), and that
+ * it must be self cleaning (K is runtime, and is VLEN for kvec or [1,4] for
+ * mvec).  On systems supporting it, VLEN will be reduced to allow this to work
+ * if necessary.  This function designed to generate small NBs, particularly
+ * B=4,6,8,12,16,24,32
+ */
+{
+   ATL_mmnode_t *mpB, *mG, *mp;
+   unsigned int mu, nu, ku, MU, NU, vlen=VLEN;
+   double mf;
+   char *fn = "ATL_tmp.c";
+   @beginskip
+/*
+ * Get best-performing kernel to use as starting case
+ */
+   mp = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   assert(mp);
+   mG = FindMaxMflopMMQ(mp, 0);
+   mp = RemoveMMNodeFromQ(mp, mp);
+   KillAllMMNodes(
+   @endskip
+   printf("SEARCHING FOR BEST GENERATED KERNEL FOR SQUARE BLOCK %u\n", B);
+/*
+ * First generate a scalar case that works on all systems.  Find near-square
+ * mu,nu that divides B
+ */
+   vlen = 1;
+   getUB(0, B, nreg, &vlen, &mu, &nu, &ku); /* 1st arg: 0:KVEC, 1:BREG1 */
+/*
+ * 2nd arg of MMGetNodeGEN is bitvec: 0:NOBCAST, 1:BREG1, 2:FKO
+ */
+   mpB = MMGetNodeGEN(pre, 0, 0, mu, nu, ku, vlen, 0, 0, 0, fn);
+   mf = TimeMMKernel(0, 0, mpB, pre, B, B, B, 1, 0, -1);
+   mpB->mflop[0] = mf;
+   printf("   B=%u, U=(%u,%u,%u), VLEN=%u, BREG1=0, mf=%.2f\n", B, mu, nu, ku, 
+          vlen, mf);
+   getUB(1, B, nreg, &vlen, &MU, &NU, &ku);
+/*
+ * See if BREG1 allows for larger blocking
+ */
+   if (MU > mu || NU > nu)
+   {
+      mp = MMGetNodeGEN(pre, 2, 0, mu, nu, ku, vlen, 0, 0, 0, fn);
+      mf = TimeMMKernel(0, 0, mp, pre, B, B, B, 1, 0, -1);
+      printf("   B=%u, U=(%u,%u,%u), VLEN=%u, BREG1=1, mf=%.2f\n", B, mu, nu,
+             ku, vlen, mf);
+      mp->mflop[0] = mf;
+      mpB = getBest(mpB, mp);
+   }
+/*
+ * Now try KVEC kernels for this block size
+ */
+   vlen = VLEN;
+   while (vlen > B || B%vlen)
+      vlen >>= 1;
+   if (vlen > 1)
+   {
+      unsigned int bv=1; /* 0:KVEC, 1:BREG1 */
+      bv |= (mpB->flag>>(MMF_BREG1-1)) & 2;
+      mp = MMGetNodeGEN(pre, 2, 0, mu, nu, vlen, vlen, 1, 0, 0, fn);
+      mf = TimeMMKernel(0, 0, mp, pre, B, B, B, 1, 0, -1);
+      printf("   B=%u, U=(%u,%u,%u), VLEN=%u, BREG1=%u, KVEC=1 mf=%.2f\n", 
+             B, mu, nu, ku, vlen, (bv>>1)&2, mf);
+      mp->mflop[0] = mf;
+      mpB = getBest(mpB, mp);
+   }
+/*
+ * Now try MVEC kernels for this block size
+ */
+   if (vlen > 1)
+   {
+      unsigned int i, bv = (mpB->flag>>(MMF_BREG1-1)) & 2;
+      MU = mu*vlen;
+      ku = 1;
+/*
+ *    Adjust MU until it works
+ */
+      while (MU > B || B%MU)
+         MU -= vlen;
+      assert(MU >= vlen);
+      mu = MU / vlen;
+      for (i=nu+1; mu*i+mu+i <= nreg && i <= B; i++)
+         if (B%i == 0)
+            nu = i;
+      mp = MMGetNodeGEN(pre, 0, 0, MU, nu, 1, vlen, 0, 0, 0, fn);
+      mf = TimeMMKernel(0, 0, mp, pre, B, B, B, 1, 0, -1);
+      printf("   B=%u, U=(%u,%u,%u), VLEN=%u, BREG1=0, MVEC=1 mf=%.2f\n", 
+             B, mu, nu, ku, vlen, mf);
+      mp->mflop[0] = mf;
+      mpB = getBest(mpB, mp);
+/*
+ *    See if splat code better than broadcast
+ */
+      if (nu%vlen == 0)
+      {
+         mp = MMGetNodeGEN(pre, 1, 0, MU, nu, 1, vlen, 0, 0, 0, fn);
+         mf = TimeMMKernel(0, 0, mp, pre, B, B, B, 1, 0, -1);
+         printf("   B=%u, U=(%u,%u,%u), VLEN=%u, SPLAT=1, MVEC=1 mf=%.2f\n", 
+                B, mu, nu, ku, vlen, mf);
+         mp->mflop[0] = mf;
+         mpB = getBest(mpB, mp);
+      }
+/*
+ *    See if we can improve perf by using only 1 reg for B
+ */
+      NU = nu;
+      for (i=nu+1; mu*i+mu+1 <= nreg && i <= B; i++)
+         if (B%i == 0)
+            NU = i;
+      if (NU != nu)
+      {
+         mp = MMGetNodeGEN(pre, 2, 0, MU, nu, 1, vlen, 0, 0, 0, fn);
+         mf = TimeMMKernel(0, 0, mp, pre, B, B, B, 1, 0, -1);
+         printf("   B=%u, U=(%u,%u,%u), VLEN=%u, BREG1=1, MVEC=1 mf=%.2f\n", 
+                B, mu, NU, ku, vlen, mf);
+         mp->mflop[0] = mf;
+         mpB = getBest(mpB, mp);
+         nu = mpB->nu;
+      }
+   }
+   printf("BEST KERNEL FOR B=%u: U=(%u,%u,%u), VL=%u, KVEC=%u\n"
+          "   BREG1=%u, SPLAT=%u, mf=%.2f\n", B, mpB->mu, mpB->nu, mpB->ku,
+          mpB->vlen, (mpB->flag>>MMF_KVEC)&1, (mpB->flag>>MMF_BREG1)&1, 
+          (mpB->flag>>MMF_NOBCAST)&1, mpB->mflop[0]);
+   mpB->rout = DupString(mpB->rout);
+   return(mpB);
+}
+
+void DosqBs(char pre, int flg, int nreg, int VLEN)
+{
+   #define NUM_B 7
+   ATL_mmnode_t *mp, *mb=NULL;
+   int i;
+   for (i=32; i; i -= 4)
+   {
+      mp = DosqB(pre, flg, nreg, VLEN, i);
+      mp->next = mb;
+      mb = mp;
+   }
+   WriteMMFileWithPath(pre, "res", "gipsqmm.sum", mb);
+   KillAllMMNodes(mb);
+}
 void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp, 
                     int nb, int kb)
 /* 
@@ -15014,6 +15233,7 @@ int main(int nargs, char **args)
    if (flg&4)     /* If I just wanted nreg calc */
       return(0);  /* then I'm done */
    DoBlock(pre, flg, verb);
+/*   DosqBs(pre, flg, nreg, VLEN); */
    DoSyrkAmmUR(pre, flg, verb, nreg);
    DoSyrk(flg, verb, pre, nreg, NB, VLEN);
    DoTrmm(pre, flg, verb, nreg);
@@ -36085,6 +36305,80 @@ void do_ipdek(int verb, char pre, int NEK)
    KillAllMMNodes(mb);
 }
 
+ATL_mmnode_t *findBestBigSQ(char pre, int verb, ATL_mmnode_t *mmb)
+/*
+ * This search finds best-performing asymptotic square case with restrictions
+ * that K is runtime, and ku is 1 for MVEC or VLEN for KVEC
+ */
+{
+   ATL_mmnode_t *pb=NULL, *p;
+   int i, k, nbN;
+/*
+ * Create new list including only kernels that obey our restrictions
+ */
+   for (p=mmb; p; p = p->next)
+   {
+      int maxKU=(FLAG_IS_SET(p->flag, MMF_KVEC) ? p->vlen : 4);
+      if (!p->ID) /* generated kernels are adapted to restrictions */
+      {
+         ATL_mmnode_t *tp;
+         tp = CloneMMNode(p);
+         tp->kbmin = tp->kbmax = 0;
+         tp->flag |= (1<<MMF_KRUNTIME);
+         tp->flag &= ~(1<<MMF_KUISKB);
+         if (tp->ku > maxKU)
+            tp->ku = maxKU;
+         tp->next = pb;
+         pb = tp;
+      }
+      else if (FLAG_IS_SET(p->flag, MMF_KRUNTIME))
+      {
+         if (p->ku <= maxKU && !p->kbmax && p->kbmin <= maxKU)
+         {
+            ATL_mmnode_t *tp;
+            tp = CloneMMNode(p);
+            tp->next = pb;
+            pb = tp;
+         }
+      }
+   }
+   p = AddUniquePerfMMKernsToList(NULL, pb);
+   assert(p);  /* need to generate if this happens */
+   KillAllMMNodes(pb);
+   pb = p;
+   #ifdef LLPC_SZ
+       nbN = minSquareNB(pre, LLPC_SZ, pb);
+   #elif defined(LLC_SZ)
+       nbN = minSquareNB(pre, LLC_SZ, pb);
+   #elif defined(L1C_SZ)
+       nbN = minSquareNB(pre, L1C_SZ, pb);
+       if (nbN < 120)
+          nbN = 120;
+   #else
+      nbN = 120;
+   #endif
+   i = ATL_CountNumberOfMMNodes(pb);
+   if (i > 1)
+   {
+      printf("ELIMINATING UNCOMPETITIVE KERNELS out of %u:\n", i);
+      pb = ElimSlowKern(pre, verb, pb, nbN, nbN, nbN, 0, 0, 0.88);
+      k = ATL_CountNumberOfMMNodes(pb);
+      printf("ELIMINATED %u KERNELS, %u LEFT TO TIME\n", i-k, k);
+      p = FindMaxMflopMMQ(pb, 0);
+   }
+   else
+      p = pb;
+   p = CloneMMNode(p);
+   printf("\nFINDING BEST BLOCK FACTOR FOR ID=%u, U=(%u,%u,%u), VL=%u %s\n", 
+          p->ID, p->mu, p->nu, p->ku, p->vlen, p->ID ? p->rout : "gen");
+   MMExpandSQ(verb, pre, 0, 1, 0, p);
+   printf("FOR ID=%u, U=(%u,%u,%u), VL=%u %s, BEST B=%u\n\n",
+          p->ID, p->mu, p->nu, p->ku, p->vlen, p->ID ? p->rout : "gen", p->nbB);
+
+   KillAllMMNodes(pb);
+   return(p);
+}
+
 void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
 /*
  * This search simply finds best performing kernel, produces ip.sum
@@ -36518,6 +36812,10 @@ int main(int nargs, char **args)
    for (mp=mmb; mp; mp = mp->next)
       mp->flag = ((mp->flag) & (~MMF_MVSET)) | ((1<<MMF_MVA) | (1<<MMF_MVB));
 
+   #if 0
+   mp = findBestBigSQ(pre, verb, mmb);
+   KillMMNode(mp);
+   #endif
    findBestIP(pre, verb, mmb, NULL);
    srch_men(pre, verb);
 #if 1   

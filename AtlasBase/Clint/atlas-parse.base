@@ -7977,6 +7977,54 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
          }
 @endproc
 
+int MMExpandSQ
+   (int verb, char pre, int tflag, int beta, int maxB, ATL_mmnode_t *mp)
+/*
+ * Assume U=LCM(MU,NU,KU), this search startes at B=MB=NB=KB=U and then tries
+ * increasing B and picks whichever provides the greatest speedup.
+ * Continues expanding B in this way until perf drops by around 3%.
+ * If maxB is non-zero, then it sets inclusive limit on growth of MB,NB,KB.
+ * RETURNS: best-performing B in range [LCM, maxB]
+ */
+{
+   const unsigned int mu=mp->mu, nu=mp->nu, ku=mp->ku;
+   unsigned int U, B, nbB;
+   double mfB;
+
+   if (mp->kbmax)
+   {
+      if (maxB)
+         maxB = Mmin(mp->kbmax, maxB);
+      else maxB = mp->kbmax;
+   }
+   if (!maxB)
+      maxB = (pre == 's' || pre == 'c') ? 512 : 480;
+   U = ATL_iLCM(mu, nu);
+   U = ATL_iLCM(U, ku);
+   assert(U <= maxB);
+   B = nbB = U;
+   mfB = TimeMMKernel(verb, tflag, mp, pre, B, B, B, beta, 0, -1);
+   printf("      ID=%d : B=%u maxB=%d mf=%.2f\n", mp->ID, B, maxB, mfB);
+
+   for (B=U+U; B <= maxB; B += U)
+   {
+      double mf;
+      mf = TimeMMKernel(verb, tflag, mp, pre, B, B, B, beta, 0, -1);
+      printf("      ID=%d : B=%u mf=%.2f\n", mp->ID, B, mf);
+      if (B > 60 && mf < 1.06)  /* quit if larger block has substantially */
+         break;                 /* worse perf than smaller */
+      if (mf > mfB)
+      {
+         nbB = B;
+         mfB = mf;
+      }
+   }
+   mp->mbB = mp->nbB = mp->kbB = nbB;
+   mp->mflop[0] = mfB;
+   assert(!MMKernelFailsTest(pre, nbB, nbB, nbB, beta, mp));
+   return(nbB);
+}
+
 @whiledef nm MNK MN_K
 double MMExpand@(nm)
    (int verb, char pre, int tflag, int beta, unsigned long sz,
