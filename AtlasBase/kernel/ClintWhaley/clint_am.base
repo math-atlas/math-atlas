@@ -18711,3 +18711,311 @@ ATL_asmdecor(ATL_USERMM):
  */
    addi r1, r1, FSIZE
    blr
+@ROUT ATL_mkmm24x4x2_avxz.S
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2018
+/*
+vmovapd (%rax), %zmm0 : 6 bytes
+vmovapd 0(%rax), %zmm0 : 6 bytes
+vmovapd -128(%rax), %zmm0 : 7 bytes
+vmovapd 256(%rax), %zmm0 : 7 bytes
+vmovapd -4096(%rax), %zmm0 : 7 bytes
+vmovapd 4096(%rax), %zmm0 : 7 bytes
+vmovapd 4100(%rax), %zmm0 : 10 bytes
+vmovapd (%rax,%r9), %zmm0 : 7 bytes
+---> appears can fit 13bit signed number in addressing mode, same for movupd
+ */
+#include "atlas_asm.h"
+#if defined(SCPLX) && !defined(SREAL)
+   #define SREAL 1
+#endif
+
+ 
+#if defined(SREAL)
+   #define FMAC vfmadd231ps   /* FMAC m256/r256, rs1, rd */
+   #define vmulpd vmulps
+   #define vsubpd vsubps
+   #define vaddpd vaddps
+   #define vmovapd vmovaps
+   #define SZ 4
+   #define szSH 2
+   #define BCAST_B vbroadcastsd
+
+/*      15  14  13  12   11  10   9   8   7   6   5   4    3   2   1   0
+ * c0={c7b,c7a,c6b,c6a, c5b,c5a,c4b,c4a, c3b,c3a,c2b,c2a, c1b,c1a,c0b,c0a}
+ * c1={cFb,cFa,cEb,cEa, cDb,cDa,cCb,cCa, cBb,cBa,cAb,cAa, c9b,c9a,c8b,c8a}
+ */
+   #define vvrsum2(c0_, c1_, t0_) \
+      vpermilps $0xD8, c0_, c0_ ; \
+/* c0={c7b,c6b,c7a,c6a, c5b,c4b,c5a,c4a, c3b,c2b,c3a,c2a, c1b,c0b,c1a,c0a}*/ \
+      vpermilps $0xD8, c1_, c1_ ; \
+/* c1={cFb,cEb,cFa,cEa, cDb,cCb,cDa,cCa, cBb,cAb,cBa,cAa, c9b,c8b,c9a,c8a}*/ \
+ \
+      vunpcklps c1_, c0_, t0_ ; \
+/* t0={cFa,c7a,cEa,c6a, cDa,c5a,cCa,c4a, cBa,c3a,cAa,c2a, c9a,c1a,c8a,c0a}*/ \
+      vunpckhps c1_, c0_, c0_ ; \
+/* c0={cFb,c7b,cEb,c6b, cDb,c5b,cCb,c4b, cBb,c3b,cAb,c2b, c9b,c1b,c8b,c0b}*/ \
+      vaddps t0_, c0_, c0_ ; \
+/*     15 14 13 12  11 10  9  8   7  6  5  4   3  2  1  0 */ \
+/* c0={cF,c7,cE,c6, cD,c5,cC,c4, cB,c3,cA,c2 ,c9,c1,c8,c0}*/ \
+      vpermilps $0xD8, c0_, c0_ ; \
+/* c0={cF,cE,c7,c6, cD,cC,c5,c4, cB,cA,c3,c2, c9,c8,c1,c0}*/ \
+/*       3     2      1     0      3     2      1     0 */ \
+      vpermpd $0xD8, c0_, c0_ ; \
+/* c0={cF,cE,cD,cC, c7,c6,c5,c4, cB,cA,c9,c8, c3,c2,c1,c0}*/ \
+      vshuff32x4 $0xD8, c0_, c0_, c0_
+
+#else
+   #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
+   #define vmovapd vmovaps
+   #define SZ 8
+   #define szSH 3
+   #define BCAST_B vbroadcastf32x4
+   #define vvrsum2(c0_, c1_, t0_) /*    7   6   5   4   3   2   1   0 */\
+                                /*c0={c3b,c3a,c2b,c2a,c1b,c1a,c0b,c0a}*/; \
+                                /*c1={c7b,c7a,c6b,c6a,c5b,c5a,c4b,c4a}*/; \
+      vunpcklpd c1_, c0_, t0_ ; /*t0={c7a,c3a,c6a,c2a,c5a,c1a,c4a,c0a}*/; \
+      vunpckhpd c1_, c0_, c0_ ; /*c0={c7b,c3b,c6b,c2b,c5b,c1b,c4b,c0b}*/; \
+      vaddpd t0_, c0_, c0_    ; /*c0={ c7, c3, c6, c2, c5, c1, c4, c0}*/; \
+      vpermpd $0xD8, c0_, c0_ ; /*c0={ c7, c6, c3, c2, c5, c4, c1, c0}*/; \
+      vshuff64x2 $0xD8,c0_,c0_,c0_ ;/*c0={ c7, c6, c5, c4, c3, c2, c1, c0}*/;
+#endif
+#ifdef BETA1
+   #define ADD2C vaddpd
+#elif !defined(BETA0)
+   #define ADD2C vsubpd
+#endif
+#define rB0 %zmm0
+   #define rB0y %ymm0
+   #define rB0x %xmm0
+#define rB1 %zmm1
+   #define rB1y %ymm1
+   #define rB1x %xmm1
+@iexp r 2
+@iexp i 0
+@iwhile i < 6
+#define rA@(i) %zmm@(r)
+   #define rA@(i)y %ymm@(r)
+   #define rA@(i)x %xmm@(r)
+   @iexp r @(r) 1 +
+   @iexp i @(i) 1 +
+@endiwhile
+@iexp j 0
+@iwhile j < 4
+   @iexp i 0
+   @iwhile i < 6
+#define rC@(i)@(j) %zmm@(r)
+   #define rC@(i)@(j)y %ymm@(r)
+   #define rC@(i)@(j)x %xmm@(r)
+      @iexp r @(r) 1 +
+      @iexp i @(i) 1 +
+   @endiwhile
+   @iexp j @(j) 1 +
+@endiwhile
+#define prefC(m_) prefetchwt1 m_
+
+/*
+ * Prioritize original registers for inner-loop, but inc regs can be any reg
+ * w/o changing opcode size, so use new regs for those
+ */
+#define KK   %rdx   /* API reg */
+#define pA   %rcx   /* API reg */
+#define pB   %r8    /* API reg */
+#define incAk %rbx  
+/*
+ * Now, N-loop variables less important
+ */
+#define pC   %r9    /* API reg */
+#define K0   %r10
+#define nnu  %rsi   /* API reg */
+/*
+ * M-loop reg asg unimportant
+ */
+#define nmu   %rdi   /* API reg */
+#define nnu0  %r11
+#define incAm %r12
+#define pB0   %r13
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.local MLOOP,NLOOP,KLOOP
+ALIGN16
+.globl ATL_asmdecor(ATL_USERMM)
+ATL_asmdecor(ATL_USERMM):
+   vxorpd rC00, rC00, rC00  /* warm up upper part of vector unit */
+/*
+ * Save callee-saved iregs
+ */
+   movq %rbp, -8(%rsp)
+   movq %rbx, -16(%rsp)
+   movq %r12, -24(%rsp)
+   movq %r13, -32(%rsp)
+   movq %r14, -40(%rsp)
+   movq %r15, -48(%rsp)
+/*
+ * Set kmm register so we can load ymm with Cs, and zero upper half
+ */
+   mov $0x3C, %eax
+   kmovw %eax, %k2
+   mov nnu, nnu0
+/*
+ * incAm = MU*sizeof*K = 6*mvec_vlenb*K = 6*32*K = 3*64*K
+ */
+   mov KK, incAm
+   shl $6, incAm  /* incAm = 64*K */
+   lea (incAm,incAm,2), incAm  /* incAm = 3*64*K = MU*sizeof*K */
+   mov $6*64, incAk
+   @BEGINSKIP
+   shl $szSH+2, KK  /* KK *= nu*sizeof = K*4*sizeof */
+   @ENDSKIP
+   add incAm, pA   /* pA += KK */
+   neg incAm  /* negate it so we can use as K0 */
+   mov incAm, KK
+   mov pB, pB0
+/*
+ * load parameters
+ */
+   MLOOP:
+      NLOOP:
+/*
+ *       Peel first iteration in order to zero rC regs
+ */
+                            /*{c30b, c30a, c20b, c20a, c10b, c10a, c00b, c00a}*/
+              BCAST_B (pB), rB0 /*{b10,b00,b10,b00,b10,b00,b10,b00} */
+             vmovapd (pA,KK), rA0          /*{a31,a30,a21,a20,a11,a10,a01,a00}*/
+             vmulpd rA0, rB0, rC00
+             vmovapd 64(pA,KK), rA1    /*{a71,a70,a61,a60,a51,a50,a41,a40}*/
+             vmulpd rA1, rB0, rC10
+             vmovapd 64*2(pA,KK), rA2
+             vmulpd rA2, rB0, rC20
+             vmovapd 64*3(pA,KK), rA3
+             vmulpd rA3, rB0, rC30
+             vmovapd 64*4(pA,KK), rA4
+             vmulpd rA4, rB0, rC40
+             vmovapd 64*5(pA,KK), rA5
+             vmulpd rA5, rB0, rC50
+              BCAST_B 2*SZ(pB), rB1/*{b11,b01,b11,b01,b11,b01,b11,b01}*/
+             vmulpd rA0, rB1, rC01
+               BCAST_B 2*2*SZ(pB), rB0 /*{b12,b02,b12,b02,b12,b02,b12,b02}*/
+             vmulpd rA1, rB1, rC11
+                prefC((pC))
+             vmulpd rA2, rB1, rC21
+                prefC(128(pC))
+             vmulpd rA3, rB1, rC31
+                prefC(256(pC))
+             vmulpd rA4, rB1, rC41
+                prefC(384(pC))
+             vmulpd rA5, rB1, rC51
+              BCAST_B 3*2*SZ(pB), rB1/*{b13,b03,b13,b03,b13,b03,b13,b03}*/
+             vmulpd rA0, rB0, rC02
+                prefC(512(pC))
+             vmulpd rA1, rB0, rC12
+                prefC(640(pC))
+             vmulpd rA2, rB0, rC22
+                prefC(768(pC))
+             vmulpd rA3, rB0, rC32
+                add $4*2*SZ, pB
+             vmulpd rA4, rB0, rC42
+                add incAk, KK
+             vmulpd rA5, rB0, rC52
+                BCAST_B (pB), rB0/*{b13,b03,b13,b03,b13,b03,b13,b03}*/
+
+             vmulpd rA0, rB1, rC03
+                vmovapd (pA,KK), rA0
+             vmulpd rA1, rB1, rC13
+                vmovapd 64(pA,KK), rA1
+             vmulpd rA2, rB1, rC23
+                vmovapd 2*64(pA,KK), rA2
+             vmulpd rA3, rB1, rC33
+                vmovapd 3*64(pA,KK), rA3
+             vmulpd rA4, rB1, rC43
+                vmovapd 4*64(pA,KK), rA4
+             vmulpd rA5, rB1, rC53
+             jz KDONE
+                vmovapd 5*64(pA,KK), rA5
+         KLOOP:
+
+            FMAC rA0, rB0, rC00
+               BCAST_B 1*2*SZ(pB), rB1
+            FMAC rA1, rB0, rC10
+            FMAC rA2, rB0, rC20
+            FMAC rA3, rB0, rC30
+            FMAC rA4, rB0, rC40
+            FMAC rA5, rB0, rC50
+               BCAST_B 2*2*SZ(pB), rB0
+            FMAC rA0, rB1, rC01
+            FMAC rA1, rB1, rC11
+            FMAC rA2, rB1, rC21
+            FMAC rA3, rB1, rC31
+            FMAC rA4, rB1, rC41
+            FMAC rA5, rB1, rC51
+               BCAST_B 3*2*SZ(pB), rB1
+            FMAC rA0, rB0, rC02
+               add $4*2*SZ, pB
+            FMAC rA1, rB0, rC12
+            FMAC rA2, rB0, rC22
+            FMAC rA3, rB0, rC32
+            FMAC rA4, rB0, rC42
+               add incAk, KK
+            FMAC rA5, rB0, rC52
+               BCAST_B (pB), rB0
+            FMAC rA0, rB1, rC03
+               vmovapd (pA,KK), rA0
+            FMAC rA1, rB1, rC13
+               vmovapd 64(pA,KK), rA1
+            FMAC rA2, rB1, rC23
+               vmovapd 2*64(pA,KK), rA2
+            FMAC rA3, rB1, rC33
+               vmovapd 3*64(pA,KK), rA3
+            FMAC rA4, rB1, rC43
+               vmovapd 4*64(pA,KK), rA4
+            FMAC rA5, rB1, rC53
+               vmovapd 5*64(pA,KK), rA5
+         jnz KLOOP
+         KDONE:
+
+         @iexp cof 0
+         @iexp j 0
+         @iwhile j < 4
+         vvrsum2(rC0@(j), rC1@(j), rB1);
+         #ifndef BETA0
+            ADD2C @(cof)(pC), rC0@(j), rC0@(j)
+         #endif
+         vvrsum2(rC2@(j), rC3@(j), rB1);
+         #ifndef BETA0
+            @iexp cn @(cof) 64 +
+            ADD2C @(cn)(pC), rC2@(j), rC2@(j)
+         #endif
+         vmovapd rC0@(j), @(cof)(pC)
+            @iexp cof @(cof) 64 +
+         vmovapd rC2@(j), @(cof)(pC)
+            @iexp cof @(cof) 64 +
+         vvrsum2(rC4@(j), rC5@(j), rB1);
+         #ifndef BETA0
+            ADD2C @(cof)(pC), rC4@(j), rC4@(j)
+         #endif
+         vmovapd rC4@(j), @(cof)(pC)
+            @iexp cof @(cof) 64 +
+
+            @iexp j @(j) 1 +
+         @endiwhile
+         mov incAm, KK
+         add $768, pC
+         dec nnu
+      jne NLOOP
+      mov nnu0, nnu
+      sub incAm, pA
+      dec nmu
+      mov pB0, pB
+   jne MLOOP
+
+/*DONE: */
+   movq -8(%rsp), %rbp
+   movq -16(%rsp), %rbx
+   movq -24(%rsp), %r12
+   movq -32(%rsp), %r13
+   movq -40(%rsp), %r14
+   movq -48(%rsp), %r15
