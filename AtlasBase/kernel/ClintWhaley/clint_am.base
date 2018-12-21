@@ -18711,8 +18711,9 @@ ATL_asmdecor(ATL_USERMM):
  */
    addi r1, r1, FSIZE
    blr
-@ROUT ATL_mkmm24x4x2_avxz.S
+@ROUT ATL_mkmm24x4x2_avxz.S ATL_mkmm16x6x2_avxz.S
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2018
+@BEGINSKIP
 /*
 vmovapd (%rax), %zmm0 : 6 bytes
 vmovapd 0(%rax), %zmm0 : 6 bytes
@@ -18724,6 +18725,7 @@ vmovapd 4100(%rax), %zmm0 : 10 bytes
 vmovapd (%rax,%r9), %zmm0 : 7 bytes
 ---> appears can fit 13bit signed number in addressing mode, same for movupd
  */
+@ENDSKIP
 #include "atlas_asm.h"
 #if defined(SCPLX) && !defined(SREAL)
    #define SREAL 1
@@ -18736,6 +18738,7 @@ vmovapd (%rax,%r9), %zmm0 : 7 bytes
    #define vsubpd vsubps
    #define vaddpd vaddps
    #define vmovapd vmovaps
+   #define vxorpd vxorps
    #define SZ 4
    #define szSH 2
    #define BCAST_B vbroadcastsd
@@ -18784,6 +18787,9 @@ vmovapd (%rax,%r9), %zmm0 : 7 bytes
 #elif !defined(BETA0)
    #define ADD2C vsubpd
 #endif
+@ROUT ATL_mkmm24x4x2_avxz.S
+@iexp mu 6
+@iexp nu 4
 #define rB0 %zmm0
    #define rB0y %ymm0
    #define rB0x %xmm0
@@ -18799,10 +18805,31 @@ vmovapd (%rax,%r9), %zmm0 : 7 bytes
    @iexp r @(r) 1 +
    @iexp i @(i) 1 +
 @endiwhile
+@ROUT ATL_mkmm16x6x2_avxz.S
+@iexp mu 4
+@iexp nu 6
+@iexp r 0
+@iexp i 0
+@iwhile i < 3
+#define rB@(i) %zmm@(r)
+   #define rB@(i)y %ymm@(r)
+   #define rB@(i)x %xmm@(r)
+   @iexp r @(r) 1 +
+   @iexp i @(i) 1 +
+@endiwhile
+@iexp i 0
+@iwhile i < 4
+#define rA@(i) %zmm@(r)
+   #define rA@(i)y %ymm@(r)
+   #define rA@(i)x %xmm@(r)
+   @iexp r @(r) 1 +
+   @iexp i @(i) 1 +
+@endiwhile
+@ROUT ATL_mkmm24x4x2_avxz.S ATL_mkmm16x6x2_avxz.S
 @iexp j 0
-@iwhile j < 4
+@iwhile j < @(nu)
    @iexp i 0
-   @iwhile i < 6
+   @iwhile i < @(mu)
 #define rC@(i)@(j) %zmm@(r)
    #define rC@(i)@(j)y %ymm@(r)
    #define rC@(i)@(j)x %xmm@(r)
@@ -18817,22 +18844,21 @@ vmovapd (%rax,%r9), %zmm0 : 7 bytes
  * Prioritize original registers for inner-loop, but inc regs can be any reg
  * w/o changing opcode size, so use new regs for those
  */
-#define KK   %rdx   /* API reg */
-#define pA   %rcx   /* API reg */
-#define pB   %r8    /* API reg */
+#define KK    %rdx   /* API reg */
+#define pA    %rcx   /* API reg */
+#define pB    %r8    /* API reg */
 #define incAk %rbx  
 /*
  * Now, N-loop variables less important
  */
-#define pC   %r9    /* API reg */
-#define K0   %r10
-#define nnu  %rsi   /* API reg */
+#define pC    %r9    /* API reg */
+#define incAm %r10
+#define nnu   %rsi   /* API reg */
 /*
  * M-loop reg asg unimportant
  */
 #define nmu   %rdi   /* API reg */
 #define nnu0  %r11
-#define incAm %r12
 #define pB0   %r13
 /*
                     rdi      rsi    rdx        rcx         r8        r9
@@ -18845,39 +18871,171 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 ALIGN16
 .globl ATL_asmdecor(ATL_USERMM)
 ATL_asmdecor(ATL_USERMM):
-   vxorpd rC00, rC00, rC00  /* warm up upper part of vector unit */
+   vxorpd (pA), rC00, rC00  /* warm up upper part of vec, preload B */
 /*
  * Save callee-saved iregs
  */
-   movq %rbp, -8(%rsp)
-   movq %rbx, -16(%rsp)
-   movq %r12, -24(%rsp)
-   movq %r13, -32(%rsp)
-   movq %r14, -40(%rsp)
-   movq %r15, -48(%rsp)
+@SKIP NOT USED: rbp r14 r15 r12
+   @define reglst @rbx r13 r15@
+   @iexp of 0
+   @whiledef rg @(reglst)
+      @iexp of @(of) -8 +
+   mov %@(rg), @(of)(%rsp)
+   @endwhile
+@BEGINSKIP
 /*
  * Set kmm register so we can load ymm with Cs, and zero upper half
  */
    mov $0x3C, %eax
    kmovw %eax, %k2
-   mov nnu, nnu0
+@ENDSKIP
+@ROUT ATL_mkmm16x6x2_avxz.S
+/*
+ * incAm = MU*sizeof*K = 4*mvec_vlenb*K = 4*32*K = 128*K
+ */
+   shl $7, KK     /* KK = 128*K */
+@ROUT ATL_mkmm24x4x2_avxz.S
 /*
  * incAm = MU*sizeof*K = 6*mvec_vlenb*K = 6*32*K = 3*64*K
  */
    mov KK, incAm
-   shl $6, incAm  /* incAm = 64*K */
-   lea (incAm,incAm,2), incAm  /* incAm = 3*64*K = MU*sizeof*K */
-   mov $6*64, incAk
-   @BEGINSKIP
-   shl $szSH+2, KK  /* KK *= nu*sizeof = K*4*sizeof */
-   @ENDSKIP
-   add incAm, pA   /* pA += KK */
-   neg incAm  /* negate it so we can use as K0 */
-   mov incAm, KK
+   shl $6, KK  /* KK = 64*K */
+   lea (KK,KK,2), KK  /* KK = 3*64*K = MU*sizeof*K */
+@ROUT ATL_mkmm24x4x2_avxz.S ATL_mkmm16x6x2_avxz.S
+   add KK, pA   /* pA += KK, pt to end of K access, sub off wt -KK */
+   neg KK
+   mov KK, incAm  /* will use sub instead of add to inc ptr */
+   mov $@(mu)*64, incAk /* add inst smaller if add from register */
    mov pB, pB0
+   mov nnu, nnu0
+
+@ROUT ATL_mkmm16x6x2_avxz.S
+   MLOOP:
+      NLOOP:
 /*
- * load parameters
+ *       Peel first iteration in order to zero rC regs
  */
+          BCAST_B (pB), rB0
+          vmovapd (pA,KK), rA0
+         vmulpd rA0, rB0, rC00
+          vmovapd 64(pA,KK), rA1
+         vmulpd rA1, rB0, rC10
+          vmovapd 2*64(pA,KK), rA2
+         vmulpd rA2, rB0, rC20
+          vmovapd 3*64(pA,KK), rA3
+
+          BCAST_B 2*SZ(pB), rB1
+         vmulpd rA3, rB0, rC30
+          BCAST_B 2*2*SZ(pB), rB2
+         vmulpd rA0, rB1, rC01
+          BCAST_B 3*2*SZ(pB), rB0
+         vmulpd rA1, rB1, rC11
+                prefC((pC))
+         vmulpd rA2, rB1, rC21
+                prefC(128(pC))
+         vmulpd rA3, rB1, rC31
+          BCAST_B 4*2*SZ(pB), rB1
+
+         vmulpd rA0, rB2, rC02
+                prefC(256(pC))
+         vmulpd rA1, rB2, rC12
+                prefC(384(pC))
+         vmulpd rA2, rB2, rC22
+                prefC(512(pC))
+         vmulpd rA3, rB2, rC32
+          BCAST_B 5*2*SZ(pB), rB2
+
+         vmulpd rA0, rB0, rC03
+                prefC(640(pC))
+         vmulpd rA1, rB0, rC13
+                prefC(768(pC))
+         vmulpd rA2, rB0, rC23
+            add $@(nu)*2*SZ, pB
+         vmulpd rA3, rB0, rC33
+            BCAST_B (pB), rB0
+
+         vmulpd rA0, rB1, rC04
+         vmulpd rA1, rB1, rC14
+            add incAk, KK
+         vmulpd rA2, rB1, rC24
+         vmulpd rA3, rB1, rC34
+            BCAST_B 2*SZ(pB), rB1
+
+         vmulpd rA0, rB2, rC05
+            vmovapd (pA,KK), rA0
+         vmulpd rA1, rB2, rC15
+            vmovapd 64(pA,KK), rA1
+         vmulpd rA2, rB2, rC25
+            vmovapd 2*64(pA,KK), rA2
+         vmulpd rA3, rB2, rC35
+             jz KDONE
+            vmovapd 3*64(pA,KK), rA3
+
+         KLOOP:
+            FMAC rA0, rB0, rC00
+              BCAST_B 2*2*SZ(pB), rB2
+            FMAC rA1, rB0, rC10
+            FMAC rA2, rB0, rC20
+            FMAC rA3, rB0, rC30
+              BCAST_B 3*2*SZ(pB), rB0
+
+            FMAC rA0, rB1, rC01
+            FMAC rA1, rB1, rC11
+            FMAC rA2, rB1, rC21
+            FMAC rA3, rB1, rC31
+              BCAST_B 4*2*SZ(pB), rB1
+
+            FMAC rA0, rB2, rC02
+            FMAC rA1, rB2, rC12
+            FMAC rA2, rB2, rC22
+            FMAC rA3, rB2, rC32
+              BCAST_B 5*2*SZ(pB), rB2
+
+            FMAC rA0, rB0, rC03
+               add $@(nu)*2*SZ, pB
+            FMAC rA1, rB0, rC13
+            FMAC rA2, rB0, rC23
+            FMAC rA3, rB0, rC33
+               BCAST_B (pB), rB0
+
+            FMAC rA0, rB1, rC04
+            FMAC rA1, rB1, rC14
+            FMAC rA2, rB1, rC24
+               add incAk, KK
+            FMAC rA3, rB1, rC34
+               BCAST_B 2*SZ(pB), rB1
+
+            FMAC rA0, rB2, rC05
+               vmovapd (pA,KK), rA0
+            FMAC rA1, rB2, rC15
+               vmovapd 64(pA,KK), rA1
+            FMAC rA2, rB2, rC25
+               vmovapd 2*64(pA,KK), rA2
+            FMAC rA3, rB2, rC35
+               vmovapd 3*64(pA,KK), rA3
+         jnz KLOOP
+         KDONE:
+
+         @iexp cof 0
+         @iexp j 0
+         @iwhile j < @(nu)
+         vvrsum2(rC0@(j), rC1@(j), rB1);
+         #ifndef BETA0
+            ADD2C @(cof)(pC), rC0@(j), rC0@(j)
+         #endif
+         vvrsum2(rC2@(j), rC3@(j), rB1);
+         #ifndef BETA0
+            @iexp cn @(cof) 64 +
+            ADD2C @(cn)(pC), rC2@(j), rC2@(j)
+         #endif
+         vmovapd rC0@(j), @(cof)(pC)
+            @iexp cof @(cof) 64 +
+         vmovapd rC2@(j), @(cof)(pC)
+            @iexp cof @(cof) 64 +
+
+            @iexp j @(j) 1 +
+         @endiwhile
+@ROUT ATL_mkmm24x4x2_avxz.S
    MLOOP:
       NLOOP:
 /*
@@ -19002,6 +19160,7 @@ ATL_asmdecor(ATL_USERMM):
 
             @iexp j @(j) 1 +
          @endiwhile
+@ROUT ATL_mkmm24x4x2_avxz.S ATL_mkmm16x6x2_avxz.S
          mov incAm, KK
          add $768, pC
          dec nnu
@@ -19013,9 +19172,12 @@ ATL_asmdecor(ATL_USERMM):
    jne MLOOP
 
 /*DONE: */
-   movq -8(%rsp), %rbp
-   movq -16(%rsp), %rbx
-   movq -24(%rsp), %r12
-   movq -32(%rsp), %r13
-   movq -40(%rsp), %r14
-   movq -48(%rsp), %r15
+/*
+ * Restore callee-saved regs
+ */
+   @iexp of 0
+   @whiledef rg @(reglst)
+      @iexp of @(of) -8 +
+   mov @(of)(%rsp), %@(rg)
+   @endwhile
+   ret
