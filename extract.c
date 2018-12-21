@@ -3366,6 +3366,7 @@ void KillProc0(EXTENV *EE, EXTPROC **basep, EXTPROC **myprocs, EXTPROC *ppkill)
    EXTPROC *fp;
    if (ppkill)
    {
+      remove(ppkill->FileNam);
       free(ppkill->ProcNam);
       free(ppkill->FileNam);
       KillWords(ppkill->argnams);
