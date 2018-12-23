@@ -2722,8 +2722,8 @@ void ATL_USCAL(const int N, const SCALAR alpha, TYPE *X, const int incX)
       X[1] = rx*ia + ix*ra;
    }
 }
-@ROUT dswap8_avxz_x0y0
-@skip #include "atlas_asm.h"
+@ROUT dswap8_avxz_x0y0 dswap32_avxz_x0y0
+#include "atlas_asm.h"
 
 #define INCX %zmm0
    #define INCXy %ymm0
@@ -2731,12 +2731,19 @@ void ATL_USCAL(const int N, const SCALAR alpha, TYPE *X, const int incX)
 #define INCY %zmm1
    #define INCYy %ymm1
    #define INCYx %xmm1
-#define rX0  %zmm2
-   #define rX0y %ymm2
-   #define rX0x %xmm2
-#define rY0  %zmm3
-   #define rY0y %ymm3
-   #define rY0x %xmm3
+@iexp r 2
+@iexp j 0
+@iwhile j < 4
+#define rX@(j)  %zmm@(r)
+   #define rX@(j)y %ymm@(r)
+   #define rX@(j)x %xmm@(r)
+   @iexp r @(r) 1 +
+#define rY@(j)  %zmm@(r)
+   #define rY@(j)y %ymm@(r)
+   #define rY@(j)x %xmm@(r)
+   @iexp r @(r) 1 +
+   @iexp j @(j) 1 +
+@endiwhile
 
 #define N    %rdi
 #define pX   %rsi
@@ -2751,12 +2758,12 @@ void ATL_USCAL(const int N, const SCALAR alpha, TYPE *X, const int incX)
  */
 .text
 .local VLOOP,CLEANUP
-@beginskip
 .globl ATL_asmdecor(ATL_USWAP)
 ATL_asmdecor(ATL_USWAP):
-@endskip
+@beginskip
 .globl ATL_USWAP
 ATL_USWAP:
+@endskip
    mov %rcx, pY                  /* free up cl for shift */
    shl $3, incX                  /* incX *= sizeof */
    shl $3, incY                  /* incX *= sizeof */
@@ -2787,6 +2794,42 @@ ATL_USWAP:
    shl $3, incX                  /* incX *= VLEN*sizeof = 8*8 = 64 */
    shl $3, incY                  /* incX *= VLEN*sizeof = 8*8 = 64 */
    mov N, NV
+@ROUT dswap32_avxz_x0y0
+   and $0xFFFFFFFFFFFFFFE0, NV    /* NV = N-N%32 */
+   jz VECROLL
+   sub NV, N                      /* N = N%32 */
+   mov $0xFF, %cl
+   kmovw %ecx, %k2
+   kmovw %k2, %k3
+   shl $2, incX
+   shl $2, incY
+   VLOOP4:
+      vgatherqpd (pX, INCX), rX0{%k3} ; kmovw %k2, %k3
+      vgatherqpd 64(pX, INCX), rX1{%k3} ; kmovw %k2, %k3
+      vgatherqpd 128(pX, INCX), rX2{%k3} ; kmovw %k2, %k3
+      vgatherqpd 192(pX, INCX), rX3{%k3} ; kmovw %k2, %k3
+      vgatherqpd (pY, INCY), rY0{%k3} ; kmovw %k2, %k3
+      vgatherqpd 64(pY, INCY), rY1{%k3} ; kmovw %k2, %k3
+      vgatherqpd 128(pY, INCY), rY2{%k3} ; kmovw %k2, %k3
+      vgatherqpd 192(pY, INCY), rY3{%k3} ; kmovw %k2, %k3
+      vscatterqpd rX0,(pY, INCY){%k3} ; kmovw %k2, %k3
+      vscatterqpd rX1,64(pY, INCY){%k3} ; kmovw %k2, %k3
+      vscatterqpd rX2,128(pY, INCY){%k3} ; kmovw %k2, %k3
+      vscatterqpd rX3,192(pY, INCY){%k3} ; kmovw %k2, %k3
+      vscatterqpd rY0,(pX, INCX){%k3} ; kmovw %k2, %k3
+      vscatterqpd rY1,64(pX, INCX){%k3} ; kmovw %k2, %k3
+      vscatterqpd rY2,128(pX, INCX){%k3} ; kmovw %k2, %k3
+      vscatterqpd rY3,192(pX, INCX){%k3} ; kmovw %k2, %k3
+      add incX, pX
+      add incY, pY
+      sub $32, NV
+   jnz VLOOP4
+   shr $2, incX
+   shr $2, incY
+VECROLL:
+   cmp $0, N
+   mov N, NV
+@ROUT dswap8_avxz_x0y0 dswap32_avxz_x0y0
    and $0xFFFFFFFFFFFFFFF8, NV    /* NV = N-N%8 */
    jz CLEANUP
    sub NV, N                     /* N = N%8 */
