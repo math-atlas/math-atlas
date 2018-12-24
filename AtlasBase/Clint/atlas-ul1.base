@@ -2954,17 +2954,26 @@ TYPE ATL_UDOT(const int N, const TYPE *X, const int incX,
 }
 @ROUT dot_avxz_x1y1
 #ifdef SREAL
-   #define SZ 4
-   #define szSH 2
    #define FMAC  vfmadd231ps   /* FMAC m256/r256, rs1, rd */
    #define FMACS vfmadd231ss   /* FMAC m256/r256, rs1, rd */
    #define vmovapd vmovaps
+   #define vmovupd vmovups
    #define vxorpd vxorps
+   #define valignq valignd
+   #define vaddpd vaddps
+   #define addpd addps
+   #define vmulpd vmulps
+   #define haddpd haddps
+   #define vextractf64x4 vextractf32x8
+   #define movsd movss
+   #define mulpd mulps
+   #define SZ   4
+   #define szSH 2
    #define VLEN 16
 #else
    #define FMAC  vfmadd231pd   /* FMAC m256/r256, rs1, rd */
    #define FMACS vfmadd231sd   /* FMAC m256/r256, rs1, rd */
-   #define SZ 8
+   #define SZ   8
    #define szSH 3
    #define VLEN 8
 #endif
@@ -2983,23 +2992,43 @@ TYPE ATL_UDOT(const int N, const TYPE *X, const int incX,
 #define rX0  %zmm4
    #define rX0x  %xmm4
 #define rY0  %zmm5
+#define rYo  %zmm6
+#define rYn  %zmm7
 
 #define N    %rdi
+   #define N_w %di
 #define Nr   %rcx
 #define pX   %rsi
 #define iX   %rdx
 #define pY   %r9    /* comes in as rcx */
 #define iY   %r8
+#define py   %r10   /* store pY */
+.section .rodata /* put in data section under read-only memory */
+.local JMPTAB
+.align 8
+JMPTAB:
+    @iexp i 1
+    @iwhile i < 16
+       @iif i = 8
+    #ifdef SREAL
+       @endiif
+   .quad LOOP4Yr@(i)
+       @iexp i @(i) 1 +
+    @endiwhile
+    #endif
 .text
 .local ALIGNX,XALIGNED,YUNALIGNED,CLEAN
 .globl ATL_UDOT
 ATL_UDOT:
    vxorpd rs0, rs0, rs0  /* warm up VPU & zero return value */
    mov %rcx, pY    /* clear so we can use %cl for shifts */
-   cmp $5*VLEN, N  /* if (N < 5*VLEN) */
+   cmp $VLEN, N  /* if (N < 5*VLEN) */
    jl ONE_AND_DONE /*   just use unoptimized scalar code */
+   vxorpd rs1, rs1, rs1
+   vxorpd rs2, rs2, rs2
+   vxorpd rs3, rs3, rs3
 /*
- *  Align X with knowledge we'll have at least unrolled loop after aligning
+ * Align X
  */
    mov pX, %rcx
    and $0xC0, %cl  /* rcx = (X/64)*64 */
@@ -3008,67 +3037,104 @@ ATL_UDOT:
 /*
  * X is now aligned
  */
-   XALIGNED:
-   mov pY, %rcx
-   and $0xC0, %cl  /* rcx = (Y/64)*64 */
-   sub pX, %rcx    /* rcx = neg value: if added to pY gives start of vector */
-   jnz YUNALIGNED  /* if (pY != (pY/64)*64) goto YUNALIGNED */
-
-
+XALIGNED:
    mov N, Nr
-   shr $8-szSH, N  /* N=(N*sizeof)/(VLENb*UNROLL) = # of vec iterations */
-   jz CLEAN
-
-   shr $6, N           /* N = (# vec its)*(VLENb) */
-   lea (pX, N), pX     /* pX += N */
-   lea (pY, N), pY     /* pY += N */
+   #ifdef SREAL
+      and $0xFFFFFFFFFFFFFFC0, N   /* N = (N/(4*VLEN))*4*VLEN */
+   #else
+      and $0xFFFFFFFFFFFFFFE0, N   /* N = (N/(4*VLEN))*4*VLEN */
+   #endif
+   jz CLEAN            /* if (nuvec its == 0) goto CLEAN */
+   sub N, Nr           /* Nr has its left after loop */
+   lea (pX,N,SZ), pX   /* pX += N */
+   lea (pY,N,SZ), pY   /* pY += N */
    neg N               /* add to pX to get back to original ptr */
+/*
+ * If Y mutually misaligned with X, go handle that elsewhere
+ */
+   mov pY, %rax
+   and $0xC0, %al  /* rax = (Y/64)*64 */
+   sub pY, %rax    /* rax = neg value: if added to pY gives start of vector */
+   jnz YUNALIGNED  /* if (pY != (pY/64)*64) goto YUNALIGNED */
    LOOP4:
-      vmovapd (pX,N), rX0
-      vmovapd (pY,N), rY0
-      FMAC rX0, rY0, rs0
-      vmovapd 64(pX,N), rX0
-      vmovapd 64(pY,N), rY0
-      FMAC rX0, rY0, rs1
-      vmovapd 2*64(pX,N), rX0
-      vmovapd 2*64(pY,N), rY0
-      FMAC rX0, rY0, rs2
-      vmovapd 3*64(pX,N), rX0
-      vmovapd 3*64(pY,N), rY0
-      FMAC rX0, rY0, rs3
-      add $64*4, N
+      vmovapd (pY,N,SZ), rY0
+      FMAC (pX,N,SZ), rY0, rs0
+      vmovapd 64(pY,N,SZ), rY0
+      FMAC 64(pX,N,SZ), rY0, rs1
+      vmovapd 2*64(pY,N,SZ), rY0
+      FMAC 2*64(pX,N,SZ), rY0, rs2
+      vmovapd 3*64(pY,N,SZ), rY0
+      FMAC 3*64(pX,N,SZ), rY0, rs3
+      add $4*VLEN, N
    jne LOOP4
+   cmp $0, Nr
+   je DONE
+CLEAN: /* 0 < Nr < 4*VL its to be done, Nr is %rcx */
+   mov Nr, N  
+   #ifdef SREAL
+      andw $0xFFF0, N_w /* N=(N/16)*16 = # of vec its */
+   #else
+      andw $0xFFF8, N_w /* N=(N/8)*8 = # of vec its */
+   #endif
+   jz LAST_CLEAN
+   sub N, Nr
+   lea (pX,N,SZ), pX
+   lea (pY,N,SZ), pY
+   neg N
+   LOOPVC: /* vectorized cleanup loop */
+      vmovupd (pY,N,SZ), rY0
+      FMAC (pX,N,SZ), rY0, rs0
+      add $VLEN, N
+   jne LOOPVC
+   cmp $0, Nr
+   je DONE
+LAST_CLEAN: /* 0 < Nr < VL its to be done, Nr is %rcx */
+   mov $1, %eax
+   shl %cl, %ax  /* ax = (1<<Nr) */
+   dec %ax       /* ax has a bit set for every remainder lane to use */
+   kmovw %eax, %k2  /* only first Nr lanes active */
+   vmovupd (pY), rY0{%k2}
+   FMAC (pX), rY0, rs0{%k2}
+DONE:
    vaddpd rs1, rs0, rs0
    vaddpd rs3, rs2, rs2
    vaddpd rs2, rs0, rs0
-   vextractf64x4 $1, rs0, rs1y
-   vaddpd rs1y, rs0y, rs0y  /*{s3,s2,s1,s0}*/
-   vextractf128 $1, rs0y, rs1x  /*  {s3,s2}*/
+   vextractf64x4 $1, rs0, rs1y /*{s7,s6,s5,s4}*/
+   vaddpd rs1y, rs0y, rs0y     /*{s3,s2,s1,s0}*/
+   vextractf128 $1, rs0y, rs1x     /*  {s3,s2}*/
    addpd rs1x, rs0x
    haddpd rs0x, rs0x
+   #ifdef SREAL
+      haddpd rs0x, rs0x
+   #endif
    ret
 
-   ALIGNX: /* %rcx=-(# of elts to ignore at top) */
 /*
  *    X & Y symmetric, so see if Y is aligned, and if so swap ptrs and go!
  */
+   ALIGNX: /* %rcx=-(# of bytes to ignore at top) */
       mov pY, %rax
       and $0xC0, %al
       cmp %rax, pY    /* if (pY = (pY/64)*64) */
       je MAKEYX       /*   goto code swapping ptrs */
+/*
+ *    Otherwise do remaining VLENb+rcx bytes of computation
+ */
       add %rcx, pX    /* pX=((pX/64))*64, aligned wt -%rcx bytes to ignore */
+      add %rcx, pY    /* move pY back by same amount as X */
       neg %rcx        /* # of bytes to ignore */
       shr $szSH, %cl  /* # of elts to ignore ([0-VLEN-1]) */
-      #if 0           /* beginning case ensures this never happens */
       cmp %rcx, N     /* if there are no vec its left after this */
-      jle ONE_AND_DONE/*   goto 1-op statement */
-      #endif
-     
-      sub %rcx, N     /* subtract of peeled iterations */
+      jle ONE_AND_DONE1/*   goto 1-op statement */
+/*
+ *    rcx is # of VLEN its that are ignored, so want 
+ *    N = N - (VLEN-rcx) = N + rcx - VLEN
+ */
+      lea -VLEN(N,%rcx), N
       mov $1, %rax
-      shl %cl, %al    /* rax = (1<<(#elts until align) */
-      dec %al         /* al has bits to ignore set, rest unset */
-      not %al         /* rax has bits to use set, rest unset */
+      shl %cl, %ax    /* rax = (1<<(#elts until align) */
+      dec %ax         /* al has bits to ignore set, rest unset */
+      not %ax         /* rax has bits to use set, rest unset */
       kmovw %eax, %k2 /* unaligned lanes are off/unset */
 
       vmovupd (pY), rY0{%k2}{z}
@@ -3082,24 +3148,99 @@ ATL_UDOT:
       mov %rax, pX
       jmp XALIGNED
 /*
+ * eax has # of bytes to go back in order to get an aligned Y.
+ * So, if we load Y from aligned, we would have this many wasted bytes
+ * in the vector that would need to be rotated out.
+ */
+   YUNALIGNED: /* rax has # of bytes back to find aligned Y */
+@BEGINSKIP
+      cmp $-VLEN, %rax
+      je YUN1
+   LOOP4YU:
+      vmovupd (pY,N,SZ), rY0
+      FMAC (pX,N,SZ), rY0, rs0
+      vmovupd 64(pY,N,SZ), rY0
+      FMAC 64(pX,N,SZ), rY0, rs1
+      vmovupd 2*64(pY,N,SZ), rY0
+      FMAC 2*64(pX,N,SZ), rY0, rs2
+      vmovupd 3*64(pY,N,SZ), rY0
+      FMAC 3*64(pX,N,SZ), rY0, rs3
+      add $4*VLEN, N
+   jne LOOP4YU
+   cmp $0, Nr       /* if (Nr != 0) */
+   jne CLEAN        /*    goto cleanup */
+   jmp DONE         /* else done */
+@ENDSKIP
+/*
+ * This code will load an extra elements before beginning and after end of Y,
+ * but this cannot cause memory problems, because you can't switch ownership
+ * of memory mid-block, and this code is only being used due to cache splits
+ * on Y.  Note that if VLEN > max(blocksize) this could cause problems,
+ * but this would not make sense architecturally!
+ */
+      lea (pY,%rax), py      /* go back to aligned address */
+      vmovapd (py,N,SZ), rYo /* get first, partial vec in Yold */
+      add $64, py            /* all we need from below actual Y */
+      neg %rax               /* make byte count positive */
+      shr $szSH, %rax        /* change byte count to element count */
+      dec %rax               /* now 0-based index into JMPTAB */
+      jmp *JMPTAB(,%rax,8)   /* jump to label in rax entry of jump table */
+@iexp i 1
+@iwhile i < 16
+   @iif i == 8
+   #ifdef SREAL
+   @endiif
+   LOOP4Yr@(i):
+      vmovapd (py,N,SZ), rYn
+      valignq $@(i), rYo, rYn, rY0
+      vmovapd rYn, rYo
+      FMAC (pX,N,SZ), rY0, rs0
+
+      vmovapd 64(py,N,SZ), rYn
+      valignq $@(i), rYo, rYn, rY0
+      vmovapd rYn, rYo
+      FMAC 64(pX,N,SZ), rY0, rs1
+
+      vmovapd 2*64(py,N,SZ), rYn
+      valignq $@(i), rYo, rYn, rY0
+      vmovapd rYn, rYo
+      FMAC 2*64(pX,N,SZ), rY0, rs2
+
+      vmovapd 3*64(py,N,SZ), rYn
+      valignq $@(i), rYo, rYn, rY0
+      vmovapd rYn, rYo
+      FMAC 3*64(pX,N,SZ), rY0, rs3
+
+      add $4*VLEN, N
+   jne LOOP4Yr@(i)
+   cmp $0, Nr       /* if (Nr != 0) */
+   jne CLEAN        /*    goto cleanup */
+   jmp DONE         /* else done */
+   @iexp i @(i) 1 +
+@endiwhile
+   #endif
+
+/*
  * Code where we are doing trivial amount of operations
  */
-ONE_AND_DONE:
+ONE_AND_DONE1:
+      lea (pX,%rcx,SZ), pX  /* restore pX to original unaligned place */
+      lea (pY,%rcx,SZ), pX  /* restore pY to original unaligned place */
+ONE_AND_DONE:   /* N has number of its to do */
    movsd (pX), rs0x
    mulpd (pY), rs0x
    dec N
    jz TOTDONE
    LOOPS:
-      add $8, pX
-      add $8, pY
+      add $SZ, pX
+      add $SZ, pY
       movsd (pX), rX0x
       FMACS (pY), rX0x, rs0x
       dec N
    jne LOOPS
-   YUNALIGNED: /* not supported yet */
-   CLEAN:      /* not supported yet */
-   TOTDONE:
-      ret
+TOTDONE:
+   ret
+
 @ROUT dot_simd_x1y1
 #include "atlas_misc.h"
 #include "atlas_simd.h"
@@ -3508,12 +3649,15 @@ void ATL_UDOT(const int N, const TYPE *X, const int incx,
    else ATL_dot(N, X, Y, dot);
 }
 @ROUT scases.dot dcases.dot
-5
+6
 1 0 0 dot1_x0y0.c        "R. Clint Whaley"
 2 1 1 dot1_x1y1.c        "R. Clint Whaley"
 3 1 1 dot8p8_x1y1.c      "R. Clint Whaley"
 4 1 1 dot4p80_x1y1.c     "R. Clint Whaley"
 5 1 1 dot_simd_x1y1.c    "R. Clint Whaley"
+6 1 1 dot_avxz_x1y1.S    "R. Clint Whaley" \
+   gcc
+   -xassembler-with-cpp  -mfpmath=sse -mavx512f -mavx512dq -mfma -m64
 @ROUT ccases.dot zcases.dot ccasesc.dot zcasesc.dot
 3
 1 0 0 cdot1_x0y0.c       "R. Clint Whaley"
