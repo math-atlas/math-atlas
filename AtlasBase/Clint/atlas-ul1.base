@@ -1,6 +1,6 @@
 @extract -b @(topd)/gen.inc what=crsetup
 @ROUT dcases.axpy scases.axpy
-10
+11
 1 2 0 0 axpy1_x0y0.c       "R. Clint Whaley"
 2 2 1 1 axpy1_x1y1.c       "R. Clint Whaley"
 3 2 1 1 axpy32_x1y1.c      "R. Clint Whaley"
@@ -17,6 +17,9 @@
 gcc
 -x assembler-with-cpp
 10 2 1 1 axpy_simd_x1y1.c   "R. Clint Whaley"
+11 2 1 1 axpy_avxz_x1y1.S   "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp -mfpmath=sse -mavx512f -mavx512dq -mfma -m64
 @ROUT zcases.axpy
 9
 @ROUT ccases.axpy
@@ -2952,7 +2955,7 @@ TYPE ATL_UDOT(const int N, const TYPE *X, const int incX,
    for (i=0; i < N; i++) dot += X[i] * Y[i];
    return(dot);
 }
-@ROUT dot_avxz_x1y1
+@ROUT dot_avxz_x1y1 axpy_avxz_x1y1
 #ifdef SREAL
    #define FMAC  vfmadd231ps   /* FMAC m256/r256, rs1, rd */
    #define FMACS vfmadd231ss   /* FMAC m256/r256, rs1, rd */
@@ -2977,6 +2980,7 @@ TYPE ATL_UDOT(const int N, const TYPE *X, const int incX,
    #define szSH 3
    #define VLEN 8
 #endif
+@ROUT dot_avxz_x1y1
 /*
  * xmm0            rdi      rsi       rdx      rcx       r8
  * TYPE ATL_UDOT(int N, TYPE *X, int incX, TYPE *Y, int incY);
@@ -3002,9 +3006,31 @@ TYPE ATL_UDOT(const int N, const TYPE *X, const int incX,
 #define iX   %rdx
 #define pY   %r9    /* comes in as rcx */
 #define iY   %r8
-#define py   %r10   /* store pY */
+#define px   %r10   /* aligned X for unaligned loops */
+   @define jt @4Yr@
+@ROUT axpy_avxz_x1y1
+   @define jt @UXr@
+/*
+ *                    rdi         xmm0    rsi        rdx     rcx         r8
+ * void ATL_UAXPY(ulong N,SCALAR alpha,TYPE*X,ulong incX,TYPE *Y,ulong incY)
+ */
+#define N  %rdi
+#define pX %rsi
+#define pY %r9  /* comes in rcx! */
+#define px %r10 /* aligned X for unaligned loops */
+#define Nr %rcx
+   #define Nr_b %cl
+   #define nr_w %cx
+#define tr %rax
+   #define tr_b  %al
+   #define tr_w  %ax
+   #define tr_l  %eax
+@ROUT dot_avxz_x1y1 axpy_avxz_x1y1
+/*
+ * Create a VLEN jump table (array of labels for optimized case statement)
+ */
 .section .rodata /* put in data section under read-only memory */
-.local JMPTAB
+.local JMPTAB    /* avoid name collisions by making JMPTAB local to file */
 .align 8
 JMPTAB:
     @iexp i 1
@@ -3012,12 +3038,29 @@ JMPTAB:
        @iif i = 8
     #ifdef SREAL
        @endiif
-   .quad LOOP4Yr@(i)
+   .quad LOOP@(jt)@(i)
        @iexp i @(i) 1 +
     @endiwhile
     #endif
 .text
-.local ALIGNX,XALIGNED,YUNALIGNED,CLEAN
+@declare ".local " n n
+   @iexp i 0
+   @iwhile i < 8
+      LOOP@(jt)@(i)
+      @iexp i @(i) 1 +
+   @endiwhile
+@enddeclare
+#ifdef SREAL
+@declare ".local " n n
+   @iwhile i < 16
+      LOOP@(jt)@(i)
+      @iexp i @(i) 1 +
+   @endiwhile
+@enddeclare
+#endif
+@ROUT dot_avxz_x1y1
+.local ALIGNX,XALIGNED,YUNALIGNED,CLEAN,LOOP4,LOOPVC,LAST_CLEAN,DONE,MAKEXY 
+.local ONE_AND_DONE1,ONE_AND_DONE,LOOPS,TOTDONE
 .globl ATL_UDOT
 ATL_UDOT:
    vxorpd rs0, rs0, rs0  /* warm up VPU & zero return value */
@@ -3240,7 +3283,144 @@ ONE_AND_DONE:   /* N has number of its to do */
    jne LOOPS
 TOTDONE:
    ret
+@ROUT axpy_avxz_x1y1
+#define ralp %zmm0
+   #define ralpy %ymm0
+   #define ralpx %xmm0
+#define rY  %zmm1
+#define rX  %zmm2
+#define rXo %zmm3  /* rX old */
+#define rXn %zmm4  /* rX new */
+.local ONE_AND_DONE,ALIGNY,YALIGNED,CLEANUP,XUNALIGNED
+.globl ATL_UAXPY
+ATL_UAXPY:
+   vxorpd rY, rY, rY  /* warm up VPU */
+   mov %rcx, pY
+/*
+ * Broadcast alpha throughout vector (passed in ralp[0])
+ */
+#ifdef SREAL
+   pshufd $0,ralpx,ralpx            /*{X,X,X,X, X,X,X,X, X,X,X,X, a,a,a,a}*/
+   vinsertf128 $1,ralpx,ralpy,ralpy /*{X,X,X,X, X,X,X,X, a,a,a,a, a,a,a,a}*/
+   vinsertf32x8 $1,ralpy,ralp,ralp  /*{a,a,a,a, a,a,a,a, a,a,a,a, a,a,a,a}*/
+#else
+   unpcklpd ralpx,ralpx             /*{  X,  X,  X,  X,  X,  X,alp,alp} */
+   vinsertf128 $1,ralpx,ralpy,ralpy /*{  X,  X,  X,  X,alp,alp,alp,alp} */
+   vinsertf64x4 $1,ralpy,ralp,ralp  /*{alp,alp,alp,alp,alp,alp,alp,alp} */
+#endif
 
+   cmp $VLEN, N                /* if (N<=VLEN) */
+   jle ONE_AND_DONE            /*    goto spcl code for <=1 vector only */
+
+   mov pY, Nr
+   and $0xC0, Nr_b /* Nr_b = (pY/64)*64, i.e. aligned Y */
+   sub pY, Nr      /* Nr has num (negative) bytes back to aligned Y */
+   jnz ALIGNY      /* If Y not already aligned, peel to align it */
+
+YALIGNED:          /* Y is known aligned, X alignment unknown */
+   mov N, Nr
+   #ifdef SREAL    /* VLEN=16 */
+      and $0xFFFFFFFFFFFFFFF0, N   /* N = # vec its = (N/VLEN)*VLEN */
+   #else           /* VLEN=8 */
+      and $0xFFFFFFFFFFFFFFF8, N   /* N = # vec its = (N/VLEN)*VLEN */
+   #endif
+   jz CLEANUP        /* if (N/VLEN == 0) goto partial last vec code */
+   sub N, Nr         /* Nr has iters left after vector loop */
+   lea (pX,N,SZ),pX  /* pX += N */
+   lea (pY,N,SZ),pY  /* pX += N */
+   neg N
+   mov pX, tr
+   and $0xC0, tr_b   /* tr = (pX/64)*64 */
+   sub pX, tr        /* tr = offset (negative) to aligned X */
+   jnz XUNALIGNED    /* if (aligned-X != X) goto misaligned X code */
+
+   LOOPA:            /* aligned vector loop */
+      vmovapd (pY,N,SZ), rY
+      FMAC (pX,N,SZ), ralp, rY
+      vmovapd rY, (pY,N,SZ)
+      add $VLEN, N
+   jne LOOPA
+   cmp $0, Nr       /* If no cleanup */
+   je  DONE         /*    goto DONE */
+CLEANUP:   /* 0 < Nr < VL its to be done, Y aligned, X align not known */
+   mov $1, tr
+   shl Nr_b, tr_w  /* tr = 1<<Nr */
+   dec tr_w        /* tr has bit set for every remainder lane to use */
+   kmovw %eax, %k2 /* only first Nr lanes active */
+   vmovupd (pX), rX{%k2}
+   vmovapd (pY), rY{%k2}
+   FMAC ralp, rX, rY{%k2}
+   vmovapd rY, (pY){%k2}
+DONE:
+   ret
+
+ALIGNY: /* Nr = number of bytes (negative) to get to aligned address */
+   add Nr, pY        /* pY=((pY/64))*64, aligned wt -Nr bytes to ignore */
+   add Nr, pX        /* move pX back by same amount as pY */
+   neg Nr            /* # of bytes to ignore in aligned op */
+   shr $szSH, Nr_b   /* # of elements to ignore in aligned op */
+   lea -VLEN(N,Nr), N/* its left = N-algn_its = N-(VLEN-Nr) = N + Nr - VLEN */
+   mov $1, tr_w
+   shl Nr_b, tr_w    /* tr = 1<<(#elts to ignore) */
+   dec tr_w          /* tr has bit set for every ignored lane else unset */
+   not tr_w          /* tr has bit unset for ignored, set for needed lanes */
+   kmovw tr_l, %k2   
+   vmovupd (pX), rX{%k2}
+   vmovapd (pY), rY{%k2}
+   FMAC ralp, rX, rY{%k2}
+   vmovapd rY, (pY){%k2}
+   add $64, pY              /* pY is now aligned! */
+   add $64, pX              /* pX has unknown alignment */
+   jmp YALIGNED
+/*
+ * Have only 0 < iterations <= VLEN iterations to do
+ */
+ONE_AND_DONE:
+   mov $1, tr
+   mov N, %rcx       /* must use rcx for shift, t != rcx */
+   shl %cl, tr       /* tr = 1<<N */
+   dec tr            /* tr has a bit set for each active lane */
+   kmovw tr_l, %k2 
+   vmovupd (pX), rX{%k2}
+   vmovupd (pY), rY{%k2}
+   FMAC ralp, rX, rY{%k2}
+   vmovupd rY, (pY){%k2}
+   ret
+XUNALIGNED: /* tr = offset (negative) to aligned X: 0 < tr < VLEN */
+/*
+ * This code will load an extra elements before beginning and after end of X,
+ * but this cannot cause memory problems, because you can't switch ownership
+ * of memory mid-block, and this code is only being used due to cache splits
+ * on Y.  Note that if VLEN > max(blocksize) this could cause problems,
+ * but this would not make sense architecturally!
+ */
+   lea (pX,tr), px        /* go back to aligned address */
+   vmovapd (px,N,SZ), rXo /* get first, partial vec in Xold */
+   add $64, px            /* all we need from below actual X */
+   neg tr                 /* make byte count positive */
+   shr $szSH, tr          /* change byte count to element count */
+   dec tr                 /* now 0-based index into JMPTAB */
+   jmp *JMPTAB(,tr,8)     /* jump to label in rax entry of jump table */
+   @iexp i 0
+   @iwhile i < 16
+      @iif i = 8
+   #ifdef SREAL
+      @endiif
+   LOOPUXr@(i):           /* Y aligned, X most rotate by @(i) */
+      vmovapd (px,N,SZ), rXn
+      valignq $@(i),rXo,rXn,rX
+      vmovapd (pY,N,SZ), rY
+      vmovapd rXn, rXo
+      FMAC rX, ralp, rY
+      vmovapd rY, (pY,N,SZ)
+      add $VLEN, N
+   jne LOOPUXr@(i)
+   cmp $0, Nr       /* If no cleanup */
+   je  DONE         /*    goto DONE */
+   jmp CLEANUP      /* do last partial iteration */
+      @iexp i @(i) 1 +
+   @endiwhile
+   #endif
 @ROUT dot_simd_x1y1
 #include "atlas_misc.h"
 #include "atlas_simd.h"
