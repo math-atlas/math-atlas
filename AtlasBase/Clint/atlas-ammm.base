@@ -19295,16 +19295,87 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @iexp vl @(vl) @(vl) +
 @endiwhile
 /*
- * If it isn't defined already (fast sys-spec vers), define 
- *    vsplatI (0 <= I < VL) using vector indexing.  
+ * If it isn't defined already (fast sys-spec vers), define vvrsum/bcast,
+ * &  vsplatI (0 <= I < VL) using vector indexing.  
  * This may be horribly slow or great, depending on how smart the compiler is.
  */
+@BEGINPROC BCASTB kv mv
+   @define i @0@
+   @define e @0@
+   @define vl @0@
+   @iexp vl @(kv) @(mv) *
+   #ifndef ATL_vbcast@(kv)x@(mv)
+      #define ATL_vbcast@(kv)x@(mv)(v_, p_) \
+      { \
+      @iexp i 0
+      @iwhile i < vl
+            @iexp e @(kv) @(i) %
+            v0_[@(i)] = p_[@(e)]; \
+         @iexp i @(i) 1 +
+      @endiwhile
+      }
+   #endif
+   @undef i
+   @undef e
+   @undef vl
+@ENDPROC
+@BEGINPROC VVRSUM kv mv
+   @define v @0@
+   @define i @0@
+   @define e @0@
+   @define a @0@
+   @define vl @0@
+   @iexp vl @(kv) @(mv) *
+   #ifndef ATL_vvrsum@(kv)x@(mv)
+      @declare "      #define ATL_vvrsum@(kv)x@(mv)(" y n ") \"
+         @iwhile i < kv
+            v@(i)_
+            @iexp i @(i) 1 +
+         @endiwhile
+      @enddeclare
+      { \
+      @iexp v 0
+      @iexp e 0
+      @iexp i 0
+      @iwhile i < vl
+         @iexp a 0
+         @iwhile a < @(kv)
+            @iif a = 0
+            v0_[@(i)] = v@(v)_[@(e)] + \
+            @endiif
+            @iif @iexp @(kv) @(a) 1 + =
+                     v@(v)_[@(e)]; \
+            @endiif
+            @iif @iexp @(kv) @(a) 1 + ! @(a) 0 ! &
+                     v@(v)_[@(e)] + \
+            @endiif
+            @iexp a @(a) 1 +
+            @iexp e @(e) 1 +
+            @iif e = vl
+               @iexp e 0
+               @iexp v @(v) 1 +
+            @endiif
+         @endiwhile
+         @iexp i @(i) 1 +
+      @endiwhile
+      }
+   #endif
+   @undef i
+   @undef v
+   @undef vl
+   @undef e
+   @undef a
+@ENDPROC
 #if ATL_VLEN == 2
    #ifndef ATL_vsplat0
    #define ATL_vsplat0(d_, s_) d_[0] = d_[1] = s_[0]
    #endif
    #ifndef ATL_vsplat1
    #define ATL_vsplat1(d_, s_) d_[0] = d_[1] = s_[1]
+   #endif
+   @callproc VVRSUM 2 1
+   #ifndef ATL_vvrsum2
+      #define ATL_vvrsum2 ATL_vvrsum2x1
    #endif
 @iexp vl 2 2 +
 @iwhile vl < 64
@@ -19318,22 +19389,24 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       @iexp k @(k) 1 +
    #endif
    @endiwhile
-@beginskip
-   @CALLPROC arglst @(vl) s _
-   #ifndef ATL_vvrsum@(vl)
-   #define ATL_vvrsum@(vl)(@(arglst))\
-   @undef arglst
-   { \
-   @iexp i 0 0 +
-   @iwhile i < @(vl)
-      @CALLPROC addarr @(vl) s@(i)_
-      s0_[@(i)] = @(addarr); \
-      @undef addarr
-      @iexp i @(i) 1 +
+   @iexp mvec 2 @(vl) /
+   @iwhile mvec > 0
+      @iexp kvec @(mvec) @(vl) /
+      @iif kvec ! vl
+         @callproc BCASTB @(kvec) @(mvec)
+      @endiif
+      @iif kvec = vl
+         @callproc BCASTB 1 @(vl)
+      @endiif
+      @callproc VVRSUM @(kvec) @(mvec)
+      @iexp mvec 2 @(mvec) /
    @endiwhile
-   }
+   #ifndef ATL_vvrsum@(vl)
+      #define ATL_vvrsum@(vl) ATL_vvrsum@(vl)x1
    #endif
-@endskip
+   #ifndef ATL_vbcast
+      #define ATL_vbcast ATL_vbcast_1x@(vl)
+   #endif
    @iexp vl @(vl) @(vl) +
 @endiwhile
 #endif
