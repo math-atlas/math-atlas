@@ -1,4 +1,7 @@
 @ROUT !
+   @ifdef ! kv
+      @iexp kv 1
+   @endiif
    @define pre @@(@pre)@
    @PRE S C
       @define typ @float@
@@ -67,12 +70,14 @@
 @endiif
 @ROUT amm
 @beginskip
-Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
+Should be called with TYPE=[SREAL,DREAL] and 
 following defines:
    mu : m (scalar) unrolling
    nu : n (scalar) unrolling
    ku : k (scalar) unrolling
-   vl : vector length to use
+   vl : vector length to use (1 means scalar code)
+   kv: degree of K-vectorization to use: vl must be a multiple of kv
+       NOTE: pure M-vec uses kv=1, pure kvec sets kv=vl
 The following can be optionally defined:
    kb : compile-time constant K loop bound to use
    kp : # of kits to peel, must be a multiple of vku!
@@ -132,18 +137,22 @@ During tuning, think about several regions for prefetch:
 @iexp DONLOOP @(bc) 4 & 0 =
 @iexp DOMLOOP @(bc) 8 & 0 =
 @iexp bc @(bc) 1 &
+@iif kv = 0
+   @iexp kv 1
+@endiif
 @print bc=@(bc) B1R=@(B1R) DO_N,M=@(DONLOOP),@(DONLOOP)
 @SKIP KVEC & UNVEC can't use splat, so define bcast!
-@VEC KDIM NO
-@ifdef bc
-   @undef bc
-@endifdef
-@iexp bc 0 1 +
-@VEC MDIM
-@ifdef ! bc
-   @iexp bc 0 1 +
-@endifdef
-@VEC !
+@iif @iexp @(kv) @(vl) = @(vl) 1 = |
+   @ifdef bc
+      @undef bc
+   @endifdef
+   @iexp bc 1
+@endiif
+@iif @iexp @(kv) @(vl) = @(vl) 1 = | 0 =
+   @ifdef ! bc
+      @iexp bc 1
+   @endifdef
+@endiif
 @ifdef ! pf
    @define pf @1@
 @endifdef
@@ -230,15 +239,16 @@ During tuning, think about several regions for prefetch:
 @skip bc = (bc != 0 || (vl < 2) || nu%vl != 0);
 @iexp bc 0 @(bc) ! 2 @(vl) < | @(vl) @(nu) % 0 ! |
 @iif TRI = 1
-   @VEC KDIM
-      @iif ku ! vl
-         @abort "ku (@(ku)) must equal vlen (@(vl))!"
+   @iif kv > 1
+      @iif ku ! kv
+         @abort "ku (@(ku)) must equal kv (@(kv))!"
       @endiif
-   @VEC MDIM
+   @endiif
+   @iif kv < 2
       @iif ku > 4
          @abort "ku must be <= 4, but it is @(ku)!"
       @endiif
-   @VEC !
+   @endiif
 @endiif
 #ifndef TYPE
    #define TYPE @(typ)
@@ -272,62 +282,44 @@ During tuning, think about several regions for prefetch:
 @iexp vku @(ku) 0 +
 @iexp vmu @(mu) 0 +
 @iexp vnu @(nu) 0 +
-@VEC MDIM
-   @iexp vmu @(vl) @(mu) /
-   @iexp kk @(vmu) @(vl) *
-   @iif kk ! mu
-      @abort "MU=@(mu) illegal with VLEN=@(vl)!"
-   @endiif
-@VEC KDIM
-   @iexp vku @(vl) @(ku) /
-   @iif @iexp @(vku) @(vl) * @(ku) !
-      @abort "KU=@(ku) illegal with VLEN=@(vl)!"
-   @endiif
-@VEC NO
-   @iif vl ! 1
-      @abort "vl must be 1 for scalar code!"
-   @endiif
-@VEC !
-@ifdef ! kp
-   @VEC KDIM `@define kp @@(vl)@`
-   @VEC ! KDIM `@define kp @1@`
-@endifdef
-@VEC KDIM 
-   @iexp vkp @(vl) @(kp) /
-   @iexp kk @(vkp) @(vl) *
-   @iif kk != ku
-      @abort "KP (@(kp)) must be a multiple of ku*VLEN (@(ku)*@(vl))"
-   @endiif
-@VEC ! KDIM
-   @define vkp @@(kp)@
-@VEC !
-@define KB @K@
-@ifdef ! kp
-   @VEC KDIM
-      @define kp @@(vl)@
-   @VEC ! KDIM
-      @define kp @@(vku)@
-   @VEC !
-@endifdef
-@iif vkp < 1
-   @abort "K-peel (kp) must be >= 1!"
+@SKIP make sure kv*mu is a multiple of vlen
+@iexp nkv @(kv) @(vl) /
+@iexp vmu @(nkv) @(mu) /
+@iif @(vl) @(vmu) @(mu) * %
+   @abort "MU=@(mu) illegal with VLEN=@(vl) and KVEC=@(kv)!"
 @endiif
-@iexp kk @(ku) @(kp) /
-@iexp kk @(kk) @(ku) *
-@iif kp ! kk
+@SKIP K-peel (kp) must be a multiple of kv
+@ifdef kp
+   @iif @iexp @(kv) @(kp) % 0 !
+      @abort "(kp (KPEEL=@(kp)) must be a multiple of kvec (@(kv))!"
+   @endiif
+   @iif kp < 1
+      @abort "K-peel (kp) must be >= 1!"
+   @endif
+@endifdef
+@ifdef ! kp
+   @iexp kp @(kv)
+@endifdef
+@define KB @K@
+@iif @(ku) @(kp) % 0 !
    @abort "K-peel (@(kp)) must be a multiple of KU=@(ku)!"
 @endiif
-@VEC KDIM
-@SKIP FOR KVEC, kb = CEIL(kb/vlen)*vlen
-@iif kb ! 0
-   @iexp kb @(vl) @(kb) @(vl) -1 + + / @(vl) *
-   @undef KB
-   @define KB @@(kb)@
-   @iif @iexp @(vku) @(kb) %
-      @abort "VKU=@(vku) must be multiple of @(kb)!"
+@SKIP for KVEC, kb = CEIL(kb/kv)*kv
+@iif kv > 1
+   @iif kb ! 0
+      @iexp kb @(kv) @(kb) @(kv) -1 + + / @(kv) *
+      @undef KB
+      @define KB @@(kb)@
    @endiif
 @endiif
-@VEC !
+@SKIP for pure MVEC kb = (CEIL(kb/ku)*ku
+@iif kv = 1
+   @iif kb ! 0
+      @iexp kb @(ku) @(kb) @(ku) -1 + + / @(ku) *
+      @undef KB
+      @define KB @@(kb)@
+   @endiif
+@endiif
 @iif kb > 0
 #define ATL_KBCONST 1
 #ifndef ATL_MM_KB
@@ -441,7 +433,7 @@ During tuning, think about several regions for prefetch:
    @endiif
 @ENDPROC
 @endiif 
-@VEC ! NO
+@iif vl > 1
 #ifdef BETA1
    #define ATL_vbeta(p_, d_) \
    { \
@@ -459,7 +451,10 @@ During tuning, think about several regions for prefetch:
       ATL_vst(p_, d_); \
    }
 #endif
-@VEC MDIM
+@endiif
+@SKIP if not doing pure K-vectorization, may use bcast or splat
+@iif kv < vl
+   @SKIP splat code when not using bcast
    @iif bc = 0
       @BEGINPROC ldB spc d i_
       @beginindent 1 @(spc)
@@ -478,11 +473,20 @@ During tuning, think about several regions for prefetch:
          which was obvious to you from the line below, of course.
 @ENDSKIP
          @iexp mo 2 @(vmu) ! 2 @(nu) ! | @(i_) 1 @(nu) - = 1 * @(mo) +
-         @iexp j @(vl) @(i_) /
-         @iexp i_ @(vl) @(j) * @(i_) -
+         @iif kv = 1
+            @iexp j @(vl) @(i_) /
+            @iexp i_ @(vl) @(j) * @(i_) -
    ATL_vsplat@(i_)(@(d), vB@(j));
 @SKIP    if ((i_+1)%vl == 0, add another vector to stack of vBs to load (lb)
-         @iexp kk @(vl) 1 @(i_) + %
+            @iexp kk @(vl) 1 @(i_) + %
+         @endiif
+         @iif kv > 1
+            @iexp j @(nkv) @(i_) /
+            @iexp i_ @(nkv) @(j) * @(i_) -
+   ATL_vsplat@(i_)_@(kv)(@(d), vB@(j));
+@SKIP    if ((i_+1)%kv == 0, add another vector to stack of vBs to load (lb)
+            @iexp kk @(kv) 1 @(i_) + %
+         @endiif
          @iif kk = 0
 @SKIP    Keep macro stack in old->new order by reversing if non-empty
 @SKIP    so we can add newest to bottom.
@@ -499,41 +503,41 @@ During tuning, think about several regions for prefetch:
       @endindent
       @ENDPROC
    @endiif
+   @SKIP otherwise, using bcast
    @iif bc ! 0
       @BEGINPROC ldB spc d i_
       @beginindent 1 @(spc)
          @iexp mo 2 @(vmu) ! 2 @(nu) ! | @(i_) 1 @(nu) - = 1 * @(mo) +
+         @SKIP offset comes in in i_
          @iif ib < 0
-            @iif i_ ! 0
-   ATL_vbcast(@(d), pB+@(i_));
-            @endiif
-            @iif i_ = 0
-            @SKIP *************************************************************
-               @iif TRMML ! 0
-                  @callproc lKpBinc
-               @endiif
-            @SKIP *************************************************************
-   ATL_vbcast(@(d), pB);
-            @endiif
+            @define OFF @@(i_)@
          @endiif
          @iif ib > -1
-            @iif ib ! 0
-   ATL_vbcast(@(d), pB+@(ib));
-             @endiif
-            @iif ib = 0
-            @SKIP *************************************************************
-               @iif TRMML ! 0
-                  @callproc lKpBinc
-               @endiif
-            @SKIP *************************************************************
-   ATL_vbcast(@(d), pB);
-             @endiif
+            @define OFF @@(ib)@
             @iexp ib @(ib) 1 +
          @endiif
+         @iif OFF = 0
+            @iif TRMML ! 0
+               @callproc lKpBinc
+            @endiif
+            @define PTR @pB@
+         @endiif
+         @iif OFF ! 0
+            @define PTR @pB+@(OFF)@
+         @endiif
+         @iif kv > 1
+   ATL_vbcast@(kv)x@(nkv)(@(d), @(PTR));
+         @endiif
+         @iif kv < 2
+   ATL_vbcast(@(d), @(PTR));
+         @endiif
+         @undef OFF
+         @undef PTR
       @endindent
       @ENDPROC
    @endiif
-@VEC KDIM
+@endiif
+@iif kv > 1
 @BEGINSKIP
 ARGS:
    nv : vvrsum # to use
@@ -546,12 +550,21 @@ ASSUMES: mu, nu, exreg
       @define kl @0@
       @define i @0@
       @define j @0@
-      @declare "   ATL_vvrsum@(nv)(" y n ");"
+      @iif kv > 1
+         @define ssuf @@(kv)x@(nkv)@
+         @iif nr ! nkv
+            @abort "VVRSUM: NR(@(nr)) should be same as NKV (@(nkv))!"
+         @endiif
+      @endiif
+      @iif kv < 2
+         @define ssuf @@(nv)@
+      @endiif
+      @declare "   ATL_vvrsum@(ssuf)(" y n ");"
          @iexp kl @(ir) @(nr) +
          @iexp k @(ir)
          @iwhile k < kl
-            @iexp j @(mu) @(k) /
-            @iexp i @(mu) @(k) %
+            @iexp j @(vmu) @(k) /
+            @iexp i @(vmu) @(k) %
                rC@(i)_@(j)
             @iexp k @(k) 1 +
          @endiwhile
@@ -563,17 +576,19 @@ ASSUMES: mu, nu, exreg
          @endiwhile
          @endiif
       @enddeclare
-      @iexp j @(mu) @(ir) /
-      @iexp i @(mu) @(ir) %
+      @iexp j @(vmu) @(ir) /
+      @iexp i @(vmu) @(ir) %
       @iexp kl @(j) @(mu) *
       @iexp kl @(kl) @(i) +
    ATL_vbeta(pC+@(kl), rC@(i)_@(j));
+      @undef ssuf
       @undef j
       @undef i
       @undef kl
       @undef k
    @ENDPROC
-@VEC KDIM NO
+@endiif
+@iif kv = vl
    @BEGINPROC ldB spc d i_
    @beginindent 1 @(spc)
       @iexp i_ @(vl) @(i_) *
@@ -607,13 +622,16 @@ ASSUMES: mu, nu, exreg
       @endiif
    @endindent
    @ENDPROC
-@VEC NO KDIM
    @define ldB @ATL_vld@
-   @iexp bmul @(vl) 0 +
-@VEC MDIM
+@endiif
+@iexp bmul @(kv)
+@iif kv = 1
    @define ldB @ATL_vbcast@
-   @iexp bmul 1 0 +
-@VEC NO
+@endiif
+@iif @iexp 1 @(kv) > @(vl) @(kv) ! &
+   @define ldB @ATL_vbcast@(vl)x@(nkv)@
+@endiif
+@iif vl = 1
    @BEGINPROC storeC spc
    @define kk @dum@
    @define i @dum@
@@ -641,7 +659,8 @@ ASSUMES: mu, nu, exreg
    @undef i
    @undef kk
    @ENDPROC
-@VEC MDIM
+@endiif
+@iif kv < 2
    @BEGINPROC storeC spc
    @define kk @dum@
    @define i @dum@
@@ -663,7 +682,8 @@ ASSUMES: mu, nu, exreg
    @undef j
    @undef i
    @ENDPROC
-@VEC KDIM
+@endiif
+@iif kv > 1
    @BEGINPROC storeC spc
       @define nr @dum@
       @define nf @dum@
@@ -672,32 +692,37 @@ ASSUMES: mu, nu, exreg
       @define vl2 @dum@
 
       @beginindent 1 @(spc)
-         @iexp nf @(vl) @(mu) @(nu) * / @(vl) *
-         @iexp nr @(nf) @(mu) @(nu) * -
+         @iexp nf @(kv) @(vmu) @(nu) * / @(kv) *
+         @iexp nr @(nf) @(vmu) @(nu) * -
          @iexp k 0
          @iwhile k < nf
-            @callproc vvrsum @(vl) @(vl) @(k)
-            @iexp k @(k) @(vl) +
+            @callproc vvrsum @(kv) @(kv) @(k)
+            @iexp k @(k) @(kv) +
          @endiwhile
-         @iif nr = 1
-            @callproc vvrsum 1 1 @(k)
+         @iif kv < vl
+            @callproc vvrsum @(kv) @(kv) @(k)
          @endiif
-         @iif nr > 1
-            @iexp ll @(vl)
-            @iwhile nr > 0
-               @iexp vl2 2 @(ll) /
-            @print nr=@(nr) ll=@(ll) vl2=@(vl2)
-               @iif nr > vl2
-                  @callproc vvrsum @(ll) @(nr) @(k)
-                  @iexp nr 0
-               @endiif
-               @iif nr } vl2
-                  @callproc vvrsum @(vl2) @(vl2) @(k)
-                  @iexp nr @(vl2) @(nr) -
-                  @iexp k @(k) @(vl2) +
-               @endiif
-               @iexp ll @(vl2)
-            @endiwhile
+         @iif kv = vl
+            @iif nr = 1
+               @callproc vvrsum 1 1 @(k)
+            @endiif
+            @iif nr > 1
+               @iexp ll @(vl)
+               @iwhile nr > 0
+                  @iexp vl2 2 @(ll) /
+               @print nr=@(nr) ll=@(ll) vl2=@(vl2)
+                  @iif nr > vl2
+                     @callproc vvrsum @(ll) @(nr) @(k)
+                     @iexp nr 0
+                  @endiif
+                  @iif nr } vl2
+                     @callproc vvrsum @(vl2) @(vl2) @(k)
+                     @iexp nr @(vl2) @(nr) -
+                     @iexp k @(k) @(vl2) +
+                  @endiif
+                  @iexp ll @(vl2)
+               @endiwhile
+            @endiif
          @endiif
       @endindent
       @undef k
@@ -706,6 +731,7 @@ ASSUMES: mu, nu, exreg
       @undef ll
       @undef vl2
    @ENDPROC
+@endiif
 @VEC KDIM
    @iexp incAk @(mu) @(vl) *
    @iexp incBk @(nu) @(vl) *
