@@ -664,7 +664,8 @@ struct ipinfo
    ushort pnmu, pnnu;       /* # of unrollings in partial blocks */
    ushort nmuF, nnuF;       /* # of unrolling for final (remainder) block */
    uchar mu, nu, ku;        /* unrolling for each dim used by amm */
-   uchar vlen;              /* vector length (needed for KVEC kerns) */
+   uchar vlen;              /* vector length (needed for alignment) */
+   uchar kvec;              /* k-vec degree (needed for KVEC kerns) */
 };
 
 typedef struct opinfo opinfo_t;
@@ -700,7 +701,8 @@ struct opinfo
    ushort nmu, nnu;         /* # of unrollings along each dim */
    ushort pnmu, pnnu;       /* # of unrollings in partial blocks */
    uchar mu, nu, ku;        /* unrolling for each dim used by amm */
-   uchar vlen;              /* vector length (needed for KVEC kerns) */
+   uchar vlen;              /* vector length (needed for alignment) */
+   uchar kvec;              /* k-vec degree (needed for KVEC kerns) */
 };
 #undef ushort
 #undef uchar
@@ -9303,7 +9305,7 @@ ATL_mmnode_t *FindBestCacheBudgetCase
    {
       size_t mb, nb, kb, ku=mp->ku;
       if (!mp->ID && FLAG_IS_SET(mp->flag, MMF_KUISKB))
-         ku = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 1;
+         ku = mp->kvec;
 
       GetBlocking(thresh, CS, mp->mu, mp->nu, ku, &mb, &nb, &kb);
       p = CloneMMNode(mp);  /* can't use mp, since may switch KRUNTIME */
@@ -9685,8 +9687,7 @@ ATL_mmnode_t *GetLowRankKKernels
          {
             const int mu = mp->mu, nu = mp->nu, ku = mp->ku;
             const int mb = (MB/mu)*mu, nb = (NB/nu)*nu;
-            const int KK = (!FLAG_IS_SET(mp->flag,MMF_KVEC)) ? 
-                           k : ((k+ku-1)/ku)*ku;
+            const int KK = (mp->kvec < 2) ?  k : ((k+ku-1)/ku)*ku;
             double mf;
    
             assert(mb && nb);
@@ -9875,7 +9876,7 @@ int IsSlowerThanList
    mb = (MB/mu)*mu;
    nb = (NB/nu)*nu;
    assert(mb && nb && kb);
-   KB = (!FLAG_IS_SET(mmc->flag,MMF_KVEC))?kb:((kb+mmc->ku-1)/mmc->ku)*mmc->ku;
+   KB = (mmc->kvec < 2)?kb:((kb+mmc->ku-1)/mmc->ku)*mmc->ku;
    mfc = TimeMMKernel(verb, 0, mmc, pre, mb, nb, KB, 0, 0, -1);
    mfc = (kb*mfc)/(double)KB;
    mmc->mflop[1] = mfc;
@@ -9887,9 +9888,9 @@ int IsSlowerThanList
          continue;
       if (mp->kbmax && kb > mp->kbmax)
          continue;
-      if (kb%ku == 0 || FLAG_IS_SET(mp->flag,MMF_KVEC))
+      if (kb%ku == 0 || (mp->kvec > 2))
       {
-         int KK = (FLAG_IS_SET(mp->flag,MMF_KVEC)) ? ((kb+ku-1)/ku)*ku : kb;
+         int KK = (mp->kvec > 1) ? ((kb+ku-1)/ku)*ku : kb;
          mu = mp->mu;
          nu = mp->nu;
          mb = (MB/mu)*mu;
@@ -10097,7 +10098,7 @@ ATL_mmnode_t *MergeRankKKernels
          {
             int mu = fixb->mu, nu = fixb->nu, ku = fixb->ku;
             int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
-            int kb = (!FLAG_IS_SET(fixb->flag,MMF_KVEC)) ? k : ((k+ku-1)/ku)*ku;
+            int kb = (fixb->kvec < 2) ? k : ((k+ku-1)/ku)*ku;
             best = fixb;
             fixb = fixb->next;
             mfB = TimeMMKernel(verb, 0, best, pre, mb, nb, kb, 0,0, -1);
@@ -10110,7 +10111,7 @@ ATL_mmnode_t *MergeRankKKernels
          {
             int mu = sqrb->mu, nu = sqrb->nu, ku = sqrb->ku;
             int mb = (MB/mu)*mu, nb = (NB/nu)*nu;
-            int kb = (!FLAG_IS_SET(sqrb->flag,MMF_KVEC)) ? k : ((k+ku-1)/ku)*ku;
+            int kb = (sqrb->kvec < 2) ? k : ((k+ku-1)/ku)*ku;
             mf = TimeMMKernel(verb, 0, sqrb, pre, mb, nb, kb, 0, 0,-1);
             mf = (mf*k)/(double)kb;
             if (mf > mfB)
@@ -10126,14 +10127,14 @@ ATL_mmnode_t *MergeRankKKernels
          }
       }
       for (p=runb; p; p = p->next)
-         if ((k % p->ku == 0 || FLAG_IS_SET(p->flag,MMF_KVEC)) && 
+         if ((k % p->ku == 0 || p->kvec > 1) && 
              k > p->kbmax && (!p->kbmin || p->kbmin <= k))
             break;
       if (p)
       {
          int mu = p->mu, nu = p->nu, ku = p->ku;
          int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
-         int kb = (!FLAG_IS_SET(p->flag,MMF_KVEC)) ? k : ((k+ku-1)/ku)*ku;
+         int kb = ((p->kvec < 2) ? k : ((k+ku-1)/ku)*ku;
          if (p->kbmax && p->kbmax < kb)
             mf = -1.0;
          else
@@ -10868,20 +10869,20 @@ int KernHandlesThisKB(ATL_mmnode_t *mp, int kb)
    if (mp->kbmax && kb > mp->kbmax)
       return(0);
 /*
- * KVEC kerns can always handle problems within vlen-1 less than their kb
+ * KVEC kerns can always handle problems within kvec-1 less than their kb
  * due to padding in copy routines.
  */
-   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   if ((mp->kvec > 1)
    {
       int KB;
       const int ku = mp->ku;
       if (mp->kbmin)
       {
-         KB = (mp->kbmin / mp->vlen)*mp->vlen;
+         KB = (mp->kbmin / mp->kvec)*mp->kvec;
          if (KB < mp->kbmin)
             return(0);
       }
-      KB = ((kb+mp->vlen-1)/mp->vlen)*mp->vlen;
+      KB = ((kb+mp->kvec-1)/mp->kvec)*mp->kvec;
       if ((KB/ku)*ku != kb)
          return(0);
    }
@@ -10933,8 +10934,8 @@ ATL_mmnode_t *BestKernForKB(int verb, char pre, ATL_mmnode_t *mmb, int KB)
          }
          continue;
       }
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-         kb = ((KB+mp->vlen-1)/mp->vlen)*mp->vlen;
+      if (mp->kvec > 1)
+         kb = ((KB+mp->kvec-1)/mp->kvec)*mp->kvec;
       if (!mp->ID && FLAG_IS_SET(mp->flag, MMF_KUISKB))
       {
          mp->kbmin = kb-mp->vlen+1;
@@ -11860,7 +11861,7 @@ ATL_mmnode_t *FindVecVL(int verb, char pre, int NB)
    while(0);
    if (mmB->vlen < 2)
       vtyp = "SCALAR";
-   else if (FLAG_IS_SET(mmB->flag, MMF_KVEC))
+   else if (mmB->kvec > 1)
       vtyp = "VEC-K";
    else 
       vtyp = "VEC-M";
@@ -12046,13 +12047,13 @@ ATL_mmnode_t *DoSyrkMUNU
 
 void DoSyrkKU(int vrb, char pre, ATL_mmnode_t *mb)
 /*
- * For KVEC, we currently force ku=vlen, so this routine does nothing.
+ * For KVEC, we currently force ku=kvec, so this routine does nothing.
  * For other kernels, see if 2 <= ku <= 4 provide speedup over default ku=1
  */
 {
    int ku, kuB;
    double mf, mfB, mf0;
-   if (FLAG_IS_SET(mb->flag, MMF_KVEC))
+   if (mb->kvec > 1)
       return;
    mf0 = mfB = mb->mflop[0];
    printf("TUNING KU, CURRENTLY KU=%d, mf=%.2f\n", mb->ku, mfB);
@@ -12116,8 +12117,9 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
    mmp->vlen = VL;
+   mmp->kvec = 1;
    if (KVEC)
-      mmp->flag |= (1<<MMF_KVEC);
+      mmp->kvec = KVEC;
    else if (!UseBcast(flg, verb, pre, nb, nreg, VL))
       mmp->flag |= (1<<MMF_NOBCAST);
 /*
@@ -12326,8 +12328,9 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
    mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
    mmp->vlen = VL;
+   mmp->kvec = 1;
    if (KVEC)
-      mmp->flag |= (1<<MMF_KVEC);
+      mmp->kvec = KVEC;
    else if (!UseBcast(flg, verb, pre, nb, nreg, VL))
       mmp->flag |= (1<<MMF_NOBCAST);
 /*
@@ -12458,8 +12461,9 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
    mmp->vlen = VL;
+   mmp->kvec = 1;
    if (KVEC)
-      mmp->flag |= (1<<MMF_KVEC);
+      mmp->kvec = KVEC;
    else if (!UseBcast(flg, verb, pre, nb, nreg, VL))
       mmp->flag |= (1<<MMF_NOBCAST);
 /*
@@ -12703,7 +12707,7 @@ void FindDefMUNU(int flg, int verb, char pre, int nb, int *NREG, int *VLEN)
  */
    if (chkNR)
    {
-      const int KVEC = FLAG_IS_SET(mmM->flag, MMF_KVEC);
+      const int KVEC = mmM->kvec;
       int i, nr = nreg+nreg;
       printf("NREG=%d, U=(%d,%d): MFLOP=%.0f\n", 
              nreg, mmM->mu, mmM->nu, mmM->mflop[0]);
@@ -12841,7 +12845,7 @@ int GetMaxNB(int flag, int verb, char pre, ATL_mmnode_t *mp)
    double mf, mfB=0.0;
 
    printf("FINDING RANGE OF NB FOR GENKERN MU=%d, NU=%d, %cVEC=%d:\n",
-          mp->mu, mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC)?'K':'M', mp->vlen);
+          mp->mu, mp->nu, (mp->kvec > 1)?'K':'M', mp->vlen);
    inc = Mylcm(mp->mu, mp->nu);
    inc = Mylcm(inc,mp->ku);
    while (inc < 12)
@@ -13402,16 +13406,13 @@ void DoKUs(char pre, int flg, int verb, ATL_mmnode_t *mmb)
       printf("   TRYING KUs, RT='%s' B=(%d,%d,%d)\n", mp->rout,
              mp->mbB, mp->nbB, mp->kbB);
       printf("      ku=%d, MFLOP=%.2f, SPEEDUP=1.0\n", mp->ku, mf0);
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-         assert(mp->ku == mp->vlen);
-      else
-         assert(mp->ku == 1);
+      assert(mp->ku == mp->kvec);
       #if 0  /* present generator handles only ku=1,full */
       kumax = (mp->kbB)>>1;
       kumax = Mmin(kumax, 128);
       kumul = Mmin(mp->mu, mp->nu); /* square-friendly K unrollings */
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-         kumul = Mylcm(kumul, mp->vlen);
+      if (mp->kvec > 1)
+         kumul = Mylcm(kumul, mp->kvec);
       else
          kumul = (kumul != 1) ? kumul : 2;
 
@@ -13962,7 +13963,7 @@ ATL_mmnode_t *DosqB(char pre, int flg, int nreg, int VLEN, unsigned int B)
    }
    printf("BEST KERNEL FOR B=%u: U=(%u,%u,%u), VL=%u, KVEC=%u\n"
           "   BREG1=%u, SPLAT=%u, mf=%.2f\n", B, mpB->mu, mpB->nu, mpB->ku,
-          mpB->vlen, (mpB->flag>>MMF_KVEC)&1, (mpB->flag>>MMF_BREG1)&1, 
+          mpB->vlen, mpB->kvec, (mpB->flag>>MMF_BREG1)&1, 
           (mpB->flag>>MMF_NOBCAST)&1, mpB->mflop[0]);
    mpB->rout = DupString(mpB->rout);
    return(mpB);
@@ -13996,8 +13997,7 @@ void TryAllSyrkPref(int flag, int vrb, char pre, ATL_mmnode_t *mp,
    const int thsC[3] = {1|256, 1, 1|32};
 @skip   const int nxtA[3] = {2|512, 2, 2|64};
    printf("PREFETCH TUNING NB=%d, KB=%d, U=%d, KVEC=%d, SPLAT=%d:\n", nb, kb, 
-          mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
-          FLAG_IS_SET(mp->flag, MMF_NOBCAST));
+          mp->nu, mp->kvec, FLAG_IS_SET(mp->flag, MMF_NOBCAST));
    mp->pref = 0; mp->pfLS=64;
    mf0 = mfB = TimeMMKernel(vrb, 0, mp, pre, nb, nb, kb, 1, 0, -1);
    mp->mflop[0] = mf0;
@@ -14069,7 +14069,7 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
    #endif
    VL = mD->vlen;
    flg = mD->flag;
-   KVEC = ((flg>>MMF_KVEC)&1)*VL;
+   KVEC = mD->kvec;
    flg &= ~(1<<MMF_KUISKB);
    flg |= (1<<MMF_KRUNTIME);
    pT = MMGetNodeGEN(pre, 0, 0, VL, 1, 1, VL, 0, 0, 0,
@@ -14094,7 +14094,7 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
          else
             pT->flag &= ~(1<<MMF_BREG1);
 @skip         pT->mu = mu = (KVEC) ? i : i*VL;
-         pT->flag |= (1<<MMF_KVEC);
+         pT->kvec = pT->vlen;
          pT->mu = mu = i;
          pT->nu = nu = j;
          pT->ku = pT->vlen;
@@ -14127,7 +14127,7 @@ void DoSyrkAmmUR(char pre, int flag, int verb, int nreg)
          mb = (NB/mu)*mu;
          if (!mb)
             continue;
-         pT->flag &= ~(1<<MMF_KVEC);
+         pT->kvec = 1;
          if (pT->genstr)
             free(pT->genstr);
          pT->genstr = MMGetGenString(pre, pT);
@@ -14540,11 +14540,11 @@ void DoPrefOnList(int flg, int vrb, char pre, int maxB)
    fprintf(fp, "---------\n");
    fprintf(fp, "  NB");
    for (mp=mb; mp; mp = mp->next)
-      fprintf(fp, "   %c%c:%2dx%2d", FLAG_IS_SET(mp->flag, MMF_KVEC) ? 'K':'M', 
+      fprintf(fp, "   %c%c:%2dx%2d", (mp->kvec > 1) ? 'K':'M', 
               FLAG_IS_SET(mp->flag,MMF_NOBCAST)?'s':'b', mp->mu, mp->nu);
    for (mp=mb; mp; mp = mp->next)
       fprintf(fp, "  PREF %c%2dx%2d", 
-              FLAG_IS_SET(mp->flag, MMF_KVEC) ? 'K':'M', mp->mu, mp->nu);
+              (mp->kvec > 1) ? 'K':'M', mp->mu, mp->nu);
    fprintf(fp, "\n====");
    for (mp=mb; mp; mp = mp->next)
       fprintf(fp, "  =========");
@@ -14625,7 +14625,7 @@ void SetFlops(int flg, int verb, char pre, int VL)
       {
          mp->ku = mp->vlen = vl;
          if (vl == 2)
-            mp->flag |= (1<<MMF_KVEC);
+            mp->kvec = vl;
          if (mp->genstr)
             free(mp->genstr);
          mp->genstr = NULL;
@@ -14690,14 +14690,14 @@ void SetFlops(int flg, int verb, char pre, int VL)
    {
       mp->ku = VL;
       mp->mu = muB;
-      mp->flag |= (1<<MMF_KVEC);
+      mp->kvec = mp->vlen;
       mp->flag &= ~(1<<MMF_NOBCAST);
    }
    else
    {
       mp->ku = 1;
       mp->mu = muB * VL;
-      mp->flag &= ~(1<<MMF_KVEC);
+      mp->kvec = 1;
       if (bcB) 
          mp->flag &= ~(1<<MMF_NOBCAST);
       else
@@ -14872,9 +14872,9 @@ static int AdjustForTRMM(char pre, int flag, ATL_mmnode_t *mp, ATL_mmnode_t *gd)
 /*
  * For kvec kernel, KU is fixed, so we must adjust U
  */
-   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   if (mp->kvec > 1)
    {
-      const unsigned int ku = mp->vlen;
+      const unsigned int ku = mp->kvec;
       unsigned int u, nreg=mp->mu*(mp->nu+1);
 
       mp->ku = ku;
@@ -14945,11 +14945,11 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
    const char *frm="    %c %4d %4d %3d %3d %9.0f\n";
    unsigned int MU, KU=mmB->ku, bf=mmB->flag;
 
-   pM = MMGetNodeGEN(pre, bf&(~(1<<MMF_KVEC)), 0, 0, 0, 1, mmB->vlen,
-                     0, 0, 0, DupString("ATL_tmp.c"));
+   pM = MMGetNodeGEN(pre, bf, 0, 0, 0, 1, mmB->vlen, 0, 0, 0, 
+                     DupString("ATL_tmp.c"));
    pM->ku = 1;
-   pK = MMGetNodeGEN(pre, bf|(1<<MMF_KVEC), 0, 0, 0, mmB->vlen, mmB->vlen, 
-                     mmB->vlen, 0, 0, DupString("ATL_tmp.c"));
+   pK = MMGetNodeGEN(pre, bf, 0, 0, 0, mmB->vlen, mmB->vlen, mmB->vlen, 0, 0, 
+                     DupString("ATL_tmp.c"));
    free(pM->genstr);
    free(pK->genstr);
    pK->ku = mmB->vlen;
@@ -15035,7 +15035,7 @@ ATL_mmnode_t *srchTrmm(char pre, int flag, int verb, int nreg,
 /*
  * If best case was M-vectorized, try ku=2,3,4
  */
-   if (!(mmB->flag & (1<<MMF_KVEC)))
+   if (mmB->kvec < 2)
    {
       const unsigned U = (flag&1) ? mmB->mu : mmB->nu;
       const unsigned B = (flag&1) ? mmB->mbB : mmB->nbB;
@@ -31777,7 +31777,7 @@ void PrintFlagArr(FILE *fp, ATL_mmnode_t *mb)
    for (n=0,mp=mb; mp; n++, mp = mp->next)
    {
       unsigned char flag=FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 1 : 0;
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      if (mp->kvec > 1)
          flag |= 2;
       fprintf(fp, "%6d%c   /* IDX=%d */\n", flag, mp->next ? ',':' ', n);
    }
@@ -32002,8 +32002,8 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
  * Create atlas_<pre><cn>szC.h if necessary
  */
    for (mp=mb; mp; mp = mp->next)
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC) && ib == -1 &&
-          (mp->mu*mp->nu) % mp->vlen != 0)
+      if (mp->kvec > 1 && ib == -1 &&
+          (mp->mu*mp->nu) % mp->kvec != 0)
          break;
    if (mp)
    {
@@ -32134,8 +32134,8 @@ double PrintSum(FILE *fp, char *cn, ATL_mmnode_t *b, double mfGE)
       fprintf(fp, "#define ATL_%sAMM_MFLOP_RATIO %e\n", cn, mf/mfGE);
    #endif
    for (kvec=0,mp=b; mp; mp = mp->next)
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-         kvec = Mmax(kvec, mp->vlen);
+      if (mp->kvec > 1)
+         kvec = Mmax(kvec, mp->kvec);
    fprintf(fp, "#ifndef  ATL_%sAMM_MAXKVEC\n", cn);
    fprintf(fp, "   #define ATL_%sAMM_MAXKVEC %d\n", cn, kvec);
    fprintf(fp, "#endif\n");
@@ -32812,9 +32812,8 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    assert(!mb->next);
    fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", "syrk", NULL);
    fprintf(fp, "#define SYRK_NB %d\n", mb->kbB);
-   fprintf(fp, "#define ATL_SYRKK_VLEN %d\n", mb->vlen);
-   fprintf(fp, "#define ATL_SYRKK_KVEC %d\n", 
-           FLAG_IS_SET(mb->flag, MMF_KVEC) ? mb->vlen:0);
+   fprintf(fp, "#define ATL_SYRKK_VLEN %u\n", mb->vlen);
+   fprintf(fp, "#define ATL_SYRKK_KVEC %u\n", mb->kvec);
    fprintf(fp, "#define ATL_SYRKK_NU %d\n", mb->nu);
    fprintf(fp, "#define ATL_SYRKK_KU %d\n", mb->ku);
 /*
@@ -32861,7 +32860,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, int RCSAME)
    {
       fprintf(fp, "#define ATL_%ccm2am_syrk%c ATL_%c%cm2am_a1_%dx%d%c\n", 
               pre, trs[itr], pre, rcs[itr], mb->nu, 
-              FLAG_IS_SET(mb->flag, MMF_KVEC)?mb->vlen:0, cjs[itr]);
+              (mb->kvec > 1)?mb->kvec:0, cjs[itr]);
       fprintf(fp, "void ATL_%ccm2am_syrk%c", pre, trs[itr]);
       if (pre == 'd' || pre == 's')
          fprintf(fp, 
@@ -33039,7 +33038,7 @@ void PrintFlagArr(FILE *fp, ATL_mmnode_t *mb)
    for (n=0,mp=mb; mp; n++, mp = mp->next)
    {
       unsigned char flag=FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 1 : 0;
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      if (mp->kvec > 1)
          flag |= 2;
       fprintf(fp, "%6d%c   /* IDX=%d */\n", flag, mp->next ? ',':' ', n);
    }
@@ -33222,8 +33221,8 @@ void GenFullCpyC(char pre, char *outd, char dir, char *cn, ATL_mmnode_t *mb)
  * Create atlas_<pre><cn>szC.h if necessary
  */
    for (mp=mb; mp; mp = mp->next)
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC) && ib == -1 &&
-          (mp->mu*mp->nu) % mp->vlen != 0)
+      if (mp->kvec > 1 && ib == -1 &&
+          (mp->mu*mp->nu) % mp->kvec != 0)
          break;
    if (mp)
    {
@@ -33364,8 +33363,8 @@ double PrintSum(FILE *fp, char *cn, ATL_mmnode_t *b, double mfGE)
       fprintf(fp, "#define ATL_%sAMM_MFLOP_RATIO %e\n", cn, mf/mfGE);
    #endif
    for (kvec=0,mp=b; mp; mp = mp->next)
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-         kvec = Mmax(kvec, mp->vlen);
+      if (mp->kvec > 1)
+         kvec = Mmax(kvec, mp->kvec);
    fprintf(fp, "#ifndef  ATL_%sAMM_MAXKVEC\n", cn);
    fprintf(fp, "   #define ATL_%sAMM_MAXKVEC %d\n", cn, kvec);
    fprintf(fp, "#endif\n");
@@ -34433,8 +34432,8 @@ int main(int nargs, char **args)
       {
          ATL_mmnode_t *nxt = mp->next;
          int kill;
-         kill  = (C & (1<<CON_NOKVEC)) && FLAG_IS_SET(mp->flag, MMF_KVEC);
-         kill |= (C & (1<<CON_NOMVEC)) && !FLAG_IS_SET(mp->flag, MMF_KVEC);
+         kill  = (C & (1<<CON_NOKVEC)) && (mp->kvec > 1);
+         kill |= (C & (1<<CON_NOMVEC)) && (mp->kvec < 2);
          kill |= (C & (1<<CON_NOCOMPK)) && !FLAG_IS_SET(mp->flag, MMF_KRUNTIME);
          if (kill)
          {
@@ -35651,10 +35650,10 @@ ATL_mmnode_t *BestCompatKern
    nbB = dp->nbB;
    kbB = dp->kbB;
 
-   printf(
-"   SEARCHING FOR BEST K-CLEANER FOR ID=%d, U=(%u,%u,%u) B=(%u,%u,%u) %c%d\n", 
+   printf( "   SEARCHING FOR BEST K-CLEANER FOR ID=%d, U=(%u,%u,%u) "
+          "B=(%u,%u,%u) V%uK%u\n", 
           dp->ID, dp->mu, dp->nu, dp->ku, dp->mbB, dp->nbB, dp->kbB,
-          FLAG_IS_SET(dp->flag, MMF_KVEC)?'K':'M', dp->vlen);
+          dp->vlen, dp->kvec);
    for (cnt=0,mp=mb; mp; mp = mp->next, cnt++)
    {
       if (MMKernCleansK(dp, mp))
@@ -35759,7 +35758,7 @@ ATL_mmnode_t *FindK1Clean
       else
          op = (K*N <= L1ELTS) ? nb->next : nb->next->next;
       flag = op->flag & MMF_ALLPF;
-      if (!FLAG_IS_SET(dp->flag, MMF_KVEC))
+      if (dp->kvec < 2)
          flag |= op->flag & (1<<MMF_NOBCAST);
       gp = MMGetGenCaseKClean(dp);
       gp->flag |= flag;
@@ -36416,7 +36415,7 @@ ATL_mmnode_t *findBestBigSQ(char pre, int verb, ATL_mmnode_t *mmb)
  */
    for (p=mmb; p; p = p->next)
    {
-      int maxKU=(FLAG_IS_SET(p->flag, MMF_KVEC) ? p->vlen : 4);
+      int maxKU=(p->kvec > 1) ? p->kvec : 4;
       if (!p->ID) /* generated kernels are adapted to restrictions */
       {
          ATL_mmnode_t *tp;
@@ -36662,7 +36661,7 @@ ATL_mmnode_t *bestUM(char pre, int verb, ATL_mmnode_t *IP)
    {
       ATL_mmnode_t *nxt=mp->next;
       const unsigned int mu=mp->mu, nu=mp->nu,
-         maxKU=(FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 4);
+         maxKU=(mp->kvec > 1) ? mp->kvec : 4);
       if (mu%nu && nu%mu || mp->ku > maxKU || 
           !FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
       {
@@ -36767,13 +36766,12 @@ void srch_menUM(char pre, int verb)
 TIME_SYRKUM:
    while (mmb->next)                      /* get rid of all but */
       mmb = KillMMNode(mmb);              /* asymptotic case */
-   maxKU = FLAG_IS_SET(mmb->flag, MMF_KVEC) ? mmb->vlen : 4;
+   maxKU = (mmb->kvec > 1) ? mmb->kvec : 4;
 /*
  * Try generating with straight params from search
  */
    bp = MMGetNodeGEN(pre, 0, 0, mmb->mu, mmb->nu, mmb->ku, mmb->vlen, 
-                     FLAG_IS_SET(mmb->flag, MMF_KVEC), mmb->pref, mmb->pfLS, 
-                     NULL);
+                     mmb->kvec, mmb->pref, mmb->pfLS, NULL);
    bp->flag = ((mmb->flag | (1<<MMF_KRUNTIME)) & 
                (~((1<<MMF_X87)|(1<<MMF_KUISKB))));
    bp->mbB = mmb->mbB;
@@ -36781,7 +36779,7 @@ TIME_SYRKUM:
    bp->kbB = mmb->kbB;
    if (bp->ku > maxKU)
    {
-      if (FLAG_IS_SET(bp->flag, MMF_KVEC))
+      if (bp->kvec > 1)
          bp->ku = maxKU;
       else
       {
@@ -37813,12 +37811,12 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
          REGEN = KILL = 1;
          if (!ob->ID) /* for genned codes, see if we can reset KU */
          {
-            if (FLAG_IS_SET(ob->flag, MMF_KVEC))
+            if (ob->kvec > 1)
             {
-               if (maxKU >= ob->vlen)
+               if (maxKU >= ob->kvec)
                {
                   KILL = 0;
-                  ob->ku = ob->vlen;
+                  ob->ku = ob->kvec;
                }
             }
             else
@@ -37834,9 +37832,9 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
          if (!ob->ID) /* genned codes poss changed to runtime */
          {
             KILL = 0;
-            if (FLAG_IS_SET(ob->flag, MMF_KVEC))
+            if (ob->kvec > 1)
             {
-               ob->ku = ob->vlen;
+               ob->ku = ob->kvec;
                ob->flag ^= 1<<MMF_KUISKB;
             }
             else
@@ -37852,12 +37850,12 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
          if (!ob->ID) /* genned codes poss changed to runtime */
          {
             KILL = 0;
-            if (FLAG_IS_SET(ob->flag, MMF_KVEC))
+            if (ob->kvec > 1)
             {
-               if (ob->ku < ob->vlen)
-                  ob->ku = ob->vlen;
+               if (ob->ku < ob->kvec)
+                  ob->ku = ob->kvec;
                else
-                  while (ob->ku % ob->vlen)
+                  while (ob->ku % ob->kvec)
                      ob->ku--;
 @ROUT bfisrch
             }
@@ -37878,9 +37876,9 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             ob->flag |= 1<<MMF_KRUNTIME;
          }
       }
-      if ((flag&(1<<FLG_NOKVEC)) && FLAG_IS_SET(ob->flag, MMF_KVEC))
+      if ((flag&(1<<FLG_NOKVEC)) && ob->kvec > 1)
          KILL = 1;
-      else if ((flag&(1<<FLG_NOMVEC)) && !FLAG_IS_SET(ob->flag, MMF_KVEC))
+      else if ((flag&(1<<FLG_NOMVEC)) && ob->kvec < 2)
          KILL = 1;
       if (KILL)
          ob = KillMMNode(ob);
@@ -37909,9 +37907,9 @@ ATL_mmnode_t *ApplyRules(ATL_mmnode_t *ob, int flag, int maxKU, int reqVL)
             if (flag&(1<<FLG_MKCOMP)) /* want to try run- & compile-time K */
             {
                ATL_mmnode_t *np=NULL;
-               if (FLAG_IS_SET(ob->flag, MMF_KVEC))
+               if (ob->kvec > 1)
                {
-                  if (ob->ku == ob->vlen)
+                  if (ob->ku == ob->kvec)
                      np = CloneMMNode(ob);
                }
                else if (ob->ku == 1)
@@ -38511,8 +38509,7 @@ void GenSyrkH(char pre, char *outd, ATL_mmnode_t *mb, unsigned int bv)
    }
    fp = OpenMMGenHeader(outd, 0, pre, NULL, "amm", UR?"ursyrk":"sqsyrk", NULL);
    fprintf(fp, "#define ATL_%sSYRKK_VLEN %d\n", SH, mb->vlen);
-   fprintf(fp, "#define ATL_%sSYRKK_KVEC %d\n", SH,
-           FLAG_IS_SET(mb->flag, MMF_KVEC) ? mb->vlen:0);
+   fprintf(fp, "#define ATL_%sSYRKK_KVEC %d\n", SH, mb->kvec);
    if (UR)
       fprintf(fp, "#define ATL_%sSYRKK_MU %d\n", SH, mb->mu);
    fprintf(fp, "#define ATL_%sSYRKK_NU %d\n", SH, mb->nu);
@@ -38915,11 +38912,11 @@ int PrintIntsHex(FILE *fp, ATL_mmnode_t *mp, int nint, int *nbits)
    int flag;
 
    ib = FLAG_IS_SET(mp->flag, MMF_KRUNTIME);
-   ib |= FLAG_IS_SET(mp->flag, MMF_KVEC) ? 2 : 0;
+   ib |= (mp->kvec > 1) ? 2 : 0;
    flag = ib;
    ish = nbits[0];
    @iexp iv 1
-   @whiledef vv ivar kbmax kbmin vlen ku nu mu
+   @whiledef vv ivar kbmax kbmin kvec vlen ku nu mu
    if (ish+nbits[@(iv)] > ATL_PSIZE*8)
    {
       fprintf(fp, ", 0x%lxL", ib);
@@ -38938,7 +38935,7 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
 {
    FILE *fpout;
    ATL_mmnode_t *mp;
-   char *VN[8]={"FLAG", "MU", "NU", "KU", "VLEN", "KBMIN", "KBMAX","K1IDX"};
+   char *VN[9]={"FLAG","MU","NU","KU","VLEN","KVEC","KBMIN","KBMAX","K1IDX"};
    unsigned int *nbits;
    unsigned int k, i, nint, N, nkvec;
    ATL_iptr_t ibt;
@@ -38977,10 +38974,11 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    fprintf(fpout, "(ATL_iptr_t)%s_b1,\n(ATL_iptr_t)%s_b0,\n(ATL_iptr_t)%s_bn\n",
            mp->auth, mp->auth, mp->auth);
    i = PrintIntsHex(fpout, mp, nint, nbits);
-   fprintf(fpout, "/* %2u: FL=%x, U=(%u,%u,%u), VL=%u, KB=(%u,%u) KclnI=%d */",
-           0, i, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kbmin, mp->kbmax, 
-           mp->ivar-1);
-   nkvec = FLAG_IS_SET(mp->flag, MMF_KVEC);
+   fprintf(fpout, 
+           "/* %2u: FL=%x, U=(%u,%u,%u), VL=%u, KV=%u KB=(%u,%u) KclnI=%d */",
+           0, i, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kvec, 
+           mp->kbmin, mp->kbmax, mp->ivar-1);
+   nkvec = (mp->kvec > 1);
    for (i=1,mp=mb->next; mp; mp = mp->next, i++)
    {
       fprintf(fpout, 
@@ -38991,7 +38989,7 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
               "/* %2u: FL=%x, U=(%u,%u,%u), VL=%u, KB=(%u,%u), KclnI=%d */",
               i, k, mp->mu, mp->nu, mp->ku, mp->vlen, mp->kbmin, mp->kbmax, 
               mp->ivar-1);
-      nkvec += FLAG_IS_SET(mp->flag, MMF_KVEC);
+      nkvec += (mp->kvec > 1);
    }
    fprintf(fpout, "\n};\n#endif /* end else of ATL_DECL */\n\n");
 
@@ -39048,10 +39046,10 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
       fprintf(fpout, "   NU_ = ATL_AMM_MIN_NU; \\\n");
    fprintf(fpout, "}\n\n");
 
-   fprintf(fpout, "#define ATL_AMM_iinfo(ia_,FLAG_,MU_,NU_,KU_,VLEN_,"
+   fprintf(fpout, "#define ATL_AMM_iinfo(ia_,FLAG_,MU_,NU_,KU_,VLEN_,KVEC_"
                   "KBMIN_,KBMAX_,K1IDX_) \\\n");
    fprintf(fpout, "{ \\\n   ATL_iptr_t v_ = *(ia_); \\\n");
-   for (nint=k=i=0; i < 8; i++)
+   for (nint=k=i=0; i < 9; i++)
    {
       int nb=nbits[i];
       if (nb)
@@ -39083,13 +39081,13 @@ void GenKernArr(char pre, char *outd, ATL_mmnode_t *mb)
    fprintf(fpout, "} /* end ATL_AMM_kinfo definition */\n");
 
    fprintf(fpout, "\n#define ATL_AMM_info(id_,mm0_, mm1_, mmN_,FLAG_,"
-                  "MU_,NU_,KU_,VLEN_,KBMIN_,KBMAX_,K1IDX_) \\\n");
+                  "MU_,NU_,KU_,VLEN_,KVEC_,KBMIN_,KBMAX_,K1IDX_) \\\n");
    fprintf(fpout, "{ \\\n   const ATL_iptr_t *ip_=ATL_AMM_ML + "
                   "ATL_AMM_Idx2Entry(id_); \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mm1_)) = *ip_; \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mm0_)) = ip_[1]; \\\n");
    fprintf(fpout, "   *((ATL_iptr_t*)(mmN_)) = ip_[2]; \\\n");
-   fprintf(fpout, "   ATL_AMM_iinfo(ip_+3,FLAG_,MU_,NU_,KU_,VLEN_,"
+   fprintf(fpout, "   ATL_AMM_iinfo(ip_+3,FLAG_,MU_,NU_,KU_,VLEN_,KVEC_,"
                   "KBMIN_,KBMAX_,K1IDX_); \\\n");
    fprintf(fpout, "} /* end ATL_AMM_info definition */\n");
    
@@ -39109,21 +39107,22 @@ void GenKernInf(ATL_mmnode_t *mb)
    ATL_mmnode_t *mp;
    FILE *fpout=NULL;
    unsigned int MAXs[8];
-   char *nms[8] = {"flg", "vlen", "mu", "nu", "ku", "kbmin", "kbmax"};
-   unsigned int MU, NU, KU, VLEN, KBMAX, KBMIN, KCleanIdx;
+   char *nms[8] = {"flg", "vlen", "kvec", "mu", "nu", "ku", "kbmin", "kbmax"};
+   unsigned int MU, NU, KU, VLEN, KVEC, KBMAX, KBMIN, KCleanIdx;
    unsigned int nbits, pbits, nint, iv, i;
 
    assert(mb);
    MAXs[0] = NFLGBITS;
    @iexp iv 1
-   @whiledef vv kbmax kbmin vlen ku nu mu
+   @whiledef vv kbmax kbmin kvec vlen ku nu mu
    MAXs[@(iv)] = mb->@(vv);
          @iexp iv @(iv) 1 +
    @endwhile
+   @iexp MIV @(iv)
    for (mp=mb->next; mp; mp=mp->next)
    {
       @iexp iv 0
-      @whiledef vv kbmax kbmin vlen ku nu mu
+      @whiledef vv kbmax kbmin kvec vlen ku nu mu
       MAXs[@(iv)] = Mmax(MAXs[@(iv)],mp->@(vv));
          @iexp iv @(iv) 1 +
       @endwhile
@@ -39131,7 +39130,7 @@ void GenKernInf(ATL_mmnode_t *mb)
    nint=1;
    nbits = NFLGBITS;
    pbits = ATL_PSIZE<<3;
-   for (i=1; i < 7; i++)
+   for (i=1; i < @(MIV); i++)
    {
       int bits;
       MAXs[i] = bits = numBitsNeeded(MAXs[i]);
@@ -39143,7 +39142,7 @@ void GenKernInf(ATL_mmnode_t *mb)
       }
    }
    assert(nint <= 3);
-   fprintf(fpout, "ATL_AmmKernbyIdx(idx_, k0_, k1_, kn_, flg_, vlen_, "
+   fprintf(fpout, "ATL_AmmKernbyIdx(idx_, k0_, k1_, kn_, flg_, vlen_, kvec_, "
            "mu_, nu_, ku_, kbmin_, kbmax_)\\\n{\\\n");
    if (nint = 1)
       fprintf(fpout, "const ATL_iptr_t id_=(idx_)<<1; \\\n");
@@ -39159,7 +39158,7 @@ void GenKernInf(ATL_mmnode_t *mb)
    fprintf(fpout, "   flg_ = bits_ & 0x%x;\\\n", 1<<(NFLGBITS+1)-1);
    nbits = NFLGBITS;
    nint=3;
-   for (i=1; i < 7; i++)
+   for (i=1; i < @(MIV); i++)
    {
       int bits = MAXs[iv];
       if (nbits + bits > pbits)
@@ -39742,7 +39741,7 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    ATL_cparr_t *cp = (ATL_cparr_t *)&out->a2blk;
    double spmfMM, spmfCP;
    size_t nfmblks, npmblks, nfnblks, npnblks;
-   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, vlen, flgK;
+   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, vlen, kvec, flgK;
    unsigned int sz, nmu, nnu, pnmu, pnnu, mb, pmb, nb, pnb, MB, NB, kb;
    const unsigned int iv=K-3;
    #ifdef TCPLX
@@ -39760,10 +39759,10 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    icpC += icpC;
    #ifdef TCPLX
       ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bn, flgK, 
-                   mu, nu, ku, vlen, k, k, k);
+                   mu, nu, ku, vlen, kvec, k, k, k);
    #else
       ATL_AMM_info(imm, &out->amm_b0, &iptmp, &iptmp, flgK, 
-                   mu, nu, ku, vlen, k, k, k);
+                   mu, nu, ku, vlen, kvec, k, k, k);
    #endif
 
    if (M > MB)
@@ -39816,6 +39815,7 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->nu = nu;
    out->ku = ku;
    out->vlen = vlen;
+   out->kvec = kvec;
    out->lda = lda;
    out->ldb = ldb;
    out->ldc = ldc;
@@ -39825,7 +39825,7 @@ void Mjoin(PATL,opinfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->nnu = nnu;
    out->nnuF = out->pnnu = pnnu;
 
-   sz = ((mu*nu+vlen-1)/vlen)*vlen;
+   sz = ((mu*nu+kvec-1)/kvec)*kvec;
    sz *= (out->nmu) ? out->nmu : out->pnmu;
    sz *= (out->nnu) ? out->nnu : out->pnnu;
    out->szC = sz;
@@ -40040,10 +40040,10 @@ int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
    icpC += icpC;
    #ifdef TCPLX
       ATL_AMM_info(imm, &op->amm_b0, &op->amm_b1, &op->amm_bn, k,
-                   mu, nu, ku, op->vlen, k, k, k);
+                   mu, nu, ku, op->vlen, op->kvec, k, k, k);
    #else
       ATL_AMM_info(imm, &op->amm_b0, &szSet, &szSet, k,
-                   mu, nu, ku, op->vlen, k, k, k);
+                   mu, nu, ku, op->vlen, op->kvec, k, k, k);
    #endif
    op->idx = iv;
    op->mu = mu;
@@ -40219,7 +40219,7 @@ int Mjoin(PATL,opsymmInfo) /* pop opinfo_t wt atlas_opgen_view K-3 */
    op->pszA = op->pmb * op->KB;
    op->pszB = op->pnb * op->KB;
    op->szC = op->mb * op->nb;
-   k = op->vlen;
+   k = op->kvec;
    k = ((mu*nu+k-1)/k)*k;
    k *= nmu * nnu;
    op->szC = k;
@@ -40274,7 +40274,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    double spmfMM, spmfCP;
    const int CONJ=flag&1;
    size_t nfmblks, npmblks, nfnblks, npnblks;
-   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, vlen, flgK;
+   unsigned int icpA, icpB, icpC, imm, k, mu, nu, ku, vlen, kvec, flgK;
    unsigned int sz, nmu, nnu, pnmu, pnnu, mb, pmb, nb, pnb, MB, NB, kb;
    const unsigned int iv=K-3;
 @ROUT ATL_opsyr2kinfo `   ATL_UINT U;`
@@ -40295,10 +40295,10 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    icpC += icpC;
    #ifdef TCPLX
       ATL_AMM_info(imm, &out->amm_b0, &out->amm_b1, &out->amm_bn, flgK, 
-                   mu, nu, ku, vlen, k, k, k);
+                   mu, nu, ku, vlen, kvec, k, k, k);
    #else
       ATL_AMM_info(imm, &out->amm_b0, &iptmp, &iptmp, flgK, 
-                   mu, nu, ku, vlen, k, k, k);
+                   mu, nu, ku, vlen, kvec, k, k, k);
    #endif
 
 @ROUT ATL_opsyrkInfo
@@ -40370,6 +40370,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->nu = nu;
    out->ku = ku;
    out->vlen = vlen;
+   out->kvec = kvec;
 @ROUT ATL_opsyrkInfo
    out->ldb = out->lda = lda;
 @ROUT ATL_opsyr2kInfo
@@ -40383,7 +40384,7 @@ int Mjoin(PATL,opsyrkInfo) /* pop opinfo_t using atlas_opgen_view K-3 idx */
    out->nmuF = out->pnmu = pnmu;
    out->nnuF = out->pnnu = pnnu;
 
-   sz = ((mu*nu+vlen-1)/vlen)*vlen;
+   sz = ((mu*nu+kvec-1)/kvec)*kvec;
    sz *= (nnu) ? nmu*nnu : pnmu*pnnu;
    out->szC = sz;
    out->exsz = (mu*nu)<<1;
@@ -40506,7 +40507,7 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
       ATL_iptr_t iptmp;
       #define CONE ATL_rone
    #endif
-   ATL_UINT vlen, mu, nu, ku, kb, nkblks, KB0, kb0, szC; 
+   ATL_UINT kvec, vlen, mu, nu, ku, kb, nkblks, KB0, kb0, szC; 
    ATL_UINT imm, ik1, icpA, icpB, icpC, flgK, kbmin, k;
    float spmf;
 
@@ -40519,16 +40520,17 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
    icpC += icpC;
    #ifdef TCPLX
       ATL_AMM_info(imm, &ip->amm_b0, &ip->amm_b1, &ip->amm_bn, flgK,
-                   mu, nu, ku, vlen, k, k, ik1);
+                   mu, nu, ku, vlen, kvec, k, k, ik1);
    #else
       ATL_AMM_info(imm, &ip->amm_b0, &ip->amm_b1, &iptmp, flgK,
-                   mu, nu, ku, vlen, k, k, ik1);
+                   mu, nu, ku, vlen, kvec, k, k, ik1);
    #endif
    ip->mu = mu;
    ip->nu = nu;
    ip->ku = ku;
    ip->kb = kb;
    ip->vlen = vlen;
+   ip->kvec = kvec;
    ip->lda = lda;
    ip->ldb = ldb;
    ip->ldc = ldc;
@@ -40570,7 +40572,7 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
    {
       if (ATL_AMM_KMAJOR(flgK))  
       {
-         KB0 = ((kb0+vlen-1)/vlen)*vlen; /* k-maj req K mul of vlen */
+         KB0 = ((kb0+kvec-1)/kvec)*kvec; /* k-maj req K mul of kvec */
          if (KB0 != kb)
          {
             if (ATL_AMM_KRUNTIME(flgK))
@@ -40624,7 +40626,7 @@ void Mjoin(PATL,@(vwf)InfoPop)  /* populate ip wt given params */
    ip->KB0 = KB0;
    ip->kb0 = kb0;
    ip->exsz = (mu+mu)*nu;
-   szC = ((mu*nu+vlen-1)/vlen)*vlen;
+   szC = ((mu*nu+kvec-1)/kvec)*kvec;
    szC *= ip->nnu * ip->nmu;
    ip->szC = szC;
 
@@ -40837,7 +40839,7 @@ void Mjoin(PATL,@(vwf)Info)
    #endif
    ATL_GetViewInfo(idx, spf, MB, NB, KB, imm, k, k, k, k, k, k);
    ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
-   ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
+   ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k, k, k);
 @BEGINSKIP
 @ROUT ATL_ipmeninfo
    NB = Mmax(M,N);
@@ -40856,7 +40858,7 @@ void Mjoin(PATL,@(vwf)Info)
    }
    ATL_GetViewInfo(idx, spf, MB, NB, k, imm, k, k, k, k, k, k);
    ipp = ATL_AMM_ML + ATL_AMM_Idx2Entry(imm) + 3;
-   ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k);
+   ATL_AMM_iinfo(ipp, k, mu, nu, k, k, k, k, k, k, k);
    npnblks = npmblks = 1;
    nfnblks = nfmblks = 0;
    pnmu = nmu = (M+mu-1)/mu;
@@ -41272,8 +41274,8 @@ ATL_mmnode_t *doGenSyrkSrch(char pre, int blask, int bv, ATL_mmnode_t *mp)
    gp->rout = DupString("ATL_tmp.c");
    gp->flag = ((gp->flag|(1<<MMF_KRUNTIME)) & 
                (~((1<<MMF_X87)|(1<<MMF_KUISKB))));
-   if (FLAG_IS_SET(gp->flag, MMF_KVEC))
-      gp->ku = gp->vlen;
+   if (gp->kvec > 1)
+      gp->ku = gp->kvec;
    else
    {
       unsigned ku=Mmin(gp->ku,4);
