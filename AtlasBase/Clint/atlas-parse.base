@@ -6907,15 +6907,10 @@ double TimeMMKernel3F
  */
    else
    {
-      if (mmp->vlen < 2)
-         ch = 'S';
-      else
-         ch = (FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? 'K' : 'M';
-
       sprintf(fnam,
       "res/%cammm%d_%dx%dx%d_%dx%dx%d_%x_m%uk%ub%d_pf%xx%d_%d.ktim",
               pre, mmp->ID, mb, nb, KB, mmp->mu, mmp->nu, KU,
-              mmp->flag, ch, mmp->vlen/mp->kvec, mp->kvec, beta, mmp->pref, 
+              mmp->flag, mmp->vlen/mp->kvec, mp->kvec, beta, mmp->pref, 
               mmp->pfLS, cflush);
       if (mmp->blask == ATL_KSYRK)
       {
@@ -7477,7 +7472,7 @@ ATL_mmnode_t *MMTimeWithGenKB
    char *sp;
    ATL_mmnode_t *mp;
    if (!mmp->ID) /* genned: kvec OK wt any mul of vlen, mvec OK wt any K */
-      kbOK = FLAG_IS_SET(mmp->flag, MMF_KVEC) ? (kb%mmp->vlen == 0):1;
+      kbOK = (mmp->kvec > 1) ? (kb%mmp->kvec == 0):1;
    else
    {
       kbOK = (mmp->kbmin) ? (nb >= mmp->kbmin) : 1;
@@ -7642,7 +7637,7 @@ int MMTimeAllVecGen
 /*
  * Try M-vectorized using broadcast
  */
-   mp->flag &= ~(1<<MMF_KVEC);    /* ask for M-vectorized kernel */
+   mp->kvec = 1;                  /* ask for M-vectorized kernel */
    mp->flag &= ~(1<<MMF_NOBCAST); /* clear bcast bit */
    mp->mu = mu0 * mp->vlen; 
    mp->genstr = MMGetGenString(pre, mp);
@@ -7672,8 +7667,8 @@ int MMTimeAllVecGen
  * Try K-vectorized
  */
    mp->mu = mu0;
-   mp->flag |= (1<<MMF_KVEC);    /* ask for K-vectorized kernel */
-   mp->ku = ((mp->ku+mp->vlen-1)/mp->vlen)*mp->vlen;
+   mp->kvec = mp->vlen;            /* ask for K-vectorized kernel */
+   mp->ku = ((mp->ku+mp->kvec-1)/mp->kvec)*mp->kvec;
    mp->genstr = MMGetGenString(pre, mp);
    mp->mflop[2] = TimeMMKernel(verb, flag, mp, pre, mb, nb, kb, beta, mflop, 
                                cflush);
@@ -7709,9 +7704,9 @@ int kernWorksThisCaseK(ATL_mmnode_t *mp, int kb)
    if (mp->kbmax && kb > mp->kbmax )
       return(0);
    KB = ((kb+ku-1)/ku)*ku;
-   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   if (mp->kvec > 1)
    {
-      if (KB-kb > mp->vlen)
+      if (KB-kb > mp->kvec)
          return(0);
    }
    else if (mp->ku > 4 && KB != kb)
@@ -8039,8 +8034,8 @@ double MMExpand@(nm)
          {
             for (KU=ku; KU < 8; KU += ku);
          }
-         else if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-            KU = mp->vlen;
+         else if (mp->kvec > 1)
+            KU = mp->kvec;
          else
             KU = NU;
          kbB = kb = KU;
@@ -8850,14 +8845,14 @@ int MMKernCanHandleCase(ATL_mmnode_t *mp, int mb, int nb, int kb)
          return(1);
       if (KRUN && kb%ku == 0)
          return(1);
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+      if (mp->kvec > 1)
       {
-         const int vl = mp->vlen, kbB=mp->kbB;
-         if (KRUN && kb%ku < vl)
+         const int kv = mp->kvec, kbB=mp->kbB;
+         if (KRUN && kb%ku < kv)
             return(2);
-         if (kbB > kb && (kbB-kb < vl))
+         if (kbB > kb && (kbB-kb < kv))
             return(2);
-         if (kbB < kb && (kb-kbB < vl))
+         if (kbB < kb && (kb-kbB < kv))
             return(2);
       }
    }
@@ -9465,8 +9460,7 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp, ATL_mmnode_t *ML)
 
    cp = GetCPNode();
    cp->flag = flag;
-   if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-      cp->kvec = (mp->vlen > 1) ? mp->vlen : 0;
+   cp->kvec = (mp->kvec > 1) ? mp->kvec : 0;
    if (mp->blask == ATL_KSYRK && (flag&(1<<CPF_CBLK)))
       cp->flag |= (1<<CPF_SYRK);
    @whiledef rt SYMM
@@ -9498,8 +9492,8 @@ ATL_cpnode_t *GetCopyNodeFromMM(int flag, ATL_mmnode_t *mp, ATL_mmnode_t *ML)
          cp->nu = mp->nu;
       }
       cp->mu = 1;
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))  /* KVEC only cleans to vlen */
-         cp->mu = mp->vlen;
+      if (cp->kvec > 1)  /* KVEC only cleans to kvec */
+         cp->mu = mp->kvec;
       else if (mp->blask) /* non-gemm kernels always pad to ku */
          cp->mu = mp->ku; /* so can handle all K in face of unrolling */
       else if (ML)/* to find copy padding, must examine cleaning node in ML */
@@ -9928,8 +9922,8 @@ ATL_cpnode_t *GetMMCopyFromMMNodes
          if (!ID)
             nu = mp->nu;
       }
-      if (FLAG_IS_SET(mp->flag, MMF_KVEC))
-         kvec = mp->vlen;
+      if (mp->kvec > 1)
+         kvec = mp->kvec;
       cp->next = GetMMCopyNode(ID, mu, nu, kvec, flag);
       cp = cp->next;
       cp->rout = GetMMCopyName(cp, &cp->rtlen);
@@ -9981,7 +9975,7 @@ void GetMMAllUniqueCopyFromMMNodes
       ATL_cpnode_t *p;
       int kvec = 0;
 
-      np->kvec = FLAG_IS_SET(mp->flag, MMF_KVEC) ? mp->vlen : 0;
+      np->kvec = (mp->kvec > 1) ? mp->kvec : 0;
       np->ID = mp->stgC; np->mu = mp->mu; np->nu = mp->nu;
       np->flag = flgC;
       if (!FindCopy(cb, np))  /* not already in list, so add it */
@@ -10052,8 +10046,7 @@ ATL_cpnode_t *AddMMCKernCopyFromMMNodes
    for (mp=mb; mp; mp = mp->next)
    {
       ATL_cpnode_t *np;
-      np = GetMMCopyNode(0, mp->mu, mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC) ? 
-                         mp->vlen : 0, flag);
+      np = GetMMCopyNode(0, mp->mu, mp->nu, (mp->kvec > 1)? mp->kvec:0, flag);
       np->rout = GetMMCopyName(np, &np->rtlen);
       np->next = ab;
       ab = np;
@@ -10075,8 +10068,7 @@ ATL_cpnode_t *AddMMUniqueACopyFromMMNodes
    ATL_mmnode_t *mp;
    for (mp=mb; mp; mp = mp->next)
    {
-      np = GetMMCopyNode(0, 0, mp->mu, 
-                         FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
+      np = GetMMCopyNode(0, 0, mp->mu, (mp->kvec > 1)?mp->kvec:0, 
                          CopyEncode(pre, dirA, 'B', 'N'));
       if (!FindCopy(ab, np))
       {
@@ -10088,8 +10080,7 @@ ATL_cpnode_t *AddMMUniqueACopyFromMMNodes
          KillCopyNode(np);
       if (mp->mu != mp->nu)
       {
-         np = GetMMCopyNode(0, 0, mp->nu, 
-                            FLAG_IS_SET(mp->flag, MMF_KVEC)?mp->vlen:0, 
+         np = GetMMCopyNode(0, 0, mp->nu, (mp->kvec > 1)?mp->kvec:0, 
                             CopyEncode(pre, dirA, 'B', 'N'));
          if (!FindCopy(ab, np))
          {
