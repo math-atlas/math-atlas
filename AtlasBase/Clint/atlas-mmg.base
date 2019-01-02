@@ -1,6 +1,9 @@
 @ifdef ! TRI
    @define TRI @0@
 @endifdef
+@ifdef ! TRMM
+   @define TRMM @0@
+@endifdef
 @ifdef ! kmaj
    @define kmaj @0@
 @endifdef
@@ -5184,6 +5187,36 @@ int main(void)
 #define NoTransA 1
 #define NoTransB 1
 
+@iif TRMM == 1
+   #ifdef UPLO_U_
+      #define UP 1
+   #else /* lo */
+      #define UP 0
+   #endif
+   #ifdef SIDE_R_
+      #define SD_Right 1
+   #else
+      #define SD_Right 0
+   #endif
+   #ifdef TCPLX
+      #if SD_Right == 1
+         void B2BLK(const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
+      #else
+         void A2BLK(const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*, TYPE*);
+      #endif
+   #else
+      #if SD_Right == 1
+         void B2BLK(const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+      #else
+         void A2BLK(const size_t, const SCALAR,
+                    const TYPE*, const size_t, TYPE*);
+      #endif
+   #endif
+@endiif
+
 void ATL_USERMM(const size_t nmu, const size_t nnu, const size_t K, 
                 const TYPE *A, const TYPE *B, TYPE *C, 
                 const TYPE *pAn, const TYPE *pBn, const TYPE *pCn);
@@ -5355,12 +5388,26 @@ int mmtst(void)
    const TYPE rone=1.0, rnone=(-1.0);
    void *va=NULL, *vb=NULL, *vc=NULL;
    TYPE *C, *D, *A, *B, *a, *b, *c;
+@iif TRMM = 1
+   ATL_INT MM, ldt; 
+   TYPE *tA, *tB, *pT, *pR;
+   const TYPE mynan = 0.0/0.0;
+@endiif 
    TYPE diff, tmp;
 @iif TRI = 1
    const TYPE mynan = 0.0/0.0;
 @endiif
    int i, j, k, n, nerr;
+@iif TRMM = 0
    ATL_CINT M=@(M), N=@(N), K=@(K), lda=M, ldb=K, ldc=M+3;
+@endiif
+@iif TRMM = 1
+   #if SD_Right == 1
+      ATL_CINT M=@(M), N=@(N), K=@(N), lda=M, ldc=M, ldb=N;
+   #else
+      ATL_CINT M=@(M), N=@(N), K=@(M), lda=M, ldb=M, ldc=M;
+   #endif
+@endiif
    ATL_CINT nmuC = (@(M)+@(mu)-1)/@(mu), nnuC = (@(N)+@(nu)-1)/@(nu);
    ATL_CINT MMU = nmuC*@(mu);
    ATL_CINT NNU = nnuC*@(nu);
@@ -5390,6 +5437,21 @@ int mmtst(void)
    B = malloc(sizeof(TYPE)*ldb*N);
    C = malloc(sizeof(TYPE)*ldc*N);
    D = malloc(sizeof(TYPE)*ldc*N);
+@iif TRMM = 1
+/* 
+ * TRMM:
+ * allocate seperate space for TRMM's triangular matrix. We will assign NAN in 
+ * one half of the matrix to make sure TRMM's copy-routine never accesses it
+ */
+#if SD_Right == 1
+   tA = A;  
+   tB = malloc(sizeof(TYPE)*ldb*N);  
+#else
+   tA = malloc(sizeof(TYPE)*lda*M);  
+   tB = B;
+#endif
+   assert(tA && tB);
+@endiif
    va = malloc(2*sizeof(TYPE)*MMU*KKU + ATL_Cachelen);
    vb = malloc(2*sizeof(TYPE)*NNU*KKU*@(dupB) + ATL_Cachelen);
    vc = malloc(2*sizeof(TYPE)*szC + ATL_Cachelen);
@@ -5400,6 +5462,7 @@ int mmtst(void)
  * Fill in column-major arrays and translate to access-major
  */
    assert(A && B && C && a && b && c);
+@iif TRMM = 0
    for (n=lda*K SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
 @iif TRI = 1
     for (j=0; j < N; j++)
@@ -5410,6 +5473,44 @@ int mmtst(void)
    for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
 @endiif
    for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
+@endiif
+@iif TRMM = 1
+/*
+ * Special initialization requirement for TRMM
+ *    Left Side  : A = triangular, C = B
+ *    Right Side : B = triangular, C = A 
+ */
+   #if SD_Right == 1
+      pT = tB; pR = B; 
+      ldt = ldb;
+      MM = N;
+   #else
+      pT = tA; pR = A; 
+      ldt = lda;
+      MM = M;
+   #endif
+      for (j=0; j < MM; j++)
+      {
+         TYPE *Tc = pR + j*ldt, *tTc = pT + j*ldt;
+   #if UP == 1 
+         for (i=0; i <= (j SHIFT); i++)
+            tTc[i] = Tc[i];
+         for ( ; i < (MM SHIFT); i++)
+         {
+            Tc[i] = 0.0;     /* gemm's lower half filled with zero */
+            tTc[i] = mynan;  /* trmm should never access lower half */
+         }
+   #else
+         for (i=0; i < (j SHIFT); i++)
+         {
+            Tc[i] = 0.0;     /* gemm's upper half filled with zero */
+            tTc[i] = mynan;  /* trmm should never access upper half */
+         }
+         for ( ; i < (MM SHIFT); i++)
+            tTc[i] = Tc[i];
+   #endif
+      }
+@endiif
 /*
  * To ease debugging, make matrices easily mappable:
  *    A counts from 1.0-M*K, col-maj
@@ -5442,13 +5543,33 @@ int mmtst(void)
       }
    }
    #endif
+@iif TRMM == 0
+/*
+ * A and B copy for access major
+ */
    ATL_rm2am(K, M, 1.0, A, lda, a);
-@iif TRI = 0
-   ATL_cm2am(K, N, 1.0, B, ldb, b);
+   @iif TRI = 0
+      ATL_cm2am(K, N, 1.0, B, ldb, b);
+   @endiif
+   @iif @iexp @(TRI) @(mu) @(nu) ! &
+      ATL_cm2am(K, N, 1.0, B, ldb, b);
+   @endiif
 @endiif
-@iif @iexp @(TRI) @(mu) @(nu) ! &
-   ATL_cm2am(K, N, 1.0, B, ldb, b);
+@iif TRMM == 1
+/*
+ * A and B copies for TRMM 
+ */
+#if SD_Right == 1
+   ATL_rm2am(N, M, 1.0, tA, lda, a);
+   B2BLK(N, 1.0, tB, ldb, b);    /* special triangular copy */ 
+#else
+   A2BLK(M, 1.0, tA, ldb, a);    /* special triangular copy */ 
+   ATL_cm2am(M, N, 1.0, tB, ldb, b);
+#endif
 @endiif
+/*
+ * C copy 
+ */
 @iif TRI = 0
    #if 0
       ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
@@ -5542,6 +5663,13 @@ int mmtst(void)
    }
    free(A);
    free(B);
+@iif TRMM = 1
+#if SD_Right == 1
+   free(tB);
+#else
+   free(tA);
+#endif
+@endiif 
    free(C);
    free(va);
    free(vb);
