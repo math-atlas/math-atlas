@@ -279,9 +279,8 @@ During tuning, think about several regions for prefetch:
 @iif kb ! 0
    @addkeys KCON=yes
 @endiif
-@iexp vku @(ku) 0 +
-@iexp vmu @(mu) 0 +
-@iexp vnu @(nu) 0 +
+@iexp vku @(kv) @(ku) /
+@iexp vnu @(nu)
 @SKIP make sure kv*mu is a multiple of vlen
 @iexp nkv @(kv) @(vl) /
 @iexp vmu @(nkv) @(mu) /
@@ -732,19 +731,14 @@ ASSUMES: mu, nu, exreg
       @undef vl2
    @ENDPROC
 @endiif
-@VEC KDIM
-   @iexp incAk @(mu) @(vl) *
-   @iexp incBk @(nu) @(vl) *
-@VEC MDIM NO
-   @iexp incAk @(mu)
-   @iexp incBk @(nu)
-@VEC !
-@iexp TWOD 1 0 +
+@iexp incAk @(mu) @(kv) *
+@iexp incBk @(nu) @(kv) *
+@iexp TWOD 1 
 @iif vmu = 1
-   @iexp TWOD 0 0 +
+   @iexp TWOD 0 
 @endiif
 @iif vnu = 1
-   @iexp TWOD 0 0 +
+   @iexp TWOD 0
 @endiif
 @skip NOKLOOP = (kb == ku);
 @iexp NOKLOOP @(kb) @(ku) =
@@ -1394,9 +1388,18 @@ void ATL_USERMM
 )
 /*
  * Performs a GEMM with M,N,K unrolling (& jam) of (@(mu),@(nu),@(ku)).
-@VEC KDIM ` * Vectorization of VLEN=@(vl) along K dim, vec unroll=(@(vmu),@(vnu),@(vku)).`
-@VEC MDIM ` * Vectorization of VLEN=@(vl) along M dim, vec unroll=(@(vmu),@(vnu),@(vku)).`
-@VEC NO   ` * Code is not vectorized (VLEN=@(vl)).`
+@iif @iexp @(kv) @(vl) = 1 @(vl) ! &
+ * Vectorization of VLEN=@(vl) along K dim, vec unroll=(@(vmu),@(vnu),@(vku)).
+@endiif
+@iif kv < 2
+ * Vectorization of VLEN=@(vl) along M dim, vec unroll=(@(vmu),@(vnu),@(vku)).
+@endiif
+@iif vl = 1
+ * Code is not vectorized (VLEN=@(vl)).
+@endiif
+@iif @iexp kv > 1
+ * Vec of VLEN=@(vl), K-vec of @(kv), Mvec=@(nkv), vec unroll=(@vmu),@(vnu),@(vku)).
+@endiif
 @iif kb = 0
  * You may set compile-time constant K dim by defining ATL_MM_KB.
 @endiif
@@ -1642,8 +1645,7 @@ void ATL_USERMM
       @endiif
       @iexp IN_K 0 0 +
          @CALLPROC DoIter0_k
-      @VEC KDIM `@iexp incK @(vl) 0 +`
-      @VEC ! KDIM `@iexp incK 1 0 +`
+      @iexp incK @(kv)
       @iexp k 0 @(incK) +
       @iwhile ipf < npf
             /* Peel K=@(k) iteration for prefetch  */
@@ -1675,8 +1677,7 @@ void ATL_USERMM
          /* Peel K=0 iteration to avoid zero of rCxx and extra add  */
       @iexp IN_K 0 0 +
       @iexp npeel 1 0 +
-      @VEC KDIM `@iexp kmul @(vl)`
-      @VEC ! KDIM `@iexp kmul 1`
+      @iexp kmul @(kv)
       @CALLPROC DoIter0
       @iwhile ipf < npf
 /*
@@ -1872,8 +1873,7 @@ KDONE:
       @endiif
    @endiif
          @CALLPROC storeC 6
-         @VEC KDIM   `@iexp kk @(vl) @(mu) @(nu) * @(vl) + -1 + / @(vl) *`
-         @VEC ! KDIM `@iexp kk @(mu) @(nu) *`
+         @iexp kk @(kv) @(mu) @(nu) * @(kv) + -1 + / @(kv) *
    @iif @iexp @(DOMLOOP) @(DONLOOP) |
          pC += @(kk);
    @iif TRMM = 0
