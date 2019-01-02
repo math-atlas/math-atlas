@@ -2709,6 +2709,7 @@ help :
 	@@echo "SEE ALSO: make [cpy,trsm,trmm]help"
 	@@echo "flags for amm kerns preMCFLAGS='', else preKCFLAGS=''\n"
 	@@echo "make PREammmtst mu=X nu=X M=X N=X K=X kmaj=<0/VL> mmrout=<FILE>\n"
+	@@echo "make PREtrmmtst sd=[L,R] up=[L,U] mu=X nu=X M=X N=X K=X kmaj=<0/VL> mmrout=<FILE>\n"
 	@@echo "make xPREammtime_pt mmrout=FILENAME mu=X nu=X ku=X mb=X nb=X kb=X M=X N=X K=X\n"
 	@@echo "make gen_amm pre=[s,d] vlen=VL kvec=KV mu=X nu=X ku=X kb=X bcast=1/0 rt=FILE\n"
 @skip	@@echo "make gen_amm_[sse,avx,gvec,scalar] mu=X nu=X vlen=VL kmaj=VL rt=FILE\n"
@@ -2734,7 +2735,8 @@ trsmhelp :
 	@@echo "make genall_cntrsm sd=[L,R] up=[L,U] ta=[N,T] tALL=[N,T] mu=# nu=# rt=fnam"
 	@@echo "make PREtrsmcase mmrout=FILE mu=X nu=X ku=X rb=X kb=X sd=[L,R] up=[U,L] ta=[T,N] tALL=[T,N] kmaj=#"
 trmmhelp :
-	@@echo "make PREtrmmcase mmrout=FILE mu=X nu=X ku=X rb=X kb=X sd=[L,R] up=[U,L] ta=[T,N] vec=[mdim, kdim] vlen=# kmaj=#"
+	@@echo "make PREtrmmtst mmrout=<FILE> sd=[L,R] up=[L,U] mu=X nu=X M=X N=X K=X kmaj=<0/VL>"
+	@@echo "make PREtrmmcase mmrout=<FILE> sd=[L,R] up=[L,U] mu=X nu=X ku=X rb=X kb=X ta=[T,N] vec=[mdim, kdim] vlen=# kmaj=#"
 
 DoSzBlk :
 	rm -f szblk.c xszblk
@@ -4011,9 +4013,12 @@ cwrk3=0
 @multidef typ DREAL SREAL
 @multidef upr d s
 @whiledef pre d s
-   @multidef gt amm  amsyrk
-   @multidef tri   0    1
-   @whiledef rt ammm syrk
+   @multidef gt amm  amsyrk amtrmm
+   @multidef tri   0    1    0
+   @multidef trmm  0    0    1
+   @whiledef rt ammm syrk trmm
+      @iif trmm = 0
+      @SKIP "no trmm copy tester yet" 
 @(pre)@(rt)cpytst: 
 	$(MAKE) gen_@(gt) rt=ATL_ktmp.c pre=@(pre) vec=$(vec) vlen=$(vlen) \
            mu=$(mu) nu=$(nu) ku=$(ku)
@@ -4066,7 +4071,10 @@ cwrk3=0
            -DKB=${kb} -o @(pre)ammm.o -c ATL_ktmp.c
 	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst @(rt)tst.c @(pre)ammm.o
 	$(ATLRUN) $(MMTdir) x@(pre)@(rt)tst 
+      @endiif
+    @iif tr = 0
 @(pre)ammtst: @(pre)ammmtst
+    @endiif
 @(pre)@(rt)tst : $(INCAdir)/atlas_type.h $(BINdir)/xextract
     @iif tri = 0
 	$(extC) -b $(mySRCdir)/micro-cpg.base -o @(rt)tst.c pre=@(pre) vec=NA \
@@ -4088,11 +4096,39 @@ cwrk3=0
                 -def kmaj "${kmaj}" -def TRI @(tri) -def vlen $(vlen) \
                 rout=ammmtst -o @(rt)tst.c
     @endiif
+    @iif trmm = 1
+	- rm -f cpTtmp.c cpTtmp.o
+	if [ "X$(sd)" = "XL" ] ; then \
+	   make gen_tAT2blk UR=$(mu) kmaj=$(kmaj) alpha=1 rt=cpTtmp.c ;\
+	   if [ "X$(up)" = "XL" ]; then \
+	      $(@up@(upr)KC) $(CDEFS) $(@up@(upr)KCFLAGS) -D@(typ)=1 \
+              -DLower_=1 -c cpTtmp.c -DATL_USERCPMM=A2BLK ; \
+	   else \
+	      $(@up@(upr)KC) $(CDEFS) $(@up@(upr)KCFLAGS) -D@(typ)=1 \
+              -DUpper_=1 -c cpTtmp.c -DATL_USERCPMM=A2BLK ; \
+	   fi; \
+	else \
+	   make gen_tAN2blk UR=$(nu) kmaj=$(kmaj) alpha=1 rt=cpTtmp.c ;\
+	   if [ "X$(up)" = "XL" ]; then \
+	      $(@up@(upr)KC) $(CDEFS) $(@up@(upr)KCFLAGS) -D@(typ)=1 \
+              -DLower_=1 -c cpTtmp.c -DATL_USERCPMM=A2BLK ; \
+	   else \
+	      $(@up@(upr)KC) $(CDEFS) $(@up@(upr)KCFLAGS) -D@(typ)=1 \
+              -DUpper_=1 -c cpTtmp.c -DATL_USERCPMM=A2BLK ; \
+	   fi; \
+	fi; 
+    @endiif
 	- rm -f @(pre)ammm.o
 	$(@up@(upr)MC) $(CDEFS) $(@up@(upr)MCFLAGS) -D@(typ)=1 -DBETA${betan} \
            -DKB=${kb} -DATL_K@up@(rt)_=1 -o @(pre)ammm.o -c $(mmrout)
     @iif tri = 0
+      @iif trmm = 0
 	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst @(rt)tst.c @(pre)ammm.o
+      @endiif
+      @iif trmm = 1
+	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst @(rt)tst.c @(pre)ammm.o \
+            cpTtmp.o $(ATLASlib)
+      @endiif
     @endiif
     @iif tri = 1
 	$(KC) $(KCFLAGS) -D@(typ)=1 -o x@(pre)@(rt)tst @(rt)tst.c @(pre)ammm.o \
@@ -4101,6 +4137,7 @@ cwrk3=0
 	$(ATLRUN) $(MMTdir) x@(pre)@(rt)tst 
     @undef gt
     @undef tri
+    @undef trmm
    @endwhile
 @(pre)ammtst_fko: @(pre)ammmtst_fko
 @(pre)ammmtst_fko : $(INCAdir)/atlas_type.h $(BINdir)/xextract
