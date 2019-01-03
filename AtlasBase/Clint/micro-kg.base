@@ -293,14 +293,14 @@ During tuning, think about several regions for prefetch:
       @abort "(kp (KPEEL=@(kp)) must be a multiple of kvec (@(kv))!"
    @endiif
    @iif kp < 1
-      @abort "K-peel (kp) must be >= 1!"
-   @endif
+      @abort "K-peel (kp=@(kp)) must be >= 1!"
+   @endiif
 @endifdef
 @ifdef ! kp
    @iexp kp @(kv)
 @endifdef
 @define KB @K@
-@iif @(ku) @(kp) % 0 !
+@iif @iexp @(ku) @(kp) % 0 !
    @abort "K-peel (@(kp)) must be a multiple of KU=@(ku)!"
 @endiif
 @SKIP for KVEC, kb = CEIL(kb/kv)*kv
@@ -522,7 +522,7 @@ During tuning, think about several regions for prefetch:
             @define PTR @pB@
          @endiif
          @iif OFF ! 0
-            @define PTR @pB+@(OFF)@
+            @define PTR @pB+@(OFF)*@(kv)@
          @endiif
          @iif kv > 1
    ATL_vbcast@(kv)x@(nkv)(@(d), @(PTR));
@@ -551,8 +551,8 @@ ASSUMES: mu, nu, exreg
       @define j @0@
       @iif kv > 1
          @define ssuf @@(kv)x@(nkv)@
-         @iif nr ! nkv
-            @abort "VVRSUM: NR(@(nr)) should be same as NKV (@(nkv))!"
+         @iif nv ! kv
+            @abort "VVRSUM: NV(@(nv)) should be same as KV (@(kv))!"
          @endiif
       @endiif
       @iif kv < 2
@@ -577,9 +577,8 @@ ASSUMES: mu, nu, exreg
       @enddeclare
       @iexp j @(vmu) @(ir) /
       @iexp i @(vmu) @(ir) %
-      @iexp kl @(j) @(mu) *
-      @iexp kl @(kl) @(i) +
-   ATL_vbeta(pC+@(kl), rC@(i)_@(j));
+      @iexp kl @(kv) @(ir) /
+   ATL_vbeta(pC+@(kl)*@(vl), rC@(i)_@(j));
       @undef ssuf
       @undef j
       @undef i
@@ -699,7 +698,9 @@ ASSUMES: mu, nu, exreg
             @iexp k @(k) @(kv) +
          @endiwhile
          @iif kv < vl
-            @callproc vvrsum @(kv) @(kv) @(k)
+            @iif nr > 0
+               @callproc vvrsum @(kv) @(nr) @(k)
+            @endiif
          @endiif
          @iif kv = vl
             @iif nr = 1
@@ -1397,8 +1398,8 @@ void ATL_USERMM
 @iif vl = 1
  * Code is not vectorized (VLEN=@(vl)).
 @endiif
-@iif @iexp kv > 1
- * Vec of VLEN=@(vl), K-vec of @(kv), Mvec=@(nkv), vec unroll=(@vmu),@(vnu),@(vku)).
+@iif kv > 1
+ * Vec of VLEN=@(vl), K-vec of @(kv), Mvec=@(nkv), vec unroll=(@(vmu),@(vnu),@(vku)).
 @endiif
 @iif kb = 0
  * You may set compile-time constant K dim by defining ATL_MM_KB.
