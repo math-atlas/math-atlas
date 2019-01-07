@@ -186,6 +186,10 @@ ID=54 MU=8 NU=6 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x16_vsx.S' \
 ID=55 MU=7 NU=7 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_kmm7x7xVLv16_vsx.S' \
       KMAJ=2 KVEC=1 VLEN=2 ASM=GAS_PPC KRUNTIME=1 \
       COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
+ID=56 MU=24 NU=4 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_mkmm24x4x2_avxz.S' \
+      KMAJ=2 KVEC=1 VLEN=2 KRUNTIME=1 ASM=GAS_x8664
+ID=57 MU=16 NU=6 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_mkmm16x6x2_avxz.S' \
+      KMAJ=2 KVEC=1 VLEN=2 KRUNTIME=1 ASM=GAS_x8664
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 VLEN=4 KU=1 AUTH='R. Clint Whaley' ROUT='ATL_samm16x4x1_av.c' \
      KRUNTIME=1 COMP='gcc' CFLAGS='-Os -maltivec -mabi=altivec -mcpu=970 -mtune=970 -mvrsave -fschedule-insns2 -fno-schedule-insns'
@@ -278,6 +282,11 @@ ID=54 MU=8 NU=6 KU=4 AUTH='R. Clint Whaley' ROUT='ATL_kmm8x6x16_vsx.S' \
 ID=55 MU=7 NU=7 KU=4 AUTH='R. Clint Whaley' ROUT='ATL_kmm7x7xVLv16_vsx.S' \
       KMAJ=4 KVEC=1 VLEN=4 ASM=GAS_PPC KRUNTIME=1 \
       COMP='gcc' CFLAGS='-x assembler-with-cpp -mvsx'
+ID=56 MU=48 NU=4 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_mkmm24x4x2_avxz.S' \
+      KMAJ=2 KVEC=1 VLEN=2 KRUNTIME=1 ASM=GAS_x8664
+ID=57 MU=32 NU=6 KU=2 AUTH='R. Clint Whaley' ROUT='ATL_mkmm32x6x2_avxz.S' \
+      KMAJ=2 KVEC=1 VLEN=2 KRUNTIME=1 ASM=GAS_x8664
+@ROUT samcases.idx
 @ROUT atlas_gnuvec.h
 #ifndef ATLAS_GNUVEC
    #define ATLAS_GNUVEC 1
@@ -14491,7 +14500,9 @@ void DoSyrk(int flg, int vrb, char pre, int nreg, int nb, int VL)
    nu = mp->nu;
    ku = mp->ku;
    mp->nbB = mp->mbB = nb = (mSQ->nbB / nu)*nu;
-   mp->kbB = kb = (mSQ->kbB / ku)*ku;
+   kb = (mSQ->kbB / ku)*ku;
+   kb = (kb) ? kb : ku;
+   mp->kbB = kb;
    assert(nb && kb);
    TryAllSyrkPref(flg, vrb, pre, mp, nb, kb);
 @skip   maxNB = SyrkXover(flg, vrb, pre, mp, mSQ);
@@ -19284,16 +19295,87 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @iexp vl @(vl) @(vl) +
 @endiwhile
 /*
- * If it isn't defined already (fast sys-spec vers), define 
- *    vsplatI (0 <= I < VL) using vector indexing.  
+ * If it isn't defined already (fast sys-spec vers), define vvrsum/bcast,
+ * &  vsplatI (0 <= I < VL) using vector indexing.  
  * This may be horribly slow or great, depending on how smart the compiler is.
  */
+@BEGINPROC BCASTB kv mv
+   @define i @0@
+   @define e @0@
+   @define vl @0@
+   @iexp vl @(kv) @(mv) *
+   #ifndef ATL_vbcast@(kv)x@(mv)
+      #define ATL_vbcast@(kv)x@(mv)(v_, p_) \
+      { \
+      @iexp i 0
+      @iwhile i < vl
+            @iexp e @(kv) @(i) %
+            v0_[@(i)] = p_[@(e)]; \
+         @iexp i @(i) 1 +
+      @endiwhile
+      }
+   #endif
+   @undef i
+   @undef e
+   @undef vl
+@ENDPROC
+@BEGINPROC VVRSUM kv mv
+   @define v @0@
+   @define i @0@
+   @define e @0@
+   @define a @0@
+   @define vl @0@
+   @iexp vl @(kv) @(mv) *
+   #ifndef ATL_vvrsum@(kv)x@(mv)
+      @declare "      #define ATL_vvrsum@(kv)x@(mv)(" y n ") \"
+         @iwhile i < kv
+            v@(i)_
+            @iexp i @(i) 1 +
+         @endiwhile
+      @enddeclare
+      { \
+      @iexp v 0
+      @iexp e 0
+      @iexp i 0
+      @iwhile i < vl
+         @iexp a 0
+         @iwhile a < @(kv)
+            @iif a = 0
+            v0_[@(i)] = v@(v)_[@(e)] + \
+            @endiif
+            @iif @iexp @(kv) @(a) 1 + =
+                     v@(v)_[@(e)]; \
+            @endiif
+            @iif @iexp @(kv) @(a) 1 + ! @(a) 0 ! &
+                     v@(v)_[@(e)] + \
+            @endiif
+            @iexp a @(a) 1 +
+            @iexp e @(e) 1 +
+            @iif e = vl
+               @iexp e 0
+               @iexp v @(v) 1 +
+            @endiif
+         @endiwhile
+         @iexp i @(i) 1 +
+      @endiwhile
+      }
+   #endif
+   @undef i
+   @undef v
+   @undef vl
+   @undef e
+   @undef a
+@ENDPROC
 #if ATL_VLEN == 2
    #ifndef ATL_vsplat0
    #define ATL_vsplat0(d_, s_) d_[0] = d_[1] = s_[0]
    #endif
    #ifndef ATL_vsplat1
    #define ATL_vsplat1(d_, s_) d_[0] = d_[1] = s_[1]
+   #endif
+   @callproc VVRSUM 2 1
+   #ifndef ATL_vvrsum2
+      #define ATL_vvrsum2 ATL_vvrsum2x1
    #endif
 @iexp vl 2 2 +
 @iwhile vl < 64
@@ -19307,22 +19389,24 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       @iexp k @(k) 1 +
    #endif
    @endiwhile
-@beginskip
-   @CALLPROC arglst @(vl) s _
-   #ifndef ATL_vvrsum@(vl)
-   #define ATL_vvrsum@(vl)(@(arglst))\
-   @undef arglst
-   { \
-   @iexp i 0 0 +
-   @iwhile i < @(vl)
-      @CALLPROC addarr @(vl) s@(i)_
-      s0_[@(i)] = @(addarr); \
-      @undef addarr
-      @iexp i @(i) 1 +
+   @iexp mvec 2 @(vl) /
+   @iwhile mvec > 0
+      @iexp kvec @(mvec) @(vl) /
+      @iif kvec ! vl
+         @callproc BCASTB @(kvec) @(mvec)
+      @endiif
+      @iif kvec = vl
+         @callproc BCASTB 1 @(vl)
+      @endiif
+      @callproc VVRSUM @(kvec) @(mvec)
+      @iexp mvec 2 @(mvec) /
    @endiwhile
-   }
+   #ifndef ATL_vvrsum@(vl)
+      #define ATL_vvrsum@(vl) ATL_vvrsum@(vl)x1
    #endif
-@endskip
+   #ifndef ATL_vbcast
+      #define ATL_vbcast ATL_vbcast_1x@(vl)
+   #endif
    @iexp vl @(vl) @(vl) +
 @endiwhile
 #endif
@@ -36818,9 +36902,7 @@ int main(int nargs, char **args)
    #endif
    findBestIP(pre, verb, mmb, NULL);
    srch_men(pre, verb);
-#if 1   
    srch_menUM(pre, verb);
-#endif
    do_ipdek(verb, pre, 0);
    do_ipdek(verb, pre, 1);
 
