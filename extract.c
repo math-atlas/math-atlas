@@ -2397,7 +2397,7 @@ void HandleDec(EXTENV *EE, char *line)
 
    if (EXTENDLINE)
    {
-      if (WhatLang == LangMake) LnLen -= 2;
+      if (WhatLang == LangMake || WhatLang == LangC) LnLen -= 2;
    }
    else if (WhatLang == LangC) LnLen--;
    if (SORT) wp0 = wptr = SortWords(cas, wptr);
@@ -2438,7 +2438,7 @@ void HandleDec(EXTENV *EE, char *line)
          }
          else
          {
-            if (WhatLang == LangMake) outln[i++] = '\\';
+            if (WhatLang == LangMake || WhatLang == LangC) outln[i++] = '\\';
             else i--;
             if (EE->Flags[F_Lang] == '9')
             {

@@ -236,8 +236,9 @@ During tuning, think about several regions for prefetch:
    @iexp npf @(npf) @(npfB) +
    @iexp npfB @(npf) 0 +
 @endiif
-@skip bc = (bc != 0 || (vl < 2) || nu%vl != 0);
-@iexp bc 0 @(bc) ! 2 @(vl) < | @(vl) @(nu) % 0 ! |
+@skip bc = (bc != 0 || (vl < 2) || (nu*kv)%vl != 0);
+@iexp bc 0 @(bc) ! 2 @(vl) < | @(vl) @(nu) @(kv) * % 0 ! |
+@print BCAST=@(bc)
 @iif TRI = 1
    @iif kv > 1
       @iif ku ! kv
@@ -363,6 +364,7 @@ During tuning, think about several regions for prefetch:
 @BEGINPROC lKpBinc
    @define j @0@ 
    @define kk @0@ 
+   @define k2 @0@
    @iif PBLHOIST ! 0
       @ifdef LAST_ITER
       @BEGINSKIP 
@@ -380,14 +382,16 @@ During tuning, think about several regions for prefetch:
          @iif PBFLD ! 0
             @iexp j 0 0 +
             @iwhile j < @(vnu)
-               @iexp kk @(vl) @(j) /
-            ATL_vld(vB@(kk), pB+@(j));
-               @iexp j @(j) @(vl) +
+               @iexp kk @(kv) @(j) /
+               @iexp k2 @(kk) @(vl) *
+            ATL_vld(vB@(kk), pB+@(k2));
+               @iexp j @(j) @(kv) +
             @endiwhile
          @endiif 
          @undef LAST_ITER 
       @endifdef
    @endiif
+   @undef k2
    @undef kk
    @undef j
 @ENDPROC
@@ -457,6 +461,7 @@ During tuning, think about several regions for prefetch:
    @iif bc = 0
       @BEGINPROC ldB spc d i_
       @beginindent 1 @(spc)
+      @define jj @@
       @define j @@
       @define kk @@
 @BEGINSKIP
@@ -472,20 +477,18 @@ During tuning, think about several regions for prefetch:
          which was obvious to you from the line below, of course.
 @ENDSKIP
          @iexp mo 2 @(vmu) ! 2 @(nu) ! | @(i_) 1 @(nu) - = 1 * @(mo) +
+            @iexp j @(nkv) @(i_) /
+@print !! j=@(j)
+            @iexp i_ @(nkv) @(j) * @(i_) -
+            @iexp kk @(nkv) 1 @(i_) + %
          @iif kv = 1
-            @iexp j @(vl) @(i_) /
-            @iexp i_ @(vl) @(j) * @(i_) -
    ATL_vsplat@(i_)(@(d), vB@(j));
-@SKIP    if ((i_+1)%vl == 0, add another vector to stack of vBs to load (lb)
-            @iexp kk @(vl) 1 @(i_) + %
          @endiif
          @iif kv > 1
-            @iexp j @(nkv) @(i_) /
-            @iexp i_ @(nkv) @(j) * @(i_) -
-   ATL_vsplat@(i_)_@(kv)(@(d), vB@(j));
-@SKIP    if ((i_+1)%kv == 0, add another vector to stack of vBs to load (lb)
-            @iexp kk @(kv) 1 @(i_) + %
+            @iexp jj @(i_) @(kv) *
+   ATL_vsplat@(jj)_@(kv)(@(d), vB@(j));
          @endiif
+@SKIP    if ((i_+1)%nkv == 0, add another vector to stack of vBs to load (lb)
          @iif kk = 0
 @SKIP    Keep macro stack in old->new order by reversing if non-empty
 @SKIP    so we can add newest to bottom.
@@ -498,6 +501,7 @@ During tuning, think about several regions for prefetch:
             @endwhile
          @endiif
          @undef j
+         @undef jj
          @undef kk
       @endindent
       @ENDPROC
@@ -549,13 +553,13 @@ ASSUMES: mu, nu, exreg
       @define kl @0@
       @define i @0@
       @define j @0@
-      @iif kv > 1
+      @iif kv < vl
          @define ssuf @@(kv)x@(nkv)@
          @iif nv ! kv
-            @abort "VVRSUM: NV(@(nv)) should be same as KV (@(kv))!"
+@skip            @abort "VVRSUM: NV(@(nv)) should be same as KV (@(kv))!"
          @endiif
       @endiif
-      @iif kv < 2
+      @iif kv = vl
          @define ssuf @@(nv)@
       @endiif
       @declare "   ATL_vvrsum@(ssuf)(" y n ");"
@@ -694,15 +698,18 @@ ASSUMES: mu, nu, exreg
          @iexp nr @(nf) @(vmu) @(nu) * -
          @iexp k 0
          @iwhile k < nf
+            /* k=@(k), nf=@(nf) nr=@(nr) kv=@(kv) VU=(@(vmu),@(nu)) */
             @callproc vvrsum @(kv) @(kv) @(k)
             @iexp k @(k) @(kv) +
          @endiwhile
          @iif kv < vl
             @iif nr > 0
+               /* cleanup call */
                @callproc vvrsum @(kv) @(nr) @(k)
             @endiif
          @endiif
          @iif kv = vl
+      /* v=@(vl),@(kv) k=@(k), nf=@(nf) nr=@(nr) kv=@(kv) VU=(@(vmu),@(nu)) */
             @iif nr = 1
                @callproc vvrsum 1 1 @(k)
             @endiif
@@ -1008,7 +1015,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @skip if (bc==0 && j%vl==0)
             @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
             @iif kk ! 0
-               @iexp kk @(vl) @(j) / -1 +
+               @iexp kk @(kv) @(j) / -1 +
              ATL_vld(vB@(kk), pB+@(ib)); /* 01 */
                @iexp ib @(ib) @(vl) +
             @endiif
@@ -1111,9 +1118,9 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @skip if (bc==0 && j%vl==0)
             @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
             @iif kk ! 0
-               @iexp kk @(vl) @(j) / -1 +
+               @iexp kk @(kv) @(j) / -1 +
                @iexp jj @(kk) @(vl) *
-             ATL_vld(vB@(kk), pB+@(jj));
+             ATL_vld(vB@(kk), pB+@(jj)); /* 04 */
             @endiif
          @endiwhile
          pB += @(incBk);
@@ -1164,9 +1171,9 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @endiif
             @iif mo = 0
                @ifdef lb
-                  @iexp kk @(lb) @(vl) *
+                  @iexp kk @(lb) @(kv) *
                ATL_vld(vB@(lb), pB+@(kk)); /* di0_01: lb=@(lb) jl=@(jl) */
-                  @iexp kk @(kk) @(vl) +
+                  @iexp kk @(kk) @(kv) +
                   @iif kk = incBk
                pB += @(incBk); /* di0_02 */
                   @endiif
@@ -1240,7 +1247,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @skip if (bc==0 && j%vl==0)
             @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
             @iif kk ! 0
-               @iexp kk @(vl) @(j) / -1 +
+               @iexp kk @(kv) @(j) / -1 +
                @iexp jj @(kk) @(vl) *
          @SKIP *********TRMML: LAST_ITER: increment pB before Loading pB[0]**
          @iif TRMML ! 0
@@ -1249,7 +1256,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @endiif 
          @endiif
          @SKIP **************************************************************
-             ATL_vld(vB@(kk), pB+@(jj));
+             ATL_vld(vB@(kk), pB+@(jj)); /*05*/
             @endiif
          @endiwhile
             pB += @(incBk);
@@ -1285,7 +1292,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                            @endiif 
                         @endiif 
                      @endiif
-               ATL_vld(vB@(lb), pB+@(kk));
+               ATL_vld(vB@(lb), pB+@(kk)); /*06*/
                      @iif TRMML ! 0
                         @iif PBFLD ! 0
                            @callproc lKpBinc
@@ -1321,7 +1328,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                      @endiif 
                   @endiif 
                   @SKIP ******************************************************
-               ATL_vld(vB@(lb), pB+@(kk));
+               ATL_vld(vB@(lb), pB+@(kk)); /*07*/
                   @undef lb
                   @iexp mo 1 0 +
                @endifdef
@@ -1341,14 +1348,16 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
 @ENDPROC
 @BEGINPROC ReloadlB
    @define kk @0@
+   @define k2 @0@
    @define i @0@ 
    @define j @0@ 
    @iif bc = 0
       @iexp j 0 0 +
       @iwhile j < @(vnu)
-         @iexp kk @(vl) @(j) /
-               ATL_vld(vB@(kk), pB+@(j));
-         @iexp j @(j) @(vl) +
+         @iexp kk @(kv) @(j) /
+         @iexp k2 @(kk) @(vl) *
+               ATL_vld(vB@(kk), pB+@(k2));  /*08*/
+         @iexp j @(j) @(kv) +
       @endiwhile
       @SKIP "IN TRMM, NOKLOOP is always 0"
       pB += @(incBk);
@@ -1360,10 +1369,10 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @ifdef lb
             @iif ib < 0
                @iexp kk @(vl) @(lb) *
-               ATL_vld(vB@(lb), pB+@(kk)); 
+               ATL_vld(vB@(lb), pB+@(kk));  /*09*/
             @endiif
             @iif ib > -1 
-               ATL_vld(vB@(lb), pB+@(ib));  
+               ATL_vld(vB@(lb), pB+@(ib));  /*10*/
                @iexp ib @(ib) @(vl) +
             @endiif
             @undef lb
@@ -1373,6 +1382,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
    @endiif
    @undef j
    @undef i
+   @undef k2
    @undef kk
 @ENDPROC
 void ATL_USERMM
@@ -1408,7 +1418,7 @@ void ATL_USERMM
 {
    @declare "   register ATL_VTYPE " y n ";"
       @iif bc = 0
-         @iexp kk @(vl) @(vnu) /
+         @iexp kk @(vl) @(vnu) @(kv) * /
          @iexp j 0 0 +
          @iwhile j < @(kk)
             vB@(j)
@@ -1567,16 +1577,17 @@ void ATL_USERMM
 @endiif
 @print NOK=@(NOKLOOP) ib=@(ib) ia=@(ia)
    @iif bc = 0
-      @iexp j 0 0 +
+      @iexp j 0
       @iwhile j < @(vnu)
          @SKIP ********* TRMML: to keep track PBLHOIST   
             @iif TRMML ! 0
                @iexp PBLHOIST @(PBLHOIST) 1 + 
             @endiif
          @SKIP ***********************************************************
-         @iexp kk @(vl) @(j) /
-      ATL_vld(vB@(kk), pB+@(j));
-         @iexp j @(j) @(vl) +
+         @iexp kk @(nkv) @(j) /
+         @iexp k2 @(kk) @(vl) *
+      ATL_vld(vB@(kk), pB+@(k2)); /*h1*/
+         @iexp j @(j) @(nkv) +
       @endiwhile
       @iif NOKLOOP ! 0
          @iexp ib @(ib) @(nu) +
@@ -1602,10 +1613,10 @@ void ATL_USERMM
          @ifdef lb
             @iif ib < 0
                @iexp kk @(vl) @(lb) *
-      ATL_vld(vB@(lb), pB+@(kk)); 
+      ATL_vld(vB@(lb), pB+@(kk)); /*11*/
             @endiif
             @iif ib > -1 
-      ATL_vld(vB@(lb), pB+@(ib));  
+      ATL_vld(vB@(lb), pB+@(ib));  /*12*/
                @iexp ib @(ib) @(vl) +
             @endiif
             @undef lb

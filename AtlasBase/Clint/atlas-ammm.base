@@ -19399,7 +19399,8 @@ veclen = mv*kv
              d_[@(vv)] = \
                @iexp vv @(vv) @(k) +
             @endiwhile
-               d_[@(kk)] = s_[@(kk)]; \
+               @iexp ii @(i) @(kk) +
+               d_[@(kk)] = s_[@(ii)]; \
             @iexp kk @(kk) 1 +
          @endiwhile
       }
@@ -41985,4 +41986,222 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
       pB = pB0;   /* rewind pB to beginning */
       pA += incA; /* done with these @(mu) cols of A */
    }
+}
+@ROUT gmmtest
+#include "atlas_misc.h"
+#include "atlas_mmtesttime.h"
+#include "atlas_simd.h"
+#define TST_KU    0
+#define TST_SPLAT 1
+#define TST_BREG1 2
+int doTest(char pre, int vlen, int kv, int B, int vmu, int nu, int ku, int bv)
+/*
+ * bv: 0:use SPLAT B, 1: use only 1 reg for B load if 0 unset
+ */
+{
+   ATL_CUINT mv=vlen/kv, mu=mv*vmu;
+   ATL_UINT mb=(B>mu)?(B/mu)*mu:mu, nb=(B>nu)?(B/nu)*nu:nu; 
+   ATL_UINT kb=(B>ku)?(B/ku)*ku:ku, FAIL=0;
+   ATL_mmnode_t *mp;
+
+   if (bv&1)     /* can't use splat if kv=vlen or */
+   {             /* nu*kv not a multiple of vector length */
+      if (kv==vlen || (nu*kv)%vlen != 0)
+         return(0);
+   }
+   mp = MMGetNodeGEN(pre, bv, 0, mu, nu, ku, vlen, kv, 0, 64, "ATL_tmp.c");
+   if (bv&1) /* see if we are using splat or not */
+   {
+      int ierr;
+      MMDoGenString(0, mp->genstr);
+      ierr = system("fgrep -c ATL_vsplat ATL_tmp.c");
+      printf("      B=(%u,%u,%u) V=(%u-%ux%u) U=(%u,%u,%u) BR1=%u, SPT=%u:",
+             mb, nb, kb, vlen, mv, kv, mu, nu, ku, 
+             (mp->flag>>MMF_BREG1)&1, (mp->flag>>MMF_NOBCAST)&1);
+      if (ierr)
+      {
+         printf(" NO SPLAT!\n         genstr='%s'\n", mp->genstr);
+         return(0);
+      }
+      else
+         printf(" SPLAT GOOD.\n");
+   }
+   printf("      B=(%u,%u,%u) V=(%u-%ux%u) U=(%u,%u,%u) BR1=%u, SPT=%u:",
+          mb, nb, kb, vlen, mv, kv, mu, nu, ku, 
+          (mp->flag>>MMF_BREG1)&1, (mp->flag>>MMF_NOBCAST)&1);
+   if (MMKernelFailsTest(pre, mb, nb, kb, 0, mp))
+      FAIL = 1;
+   else if (MMKernelFailsTest(pre, mb, nb, kb, 1, mp))
+      FAIL = 2;
+   else if (MMKernelFailsTest(pre, mb, nb, kb, -1, mp))
+      FAIL = 3;
+/*
+ * If we failed, try to simplify by seeing of no-loop code fails too
+ */
+   if (FAIL)
+   {
+      int beta = 0;
+      if (FAIL != 1)
+         beta = (FAIL == 2) ? 1 : -1;
+      if (MMKernelFailsTest(pre, mu, nu, ku, beta, mp))
+      {
+         mb = mu; nb=nu; kb=ku;
+      }
+      fflush(stdout);
+      fprintf(stderr, "FAIL B=(%u,%u,%u)\n", mb, nb, kb);
+      PrintMMLine(stderr, mp);
+      exit(1);
+   }
+   printf(" PASS\n");
+   mp->rout = NULL;
+   KillMMNode(mp);
+   return(0);
+}
+
+int testU(char pre, ATL_UINT nreg, ATL_UINT vlen, ATL_UINT B, ATL_UINT flg, 
+          ATL_UINT vmu, ATL_UINT nu)
+{
+   ATL_UINT kv, nerr=0;
+   ATL_UINT VMUs=1, VMUd=nreg, NUs=1, NUd=nreg;
+
+   if (vmu)
+      VMUd = VMUs = vmu;
+   if (nu)
+      NUd = NUs = nu;
+   for (vmu=VMUs; vmu <= VMUd; vmu++)
+   {
+      for (nu=NUs; nu <= NUd; nu++)
+      {
+         if (vmu*nu+2 > nreg)
+            break;
+         printf("   TESTING %ux%u UNROLL:\n", vmu, nu);
+         for (kv=1; kv <= vlen; kv *= 2)
+         {
+            ATL_UINT ku = kv, bv=0;
+            if (vmu*nu+vmu+nu > nreg)
+               bv |= 2;
+            nerr += doTest(pre, vlen, kv, B, vmu, nu, ku, 0);
+            if ((flg&(1<<TST_BREG1)) && !(bv&2))
+               nerr += doTest(pre, vlen, kv, B, vmu, nu, ku, 2);
+            if ((flg&(1<<TST_SPLAT)))
+            {
+               nerr += doTest(pre, vlen, kv, B, vmu, nu, ku, 1);
+      @skip         fprintf(stdout, "DID SPLAT WORK:\n");
+      @skip         system("fgrep ATL_vsplat ATL_tmp.c");
+            }
+         }
+         printf("   PASS    %ux%u UNROLL:\n", vmu, nu);
+      }
+   }
+   return(nerr);
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -r <nreg> : (32) set max # of registers to test\n");
+   fprintf(stderr, "   -V <vlen> : force vector length\n");
+   fprintf(stderr, "   -b <nb>   : set rough block factor to test\n");
+   fprintf(stderr, "   -m <vmu>  : set exact (only) vector M-loop unroll\n");
+   fprintf(stderr, "   -n <vnu>  : set exact (only) vector N-loop unroll\n");
+   fprintf(stderr, "   -U <vmu> <vnu> : set unroll case to test\n");
+   fprintf(stderr,
+           "   -f <flg>  : bitvec for srch control, add vals you want set:\n");
+   fprintf(stderr, "        1: test all legal KU\n");
+   fprintf(stderr, "        2: test SPLAT code\n");
+   fprintf(stderr, "        4: test BREG1 for all unrolls\n");
+   fprintf(stderr, "        8: test all vmu,vnu <= nregs\n");
+   fprintf(stderr, "      DEFAULT: all bits unset\n");
+   exit(ierr ? ierr : -1);
+}
+
+char getFlags(int nargs, char **args, int *FLG, int *NREG, int *VLEN, int *NB,
+              int *VMU, int *VNU) 
+{ /* returns pre */
+   ATL_UINT i, B=120, nreg=32, mu=0, nu=0, flg=0, vlen=0;
+   char pre = 'd';
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        if (pre == 'z')
+           pre = 'd';
+        else if (pre == 'c')
+           pre = 's';
+        assert(pre == 's' || pre == 'd');
+        break;
+      case 'U':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         mu = atoi(args[i]);
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nu = atoi(args[i]);
+         break;
+      case 'V':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         vlen = atoi(args[i]);
+         break;
+      case 'm':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         mu = atoi(args[i]);
+         break;
+      case 'n':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nu = atoi(args[i]);
+         break;
+      case 'f':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         flg = atoi(args[i]);
+         break;
+      case 'r':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nreg = atoi(args[i]);
+         break;
+      case 'b':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         B = atoi(args[i]);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!vlen)
+      vlen = ATL_VLEN;
+   *FLG = flg;
+   *NREG = nreg;
+   *VLEN = vlen;
+   *VMU = mu;
+   *VNU = nu;
+   *NB = B;
+   return(pre);
+}
+
+int main(int nargs, char **args)
+{
+   ATL_UINT nerr, flg, nreg, vlen, B, vmu, vnu;
+   char pre;
+   pre = getFlags(nargs, args, &flg, &nreg, &vlen, &B, &vmu, &vnu);
+   nerr = testU(pre, nreg, vlen, B, flg, vmu, vnu);
+   return(nerr);
 }
