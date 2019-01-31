@@ -6212,6 +6212,12 @@ int main(int nargs, char **args)
 
    return(0);
 }
+@ROUT gmmsrch
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def cwdate 2019
+#include "atlas_cache.h"
+#include "atlas_misc.h"
+#include "atlas_mmtesttime.h"
+#include "atlas_simd.h"
 @ROUT gmmsearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def cwdate 2016
 #include "atlas_cache.h"
@@ -15239,6 +15245,127 @@ int main(int nargs, char **args)
    DoSyrk(flg, verb, pre, nreg, NB, VLEN);
    DoTrmm(pre, flg, verb, nreg);
    return(0);
+}
+@ROUT gmmsrch
+void printUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -r <nreg> : set max # of registers to try\n");
+   fprintf(stderr, "   -V <vlen> : force vector length\n");
+   fprintf(stderr, "   -b <nb>   : set initial block factor to try\n");
+   fprintf(stderr,
+           "   -f <flg>  : bitvec for srch control, add vals you want set:\n");
+   fprintf(stderr, "        1: test all generated kernels\n");
+   fprintf(stderr, "        2: do full MUxNU search\n");
+   fprintf(stderr, "        4: print # of regs to res/<pre>nreg\n");
+   fprintf(stderr, "        8: pref tune & time kerns in time.sum & exit\n");
+   fprintf(stderr, "       16: create [d,s]flops.frc and return\n");
+   fprintf(stderr, "      DEFAULT: all bits unset\n");
+   exit(ierr ? ierr : -1);
+}
+
+void getFlags(int nargs, char **args, int *FLG, char *PRE, int *NREG,
+              int *VLEN, int *NB)
+{
+   int i, flg=0, nreg=0;
+   char pre = 'd';
+
+   *NB = 120;
+   *VLEN = 0;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         printUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'V':
+        if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         *VLEN = atoi(args[i]);
+         break;
+      case 'f':
+        if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         flg = atoi(args[i]);
+         break;
+      case 'r':
+        if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         nreg = atoi(args[i]);
+         break;
+      case 'v':
+        if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         *VERB = atoi(args[i]);
+         break;
+      case 'b':
+        if (++i >= nargs)
+            printUsage(args[0], i-1, NULL);
+         *NB = atoi(args[i]);
+         break;
+      default:
+         printUsage(args[0], i, args[i]);
+      }
+   }
+   if (!nreg)
+      nreg = GetNumVecRegs(pre);
+   if (pre == 's' || pre == 'c' && (*NB)%16)
+      *NB = (*NB == 120) ? 240 : (((*NB+15)>>4)<<4);
+   *PRE = pre;
+   *FLG = flg;
+   *NREG = nreg;
+}
+
+int findUsableRegs
+(
+   char pre, /* must be real: d for double precision, s for single */
+   int VL,   /* if non-zero, SIMD veclen to use */
+   int nb    /* block factor to use for timings */
+)
+/*
+ * Finds the number of registers that the compiler can use for GEMM before
+ * performance is reduced.  We use fully k-vectorized kernels, since they
+ * will require the greatest bandwidth, and will thus get the most benefit
+ * from register blocking and its associated increase in flops / mem access
+ * ratio.
+ */
+{
+   ATL_mmnode_t *mp;
+   double mfB;
+   if (!VL)
+   #ifdef ATL_VLEN
+      VL = ATL_VLEN;
+   #else
+      VL = 1;  /* need to replace this with code that tries gnuvec! */
+   #endif
+   mp = MMGetNodeGen(pre, 0, 0, 1, 1, 1, VL, VL, 0, 64, "ATL_tmp.c");
+/*
+ * First find floor(sqrt(nreg)) by trying square cases until perf drops
+ */
+}
+int main(int nargs, char **args)
+{
+   int flg, verb, nreg, VLEN, NB, TEST;
+   char pre, upr;
+   GetFlags(nargs, args, &flg, &pre, &nreg, &VLEN, &NB);
+   upr = pre;
+   if (pre == 'z')
+      upr = 'd';
+   else if (pre == 'c')
+      upr = 's';
 }
 @ROUT ATL_ammmABC
 #include "atlas_misc.h"
