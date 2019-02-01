@@ -15497,6 +15497,49 @@ int tuneKvec
    mp->mflop[0] = mfB;
 }
 
+int tuneVlen
+(
+   char pre,          /* d,s,z,c */
+   int flg,
+   int VL,            /* if non-zero, SIMD veclen to use */
+   ATL_mmnode_t *mp 
+)
+{
+   double mfB=0.0, mf;
+   unsigned int vlenB, muB, kvecB;
+
+   printf("\nTUNING VLEN FROM %u:\n", mp->vlen);
+   do
+   {
+      int MB;
+      MB = (mp->mu < mp->mbB) ? ((mp->mbB/mp->mu)*mp->mu) : mp->mu;
+      mf = TimeKern(pre, mp, MB, mp->nbB, mp->kbB, 1);
+      printf("   B=(%u,%u,%u) U=(%u,%u,%u) KVEC=%u VLEN=%u: mf=%.0f\n", 
+             MB, mp->nbB, mp->kbB, mp->mu, mp->nu, mp->ku, mp->kvec, 
+             mp->vlen, mf);
+      fflush(stdout);
+      if (mf > mfB || mfB <= 0.0)
+      {
+         mfB = mf;
+         vlenB = mp->vlen;
+         kvecB = mp->kvec;
+         muB = mp->mu;
+      }
+      if (mp->kvec == mp->vlen)
+         mp->kvec >>= 1;
+      else
+         mp->mu >>= 1;
+      mp->vlen >>= 1;
+   }
+   while (mp->vlen > 0);
+   mp->mu = muB;
+   mp->kvec = kvecB;
+   mp->vlen = vlenB;
+   mp->mflop[0] = mfB;
+   return(vlenB);
+}
+
+
 int main(int nargs, char **args)
 {
    int flg, verb, nreg, VLEN, NB, TEST;
@@ -15511,6 +15554,7 @@ int main(int nargs, char **args)
       upr = pre;
    mp = findBestSquareKVEC(upr, flg, VLEN, NB);
    tuneKvec(pre, flg, VLEN, mp);
+   tuneVlen(pre, flg, VLEN, mp);
    KillMMNode(mp);
    return(0);
 }
