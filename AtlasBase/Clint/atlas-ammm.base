@@ -15276,7 +15276,7 @@ void getFlags(int nargs, char **args, int *FLG, char *PRE, int *NREG,
    int i, flg=0, nreg=0;
    char pre = 'd';
 
-   *NB = 120;
+   *NB = 240;
    *VLEN = 0;
    for (i=1; i < nargs; i++)
    {
@@ -15306,11 +15306,13 @@ void getFlags(int nargs, char **args, int *FLG, char *PRE, int *NREG,
             printUsage(args[0], i-1, NULL);
          nreg = atoi(args[i]);
          break;
+      @BEGINSKIP
       case 'v':
         if (++i >= nargs)
             printUsage(args[0], i-1, NULL);
          *VERB = atoi(args[i]);
          break;
+      @ENDSKIP
       case 'b':
         if (++i >= nargs)
             printUsage(args[0], i-1, NULL);
@@ -15329,11 +15331,11 @@ void getFlags(int nargs, char **args, int *FLG, char *PRE, int *NREG,
    *NREG = nreg;
 }
 
-int findUsableRegs
+ATL_mmnode_t *findBestSquareKVEC
 (
    char pre, /* must be real: d for double precision, s for single */
    int VL,   /* if non-zero, SIMD veclen to use */
-   int nb    /* block factor to use for timings */
+   int B     /* block factor to use for timings */
 )
 /*
  * Finds the number of registers that the compiler can use for GEMM before
@@ -15344,28 +15346,152 @@ int findUsableRegs
  */
 {
    ATL_mmnode_t *mp;
-   double mfB;
+   double mfB, mf;
+   int nbad=0, U=1, UB=1, KB, B1B=0;
    if (!VL)
    #ifdef ATL_VLEN
       VL = ATL_VLEN;
    #else
       VL = 1;  /* need to replace this with code that tries gnuvec! */
    #endif
-   mp = MMGetNodeGen(pre, 0, 0, 1, 1, 1, VL, VL, 0, 64, "ATL_tmp.c");
+   mp = MMGetNodeGEN(pre, 0, 0, 1, 1, VL, VL, VL, 0, 64, "ATL_tmp.c");
+   mp->kbB = KB = ((B+VL-1)/VL)*VL;
 /*
  * First find floor(sqrt(nreg)) by trying square cases until perf drops
  */
+   printf("NREG PERFORMANCE SWEEP USING SQUARE CASES:\n");
+   mfB = TimeMMKernel(1, 0, mp, pre, B, B, KB, 1, 0, -1);
+   printf("   B=(%u,%u,%u) U=(%u,%u,%u) mf=%.0f\n", B, B, KB, mp->mu, mp->nu,
+          mp->ku, mfB);
+/*
+ * Try full unrolling for platforms where loop overhead bottleneck
+ */
+   if (B <= 320)
+   {
+      ATL_mmnode_t *mpUR;
+      mpUR = MMGetNodeGEN(pre, 0, KB, 1, 1, B, VL, VL, 0, 64, "ATL_tmp.c");
+      mf = TimeMMKernel(1, 0, mpUR, pre, B, B, KB, 1, 0, -1);
+      printf("   B=(%u,%u,%u) U=(%u,%u,%u) mf=%.0f\n", B, B, KB, mp->mu, mp->nu,
+             mp->ku, mf);
+      if (mf > mfB*1.04)    /* if full K unroll significantly better */
+      {                     /* that is all we'll use in nreg search */
+         mfB = mf;
+         mp->rout = NULL;
+         KillMMNode(mp);
+         mp = mpUR;
+      }
+      else                  /* if full unroll isn't much better */
+      {
+         mpUR->rout = NULL;
+         KillMMNode(mpUR);  /* do not use it to save time in search */
+      }
+   }
+   while(nbad < 2)
+   {
+      unsigned int b, nr;
+      mp->mu = mp->nu = ++U;
+      b = (U <= B) ? (B/U)*U : U;
+      mf = TimeMMKernel(1, 0, mp, pre, b, b, KB, 1, 0, -1);
+      nr = (mp->flag & (1<<MMF_BREG1)) ? mp->mu*mp->nu+mp->mu+1 :
+           mp->mu*mp->nu+mp->mu+mp->nu;
+      printf("   B=(%u,%u,%u) U=(%u,%u,%u) NR=%u: mf=%.0f\n", B, B, KB, 
+             mp->mu, mp->nu, mp->ku, nr, mf);
+      fflush(stdout);
+      if (mf >= mfB)
+      {
+         mfB = mf;
+         UB = U;
+      }
+      else /* try using BREG1 when perf drops */
+      {
+         if ((mp->flag&(1<<MMF_BREG1)) == 0)
+         {
+            double mf1;
+            mp->flag |= (1<<MMF_BREG1);
+            nr += 1 - mp->nu;
+            mf1 = TimeMMKernel(1, 0, mp, pre, b, b, KB, 1, 0, -1);
+            printf("   B=(%u,%u,%u) U=(%u,%u,%u) NR=%u: mf=%.0f\n", B, B, KB, 
+                   mp->mu, mp->nu, mp->ku, nr, mf1);
+            if (mf1 <= mf)
+               mp->flag ^= (1<<MMF_BREG1);
+            else
+               B1B = 1;
+            if (mf1 >= mfB)
+            {
+               mfB = mf1;
+               UB = U;
+            }
+            else
+               nbad++;
+         }
+         else nbad++;
+      }
+   }
+   U = UB*UB + UB + 1;
+   for (nbad=1; nbad <= U; nbad += nbad);
+   printf("NREG BOUND: [%u,%u]\n", U, nbad);
+
+   mp->mbB = mp->nbB = (B >= UB) ? (B/UB)*UB : UB;
+   mp->rout = DupString(mp->rout);
+   mp->mflop[0] = mfB;
+   mp->mu = mp->nu = UB;
+   if (B1B)
+      mp->flag |= (1<<MMF_BREG1);
+   else
+      mp->flag &= ~(1<<MMF_BREG1);
+   return(mp);
 }
+
+int tuneKvec
+(
+   char pre,          /* d,s,z,c */
+   int VL,            /* if non-zero, SIMD veclen to use */
+   ATL_mmnode_t *mp 
+)
+{
+   double mfB=0.0, mf;
+   unsigned int kvB, muB;
+
+   assert(mp->kvec == mp->vlen);
+   printf("\nTUNING KVEC FROM %u down to 1:\n", mp->vlen);
+   do
+   {
+      int MB;
+      MB = (mp->mu < mp->mbB) ? ((mp->mbB/mp->mu)*mp->mu) : mp->mu;
+      mf = TimeMMKernel(1, 0, mp, pre, MB, mp->nbB, mp->kbB, 1, 0, -1);
+      printf("   B=(%u,%u,%u) U=(%u,%u,%u) KVEC=%u: mf=%.0f\n", 
+             MB, mp->nbB, mp->kbB, mp->mu, mp->nu, mp->ku, mp->kvec, mf);
+      if (mf > mfB || mfB <= 0.0)
+      {
+         mfB = mf;
+         kvB = mp->kvec;
+         muB = mp->mu;
+      }
+      mp->kvec >>= 1;
+      mp->mu <<= 1;
+   }
+   while (mp->kvec > 0);
+   mp->mu = muB;
+   mp->kvec = kvB;
+   mp->mflop[0] = mfB;
+}
+
 int main(int nargs, char **args)
 {
    int flg, verb, nreg, VLEN, NB, TEST;
    char pre, upr;
-   GetFlags(nargs, args, &flg, &pre, &nreg, &VLEN, &NB);
-   upr = pre;
+   ATL_mmnode_t *mp;
+   getFlags(nargs, args, &flg, &pre, &nreg, &VLEN, &NB);
    if (pre == 'z')
       upr = 'd';
    else if (pre == 'c')
       upr = 's';
+   else
+      upr = pre;
+   mp = findBestSquareKVEC(upr, VLEN, NB);
+   tuneKvec(pre, VLEN, mp);
+   KillMMNode(mp);
+   return(0);
 }
 @ROUT ATL_ammmABC
 #include "atlas_misc.h"
