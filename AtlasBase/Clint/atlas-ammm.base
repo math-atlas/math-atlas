@@ -15247,6 +15247,7 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT gmmsrch
+#define SRCH_TEST 0
 void printUsage(char *name, int ierr, char *flag)
 {
    if (ierr > 0)
@@ -15331,9 +15332,21 @@ void getFlags(int nargs, char **args, int *FLG, char *PRE, int *NREG,
    *NREG = nreg;
 }
 
+double TimeKern(char pre, ATL_mmnode_t *mp, int mb, int nb, int kb, int beta)
+{
+   double mf;
+/*
+ * Kill genstr in case we've changed mp, so TimeMM will use new genstr
+ */
+   if (mp->genstr)
+      free(mp->genstr);
+   mp->genstr = NULL;
+   return(TimeMMKernel(1, 0, mp, pre, mb, nb, kb, beta, 0, -1));
+}
 ATL_mmnode_t *findBestSquareKVEC
 (
    char pre, /* must be real: d for double precision, s for single */
+   int flg,
    int VL,   /* if non-zero, SIMD veclen to use */
    int B     /* block factor to use for timings */
 )
@@ -15347,7 +15360,7 @@ ATL_mmnode_t *findBestSquareKVEC
 {
    ATL_mmnode_t *mp;
    double mfB, mf;
-   int nbad=0, U=1, UB=1, KB, B1B=0;
+   int nbad=0, U=1, UB=1, KB, B1B=0, TEST=(flg&(1<<SRCH_TEST));
    if (!VL)
    #ifdef ATL_VLEN
       VL = ATL_VLEN;
@@ -15360,9 +15373,11 @@ ATL_mmnode_t *findBestSquareKVEC
  * First find floor(sqrt(nreg)) by trying square cases until perf drops
  */
    printf("NREG PERFORMANCE SWEEP USING SQUARE CASES:\n");
-   mfB = TimeMMKernel(1, 0, mp, pre, B, B, KB, 1, 0, -1);
+   mfB = TimeKern(pre, mp, B, B, KB, 1);
    printf("   B=(%u,%u,%u) U=(%u,%u,%u) mf=%.0f\n", B, B, KB, mp->mu, mp->nu,
           mp->ku, mfB);
+   if (TEST)
+      assert(!MMKernelFailsAnyBeta(pre, B, B, KB, mp));
 /*
  * Try full unrolling for platforms where loop overhead bottleneck
  */
@@ -15370,7 +15385,7 @@ ATL_mmnode_t *findBestSquareKVEC
    {
       ATL_mmnode_t *mpUR;
       mpUR = MMGetNodeGEN(pre, 0, KB, 1, 1, B, VL, VL, 0, 64, "ATL_tmp.c");
-      mf = TimeMMKernel(1, 0, mpUR, pre, B, B, KB, 1, 0, -1);
+      mf = TimeKern(pre, mp, B, B, KB, 1);
       printf("   B=(%u,%u,%u) U=(%u,%u,%u) mf=%.0f\n", B, B, KB, mp->mu, mp->nu,
              mp->ku, mf);
       if (mf > mfB*1.04)    /* if full K unroll significantly better */
@@ -15391,7 +15406,7 @@ ATL_mmnode_t *findBestSquareKVEC
       unsigned int b, nr;
       mp->mu = mp->nu = ++U;
       b = (U <= B) ? (B/U)*U : U;
-      mf = TimeMMKernel(1, 0, mp, pre, b, b, KB, 1, 0, -1);
+      mf = TimeKern(pre, mp, b, b, KB, 1);
       nr = (mp->flag & (1<<MMF_BREG1)) ? mp->mu*mp->nu+mp->mu+1 :
            mp->mu*mp->nu+mp->mu+mp->nu;
       printf("   B=(%u,%u,%u) U=(%u,%u,%u) NR=%u: mf=%.0f\n", B, B, KB, 
@@ -15399,6 +15414,8 @@ ATL_mmnode_t *findBestSquareKVEC
       fflush(stdout);
       if (mf >= mfB)
       {
+         if (TEST)
+            assert(!MMKernelFailsAnyBeta(pre, b, b, KB, mp));
          mfB = mf;
          UB = U;
       }
@@ -15409,15 +15426,18 @@ ATL_mmnode_t *findBestSquareKVEC
             double mf1;
             mp->flag |= (1<<MMF_BREG1);
             nr += 1 - mp->nu;
-            mf1 = TimeMMKernel(1, 0, mp, pre, b, b, KB, 1, 0, -1);
+            mf1 = TimeKern(pre, mp, b, b, KB, 1);
             printf("   B=(%u,%u,%u) U=(%u,%u,%u) NR=%u: mf=%.0f\n", B, B, KB, 
                    mp->mu, mp->nu, mp->ku, nr, mf1);
+            fflush(stdout);
             if (mf1 <= mf)
                mp->flag ^= (1<<MMF_BREG1);
             else
                B1B = 1;
             if (mf1 >= mfB)
             {
+               if (TEST)
+                  assert(!MMKernelFailsAnyBeta(pre, b, b, KB, mp));
                mfB = mf1;
                UB = U;
             }
@@ -15445,6 +15465,7 @@ ATL_mmnode_t *findBestSquareKVEC
 int tuneKvec
 (
    char pre,          /* d,s,z,c */
+   int flg,
    int VL,            /* if non-zero, SIMD veclen to use */
    ATL_mmnode_t *mp 
 )
@@ -15458,7 +15479,7 @@ int tuneKvec
    {
       int MB;
       MB = (mp->mu < mp->mbB) ? ((mp->mbB/mp->mu)*mp->mu) : mp->mu;
-      mf = TimeMMKernel(1, 0, mp, pre, MB, mp->nbB, mp->kbB, 1, 0, -1);
+      mf = TimeKern(pre, mp, MB, mp->nbB, mp->kbB, 1);
       printf("   B=(%u,%u,%u) U=(%u,%u,%u) KVEC=%u: mf=%.0f\n", 
              MB, mp->nbB, mp->kbB, mp->mu, mp->nu, mp->ku, mp->kvec, mf);
       if (mf > mfB || mfB <= 0.0)
@@ -15488,8 +15509,8 @@ int main(int nargs, char **args)
       upr = 's';
    else
       upr = pre;
-   mp = findBestSquareKVEC(upr, VLEN, NB);
-   tuneKvec(pre, VLEN, mp);
+   mp = findBestSquareKVEC(upr, flg, VLEN, NB);
+   tuneKvec(pre, flg, VLEN, mp);
    KillMMNode(mp);
    return(0);
 }
