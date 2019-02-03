@@ -15489,11 +15489,12 @@ int tuneKvec
          muB = mp->mu;
       }
       mp->kvec >>= 1;
+      mp->ku = mp->kvec;
       mp->mu <<= 1;
    }
    while (mp->kvec > 0);
    mp->mu = muB;
-   mp->kvec = kvB;
+   mp->ku = mp->kvec = kvB;
    mp->mflop[0] = mfB;
 }
 
@@ -15539,12 +15540,133 @@ int tuneVlen
    return(vlenB);
 }
 
+unsigned char *getURs(ATL_mmnode_t *mp)
+/*
+ * mp contains the best square KVEC register blocking, and the number of
+ * registers used is a lower bound on the ones gcc can figure to use.
+ * The next power of two up from this is should be the actual number of
+ * registers, which should be the upper bound of the nreg gcc can use.
+ * Figure out all register blockings within this within 10% of best-so-far
+ * flops/load ratio, and select them for further timing.
+ * RET: short array, 1st entry is low nreg, 2nd upp, 3rd # of pairs to scope,
+ *      then mu,nu pairs.
+ */
+{
+   unsigned int nrLB, nrUB, i, j, ncas=0, cnt;
+   const unsigned int mu0=mp->mu, nu0=mp->nu;
+   const double rat0=((double)mu0*nu0) / ((double)(mu0+nu0));
+   unsigned char *uarr=NULL;
 
+   nrLB = mu0*nu0+mu0;
+   nrLB += (mp->flag&(1<<MMF_BREG1)) ? 1 : nu0;
+   for (nrUB=1; nrUB <= nrLB; nrUB += nrUB);
+
+   FNDCASES:
+   for (cnt=3,i=1; i <= nrUB; i++)
+   {
+      for (j=1; j <= nrUB; j++)
+      {
+         const unsigned int nr = i*j+i+1;
+         const double rat=((double)(i*j))/((double)(i+j));
+         if (nr <= nrUB && rat*1.1 >= rat0)
+         {
+            if (uarr)
+            {
+               uarr[cnt] = i;
+               uarr[cnt+1] = j;
+               cnt += 2;
+            }
+            else
+               ncas++;
+         }
+      }
+   }
+   if (!uarr)
+   {
+      uarr = malloc((ncas*2+3)*sizeof(char));
+      assert(uarr);
+      uarr[0] = nrLB;
+      uarr[1] = nrUB;
+      uarr[2] = ncas;
+      goto FNDCASES;
+   }
+   printf("nr=[%u,%u], uarr=[", uarr[0], uarr[1]);
+   for (ncas=0,cnt=3; ncas < uarr[2]; ncas++, cnt+= 2)
+      printf("(%u,%u),", uarr[cnt], uarr[cnt+1]);
+   printf("]\n");
+   fflush(stdout);
+   return(uarr);
+}
+void refineMUNU(char pre, int flg, ATL_mmnode_t *mp, unsigned char *urs)
+{
+   const unsigned int nrLB=urs[0], nrUB=urs[1], N=urs[2];
+   int muB=mp->mu, nuB=mp->nu, mbB=mp->mbB, nbB=mp->nbB, i; 
+   int B1B=((mp->flag&(1<<MMF_BREG1)) != 0);
+   double mfB;
+
+   printf("REFINING MU & NU, %u CASES WITHIN RANGE [%u,%u]:\n", N, nrLB, nrUB);
+   urs += 3;
+   mfB = TimeKern(pre, mp, mp->mbB, mp->nbB, mp->kbB, 1);
+   printf("   B=(%u,%u,%u) U=(%u,%u,%u) mf=%.0f\n", 
+          mbB, nbB, mp->kbB, mp->mu, mp->nu, mp->ku, mfB);
+   mp->flag &= ~(1<<MMF_BREG1);
+   for (i=0; i < N; i++)
+   {
+      double mf;
+      const unsigned int mu=urs[i+i], nu=urs[i+i+1];
+      const unsigned int MB=(mu > mp->mbB) ? mu : (mp->mbB/mu)*mu;
+      const unsigned int NB=(nu > mp->nbB) ? nu : (mp->nbB/nu)*nu;
+      mp->mu = mu;
+      mp->nu = nu;
+      mf = TimeKern(pre, mp, mp->mbB, mp->nbB, mp->kbB, 1);
+      printf("   B=(%u,%u,%u) U=(%u,%u,%u) BREG1=0 mf=%.0f\n", 
+             MB, NB, mp->kbB, mp->mu, mp->nu, mp->ku, mf);
+      fflush(stdout);
+      if (mf > mfB)
+      {
+         mbB = MB;
+         nbB = NB;
+         muB = mu;
+         nuB = nu;
+         mfB = mf;
+         B1B = 0;
+      }
+      else
+      {
+         mp->flag |= 1<<MMF_BREG1;
+         mf = TimeKern(pre, mp, mp->mbB, mp->nbB, mp->kbB, 1);
+         printf("   B=(%u,%u,%u) U=(%u,%u,%u) BREG1=1 mf=%.0f\n", 
+                MB, NB, mp->kbB, mp->mu, mp->nu, mp->ku, mf);
+         fflush(stdout);
+         if (mf > mfB)
+         {
+            mbB = MB;
+            nbB = NB;
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+            B1B = 1;
+         }
+         mp->flag &= ~(1<<MMF_BREG1);
+      }
+   }
+   mp->mbB = mbB;
+   mp->nbB = nbB;
+   mp->mu = muB;
+   mp->nu = nuB;
+   mp->mflop[0] = mfB;
+   if (B1B)
+      mp->flag |= 1<<MMF_BREG1;
+   printf("BEST: B=(%u,%u,%u) U=(%u,%u,%u) BREG1=%u mf=%.0f\n\n", 
+          mp->mbB, mp->nbB, mp->kbB, mp->mu, mp->nu, mp->ku, 
+          (mp->flag>>MMF_BREG1)&1, mp->mflop[0]);
+}
 int main(int nargs, char **args)
 {
+   ATL_mmnode_t *mp;
+   unsigned char *urs;
    int flg, verb, nreg, VLEN, NB, TEST;
    char pre, upr;
-   ATL_mmnode_t *mp;
    getFlags(nargs, args, &flg, &pre, &nreg, &VLEN, &NB);
    if (pre == 'z')
       upr = 'd';
@@ -15553,6 +15675,8 @@ int main(int nargs, char **args)
    else
       upr = pre;
    mp = findBestSquareKVEC(upr, flg, VLEN, NB);
+   urs = getURs(mp);
+   refineMUNU(pre, flg, mp, urs);
    tuneKvec(pre, flg, VLEN, mp);
    tuneVlen(pre, flg, VLEN, mp);
    KillMMNode(mp);
@@ -18637,6 +18761,12 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_VTYPE __m512
       #define ATL_vzero(v_) v_ = _mm512_setzero_ps()
       #define ATL_vbcast(v_, p_) v_ =  _mm512_set1_ps(*(p_))
+      #define ATL_vbcast2x8(v_, p_) \
+         v_ = (ATL_VTYPE) _mm512_broadcastsd_pd(_mm_load_sd((void*)(p_)))
+      #define ATL_vbcast4x4(v_, p_) \
+         v_ = _mm512_broadcast_f32x4(_mm_load_ps(p_))
+      #define ATL_vbcast8x2(v_, p_) \
+         v_ = _mm512_broadcast_f32x8(_mm256_load_ps(p_))
       #define ATL_vuld(v_, p_) v_ = _mm512_loadu_ps(p_)
       #define ATL_vld(v_, p_) v_ = _mm512_load_ps(p_)
       #define ATL_vust(p_, v_) _mm512_storeu_ps(p_, v_)
@@ -18699,6 +18829,17 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          s0_ = _mm256_permute2f128_ps(s0_, s0_, 0x20); \
             /*{s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d}*/\
          s0_ = _mm256_add_ps(s0_, s1_); \
+      }
+      #define ATL_vvrsum2x8(c0_, c1_) \
+      { __m512 t0_; \
+         c0_ = _mm512_permute_ps(c0_, 0xD8); \
+         c1_ = _mm512_permute_ps(c1_, 0xD8); \
+         t0_ = _mm512_unpacklo_ps(c0_, c1_); \
+         c0_ = _mm512_unpackhi_ps(c0_, c1_); \
+         ATL_vadd(c0_, c0_, t0_); \
+         c0_ = _mm512_permute_ps(c0_, 0xD8); \
+         c0_ = (ATL_VTYPE) _mm512_permutex_pd((__m512d)(c0_), 0xD8); \
+         c0_ = _mm512_shuffle_f32x4(c0_, c0_, 0xD8); \
       }
       #define ATL_vrsum1(d_, s_) \
       { __m256 t0_, t1_; __m128 x0_, x1_; \
@@ -18881,6 +19022,10 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #endif
       #define ATL_vzero(v_) v_ = _mm512_setzero_pd()
       #define ATL_vbcast(v_, p_) v_ =  _mm512_set1_pd(*(p_))
+                                         
+      #define ATL_vbcast2x4(v_, p_) v_ = _mm512_broadcast_f64x2(_mm_load_pd(p_))
+      #define ATL_vbcast4x2(v_, p_) \
+         v_ = _mm512_broadcast_f64x4(_mm256_load_pd(p_))
       #define ATL_vuld(v_, p_) v_ = _mm512_loadu_pd(p_)
       #define ATL_vld(v_, p_) v_ = _mm512_load_pd(p_)
       #define ATL_vust(p_, v_) _mm512_storeu_pd(p_, v_)
@@ -18939,6 +19084,29 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          ATL_vvrsum4_512_256(t0_, s0_, s1_, s2_, s3_); \
          s0_ = _mm512_insertf64x4(s0_, t0_, 0); \
          ATL_vvrsum4_512_256(t0_, s4_, s5_, s6_, s7_); \
+         s0_ = _mm512_insertf64x4(s0_, t0_, 1); \
+      }
+      #define ATL_vvrsum2x4(s0_, s1_) \
+      { __m512d t0_; \
+          t0_ = _mm512_unpacklo_pd(s0_, s1_); \
+          s0_ = _mm512_unpackhi_pd(s0_, s1_); \
+          ATL_vadd(s0_, s0_, t0_); \
+          s0_ = _mm512_permutex_pd(s0_, 0xD8); \
+          s0_ = _mm512_shuffle_f64x2(s0_, s0_, 0xD8); \
+      }
+      #define ATL_vvrsum4x2(s0_, s1_, s2_, s3_) \
+      { __m256d t0_, t1_, t2_, t3_; \ 
+         t0_ = _mm512_extractf64x4_pd(s0_, 0); \
+         t1_ = _mm512_extractf64x4_pd(s0_, 1); \
+         t2_ = _mm512_extractf64x4_pd(s1_, 0); \
+         t3_ = _mm512_extractf64x4_pd(s1_, 1); \
+         ATL_vvrsum4_256(t0_, t1_, t2_, t3_); \
+         s0_ = _mm512_insertf64x4(s0_, t0_, 0); \
+         t0_ = _mm512_extractf64x4_pd(s2_, 0); \
+         t1_ = _mm512_extractf64x4_pd(s2_, 1); \
+         t2_ = _mm512_extractf64x4_pd(s3_, 0); \
+         t3_ = _mm512_extractf64x4_pd(s3_, 1); \
+         ATL_vvrsum4_256(t0_, t1_, t2_, t3_); \
          s0_ = _mm512_insertf64x4(s0_, t0_, 1); \
       }
       #define ATL_vvrsum2(s0_, s1_) \
