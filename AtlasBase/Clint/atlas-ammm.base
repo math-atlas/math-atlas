@@ -15362,11 +15362,7 @@ ATL_mmnode_t *findBestSquareKVEC
    double mfB, mf;
    int nbad=0, U=1, UB=1, KB, B1B=0, TEST=(flg&(1<<SRCH_TEST));
    if (!VL)
-   #ifdef ATL_VLEN
-      VL = ATL_VLEN;
-   #else
-      VL = 1;  /* need to replace this with code that tries gnuvec! */
-   #endif
+      VL = GetNativeVLEN(pre);
    mp = MMGetNodeGEN(pre, 0, 0, 1, 1, VL, VL, VL, 0, 64, "ATL_tmp.c");
    mp->kbB = KB = ((B+VL-1)/VL)*VL;
 /*
@@ -18840,6 +18836,66 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          c0_ = _mm512_permute_ps(c0_, 0xD8); \
          c0_ = (ATL_VTYPE) _mm512_permutex_pd((__m512d)(c0_), 0xD8); \
          c0_ = _mm512_shuffle_f32x4(c0_, c0_, 0xD8); \
+      }
+/*c0={c3d,c3c,c3b,c3a,c2d,c2c,c2b,c2a,c1d,c1c,c1b,c1a,c0d,c0c,c0b,c0a}*/
+/*     15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5, 4,   3,  2,  1,  0  */
+/*c1={c7d,c7c,c7b,c7a,c6d,c6c,c6b,c6a,c5d,c5c,c5b,c4a,c4d,c4c,c4b,c4a}*/
+      #define ATL_vvrsum4x4(c0_, c1_, c2_, c3_) \
+      { __m256 t0_, t1_, t2_, t3_; __m128 x0_, x1_, x3_; \
+         t0_ = _mm512_extractf32x8_ps(c0_, 0); \
+         t1_ = _mm512_extractf32x8_ps(c0_, 1); \
+         t0_ = _mm256_hadd_ps(t0_, t1_); \
+               /*t0_={c3cd,c3ab,c1cd,c1ab, c2cd,c2ab,c0cd,c0ab}; */ \
+         t2_ = _mm512_extractf32x8_ps(c1_, 0); \
+         t3_ = _mm512_extractf32x8_ps(c1_, 1); \
+         t2_ = _mm256_hadd_ps(t2_, t3_); \
+               /*t2_={c7cd,c7ab,c5cd,c5ab, c6cd,c6ab,c4cd,c4ab}; */ \
+         t0_ = _mm256_hadd_ps(t0_, t2_); \
+               /*t0={c7,c5,c3,c1, c6,c4,c2,c0}; */ \
+         x0_ = _mm256_extractf128_ps(t0_, 0); /*{c6,c4,c2,c0}*/ \
+         x1_ = _mm256_extractf128_ps(t0_, 1); /*{c7,c5,c3,c1}*/ \
+         x3_ = _mm_unpacklo_ps(x0_, x1_);     /*{c3 c2,c1,c0}*/ \
+         x1_ = _mm_unpackhi_ps(x0_, x1_);     /*{c7,c6,c5,c4}*/ \
+         t0_ = _mm256_insertf128_ps(t0_, x3_, 0); \
+         t0_ = _mm256_insertf128_ps(t0_, x1_, 1); \
+         c0_ = _mm512_insertf32x8(c0_, t0_, 0); \
+         t0_ = _mm512_extractf32x8_ps(c2_, 0); \
+         t1_ = _mm512_extractf32x8_ps(c2_, 1); \
+         t0_ = _mm256_hadd_ps(t0_, t1_); \
+         t2_ = _mm512_extractf32x8_ps(c3_, 0); \
+         t3_ = _mm512_extractf32x8_ps(c3_, 1); \
+         t2_ = _mm256_hadd_ps(t2_, t3_); \
+         t0_ = _mm256_hadd_ps(t0_, t2_); \
+         x0_ = _mm256_extractf128_ps(t0_, 0); \
+         x1_ = _mm256_extractf128_ps(t0_, 1); \
+         x3_ = _mm_unpacklo_ps(x0_, x1_);     \
+         x1_ = _mm_unpackhi_ps(x0_, x1_);     \
+         t0_ = _mm256_insertf128_ps(t0_, x3_, 0); \
+         t0_ = _mm256_insertf128_ps(t0_, x1_, 1); \
+         c0_ = _mm512_insertf32x8(c0_, t0_, 1); \
+      }
+      #define ATL_vvrsum8x2(c0_, c1_, c2_, c3_, c4_, c5_, c6_, c7_) \
+      { __m256 t0_, t1_, t2_, t3_, t4_, t5_, t6_, t7_; \
+         t0_ = _mm512_extractf32x8_ps(c0_, 0); \
+         t1_ = _mm512_extractf32x8_ps(c0_, 1); \
+         t2_ = _mm512_extractf32x8_ps(c1_, 0); \
+         t3_ = _mm512_extractf32x8_ps(c1_, 1); \
+         t4_ = _mm512_extractf32x8_ps(c2_, 0); \
+         t5_ = _mm512_extractf32x8_ps(c2_, 1); \
+         t6_ = _mm512_extractf32x8_ps(c3_, 0); \
+         t7_ = _mm512_extractf32x8_ps(c3_, 1); \
+         ATL_vvrsum8_256(t0_, t1_, t2_, t3_, t4_, t5_, t6_, t7_); \
+         c0_ = _mm512_insertf32x8(c0_, t0_, 0); \
+         t0_ = _mm512_extractf32x8_ps(c4_, 0); \
+         t1_ = _mm512_extractf32x8_ps(c4_, 1); \
+         t2_ = _mm512_extractf32x8_ps(c5_, 0); \
+         t3_ = _mm512_extractf32x8_ps(c5_, 1); \
+         t4_ = _mm512_extractf32x8_ps(c6_, 0); \
+         t5_ = _mm512_extractf32x8_ps(c6_, 1); \
+         t6_ = _mm512_extractf32x8_ps(c7_, 0); \
+         t7_ = _mm512_extractf32x8_ps(c7_, 1); \
+         ATL_vvrsum8_256(t0_, t1_, t2_, t3_, t4_, t5_, t6_, t7_); \
+         c0_ = _mm512_insertf32x8(c0_, t0_, 1); \
       }
       #define ATL_vrsum1(d_, s_) \
       { __m256 t0_, t1_; __m128 x0_, x1_; \
