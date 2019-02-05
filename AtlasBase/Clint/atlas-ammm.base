@@ -18327,7 +18327,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #endif
    #elif defined(ATL_AVXZ) || defined(ATL_AVXMAC)
       #if defined(SREAL) || defined(SCPLX)
-         #if ATL_VLEN != 16 && ATL_VLEN != 8 && ATL_VLEN != 4
+         #if ATL_VLEN != 16 && ATL_VLEN != 8 && ATL_VLEN != 4 && ATL_VLEN != 2
             #define ATL_FRCGNUVEC
           #endif
       #elif defined(DREAL) || defined(DCPLX)
@@ -18337,7 +18337,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #endif
    #elif defined(ATL_AVX) || defined(ATL_AVXMAC)
       #if defined(SREAL) || defined(SCPLX)
-         #if ATL_VLEN != 8 && ATL_VLEN != 4
+         #if ATL_VLEN != 8 && ATL_VLEN != 4 && ATL_VLEN != 2
             #define ATL_FRCGNUVEC
           #endif
       #elif defined(DREAL) || defined(DCPLX)
@@ -18345,14 +18345,9 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             #define ATL_FRCGNUVEC
           #endif
       #endif
-   #elif defined(ATL_SSE2)
-      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != 4) || \
-          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2)
-         #define ATL_FRCGNUVEC
-      #endif
-   #elif defined(ATL_SSE1)
-      #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != 4) || \
-          ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2)
+   #elif defined(ATL_SSE2) || defined(ATL_SSE1)
+      #if ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2) || \
+           ((defined(SREAL)||defined(SCPLX)) && ATL_VLEN != 4 && ATL_VLEN != 2)
          #define ATL_FRCGNUVEC
       #endif
    #endif
@@ -18749,6 +18744,10 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #endif
    #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
    #define ATL_vust(p_, v_) ATL_vst(p_, v_)
+/*
+ * We only handle full-length AVXZ code here.  Shorter lenghths handled by 
+ * AVX and SSE codes
+ */
 #elif defined(ATL_AVXZ) && \
       ( (ATL_VLEN == 16 && (defined(SREAL) || defined(SCPLX))) || \
         (ATL_VLEN ==  8 && (defined(DREAL) || defined(DCPLX))) )
@@ -19235,6 +19234,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = _mm512_broadcastsd_pd(_mm256_extractf128_pd(_mm512_extractf64x4_pd(d_, 1), 1)); \
       }
    #endif
+/*
+ * Only handle full length AVX (256 bit, 32-byte) here, handle shorter as SSE.
+ * Intrinsics aren't two-operand, so we shouldn't lose much performance by using
+ * SSE intrinsics, as long as we put in ability to use FMAC
+ */
 #elif ATL_VLENb == 32 && (defined(ATL_AVXMAC) || defined(ATL_AVX) || \
       defined(ATL_AVXZ))
    #include <immintrin.h>
@@ -19364,15 +19368,12 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #else        /* double precision */
       #if ATL_VLEN == 4
          #define ATL_VTYPE __m256d
-      #elif ATL_VLEN == 8
-         #define ATL_VTYPE __m512d
-      #elif ATL_VLEN == 2
-         #define ATL_VTYPE __m128d
       #else
-         #error "AVX SUPPORTS ONLY VLEN=[2,4,8] FOR DOUBLE!"
+         #error "AVX SUPPORTS ONLY VLEN=4 FOR DOUBLE!"
       #endif
       #define ATL_vzero(v_) v_ = _mm256_setzero_pd()
       #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_sd(p_)
+      #define ATL_vbcast2x2(v_, p_) v_ =  _mm256_broadcast_pd((void*)(p_))
       #define ATL_vuld(v_, p_) v_ = _mm256_loadu_pd(p_)
       #define ATL_vld(v_, p_) v_ = _mm256_load_pd(p_)
       #define ATL_vust(p_, v_) _mm256_storeu_pd(p_, v_)
@@ -19404,6 +19405,12 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          s1_ = _mm256_permute2f128_pd(s0_, s2_,0x31);/*{s3cd,s2cd,s1cd,s0cd}*/ \
          s0_ = _mm256_permute2f128_pd(s0_, s2_,0x20);/*{s3ab,s2ab,s1ab,s0ab}*/ \
          ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum2x2(s0_, s1_)           /*s0={c1b,c1a,c0b,c0a}*/ \
+      { __m256d t0_;                            /*s1={c3b,c3a,c2b,c2a}*/ \
+         t0_=_mm256_permute2f128_pd(s0_,s1_,0x20); /*{c2b,c2a,c0b,c0a}*/ \
+         s0_=_mm256_permute2f128_pd(s0_,s1_,0x31); /*{c3b,c3a,c1b,c1a}*/ \
+         s0_ = _mm256_hadd_pd(t0_, s0_);           /*{c3ab,c2ab,c1ab,c0ab}*/ \
       }
       #define ATL_vvrsum2(s0_, s1_) \
       { \
@@ -19438,6 +19445,9 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,1), 0); \
       }
    #endif
+/*
+ * Handle all 16-byte double SIMD using SSE2 or later intrinsics
+ */
 #elif ATL_VLENb == 16 &&(defined(DREAL) || defined(DCPLX)) && \
       (defined(ATL_SSE2) || defined(ATL_AVX) || defined(ATL_AVXMAC) \
        || defined(ATL_AVXZ))
@@ -19472,6 +19482,9 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = _mm_add_pd(t_, d_); \
       }
    #endif
+/*
+ * With SSE3 or later, can do reduction use haddpd
+ */
    #if defined(ATL_SSE3) || defined(ATL_AVXMAC) || defined(ATL_AVXZ) || \
           defined(ATL_AVX)
       #define ATL_vrsum1(d_, s_) d_ = _mm_cvtsd_f64(_mm_hadd_pd(s_, s_))
@@ -19480,6 +19493,9 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_vsplat0(d_, s_) d_ = _mm_movedup_pd(s_)
       #define ATL_vsplat1(d_, s_) d_ = (ATL_VTYPE) \
          _mm_shuffle_epi32((__m128i)(s_), 0xEE)
+/*
+ * Prior to SSE3, must use swizzle+vecadd for reductions
+ */
    #else
       #define ATL_vrsum1(d_, s_) \
          d_ = _mm_cvtsd_f64(_mm_add_sd(_mm_unpackhi_pd(s_, s_), s_))
@@ -19506,7 +19522,10 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_vsplat3(d_, s_) d_ = (ATL_VTYPE) \
          _mm_shuffle_epi32((__m128i)(s_), 0xFF)
    #endif
-#elif ATL_VLENb == 16 && (defined(ATL_SSE1) || defined(ATL_AVX) || \
+/*
+ * For VLEN=2 or 4, can use SSE instructions on x86
+ */
+#elif (defined(ATL_SSE1) || defined(ATL_AVX) || \
       defined(ATL_AVXMAC) || defined(ATL_AVXZ))
    #include <xmmintrin.h>
    #ifdef ATL_AVXMAC
@@ -19517,17 +19536,25 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #include <tmmintrin.h>
    #endif
    #define ATL_VTYPE __m128
-   #if defined(ATL_VLEN) && ATL_VLEN != 4
-      #error "VLEN == 4 only supported size for single precision SSE!"
+   #if defined(ATL_VLEN) && ATL_VLEN != 4 && ATL_VLEN != 2
+      #error "VLEN=[4,2] only supported sizes for single precision SSE!"
    #elif !defined(ATL_VLEN)
       #define ATL_VLEN 4
    #endif
    #define ATL_vzero(v_) v_ = _mm_setzero_ps()
    #define ATL_vbcast(v_, p_) v_ =  _mm_load1_ps(p_)
-   #define ATL_vuld(v_, p_) v_ = _mm_loadu_ps(p_)
-   #define ATL_vld(v_, p_) v_ = _mm_load_ps(p_)
-   #define ATL_vust(p_, v_) _mm_storeu_ps(p_, v_)
-   #define ATL_vst(p_, v_) _mm_store_ps(p_, v_)
+   #if ATL_VLEN == 4
+      #define ATL_vuld(v_, p_) v_ = _mm_loadu_ps(p_)
+      #define ATL_vld(v_, p_) v_ = _mm_load_ps(p_)
+      #define ATL_vust(p_, v_) _mm_storeu_ps(p_, v_)
+      #define ATL_vst(p_, v_) _mm_store_ps(p_, v_)
+   #else
+      #define ATL_vuld(v_, p_) \
+         v_ = (ATL_VTYPE) _mm_loadu_pd((const double*)(p_))
+      #define ATL_vld(v_, p_) ATL_vuld(v_, p_)
+      #define ATL_vst(p_, v_) _mm_storel_pi((void*)(p_), v_)
+      #define ATL_vust(p_, v_) _mm_storeu_pd(p_, v_)
+   #endif
    #define ATL_vadd(d_, s1_, s2_) d_ =  _mm_add_ps(s1_, s2_)
    #define ATL_vsub(d_, s1_, s2_) d_ =  _mm_sub_ps(s1_, s2_)
    #define ATL_vmul(d_, s1_, s2_) d_ =  _mm_mul_ps(s1_, s2_)
@@ -19540,6 +19567,9 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = _mm_add_ps(t_, d_); \
       }
    #endif
+/*
+ * For SSE3 and later instruction sets, can use hadd for reductions
+ */
    #if defined(ATL_SSE3) || defined(ATL_AVX) || \
        defined(ATL_AVXMAC) || defined(ATL_AVXZ)
       #define ATL_vrsum1(d_, s_) \
@@ -19547,22 +19577,34 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          t_ = _mm_hadd_ps(s_, s_); \
          d_ = _mm_cvtss_f32(_mm_hadd_ps(t_, t_)); \
       }
-      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
-      { \
-         s0_ = _mm_hadd_ps(s0_, s1_); /*{s1cd,s1ab,s0cd,s0ab}*/ \
-         s2_ = _mm_hadd_ps(s2_, s3_); /*{s3cd,s3ab,s2cd,s2ab}*/ \
-         s0_ = _mm_hadd_ps(s0_, s2_); /*{s3a-d,s2a-d,s1a-d,s0a-d}*/ \
-      }
-      #define ATL_vvrsum2(s0_, s1_) \
-      { \
-         s0_ = _mm_hadd_ps(s0_, s1_); /*{s1cd,s1ab,s0cd,s0ab}*/ \
-         s0_ = _mm_hadd_ps(s0_, s0_); /*{s1a-d,s0a-d,s1a-d,s0a-d}*/ \
-      }
-      #define ATL_vvrsum1(s0_) \
-      { \
-         s0_ = _mm_hadd_ps(s0_, s0_); /*{s0cd,s0ab,s0cd,s0ab}*/ \
-         s0_ = _mm_hadd_ps(s0_, s0_); /*{s0a-d,s0a-d,s0a-d,s0a-d}*/ \
-      }
+      #if ATL_VLEN == 4
+         #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+         { \
+            s0_ = _mm_hadd_ps(s0_, s1_); /*{s1cd,s1ab,s0cd,s0ab}*/ \
+            s2_ = _mm_hadd_ps(s2_, s3_); /*{s3cd,s3ab,s2cd,s2ab}*/ \
+            s0_ = _mm_hadd_ps(s0_, s2_); /*{s3a-d,s2a-d,s1a-d,s0a-d}*/ \
+         }
+         #define ATL_vvrsum2(s0_, s1_) \
+         { \
+            s0_ = _mm_hadd_ps(s0_, s1_); /*{s1cd,s1ab,s0cd,s0ab}*/ \
+            s0_ = _mm_hadd_ps(s0_, s0_); /*{s1a-d,s0a-d,s1a-d,s0a-d}*/ \
+         }
+         #define ATL_vvrsum1(s0_) \
+         { \
+            s0_ = _mm_hadd_ps(s0_, s0_); /*{s0cd,s0ab,s0cd,s0ab}*/ \
+            s0_ = _mm_hadd_ps(s0_, s0_); /*{s0a-d,s0a-d,s0a-d,s0a-d}*/ \
+         }
+      #else /*VLEN = 2*/
+         #define ATL_vvrsum1(s0_)        /*{s0a,s0b, U, U} */ \
+         { \
+            s0_ = _mm_hadd_ps(s0_, s0_); /*{s0ab, U, U, U}*/ \
+         }
+         #define ATL_vvrsum2(s0_, s1_)   /*{s0a, s0b, U, U}*/\
+         { \
+            s0_ = _mm_hadd_ps(s0_, s1_); /*{s0ab,U,s1ab,U}*/ \
+            s0_ = _mm_shuffle_ps(s0_, s0_, 0xE8); /*{s0ab,s1ab,s1ab,U}*/ \
+         }
+      #endif
    #else
       #define ATL_vrsum1(d_, s_) \
       { \
@@ -19572,39 +19614,49 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          t_ = _mm_add_ps(t_, _mm_shuffle_ps(t_, t_, 1)); \
          d_ = _mm_cvtss_f32(t_); \
       }
-      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
-      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
-         ATL_VTYPE t0_; \
-         t0_ = _mm_unpackhi_ps(s0_,s1_);     /*{s1d,  s0d,  s1c,  s0c}*/\
-         s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{s1b,  s0b,  s1a,  s0a}*/\
-         s1_ = _mm_unpackhi_ps(s2_,s3_);     /*{s3d,  s2d,  s3c,  s2c}*/\
-         ATL_vadd(s0_, s0_, t0_);            /*{s1bd, s0bd, s1ac, s0ac}*/\
-         s2_ = _mm_unpacklo_ps(s2_,s3_);     /*{s3b,  s2b,  s3a,  s2a}*/\
-         ATL_vadd(s2_, s2_, s1_);            /*{s3bd, s2bd, s3ac, s2ac}*/\
-         t0_ = _mm_shuffle_ps(s0_,s2_,0xEE); /*{s3bd, s2bd, s1bd, s0bd}*/\
-         s0_ = _mm_shuffle_ps(s0_,s2_,0x44); /*{s3ac, s2ac, s1ac, s0ac}*/\
-         ATL_vadd(s0_,s0_,t0_);              /*{s3a-d,s2a-d,s1a-d,s0a-d}*/\
-      }
-      #define ATL_vvrsum2(s0_, s1_) \
-      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
-         ATL_VTYPE t0_; \
-         t0_ = _mm_unpackhi_ps(s0_,s1_);     /*{s1d,  s0d,  s1c,  s0c}*/\
-         s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{s1b,  s0b,  s1a,  s0a}*/\
-         ATL_vadd(s0_, s0_, t0_);            /*{s1bd, s0bd, s1ac, s0ac}*/\
-         t0_ = _mm_shuffle_ps(s0_,s0_,0xEE); /*{s1bd, s0bd, s1bd, s0bd}*/\
-         s0_ = _mm_shuffle_ps(s0_,s0_,0x44); /*{s1ac, s0ac, s1ac, s0ac}*/\
-         ATL_vadd(s0_,s0_,t0_);              /*{s1a-d,s0a-d,s1a-d,s0a-d}*/\
-      }
-      #define ATL_vvrsum1(s0_) \
-      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
-         ATL_VTYPE t0_; \
-         t0_ = _mm_unpackhi_ps(s0_,s0_);     /*{s0d,  s0d,  s0c,  s0c}*/\
-         s0_ = _mm_unpacklo_ps(s0_,s0_);     /*{s0b,  s0b,  s0a,  s0a}*/\
-         ATL_vadd(s0_, s0_, t0_);            /*{s0bd, s0bd, s0ac, s0ac}*/\
-         t0_ = _mm_shuffle_ps(s0_,s0_,0xEE); /*{s0bd, s0bd, s0bd, s0bd}*/\
-         s0_ = _mm_shuffle_ps(s0_,s0_,0x44); /*{s0ac, s0ac, s0ac, s0ac}*/\
-         ATL_vadd(s0_,s0_,t0_);              /*{s0a-d,s0a-d,s0a-d,s0a-d}*/\
-      }
+      #if ATL_VLEN == 4
+         #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+         {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+            ATL_VTYPE t0_; \
+            t0_ = _mm_unpackhi_ps(s0_,s1_);     /*{s1d,  s0d,  s1c,  s0c}*/\
+            s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{s1b,  s0b,  s1a,  s0a}*/\
+            s1_ = _mm_unpackhi_ps(s2_,s3_);     /*{s3d,  s2d,  s3c,  s2c}*/\
+            ATL_vadd(s0_, s0_, t0_);            /*{s1bd, s0bd, s1ac, s0ac}*/\
+            s2_ = _mm_unpacklo_ps(s2_,s3_);     /*{s3b,  s2b,  s3a,  s2a}*/\
+            ATL_vadd(s2_, s2_, s1_);            /*{s3bd, s2bd, s3ac, s2ac}*/\
+            t0_ = _mm_shuffle_ps(s0_,s2_,0xEE); /*{s3bd, s2bd, s1bd, s0bd}*/\
+            s0_ = _mm_shuffle_ps(s0_,s2_,0x44); /*{s3ac, s2ac, s1ac, s0ac}*/\
+            ATL_vadd(s0_,s0_,t0_);              /*{s3a-d,s2a-d,s1a-d,s0a-d}*/\
+         }
+         #define ATL_vvrsum2(s0_, s1_) \
+         {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+            ATL_VTYPE t0_; \
+            t0_ = _mm_unpackhi_ps(s0_,s1_);     /*{s1d,  s0d,  s1c,  s0c}*/\
+            s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{s1b,  s0b,  s1a,  s0a}*/\
+            ATL_vadd(s0_, s0_, t0_);            /*{s1bd, s0bd, s1ac, s0ac}*/\
+            t0_ = _mm_shuffle_ps(s0_,s0_,0xEE); /*{s1bd, s0bd, s1bd, s0bd}*/\
+            s0_ = _mm_shuffle_ps(s0_,s0_,0x44); /*{s1ac, s0ac, s1ac, s0ac}*/\
+            ATL_vadd(s0_,s0_,t0_);              /*{s1a-d,s0a-d,s1a-d,s0a-d}*/\
+         }
+         #define ATL_vvrsum1(s0_) \
+         {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+            ATL_VTYPE t0_; \
+            t0_ = _mm_unpackhi_ps(s0_,s0_);     /*{s0d,  s0d,  s0c,  s0c}*/\
+            s0_ = _mm_unpacklo_ps(s0_,s0_);     /*{s0b,  s0b,  s0a,  s0a}*/\
+            ATL_vadd(s0_, s0_, t0_);            /*{s0bd, s0bd, s0ac, s0ac}*/\
+            t0_ = _mm_shuffle_ps(s0_,s0_,0xEE); /*{s0bd, s0bd, s0bd, s0bd}*/\
+            s0_ = _mm_shuffle_ps(s0_,s0_,0x44); /*{s0ac, s0ac, s0ac, s0ac}*/\
+            ATL_vadd(s0_,s0_,t0_);              /*{s0a-d,s0a-d,s0a-d,s0a-d}*/\
+         }
+      #else /* VLEN == 2 */
+         #define ATL_vvrsum2(s0_, s1_) \
+         {                                      /*{  U,    U,  sXb,  sXa}*/ \
+            ATL_VTYPE t0_; \
+            s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{ s1b,  s0b, s1a , s0a}*/\
+            s1_ = _mm_movehl_ps(s1_, s0_);      /*    U,    U, x1b , s0b}*/ \
+            ATL_vadd(s0_,s0_,t0_);              /*{   U,    U, s1ab, s0ab}*/\
+         }
+      #endif
    #endif
 #elif ATL_VLEN > 1  /* use gnuvec when atlas knows no VEC ISA */
 @skip   typedef TYPE ATL_gnuvec_t  __attribute__ ((vector_size (ATL_VLENb)))
