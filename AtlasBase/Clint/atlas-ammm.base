@@ -19250,6 +19250,10 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #endif
       #define ATL_vzero(v_) v_ = _mm256_setzero_ps()
       #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_ss(p_)
+      #define ATL_vbcast2x4(v_, p_) \
+         v_ =  (ATL_VTYPE)_mm256_broadcast_sd((void*)(p_))
+      #define ATL_vbcast4x2(v_, p_) \
+         v_ =  _mm256_broadcast_ps((void*)(p_))
       #define ATL_vuld(v_, p_) v_ = _mm256_loadu_ps(p_)
       #define ATL_vld(v_, p_) v_ = _mm256_load_ps(p_)
       #define ATL_vust(p_, v_) _mm256_storeu_ps(p_, v_)
@@ -19312,6 +19316,35 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          s0_ = _mm256_permute2f128_ps(s0_, s0_, 0x20); \
             /*{s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d,s1a-d,s0a-d}*/\
          ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vvrsum2x4(s0_, s1_)  /*{s3b,s3a,s2b,s2a,s1b,s1a,s0b,s0a}*/ \
+      {  __m256 t0_;                   /*{s7b,s7a,s6b,s6a,s5b,s5a,s4b,s4a}*/ \
+         t0_ = _mm256_permute2f128_ps(s0_,s1_,0x20); \
+             /*t0={s5b,s5a,s4b,s4a,s1b,s1a,s0b,s0a} */ \
+         s0_ = _mm256_permute2f128_ps(s0_,s1_,0x31); \
+             /*s0={s7b,s7a,s6b,s6a,s3b,s3a,s2b,s2a}*/ \
+         s0_=_mm256_hadd_ps(t0_, s0_); \
+             /*s0={s7ab,s6ab,s5ab,s4ab,s3ab,s2ab,s1ab,s0ab}*/ \
+      }
+/*
+ * sX={s1d,s1c,s1b,s1a,s0d,s0c,s0b,s0a}, s1=c3,c2; s2=c5,c4; s3=c7,c6
+ */
+      #define ATL_vvrsum4x2(s0_,s1_,s2_,s3_) \
+      {  __m256 t0_;            /*s1={s3d,s3c,s3b,s3a,s2d,s2c,s2b,s2a}*/ \
+         t0_ = _mm256_permute2f128_ps(s0_,s2_,0x20); /*0b0010 0000 */ \
+             /*t0={s4d,s4c,s4b,s4a,s0d,s0c,s0b,s0a}*/ \
+         s0_ = _mm256_permute2f128_ps(s0_,s2_,0x31); /*0b0011 0001 */ \
+             /*s0={s5d,s5c,s5b,s5a,s1d,s1c,s1b,s1a}*/ \
+         s0_=_mm256_hadd_ps(t0_, s0_); \
+             /*s0={s5cd,s5ab,s4cd,s4ab,s1cd,s1ab,s0cd,s0ab}*/ \
+         t0_ = _mm256_permute2f128_ps(s1_,s3_,0x20); /*0b0010 0000 */ \
+         /*t0={s6d,s6c,s6b,s6a,s2d,s2c,s2b,s2a}*/ \
+         s1_ = _mm256_permute2f128_ps(s1_,s3_,0x31); /*0b0011 0001 */ \
+         /*s1={s7d,s7c,s7b,s7a,s3d,s3c,s3b,s3a}*/ \
+         s1_=_mm256_hadd_ps(t0_, s1_); \
+             /*s1={s7cd,s7ab,s6cd,s6ab,s3cd,s3ab,s2cd,s2ab}*/ \
+         s0_=_mm256_hadd_ps(s0_, s1_); \
+             /*s0={s7a-d,s6a-d,s5a-c,s4a-d,s3a-d,s2a-d,s1a-d,s0a-d}*/ \
       }
       #define ATL_vvrsum1(s0_) \
       {  ATL_VTYPE t1_; \
@@ -19543,6 +19576,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #endif
    #define ATL_vzero(v_) v_ = _mm_setzero_ps()
    #define ATL_vbcast(v_, p_) v_ =  _mm_load1_ps(p_)
+   #define ATL_vbcast2x2(v_, p_) v_ =  (ATL_VTYPE)_mm_load1_pd((void*)(p_))
    #if ATL_VLEN == 4
       #define ATL_vuld(v_, p_) v_ = _mm_loadu_ps(p_)
       #define ATL_vld(v_, p_) v_ = _mm_load_ps(p_)
@@ -19593,6 +19627,10 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          { \
             s0_ = _mm_hadd_ps(s0_, s0_); /*{s0cd,s0ab,s0cd,s0ab}*/ \
             s0_ = _mm_hadd_ps(s0_, s0_); /*{s0a-d,s0a-d,s0a-d,s0a-d}*/ \
+         }
+         #define ATL_vvrsum2x2(s0_,s1_)  /*s0={c1b,c1a,c0b,c0a}*/ \
+         {                               /*s1={c3b,c3a,c2b,c2a}*/ \
+            s0_=_mm_hadd_ps(s0_, s1_);   /*s0={s3ab,s2ab,c1ab,c0ab}*/ \
          }
       #else /*VLEN = 2*/
          #define ATL_vvrsum1(s0_)        /*{s0a,s0b, U, U} */ \
