@@ -6217,7 +6217,6 @@ int main(int nargs, char **args)
 #include "atlas_cache.h"
 #include "atlas_misc.h"
 #include "atlas_mmtesttime.h"
-#include "atlas_simd.h"
 @ROUT gmmsearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def cwdate 2016
 #include "atlas_cache.h"
@@ -15657,6 +15656,110 @@ void refineMUNU(char pre, int flg, ATL_mmnode_t *mp, unsigned char *urs)
           mp->mbB, mp->nbB, mp->kbB, mp->mu, mp->nu, mp->ku, 
           (mp->flag>>MMF_BREG1)&1, mp->mflop[0]);
 }
+
+void refineMUNU_mvec(char pre, int flg, ATL_mmnode_t *mp, unsigned char *urs)
+/*
+ * If we use mvec, re-search reg blockings including using splat not bcast
+ */
+{
+   const unsigned int nrLB=urs[0], nrUB=urs[1], N=urs[2];
+   int muB=mp->mu, nuB=mp->nu, mbB=mp->mbB, nbB=mp->nbB, i; 
+   int B1B=((mp->flag&(1<<MMF_BREG1)) != 0), SPLTB=0;
+   const int mvec=mp->vlen / mp->kvec;
+   double mfB;
+
+   printf("REFINING MU & NU, %u CASES WITHIN RANGE [%u,%u] WITH VL=%u, "
+          "KVEC=%u:\n", N, nrLB, nrUB, mp->vlen, mp->kvec);
+   urs += 3;
+   mfB = TimeKern(pre, mp, mp->mbB, mp->nbB, mp->kbB, 1);
+   printf("   B=(%u,%u,%u) U=(%u,%u,%u) B1=0 SPLT=0 mf=%.0f\n", 
+          mbB, nbB, mp->kbB, mp->mu, mp->nu, mp->ku, mfB);
+   mp->flag &= ~(1<<MMF_BREG1);
+   for (i=0; i < N; i++)
+   {
+      double mf;
+      const unsigned int mu=urs[i+i], nu=urs[i+i+1];
+      const unsigned int MB=(mu > mp->mbB) ? mu : (mp->mbB/mu)*mu;
+      const unsigned int NB=(nu > mp->nbB) ? nu : (mp->nbB/nu)*nu;
+      int BREG1=0;
+      mp->mu = mu*mvec;
+      mp->nu = nu;
+      mf = TimeKern(pre, mp, mp->mbB, mp->nbB, mp->kbB, 1);
+      printf("   B=(%u,%u,%u) U=(%u,%u,%u) B1=0 SPLT=0 mf=%.0f\n", 
+             MB, NB, mp->kbB, mp->mu, mp->nu, mp->ku, mf);
+      fflush(stdout);
+      if (mf > mfB)
+      {
+         mbB = MB;
+         nbB = NB;
+         muB = mu;
+         nuB = nu;
+         mfB = mf;
+         B1B = 0;
+         SPLTB = 0;
+      }
+      else
+      {
+         mp->flag |= 1<<MMF_BREG1;
+         mf = TimeKern(pre, mp, mp->mbB, mp->nbB, mp->kbB, 1);
+         printf("   B=(%u,%u,%u) U=(%u,%u,%u) B1=1 SPLT=0 mf=%.0f\n", 
+                MB, NB, mp->kbB, mp->mu, mp->nu, mp->ku, mf);
+         fflush(stdout);
+         if (mf > mfB)
+         {
+            BREG1=1;
+            mbB = MB;
+            nbB = NB;
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+            B1B = 1;
+            SPLTB = 0;
+         }
+         mp->flag &= ~(1<<MMF_BREG1);
+      }
+/*
+ *    # elts of B to fetch is nu, get mvec=vlen/kvec items at a time.
+ *    If nu is a multiple of mvec, the we can use splat code
+ */
+      if ((nu/mvec)*mvec == nu)
+      {
+         if (BREG1)
+            mp->flag |= 1<<MMF_BREG1;
+         mp->flag |= 1<<MMF_NOBCAST;
+         mf = TimeKern(pre, mp, mp->mbB, mp->nbB, mp->kbB, 1);
+         printf("   B=(%u,%u,%u) U=(%u,%u,%u) B1=%u SPLT=1 mf=%.0f\n", 
+                MB, NB, mp->kbB, mp->mu, mp->nu, mp->ku, BREG1, mf);
+         fflush(stdout);
+         if (mf > mfB)
+         {
+            mbB = MB;
+            nbB = NB;
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+            B1B = 1;
+            SPLTB = 1;
+         }
+         if (BREG1)
+            mp->flag ^= 1<<MMF_BREG1;
+         mp->flag ^= 1<<MMF_NOBCAST;
+      }
+   }
+   mp->mbB = mbB;
+   mp->nbB = nbB;
+   mp->mu = muB * mvec;
+   mp->nu = nuB;
+   mp->mflop[0] = mfB;
+   if (B1B)
+      mp->flag |= 1<<MMF_BREG1;
+   if (SPLTB)
+      mp->flag |= 1<<MMF_NOBCAST;
+   printf("BEST: B=(%u,%u,%u) U=(%u,%u,%u) BREG1=%u SPLT=%u VL=%u KV=%u "
+          "mf=%.0f\n\n", mp->mbB, mp->nbB, mp->kbB, mp->mu, mp->nu, mp->ku, 
+          (mp->flag>>MMF_BREG1)&1, (mp->flag>>MMF_NOBCAST)&1, mp->vlen,
+          mp->kvec, mp->mflop[0]);
+}
 int main(int nargs, char **args)
 {
    ATL_mmnode_t *mp;
@@ -15675,6 +15778,9 @@ int main(int nargs, char **args)
    refineMUNU(pre, flg, mp, urs);
    tuneKvec(pre, flg, VLEN, mp);
    tuneVlen(pre, flg, VLEN, mp);
+   if (mp->kvec < mp->vlen)
+      refineMUNU_mvec(pre, flg, mp, urs);
+   free(urs);
    KillMMNode(mp);
    return(0);
 }
@@ -19109,6 +19215,24 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = _mm512_shuffle_f32x4(s_, s_, 0xFF); \
          d_ = _mm512_permute_ps(d_, 0xEE); \
       }
+      #define ATL_vsplat0_4(d_, s_) \
+         d_ = _mm512_shuffle_f32x4(s_, s_, 0x00)
+      #define ATL_vsplat4_4(d_, s_) \
+         d_ = _mm512_shuffle_f32x4(s_, s_, 0x55)
+      #define ATL_vsplat8_4(d_, s_) \
+         d_ = _mm512_shuffle_f32x4(s_, s_, 0xAA)
+      #define ATL_vsplat12_4(d_, s_) \
+         d_ = _mm512_shuffle_f32x4(s_, s_, 0xFF)
+      @BEGINSKIP
+      #define ATL_vsplat0_8(d_, s_) \
+         d_ = _mm512_broadcast_f32x8(_mm512_extractf32x8_ps(s_,0))
+      #define ATL_vsplat8_8(d_, s_) \
+         d_ = _mm512_broadcast_f32x8(_mm512_extractf32x8_ps(s_,1))
+      @ENDSKIP
+      #define ATL_vsplat0_8(d_, s_) \
+         d_ = _mm512_insertf32x8(s_, _mm512_extractf32x8_ps(s_,0), 1)
+      #define ATL_vsplat8_8(d_, s_) \
+         d_ = _mm512_insertf32x8(s_, _mm512_extractf32x8_ps(s_,1), 0)
    #else        /* double precision */
       #if ATL_VLEN == 8
          #define ATL_VTYPE __m512d
