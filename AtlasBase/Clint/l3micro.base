@@ -1122,7 +1122,6 @@ void SYR2K
  *
  * If (Uplo==Upper && sy2blk)
  *    (1) flag&1 == 1; (2) wU non-NULL; (3) sy2blk is beta=0.
- * ==> wU can be aliased wt wS if you don't need correct wS on output
  */
 #ifdef Conj_
    #define syrkBlk Mjoin(PATL,sqherkBlk)
@@ -1133,7 +1132,7 @@ void SYR2K
    #define syrk_K  Mjoin(PATL,sqsyrk_KLoop)
    #define syrk  Mjoin(PATL,sqsyrk)
 #endif
-/*#define MEM_DEBUG 1*/
+@SKIP /*#define MEM_DEBUG 1*/
 
 void syrkBlk
 (
@@ -1153,8 +1152,7 @@ void syrkBlk
    TYPE *wB,      /* if non-NULL ip-based At workspace */
    TYPE *wBn,     /* next B wrkspc to be prefetched */
    TYPE *rC,      /* real portion of wC (unused for real routines) */
-   TYPE *wC,      /* if non-NULL: ptr to syrk-storage C wrkspc */
-   TYPE *wU       /* reflection space for Upper if non-NULL */
+   TYPE *wC       /* if non-NULL: ptr to syrk-storage C wrkspc */
 )
 {
    ATL_CUINT kb = (k != ip->nfkblks) ? ip->kb : ip->kb0;
@@ -1300,6 +1298,7 @@ void syrkBlk
          #endif
       }
    }
+@BEGINSKIP
    #if 0
    if ((flag&1) && C && wU)  /* need to reflect from Lower to Upper */
    {
@@ -1324,6 +1323,7 @@ void syrkBlk
       #endif
    }
    #endif
+@ENDSKIP
 }
 
 /*
@@ -1347,8 +1347,7 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
    TYPE *wA,      /* if non-NULL, ip-based A workspace */
    TYPE *wB,      /* if non-NULL ip-based At workspace */
    TYPE *rC,      /* real portion of wC (unused in real routines) */
-   TYPE *wC,      /* if non-NULL: ptr to syrk-storage C wrkspc */
-   TYPE *wU       /* NBxNB wrkspc needed for Upper C storage & blk2c != NULL */
+   TYPE *wC       /* if non-NULL: ptr to syrk-storage C wrkspc */
 )
 {
    const size_t nfkblks = ip->nfkblks;
@@ -1372,14 +1371,14 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
    {
       TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szB : NULL;
       syrkBlk(ip, flag|4, d, 0, A, sy2blk, NULL, beta, NULL, rS, wS,
-              wA, wAn, wB, wBn, rC, wC, wU);
+              wA, wAn, wB, wBn, rC, wC);
       wA = wAn;
       wB = wBn;
    }
    else /* this is first & last block! */
    {
       syrkBlk(ip, flag|4, d, 0, A, sy2blk, blk2c, beta, C, rS, wS,
-              wA, wA, wB, wB, rC, wC, wU);
+              wA, wA, wB, wB, rC, wC);
       return;
    }
 /*
@@ -1389,7 +1388,7 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
    {
       TYPE *wAn=(wA)? wA+szA:NULL, *wBn=(wB) ? wB+szB : NULL;
       syrkBlk(ip, flag, d, k, A, sy2blk, NULL, beta, NULL, rS, wS,
-              wA, wAn, wB, wBn, rC, wC, wU);
+              wA, wAn, wB, wBn, rC, wC);
       wA = wAn;
       wB = wBn;
    }
@@ -1397,7 +1396,7 @@ void syrk_K  /* inner-product based syrk/herk loop over K loop */
  * Last block actually writes to C
  */
    syrkBlk(ip, flag, d, k, A, sy2blk, blk2c, beta, C, rS, wS,
-           wA, wA, wB, wB, rC, wC, wU);
+           wA, wA, wB, wB, rC, wC);
 }
 
 int syrk
@@ -1425,7 +1424,7 @@ int syrk
 {
    size_t sz, szA, szB, szC, szS, nnblks, extra;
    void *vp=NULL;
-   TYPE *wA, *wB, *wC, *wS, *wCs, *rC, *rCs, *rS;
+   TYPE *wA, *wB, *wC, *wS, *rC, *rCs, *rS;
    double timG;
    int nb, nbS, flg, idx;
    int ierr;
@@ -1467,7 +1466,7 @@ int syrk
    szS = ((ip->kb + ATL_SYRKK_KU-1)/ATL_SYRKK_KU)*ATL_SYRKK_KU;
    szS *= nbS;
    sz = Mmax(ip->szC,szC);
-   sz = ATL_MulBySize(sz + szS + szA+szB + extra) + 5*ATL_Cachelen;
+   sz = ATL_MulBySize(sz + szS + szA + szB + extra) + 4*ATL_Cachelen;
    if (sz < ATL_MaxMalloc)
       vp = malloc(sz);
    if (!vp)
@@ -1481,7 +1480,6 @@ int syrk
    wC = ATL_AlignPtr(wC);
    if (!szA)
       wA = NULL;
-   wCs = wC;
    #ifdef TCPLX
       rC = wC + ip->szC;
       rCs = wC + szC;
@@ -1582,7 +1580,7 @@ int syrk
    {
       flg |= 1;
       syrk_K(ip, flg, 0, A, sy2blk, blk2sy, beta, C, rS, wS, wB, NULL,
-             rCs, wC, wCs);
+             rCs, wC);
       if (N > nb)
       {
          const size_t incC = nb*((ldc+1)SHIFT);
@@ -1600,7 +1598,7 @@ int syrk
          for (i=1; i < nnblks-1; i++)
          {
             syrk_K(ip, flg, i, A, sy2blk, blk2sy, beta, C, rS, wS, wB, NULL,
-                   rCs, wC, wCs);
+                   rCs, wC);
             wA += szB SHIFT;
             Mjoin(PATL,iploopsNK)(ip, i, i+1, NULL, NULL, C+i*(nb SHIFT), 11,
                                   wB, wA, rC, wC, beta, blk2c);
@@ -1609,7 +1607,7 @@ int syrk
  *       Last colpan is only 1 diag blk, so don't copy A or B for gemm
  */
          syrk_K(ip, flg, i, A, sy2blk, blk2sy, beta, C, rS, wS, NULL, NULL,
-                rCs, wC, wCs);
+                rCs, wC);
       }
    }
 /*
@@ -1626,7 +1624,7 @@ int syrk
  *    of C's gemm computation
  */
       syrk_K(ip, flg, 0, A, sy2blk, blk2sy, beta, C, rS, wS, NULL, wB,
-             rCs, wC, wCs);
+             rCs, wC);
       if (N > nb)
       {
 /*
@@ -1643,7 +1641,7 @@ int syrk
          for (j=1; j < nnblks-1; j++)
          {
             syrk_K(ip, flg, j, A, sy2blk, blk2sy, beta, C, rS, wS,
-                   NULL, wB, rCs, wC, wCs);
+                   NULL, wB, rCs, wC);
             wA += szB SHIFT;
             Mjoin(PATL,iploopsMK)(ip, j+1, j, NULL, NULL, c, 7, wA, wB, rC, wC,
                                   beta, blk2c);
@@ -1653,7 +1651,7 @@ int syrk
  *       Last colpan is only 1 diag blk, so don't copy A or B for gemm
  */
          syrk_K(ip, flg, j, A, sy2blk, blk2sy, beta, C, rS, wS,
-                NULL, NULL, rCs, wC, wCs);
+                NULL, NULL, rCs, wC);
       }
    }
    free(vp);
@@ -2390,7 +2388,6 @@ int syrk
  *
  * If (Uplo==Upper && sy2blk) 
  *    (1) flag&1 == 1; (2) wU non-NULL; (3) sy2blk is beta=0.
- * ==> wU can be aliased wt wS if you don't need correct wS on output
  */
 #ifdef Conj_
    #define syrk_amm  Mjoin(PATL,herk_amm)
@@ -2775,8 +2772,7 @@ void sqsyrkBlk
    TYPE *wB,      /* if non-NULL op-based At workspace */
    TYPE *wBn,     /* next B wrkspc to be prefetched */
    TYPE *rC,      /* real ptr (unused for real routs) */
-   TYPE *wC,      /* if non-NULL: ptr to syrk-storage C wrkspc */
-   TYPE *wU       /* NBxNB wrkspc needed for Upper C storage & blk2c != NULL */
+   TYPE *wC      /* if non-NULL: ptr to syrk-storage C wrkspc */
 )
 {
    ATL_CSZT lda = op->lda, nfblks = op->nfnblks;
@@ -2974,9 +2970,9 @@ int opsqsyrk
    ATL_CSZT ldc
 )
 {
-   size_t sz, szA, szC, szU, szS, nnblks, szAblk;
+   size_t sz, szA, szC, szS, nnblks, szAblk;
    void *vp;
-   TYPE *wA, *wB, *wC, *wS, *wU, *rC, *rCs, *rS;
+   TYPE *wA, *wB, *wC, *wS, *rC, *rCs, *rS;
    int nb, nbS, flg, idx, extra;
    cm2am_t sy2blk;
    ablk2cmat_t blk2sy, blk2c;
@@ -2986,7 +2982,6 @@ int opsqsyrk
 
    if (Uplo == AtlasLower)
    {
-      szU = 0;
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
@@ -3022,7 +3017,6 @@ int opsqsyrk
    }
    else  /* C is Upper */
    {
-      szU = 0;
       if (SCALAR_IS_ONE(beta))
       {
          if (SCALAR_IS_NONE(alpha))
@@ -3071,10 +3065,7 @@ int opsqsyrk
    extra = (ATL_SQSYRKK_NU+ATL_SQSYRKK_NU)*ATL_SQSYRKK_NU;
    flg = (TA == AtlasNoTrans) ? 2 : 0;
    if (TA == AtlasUpper)
-   {
       flg |= 1;
-      extra -= Mmin(extra, szU);
-   }
    if (nnblks == 1)  /* we've got a 1 block of SYRK only! */
    {
       nbS = (N+ATL_SQSYRKK_NU-1)/ATL_SQSYRKK_NU;
@@ -3088,16 +3079,13 @@ int opsqsyrk
       #else
          szS = nbS * K;
       #endif
-      szU = Mmax(op->szC, szU);  /* Majedul: don't need anymore */
-      sz = ATL_MulBySize(szU + szC + szS + extra) + 3*ATL_Cachelen;
+      sz = ATL_MulBySize(szC + szS + extra) + 2*ATL_Cachelen;
       vp = malloc(sz);
       if (!vp)
          return(1);
       wS = ATL_AlignPtr(vp);
       wC = wS + (szS SHIFT);
       wC = ATL_AlignPtr(wC);
-      wU = wC + (szC SHIFT);
-      wU = ATL_AlignPtr(wU);
       #ifdef TCPLX
          rC = wC + szC;
          rS = wS + szS;
@@ -3107,7 +3095,7 @@ int opsqsyrk
       #endif
       flg |= (Uplo == AtlasUpper) ? 1 : 0;
       sqsyrkBlk(op, flg, 0, A, sy2blk, blk2sy, C, rS, wS,
-              NULL, NULL, NULL, NULL, rC, wC, wU);
+              NULL, NULL, NULL, NULL, rC, wC);
       free(vp);
       return(0);
    }
@@ -3126,7 +3114,6 @@ int opsqsyrk
    #else
       szS = nbS * K;
    #endif
-   szU = Mmax(op->szC, szU);  /* Majedul: no need anymore */
    szAblk = op->szA;
    szA = szAblk * (nnblks-1);
    /*
@@ -3134,7 +3121,7 @@ int opsqsyrk
     * We need to allocate Mmax(szC, op->szC) for wC
     */
    sz = Mmax(szC, op->szC);
-   sz = ATL_MulBySize(szA+szAblk + szS + sz + szU + extra) + 5*ATL_Cachelen;
+   sz = ATL_MulBySize(szA + szAblk + szS + sz + extra) + 4*ATL_Cachelen;
    vp = malloc(sz);
    if (!vp)
       return(1);
@@ -3145,8 +3132,6 @@ int opsqsyrk
    wS = ATL_AlignPtr(wS);
    wC = wS + (szS SHIFT);
    wC = ATL_AlignPtr(wC);
-   wU = wC + (szC SHIFT);
-   wU = ATL_AlignPtr(wU);
    #ifdef TCPLX
       rC = wC + op->szC;
       rCs = wC + szC;
@@ -3164,7 +3149,7 @@ int opsqsyrk
  *    used only for this diagonal (SYRK)
  */
       sqsyrkBlk(op, flg, 0, A, sy2blk, blk2sy, C, rS, wS, NULL, NULL, wB, wB,
-              rCs, wC, wU);
+              rCs, wC);
 /*
  *    Do rank-K update on ge blks beneath diag, cop->ing entire A at same time
  */
@@ -3175,7 +3160,7 @@ int opsqsyrk
       for (j=1; j < nnblks-1; j++)
       {
          sqsyrkBlk(op, flg, j, A, sy2blk, blk2sy, C, rS, wS, NULL, NULL, wB, wB,
-                 rCs, wC, wU);
+                 rCs, wC);
          wA += (szAblk SHIFT);
          Mjoin(PATL,oploopsM)(op, j+1, j, NULL, NULL, C, 1, wA, wB, rC, wC);
       }
@@ -3183,10 +3168,12 @@ int opsqsyrk
  *    Last col panel is only one diagonal
  */
       sqsyrkBlk(op, flg, j, A, sy2blk, blk2sy, C, rS, wS, NULL, NULL, NULL, NULL,
-              rCs, wC, wU);
+              rCs, wC);
    }
    else
    {
+@BEGINSKIP 
+************** old implementation, TLB problem   
       size_t i;
 /*
  *    Do first diagonal block, don't copy A^T blk to GEMM storage since it is
@@ -3194,7 +3181,7 @@ int opsqsyrk
  */
       flg |= 1;
       sqsyrkBlk(op, flg, 0, A, sy2blk, blk2sy, C, rS, wS, wB, wB, NULL, NULL,
-              rCs, wC, wU);
+              rCs, wC);
 /*
  *    Do rank-K update on ge blks beneath diag, copying entire A^T at same time
  */
@@ -3205,7 +3192,7 @@ int opsqsyrk
       for (i=1; i < nnblks-1; i++)
       {
          sqsyrkBlk(op, flg, i, A, sy2blk, blk2sy, C, rS, wS, wB, wB, NULL, NULL,
-                 rCs, wC, wU);
+                 rCs, wC);
          wA += (szAblk SHIFT);
          Mjoin(PATL,oploopsN)(op, i, i+1, NULL, NULL, C, 2, wB, wA, rC, wC);
       }
@@ -3213,7 +3200,58 @@ int opsqsyrk
  *    Last col panel is only one diagonal
  */
       sqsyrkBlk(op, flg, i, A, sy2blk, blk2sy, C, rS, wS, NULL, NULL, NULL, NULL,
-              rCs, wC, wU);
+              rCs, wC);
+************************
+@ENDSKIP
+      size_t j;
+      const size_t nfmblks0=op->nfmblks, npmblks0=op->npmblks;/*original vals */
+      size_t nfmblksI, npmblksI; /* values used in oploops */
+      
+      flg |= 1;
+/*
+ *    Do last diagonal block, copy A^T (B) blk for gemm 
+ */
+      sqsyrkBlk(op, flg, nnblks-1, A, sy2blk, blk2sy, C, rS, wS, NULL, NULL, wB, 
+                wB, rCs, wC);
+/*
+ *    oploops always works on full blk 
+ */
+      nfmblksI = op->nfmblks;
+      if (!op->npmblks)
+         nfmblksI--;
+      npmblksI=0;
+/*
+ *    apply oploopsM on last colpan, copy the whole A (except last blk) and 
+ *    use wB for B (AT) copy 
+ */
+      op->nfmblks = nfmblksI;
+      op->npmblks = npmblksI;
+      Mjoin(PATL,oploopsM)(op, 0, nnblks-1, A, NULL, C, 1, wA, wB, rC, wC);
+/*
+ *    For remaining column panels of C, sqsyrkBlk reuses A and copies AT (B)
+ */
+      for (j=nnblks-2; j > 0; j--)
+      {
+         op->nfmblks = nfmblks0;
+         op->npmblks = npmblks0;
+         sqsyrkBlk(op, flg, j, A, sy2blk, blk2sy, C, rS, wS, NULL, NULL, wB, wB,
+                 rCs, wC);
+/*
+ *       apply oploopsM on the colpan above the diagonal blk, one less blk 
+ *       each time 
+ */
+         nfmblksI--; /* one less blk for oploopsM */
+         op->nfmblks = nfmblksI;
+         op->npmblks = npmblksI;
+         Mjoin(PATL,oploopsM)(op, 0, j, NULL, NULL, C, 1, wA, wB, rC, wC);
+      }
+/*
+ *    first col panel is only one diagonal
+ */
+      op->nfmblks = nfmblks0;
+      op->npmblks = npmblks0;
+      sqsyrkBlk(op, flg, 0, A, sy2blk, blk2sy, C, rS, wS, NULL, NULL, NULL, NULL,
+              rCs, wC);
    }
    free(vp);
    return(0);
@@ -3385,9 +3423,9 @@ int opursyrk
    ATL_CSZT ldc
 )
 {
-   size_t sz, szA, szC, szU, szS, nnblks, szAblk;
+   size_t sz, szA, szC, szS, nnblks, szAblk;
    void *vp;
-   TYPE *wA, *wB, *wC, *wS, *wU, *rC, *rCs, *rS;
+   TYPE *wA, *wB, *wC, *wS, *rC, *rCs, *rS;
    int nb, nbS, flg, idx, extra;
    cm2am_t sy2blk;
    ablk2cmat_t blk2c;
@@ -3430,7 +3468,7 @@ int opursyrk
       nbS = (N+smnu-1)/smnu;
       szC = ((nbS+1)*nbS)>>1;
       nbS *= smnu;
-      szC *= ((smnu*smnu+op->ku-1)/op->ku)*op->ku;
+      szC *= ((smnu*smnu+op->vlen-1)/op->vlen)*op->vlen;
       szS = nbS * op->KB;         /* KB is already rounded with ku */
       szA = szAblk = szS;
       sz = ATL_MulBySize(szA+szAblk+szC+extra) + 3*ATL_Cachelen;
@@ -3511,6 +3549,8 @@ int opursyrk
    }
    else
    {
+@BEGINSKIP
+************** old implementation, TLB problem for large N 
       size_t i;
 /*
  *    GEMM will reuse A*T, Syrk can reuse B later... wB is wA
@@ -3533,6 +3573,51 @@ int opursyrk
  *    Last col panel is only one diagonal
  */
       ursyrkBlk(op, i, A, NULL, blk2sy, C, wB, wB, wA, wA, rC, wC);
+****************
+@ENDSKIP
+      size_t j;
+      const size_t nfmblks0=op->nfmblks, npmblks0=op->npmblks;
+      size_t nfmblksI, npmblksI;
+      
+/*
+ *    oploops will reuse A*T, no reuse for wA (will be overwritten)  
+ */
+      ursyrkBlk(op, nnblks-1, A, A, blk2sy, C, wA, wA, wB, wB, rC, wC);
+
+      nfmblksI = op->nfmblks;
+      if (!op->npmblks)
+         nfmblksI--;
+      npmblksI=0;
+/*
+ *    Do rank-K update on ge blks above diag, copying entire A at same time
+ */
+      op->nfmblks = nfmblksI;
+      op->npmblks = npmblksI;
+      Mjoin(PATL,oploopsM)(op, 0, nnblks-1, A, NULL, C, 1, wA, wB, rC, wC);
+
+      for (j=nnblks-2; j > 0 ; j--)
+      {
+/*
+ *       for oploops, wA always starts from 1st position, but need to find wA 
+ *       for diagonal blk 
+ */
+         TYPE *pA = wA + (szAblk SHIFT)*j;
+         op->nfmblks = nfmblks0;
+         op->npmblks = npmblks0;
+         ursyrkBlk(op, j, NULL, A, blk2sy, C, pA, pA, wB, wB, rC, wC);
+         
+         nfmblksI--; /* one less blk for gemm */
+
+         op->nfmblks = nfmblksI;
+         op->npmblks = npmblksI;
+         Mjoin(PATL,oploopsM)(op, 0, j, NULL, NULL, C, 1, wA, wB, rC, wC);
+      }
+/*
+ *    syrk at position 0  
+ */
+      op->nfmblks = nfmblks0;
+      op->npmblks = npmblks0;
+      ursyrkBlk(op, 0, NULL, A, blk2sy, C, wA, wA, wB, wB, rC, wC);
    }
    free(vp);
    return(0);
