@@ -3815,43 +3815,46 @@ int opursyrk
  */
       ursyrkBlk(op, flg|8, nnblks-1, A, sya2blk, syb2blk, blk2sy, beta, C, 
             NULL, rAs, wAs, wB, rBs, wBs, rCs, wCs);
-
-      nfmblksI = op->nfmblks;
-      if (!op->npmblks)
-         nfmblksI--;
-      npmblksI=0;
-/*
- *    Do rank-K update on ge blks above diag, copying entire A at same time
- */
-      op->nfmblks = nfmblksI;
-      op->npmblks = npmblksI;
-      Mjoin(PATL,oploopsM)(op, 0, nnblks-1, A, NULL, C, 1, wA, wB, rC, wC);
-
-      for (j=nnblks-2; j > 0 ; j--)
+   
+      if (nnblks > 1)
       {
+         nfmblksI = op->nfmblks;
+         if (!op->npmblks)
+            nfmblksI--;
+         npmblksI=0;
 /*
- *       for oploops, wA always starts from 1st position, but need to find wA
- *       for diagonal blk
+ *       Do rank-K update on ge blks above diag, copying entire A at same time
  */
-         TYPE *pA = wA + (szB SHIFT)*j;
-         op->nfmblks = nfmblks0;
-         op->npmblks = npmblks0;
-         ursyrkBlk(op, flg|8, j, A, sya2blk, syb2blk, blk2sy, beta, C, 
-               pA, rAs, wAs, wB, rBs, wBs, rCs, wCs);
-
-         nfmblksI--; /* one less blk for gemm */
-
          op->nfmblks = nfmblksI;
          op->npmblks = npmblksI;
-         Mjoin(PATL,oploopsM)(op, 0, j, NULL, NULL, C, 1, wA, wB, rC, wC);
-      }
+         Mjoin(PATL,oploopsM)(op, 0, nnblks-1, A, NULL, C, 1, wA, wB, rC, wC);
+
+         for (j=nnblks-2; j > 0 ; j--)
+         {
 /*
- *    syrk at position 0
+ *          for oploops, wA always starts from 1st position, but need to find wA
+ *          for diagonal blk
  */
-      op->nfmblks = nfmblks0;
-      op->npmblks = npmblks0;
-      ursyrkBlk(op, flg|8|16, 0, A, sya2blk, syb2blk, blk2sy, beta, C, 
-            wA, rAs, wBs, NULL, rBs, wBs, rCs, wCs);
+            TYPE *pA = wA + (szB SHIFT)*j;
+            op->nfmblks = nfmblks0;
+            op->npmblks = npmblks0;
+            ursyrkBlk(op, flg|8, j, A, sya2blk, syb2blk, blk2sy, beta, C, 
+                      pA, rAs, wAs, wB, rBs, wBs, rCs, wCs);
+
+            nfmblksI--; /* one less blk for gemm */
+
+            op->nfmblks = nfmblksI;
+            op->npmblks = npmblksI;
+            Mjoin(PATL,oploopsM)(op, 0, j, NULL, NULL, C, 1, wA, wB, rC, wC);
+         }
+/*
+ *       syrk at position 0
+ */
+         op->nfmblks = nfmblks0;
+         op->npmblks = npmblks0;
+         ursyrkBlk(op, flg|8|16, 0, A, sya2blk, syb2blk, blk2sy, beta, C, 
+                   wA, rAs, wBs, NULL, rBs, wBs, rCs, wCs);
+      }
    }
    free(vp);
    return(0);
