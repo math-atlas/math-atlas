@@ -2137,7 +2137,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @endwhile
 @ROUT mmread
-@whiledef jj vlen
+@whiledef jj vlen kvec
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
       p->@(jj) = atoi(sp+@len@(jj)+1);
@@ -2394,7 +2394,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @ROUT mmread 
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "OPMV=%d ", ATL_MMF_MVGET(np->flag));
-@whiledef kw ivar kbmin kbmax pref pfLS vlen blask
+@whiledef kw ivar kbmin kbmax pref pfLS vlen kvec blask
    if (np->@(kw))
    {
       if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
@@ -7943,7 +7943,7 @@ int MMVaryDim(int verb, char pre, int tflag, int MDIM, int MD, int beta,
 @endproc
 
 int MMExpandSQ
-   (int verb, char pre, int tflag, int beta, int maxB, ATL_mmnode_t *mp)
+   (int verb, char pre, int tflag, int beta, int minB,int maxB,ATL_mmnode_t *mp)
 /*
  * Assume U=LCM(MU,NU,KU), this search startes at B=MB=NB=KB=U and then tries
  * increasing B and picks whichever provides the greatest speedup.
@@ -7967,11 +7967,22 @@ int MMExpandSQ
    U = ATL_iLCM(mu, nu);
    U = ATL_iLCM(U, ku);
    assert(U <= maxB);
-   B = nbB = U;
+   if (minB)
+   {
+      if (minB < U)
+         minB = U;
+      else if (minB%U)
+         minB = (minB/U)*U;
+      if (minB > maxB)
+         maxB = minB;
+      B = nbB = minB;
+   }
+   else
+      B = nbB = U;
    mfB = TimeMMKernel(verb, tflag, mp, pre, B, B, B, beta, 0, -1);
    printf("      ID=%d : B=%u maxB=%d mf=%.2f\n", mp->ID, B, maxB, mfB);
 
-   for (B=U+U; B <= maxB; B += U)
+   for (B=(minB)?minB:U+U; B <= maxB; B += U)
    {
       double mf;
       mf = TimeMMKernel(verb, tflag, mp, pre, B, B, B, beta, 0, -1);
@@ -9152,7 +9163,170 @@ double TimeTSKernel
    }
    return(*((double*)ReadResultsFile(0, 0, resf)));
 }
+/*
+ ***********************************************************************
+ * These function used to estimate top-end blockings for fitting varying
+ * matmul operands in cache of size CS
+ ***********************************************************************
+ */
 
+static double cacheRatio_all3pAB
+   (size_t CS, int mb, int nb, int kb, int mu, int nu)
+{ /* RETURNS: ratio of util cache A,B,C + next A & B */
+   double dret = 2.0*kb*(mb+nb)+mb*nb;
+   return(dret/CS);
+}
+static double cacheRatio_all3pA
+   (size_t CS, int mb, int nb, int kb, int mu, int nu)
+{ /* RETURNS: ratio of utilized cache to keep all 3 mm ops + next A in CS */
+   double dret = kb*(mb+mb+nb)+mb*nb;
+   return(dret/CS);
+}
+
+static double cacheRatio_all3pB
+   (size_t CS, int mb, int nb, int kb, int mu, int nu)
+{ /* RETURNS: ratio of utilized cache to keep all 3 mm ops + next B in CS */
+   double dret = kb*(mb+nb+nb)+mb*nb;
+   return(dret/CS);
+}
+
+static double cacheRatio_all3
+   (size_t CS, int mb, int nb, int kb, int mu, int nu)
+{ /* RETURNS: ratio of utilized cache to keep all 3 mm ops in CS */
+   double dret = 1.0*kb*(mb+nb)+mb*nb;
+   return(dret/CS);
+}
+
+static double cacheRatio_one
+   (size_t CS, int mb, int nb, int kb, int mu, int nu)
+{ /* RETURNS: ratio of util cache for B + working set of A/C */
+   double dret = kb*nb + 2.0*(mu*kb + mu*nu);
+   return(dret/CS);
+}
+
+double cacheRatio_ws
+   (size_t CS, int mb, int nb, int kb, int mu, int nu)
+{ /* RETURNS: ratio of working set of all matmul ops to CS */
+   double dret = 2.0*(mu*nu + nu*kb) + mu*kb;
+   return(dret/CS);
+}
+
+@skip typedef void (*budgetFunc_t)(double, size_t, size_t, size_t, size_t,
+@skip                              int*, int*, int*);
+
+void getBlkFromBudget_allP(char extra, double thresh, size_t CS, int MAXNB,
+                           size_t mu, size_t nu, size_t ku,
+                           int *MB, int *NB, int *KB)
+{
+   double (*cacheRatio)(size_t,int,int,int,int,int);
+   size_t mb=mu, nb=nu, kb=ku, nmu=1, nnu=1;
+   int MGROW, NGROW, KGROW;
+
+   if (extra == 'A')
+      cacheRatio = cacheRatio_all3pA;
+   else if (extra == 'B')
+      cacheRatio = cacheRatio_all3pB;
+   else if (extra == '2')
+      cacheRatio = cacheRatio_all3pAB;
+   else  /* nothing extra */
+      cacheRatio = cacheRatio_all3;
+   do
+   {
+      size_t mn=mb+mu, nn=nb+nu, kn=kb+ku;
+      int DOK, DOM;
+      MGROW = mn < MAXNB && (cacheRatio(CS, mn, nb, kb, mu, nu) <= thresh);
+      NGROW = nn < MAXNB && (cacheRatio(CS, mb, nn, kb, mu, nu) <= thresh);
+      KGROW = kn < MAXNB && (cacheRatio(CS, mb, nb, kn, mu, nu) <= thresh);
+      if (MGROW && kn >= mn)
+         DOK=0;
+      else if (NGROW && kn >= nn)
+         DOK = 0;
+      else
+         DOK = KGROW;
+      if (MGROW)
+      {
+         if (NGROW) /* must see if M should grow when M or N both could */
+         {
+            if (mn < nn)
+               DOM = 1;
+            else if (mn == nn)
+               DOM = (nmu < nnu);
+            else
+               DOM = 0;
+         }
+      }
+      else
+         DOM = 0;
+      if (!NGROW)
+         DOM = MGROW;
+      if (DOK)
+         kb = kn;
+      else if (DOM)
+      {
+         mb = mn;
+         nmu++;
+      }
+      else if (NGROW)
+      {
+         nb = nn;
+         nnu++;
+      }
+   }
+   while (MGROW | NGROW | KGROW);
+   *MB = mb;
+   *NB = nb;
+   *KB = kb;
+}
+
+void getBlkFromBudget_one(double thresh, size_t CS, int MAXNB,
+                          size_t mu, size_t nu, size_t ku,
+                          int *MB, int *NB, int *KB)
+{
+   size_t mb=mu, nb=nu, kb=ku;
+   int NGROW, KGROW;
+   do
+   {
+      size_t nn=nb+nu, mn=(nn/mu)*mu, mn1 = ((nn+mu-1)/mu)*mu, kn=kb+ku;
+      if (mn1 - nn <= nn - mn || !mn)
+         mn = mn1;
+      NGROW = nn < MAXNB && (cacheRatio_one(CS, mn, nn, kb, mu, nu) <= thresh);
+      KGROW = kn < MAXNB && (cacheRatio_one(CS, mb, nb, kn, mu, nu) <= thresh);
+      if (NGROW && ((nn < kn && mn < kn) || !KGROW))
+      {
+         nb = nn;
+         mb = mn;
+      }
+      else if (KGROW)
+         kb = kn;
+   }
+   while (NGROW | KGROW);
+   *MB = mb;
+   *NB = nb;
+   *KB = kb;
+}
+
+void GetBlkFromBudget_ws(double thresh, size_t CS, int MAXNB,
+                          size_t mu, size_t nu, size_t ku,
+                          int *MB, int *NB, int *KB)
+{
+   size_t mb=mu, nb=nu, kb=ku;
+   int KGROW;
+   do
+   {
+      size_t kn=kb+ku, mn=(kn > mu)?(kn/mu)*mu:mu, nn=(kn>nu)?(kn/nu)*nu:nu;
+      KGROW = kn < MAXNB && (cacheRatio_ws(CS, mn, nn, kn, mu, nu) <= thresh);
+      if (KGROW)
+      {
+         mb = mn;
+         nb = mn;
+         kb = kn;
+      }
+   }
+   while (KGROW);
+   *MB = mb;
+   *NB = nb;
+   *KB = kb;
+}
 #endif  /* end guard around atlas_@(rt)testtime.h */
 @ROUT atlas_mmgen.h
    @iexp ip 0
