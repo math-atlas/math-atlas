@@ -16153,9 +16153,15 @@ void doPrefNBs(char pre, int flg)
  */
 {
    ATL_mmnode_t *nopf, *big, *tny, *mp;
-   const int maxB=(pre=='d'||pre=='z')?480:512;
+   const int maxB=(pre=='d'||pre=='z')?480:512, szSH=(pre=='d'||pre=='z')?3:2;
    int pref, mu, nu, ku, kuN, KUISKB;
    ATL_iptr_t nelt;
+   mp = TimeMMFileWithPath(pre, "res", "gipgemmPF.sum", 0, 1, 0, 1, 0, -1);
+   if (mp)
+   {
+      KillAllMMNodes(mp);
+      return;
+   }
 /*
  * Get best performing kernel w/o prefetch, and make sure it doesn't have
  * genstr set, so that when we change params, file is genned wt new vals
@@ -16195,7 +16201,7 @@ void doPrefNBs(char pre, int flg)
  */
    tny = CloneMMNode(nopf);
    #ifdef L1C_SZ
-   nelt = L1C_SZ>>((pre=='d'||pre=='z')?3:2);
+   nelt = L1C_SZ>>szSH;
    if (1)
    {
       unsigned int B;
@@ -16312,6 +16318,102 @@ void doPrefNBs(char pre, int flg)
       }
    }
 /*
+ * Now see if we've got Last-level private cache distinct from L1 we should 
+ * tune prefetch for. On many machines, LLPC can fully support bandwidth needs.
+ * For this larger cache, use square blockings;
+ */
+   #if defined(LLPC_LVL) && LLPC_LVL > 1 && LLPC_SZ > L1C_SZ
+   {
+      ATL_mmnode_t *p5, *p4, *p3, *p1;
+      unsigned int b, U;
+      nelt = LLPC_SZ>>szSH;
+      b = U = ATL_iLCM(mu, nu);
+      while(5*b*b <= nelt)
+         b += U;
+      b -= U;
+      if (b > big->nbB)
+         goto NO_LLPC;
+      mp = p5 = CloneMMNode(nopf);
+      mp->mbB = mp->nbB = mp->kbB = b;
+      if (KUISKB)
+         mp->ku = b;
+      fprintf(stderr, "5blk LLPC: U=(%u,%u,%u) B=(%u,%u,%u)\n", 
+              mp->mu, mp->nu, mp->ku, mp->mbB, mp->nbB, mp->kbB);
+      mp->mflop[0] = TimeMMKernel(1, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB,
+                                  1, 0, -1);
+      tryAllPref(pre, flg, 1, "5 LLPC BLOCK", mp);
+/*    4 block case */
+      while(4*b*b <= nelt)
+         b += U;
+      b -= U;
+      if (b > big->nbB)
+         goto ADD_LLPC;
+      if (b > p5->nbB)
+      {
+         p5->next = mp = p4 = CloneMMNode(nopf);
+         mp->mbB = mp->nbB = mp->kbB = b;
+         if (KUISKB)
+            mp->ku = b;
+         fprintf(stderr, "4blk LLPC: U=(%u,%u,%u) B=(%u,%u,%u)\n", 
+                 mp->mu, mp->nu, mp->ku, mp->mbB, mp->nbB, mp->kbB);
+         mp->mflop[0] = TimeMMKernel(1, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB,
+                                     1, 0, -1);
+         tryAllPref(pre, flg, 1, "4 LLPC BLOCK", mp);
+      }
+      else
+         p4 = p5;
+/*    3 block+wrkset case */
+      while(3*b*b+2*b*(mu+nu)+2*mu*nu <= nelt)
+         b += U;
+      b -= U;
+      if (b > big->nbB)
+         goto ADD_LLPC;
+      if (b > p4->nbB)
+      {
+         p4->next = mp = p3 = CloneMMNode(nopf);
+         mp->mbB = mp->nbB = mp->kbB = b;
+         if (KUISKB)
+            mp->ku = b;
+         fprintf(stderr, "3blk LLPC: U=(%u,%u,%u) B=(%u,%u,%u)\n", 
+                 mp->mu, mp->nu, mp->ku, mp->mbB, mp->nbB, mp->kbB);
+         mp->mflop[0] = TimeMMKernel(1, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB,
+                                     1, 0, -1);
+         tryAllPref(pre, flg, 1, "3 LLPC BLOCK", mp);
+      }
+      else
+         p3 = p4;
+
+/*    1 block case */
+      while(b*b+b*nu+mu*nu <= nelt)
+         b += U;
+      b -= U;
+      if (b > big->nbB)
+         goto ADD_LLPC;
+      if (b > p3->nbB)  /* if already tuned, don't retune */
+      {
+         p3->next = mp = p1 = CloneMMNode(nopf);
+         mp->mbB = mp->nbB = mp->kbB = b;
+         if (KUISKB)
+            mp->ku = b;
+         fprintf(stderr, "1blk LLPC: U=(%u,%u,%u) B=(%u,%u,%u)\n", 
+                 mp->mu, mp->nu, mp->ku, mp->mbB, mp->nbB, mp->kbB);
+         mp->mflop[0] = TimeMMKernel(1, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB,
+                                     1, 0, -1);
+         tryAllPref(pre, flg, 1, "1 LLPC BLOCK", mp);
+      }
+      else
+         printf("Not scoping 1blk=%u, since big is %u\n", b, big->nbB);
+/*
+ *    Suffix LLPC cases to L1 list
+ */
+ADD_LLPC:
+      for (mp=tny; mp->next; mp = mp->next);
+      mp->next = p5;
+   }
+NO_LLPC:
+   #endif
+   KillMMNode(nopf);
+/*
  * Add big to queue
  */
    for (mp=tny; mp->next; mp = mp->next);
@@ -16322,7 +16424,7 @@ void doPrefNBs(char pre, int flg)
    printf("\nUNTRIMMED PREFETCH RANGE RESULTS:\n");
    for (mp=tny; mp; mp = mp->next)
    {
-      printf("(%u,%u,%u) ", mp->mbB, mp->nbB, mp->kbB);
+      printf("(%u,%u,%u)", mp->mbB, mp->nbB, mp->kbB);
       PrintPref(stdout, mp->pref);
       printf(": %.2f\n", mp->mflop[0]);
    }
@@ -16346,12 +16448,12 @@ void doPrefNBs(char pre, int flg)
    printf("\nTRIMMED PREFETCH RANGE RESULTS:\n");
    for (mp=tny; mp; mp = mp->next)
    {
-      printf("(%u,%u,%u) ", mp->mbB, mp->nbB, mp->kbB);
+      printf("(%u,%u,%u)", mp->mbB, mp->nbB, mp->kbB);
       PrintPref(stdout, mp->pref);
       printf(": %.2f\n", mp->mflop[0]);
    }
+   WriteRefreshedMMFileWithPath(pre, "res", "gipgemmPF.sum", tny);
    KillAllMMNodes(tny);
-   KillMMNode(nopf);
 }
 
 int main(int nargs, char **args)
