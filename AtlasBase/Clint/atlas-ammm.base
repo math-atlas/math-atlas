@@ -15668,6 +15668,7 @@ void refineMUNU_mvec(char pre, int flg, ATL_mmnode_t *mp, unsigned char *urs)
    const int mvec=mp->vlen / mp->kvec;
    double mfB;
 
+   muB /= mvec;
    printf("REFINING MU & NU, %u CASES WITHIN RANGE [%u,%u] WITH VL=%u, "
           "KVEC=%u:\n", N, nrLB, nrUB, mp->vlen, mp->kvec);
    urs += 3;
@@ -38090,7 +38091,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
          printf("   TUNE BLK for %s, current=(%u,%u,%u), mf=%.2f\n",
                 GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB, 
                 mp->mflop[0]);
-         mfN = MMExpandMNK(verb, pre, 0, 0, 0, NULL, 0, maxD, mp);
+         mfN = MMExpandMNK(verb, pre, 0, 0, 0, NULL, maxD, mp);
          if (mfN > mfB)
          {
             printf(
@@ -38125,7 +38126,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
           GetMMLabelName(pre, mpD), mpD->mbB,mpD->nbB,mpD->kbB, mpD->mflop[0]);
    mpU = CloneMMNode(mpD);
    printf("FINDING LARGE BLOCK FACTORS FOR CHOSEN KERNEL:\n");
-   mf = MMExpandMNK(verb, pre, 0, 0, 0, NULL, 0, 480, mpU);
+   mf = MMExpandMNK(verb, pre, 0, 0, 0, NULL, 480, mpU);
    if (mf < mfB)
    {
       KillMMNode(mpU);
@@ -38151,7 +38152,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
    {
       printf("   LOOKING FOR BEST KERNS WITH M&N < %d:\n", D);
       mp = CloneMMNode(mpD);
-      mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, 0, D, mp);
+      mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, D, mp);
       mp->flag |= (1<<MMF_KCLN);
       mp->next = mmb;
       mmb = mp;
@@ -38165,7 +38166,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
       {
          printf("   LOOKING FOR BEST KERNS WITH M&N < %d:\n", D);
          mp = CloneMMNode(mpD);
-         mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, 0, D, mp);
+         mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, D, mp);
          mp->flag |= (1<<MMF_KCLN);
          mp->next = mmb;
          mmb = mp;
@@ -38180,7 +38181,7 @@ void findBestIP(char pre, int verb, ATL_mmnode_t *mmb, char *fnout)
          {
             printf("   LOOKING FOR BEST KERNS WITH M&N < %d:\n", D);
             mp = CloneMMNode(mpD);
-            mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, 0, D, mp);
+            mf = MMExpandMN_K(verb, pre, 0, 0, 0, NULL, D, mp);
             mp->flag |= (1<<MMF_KCLN);
             mp->next = mmb;
             mmb = mp;
@@ -38848,7 +38849,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
  */
    printf("   FINDING BEST MAX BLOCK FACTORS, current=(%d,%d,%d):\n", 
           mp->mbB, mp->nbB, mp->kbB);
-   MMExpandMNK(verb, pre, 4, 0, nelt_llc, opWorkSetOK, 0, 512, mp);
+   MMExpandMNK(verb, pre, 4, 0, nelt_llc, opWorkSetOK, 512, mp);
    MB = mp->mbB; NB = mp->nbB; KB = mp->kbB;
    printf("   BEST B=(%d,%d,%d), mf=%.2f, speedup=%.2f\n", MB, NB, KB, 
           mp->mflop[0], mp->mflop[0] / mf);
@@ -38869,7 +38870,7 @@ void do_opk(int verb, char pre, char *fnam, int maxK)
       mp = mpB;
       printf("   FINDING BEST MAX BLOCK FACTORS, current=(%d,%d,%d):\n", 
              mp->mbB, mp->nbB, mp->kbB);
-      MMExpandMNK(verb, pre, 4, 0, nelt_llc, opWorkSetOK, 0, 512, mp);
+      MMExpandMNK(verb, pre, 4, 0, nelt_llc, opWorkSetOK, 512, mp);
       MB = mp->mbB; NB = mp->nbB; KB = mp->kbB;
       printf("   BEST B=(%d,%d,%d), mf=%.2f, speedup=%.2f\n", MB, NB, KB, 
              mp->mflop[0], mp->mflop[0] / mf);
@@ -39537,7 +39538,7 @@ void DoSrchD(char pre, int flag, int KB, char *fnin, int idx, char *fnout)
    if (KB)
       mf = MMExpandMN(verb, pre, flg, 0, 512, mp);
    else
-      mf = MMExpandMNK(verb, pre, flg, 0, 0, NULL, 0, 512, mp);
+      mf = MMExpandMNK(verb, pre, flg, 0, 0, NULL, 512, mp);
    printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n", mp->mbB, mp->nbB, mp->kbB, mf);
    PrintMMLine(stdout, mp);
    if (fnout)
@@ -43901,6 +43902,96 @@ char GetFlags(int nargs, char **args)
    return(pre);
 }
 
+ATL_mmnode_t *giveRunAdv(ATL_mmnode_t *mb, ATL_mmnode_t *mpB, int imf)
+/*
+ * Given mpB is best performing kernel in mb, find the best kernel while
+ * giving a small advantage to runtime-K kernels, which will always be
+ * more flexible, and are often smaller in code size, and can sometimes
+ * provide K-cleanup.
+ */
+{
+/*
+ * If best kernel is compile-time K, see if a runtime kernel gets very close
+ * to its performance, and select the more flexible(poss smaller) kern instead
+ */
+   if (!FLAG_IS_SET(mpB->flag, MMF_KRUNTIME))
+   {
+      ATL_mmnode_t *mp;
+      double adv = 1.015;  /* 1.5 advantage to runtime over fixed K */
+      for (mp=mb; mp; mp = mp->next)
+      {
+         if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+         {
+            if (mp->mflop[0]*adv >= mpB->mflop[0])
+            {
+               mpB = mp;
+               adv = 1.0;
+            }
+         }
+      }
+   }
+   return(mpB);
+}
+
+ATL_mmnode_t *pruneSlow(ATL_mmnode_t *bp, int imf, double mfB, double tol)
+/*
+ * Deletes all nodes in bp whose imf entry *tol <= mfB.  If tol < 0.0, then
+ * it retains any node with mflop == -1.0, and applies positive tolerance
+ */
+{
+   ATL_mmnode_t *mp;
+   int KEEPN1=0;
+
+   if (tol < 0.0)
+   {
+      KEEPN1 = 1;
+      tol = -tol;
+   }
+   while (bp && bp->mflop[imf]*tol < mfB)
+      bp = KillMMNode(bp);
+   if (bp)
+   {
+      ATL_mmnode_t *prev=bp, *mp=bp->next;
+
+      while (mp)
+      {
+         ATL_mmnode_t *next = mp->next;
+         double mf = mp->mflop[imf];
+         if (mf*tol < mfB && (!KEEPN1 || mf != -1.0))
+         {
+            prev->next = mp->next;
+            KillMMNode(mp);
+         }
+         else
+            prev = mp;
+         mp = next;
+      }
+   }
+   return(bp);
+}
+/*
+ * Beautiful global variable func ptr for ExpandMNK function, wraps cache ratio
+ * funcs given in atlas_mmtesttime.h
+ */
+static double (*cacheRat)(size_t CS, int mb, int nb, int kb, int mu, int nu);
+static double cacheRatio4(size_t CS, int mb, int nb, int kb, int mu, int nu)
+{
+   double rat;
+   rat = cacheRatio_all3pA(CS, mb, nb, kb, mu, nu);
+   if (rat > 1.0)
+      rat = cacheRatio_all3pB(CS, mb, nb, kb, mu, nu);
+   return(rat);
+}
+int wrkSetOK(unsigned long CS, ATL_mmnode_t *mp, int mb, int nb, int kb)
+/*
+ * returns: 0 if working set (mb,nb,kb) too large, else 1
+ */
+{
+   if (cacheRat(CS, mb, nb, kb, mp->mu, mp->nu) <= 1.0)
+      return(1);
+   return(0);
+}
+
 void doSrch
 (
    char pre,
@@ -43910,13 +44001,19 @@ void doSrch
 {
    ATL_mmnode_t *ap;      /* asymptotic case ptr from gb */
    ATL_mmnode_t *ab;      /* kernels that are OK to use for asymptotic case */
+   ATL_mmnode_t *pb;      /* kernels to try in LLPC > L1 */
+   ATL_mmnode_t *pgb;     /* smallest LLPC generated case, if it exists */
    ATL_mmnode_t *sb=NULL; /* smallest-case kernels */
-   ATL_mmnode_t *mp, *prev=NULL;
-   int MB, NB, KB, minB, nkern, nelim=0;
+   ATL_mmnode_t *tb;      /* tuned kernels for each cache context */
+   ATL_mmnode_t *mp, *mpB, *prev=NULL;
+   int maxD = (pre == 'd' || pre == 'z') ? 480 : 512;
+   int MB, NB, KB, nkern, nelim=0;
    double mfB=0.0;
 
    assert(gb);
-   for (ap=gb; ap->next; ap = ap->next);
+   gb = ReverseMMQ(gb);  /* go from smallest to least */
+   ap = gb;              /* asymptotic case always last orig order */
+   gb = gb->next;        /* now pointing at largest LLPC or L1 case */
    MB = ap->mbB;
    NB = ap->nbB;
    KB = ap->kbB;
@@ -43949,20 +44046,22 @@ void doSrch
              mp->mbB, mp->nbB, mp->kbB, mf);
       mp->mflop[0] = mf;
       if (mf > mfB)
+      {
          mfB = mf;
+         mpB = mp;
+      }
    }
    printf("Done %u asymptotic near-square timings\n\n", nkern);
 /*
  * Add asymptotic generated case to list
  */
-   mp = CloneMMNode(ap);
-   mp->next = ab;
-   ab = mp;
+   ap->next = ab;
+   ab = ap;
 /*
  * Go through big-problem list.  Ultimately we will eliminate all kernels not
  * within 5% of performance on this square case from consideration before
  * adapting them for block tuning.
- * However, we'll also create the list to be search for smallest problems,
+ * However, we'll also create the list to be search for smaller problems,
  * where we'll add it if kbmax+8 <= KB (timing not accurate) or if performance
  * is within 33%
  */
@@ -44004,38 +44103,238 @@ void doSrch
           nelim, nkern-1);
           
 /*
- * Find next size down, and set minB to its minimum blocking
- */
-   if (gb == ab)
-      minB = 0;
-   else
-   {
-      for (mp=gb; mp->next != ap; mp = mp->next);
-      minB = mp->mbB;
-      minB = Mmin(minB, mp->nbB);
-      minB = Mmin(minB, mp->kbB);
-   }
-/*
  * Now individually tune block factor for these kerns in asymptotic case 
  */
-#if 0
-   for (mp=ab; mp; mp = mp->next)
+   for (mpB=mp=ab; mp; mp = mp->next)
    {
+      double mf;
       printf("   TUNING B FOR %s, PRESENT B=(%u,%u,%u), mf=%.2f:\n", 
              GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB,
              mp->mflop ? mp->mflop[0]:0.0);
       GetMMLabelName(pre, NULL);
-      /* need to check if KB can be expanded, and call expandMN if not!
-         Still need to add minB to expandMN! RCW HERE HERE */
-      mf = MMExpandMNK(verb, pre, flg, 0, 0, NULL, 0, 512, mp);
+      mf = MMExpandMNK(1, pre, 0, 0, 0, NULL, maxD, mp);
+      if (mf > mpB->mflop[0])
+         mpB = mp;
       printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n", 
              mp->mbB, mp->nbB, mp->kbB, mf);
       PrintMMLine(stdout, mp);
    }
-#endif
-   GetMMLabelName(pre, NULL);
+   mpB = giveRunAdv(ab, mpB, 0);
    KillAllMMNodes(ab);
+   tb = CloneMMNode(mpB);
+/*
+ * Loop over LLPC cache contexts
+ */
+   #if defined(LLPC_LVL) && LLPC_LVL > 1 && LLPC_SZ > L1C_SZ
+   pb = CloneMMQueue(ub);
+   while (gb && (gb->ivar & 16))
+   {
+      ATL_mmnode_t *basp;
+      const unsigned int nblk = gb->ivar&0x7;
+
+      mp = gb;
+/*
+ *    Set up function that will stop block expansion in ExpandMNK
+ */
+      switch(nblk)  /* find number of blocks */
+      {
+      case 5: 
+         cacheRat = cacheRatio_all3pAB;
+         break;
+      case 4: 
+         cacheRat = cacheRatio4;
+         break;
+      case 3: 
+         cacheRat = cacheRatio_all3;
+         break;
+      default:
+         cacheRat = cacheRatio_one;
+         break;
+      }
+/*
+ *    Add generated case to list of functions to try, then prune everything
+ *    not within 5% of best performing kernel at default block factors
+ */
+      printf("Eliminating uncompetitive kernels LLPC=%lu, NBLK=%u:\n", 
+             LLPC_SZ, nblk);
+      for (mpB=mp=pb; mp; mp=mp->next)
+      {
+         double mf;
+         int mb, nb, kb;
+
+         if (nblk == 5)
+            getBlkFromBudget_allP('2', 1.0, LLPC_SZ, maxD, mp->mu, mp->nu, 
+                                  mp->ku, &mb, &nb, &kb);
+         else if (nblk == 4)
+            getBlkFromBudget_allP('A', 1.0, LLPC_SZ, maxD, mp->mu, mp->nu, 
+                                  mp->ku, &mb, &nb, &kb);
+         else if (nblk == 3)
+            getBlkFromBudget_allP('0', 1.0, LLPC_SZ, maxD, mp->mu, mp->nu, 
+                                  mp->ku, &mb, &nb, &kb);
+         else
+            getBlkFromBudget_one(1.0, LLPC_SZ, maxD, mp->mu, mp->nu, mp->ku,
+                                 &mb, &nb, &kb);
+         if ((mp->kbmax && kb > mp->kbmax)||(mp->kbmin && kb < mp->kbmin))
+         {
+            mp->mflop[0] = -1.0;
+            continue;
+         }
+         mf = TimeMMKernel(1, 0, mp, pre, mb, nb, kb, 1, 0, -1);
+         printf("   %s, B=(%u,%u,%u), mf=%.2f\n", GetMMLabelName(pre, mp),
+                mp->mbB, mp->nbB, mp->kbB, mf);
+         mp->mflop[1] = mf;
+         if (mf > mpB->mflop[1])
+            mpB = mp;
+      }
+/*
+ *    Remove hugely slow kerns for all LLPC kerns, then create new list for
+ *    this particular, and prune anything 5% slower
+ */
+      pb = pruneSlow(pb, 1, mfB, -1.33);
+      basp = CloneMMQueue(pb);
+      basp = pruneSlow(basp, 1, mfB, 1.05);
+/*
+ *    Add gb to survivers, and do detailed blocking tunings 
+ */
+      mp = gb;
+      gb = gb->next; /* remove this context case from generated list */
+      mp->next = basp;
+      basp = mp;
+/*
+ *    Don't let problem get too nonsquare, since these kernels should be
+ *    used when both M & N are small
+ */
+      maxD = mp->mbB;
+      maxD = Mmax(maxD, mp->nbB);
+      maxD = Mmax(maxD, mp->kbB);
+      for (mpB=mp=basp; mp; mp=mp->next)
+      {
+         double mf0=mp->mflop[0], mf;
+         printf("   TUNING B FOR %s, PRESENT B=(%u,%u,%u), mf=%.2f:\n",
+                GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB,
+                mp->mflop ? mp->mflop[0]:0.0);
+         mf = MMExpandMNK(1, pre, 0, 1, LLPC_SZ, wrkSetOK, maxD, mp);
+         if (mf > mpB->mflop[0])
+            mpB = mp;
+         printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n",
+                mp->mbB, mp->nbB, mp->kbB, mf);
+         mp->mflop[1] = mf;
+         mp->mflop[0] = mf0;
+      }
+      mp = mpB = giveRunAdv(basp, mpB, 0);
+      printf("   BEST LLPC=%lu, nblks=%u B=(%u,%u,%u), MFLOPS=%.2f\n",
+             LLPC_SZ, nblk, mp->mbB, mp->nbB, mp->kbB, mpB->mflop[1]);
+      PrintMMLine(stdout, mp);
+      basp = RemoveMMNodeFromQ(basp, mpB);
+      KillAllMMNodes(basp);
+      mpB->next = tb;
+      tb = mpB;
+      mpB->mflop[0] = mpB->mflop[1];
+      mpB->mflop[1] = 0.0;
+   }
+   KillAllMMNodes(pb);
+   #endif
+/*
+ * Now tune L1 cases, and insist all block factors get smaller since we
+ * are timing these for small problems
+ */
+   mp = mpB;
+   maxD = mp->mbB;
+   maxD = Mmax(maxD, mp->nbB);
+   maxD = Mmax(maxD, mp->kbB);
+   while (gb)
+   {
+      const unsigned int nblk = gb->ivar;
+      int maxB=maxD;
+/*
+ *    compute next times max block size, and advance to next cache case 
+ */
+      mp = gb;
+      maxD = mp->mbB;
+      maxD = Mmax(maxD, mp->nbB);
+      maxD = Mmax(maxD, mp->kbB);
+/*
+ *    Time all cases with default L1 context blocking, prune those not within
+ *    8% of best performing kernel at default block factors
+ */
+      printf("Eliminating uncompetitive kernels L1SZ=%lu, NBLK=%u:\n", 
+             L1C_SZ, nblk);
+      for (mpB=mp=sb; mp; mp=mp->next)
+      {
+         double mf;
+         int mb, nb, kb;
+
+         if (nblk == 5)
+            getBlkFromBudget_allP('2', 1.0, L1C_SZ, maxB, mp->mu, mp->nu, 
+                                  mp->ku, &mb, &nb, &kb);
+         else if (nblk == 4)
+            getBlkFromBudget_allP('A', 1.0, L1C_SZ, maxB, mp->mu, mp->nu, 
+                                  mp->ku, &mb, &nb, &kb);
+         else if (nblk == 3)
+            getBlkFromBudget_allP('0', 1.0, L1C_SZ, maxB, mp->mu, mp->nu, 
+                                  mp->ku, &mb, &nb, &kb);
+         else
+            getBlkFromBudget_one(1.0, L1C_SZ, maxB, mp->mu, mp->nu, mp->ku,
+                                 &mb, &nb, &kb);
+         if ((mp->kbmax && kb > mp->kbmax)||(mp->kbmin && kb < mp->kbmin))
+         {
+            mp->mflop[0] = -1.0;
+            continue;
+         }
+         mf = TimeMMKernel(1, 0, mp, pre, mb, nb, kb, 1, 0, -1);
+         printf("   %s, B=(%u,%u,%u), mf=%.2f\n", GetMMLabelName(pre, mp),
+                mp->mbB, mp->nbB, mp->kbB, mf);
+         mp->mflop[0] = mf;
+         if (mf > mpB->mflop[0])
+            mpB = mp;
+      }
+/*
+ *    Remove slow kerns for all remaining L1 timings.
+ */
+      sb = pruneSlow(sb, 1, mfB, -1.08);
+/*
+ *    Add best generated case for this cache context to list, and search
+ */
+      mp = gb;
+      gb = gb->next;
+      mp->next = sb;
+      sb = mp;
+      printf("\nTUNING %u CASES FOR %u BLOCKS IN L1:\n", 
+             ATL_CountNumberOfMMNodes(sb), nblk);
+      for (mpB=mp=sb; mp; mp=mp->next)
+      {
+         double mf;
+         int maxKB=maxB, ku=mp->ku;
+         printf("   TUNING B FOR %s, PRESENT B=(%u,%u,%u), mf=%.2f:\n",
+                GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB,
+                mp->mflop ? mp->mflop[0]:0.0);
+         mf = MMExpandMNK(1, pre, 0, 1, L1C_SZ, wrkSetOK, maxB, mp);
+         while (wrkSetOK(L1C_SZ, mp, mp->mbB, mp->nbB, maxKB))
+            maxKB += ku;
+         maxKB -= ku;
+         if (maxKB > maxB && maxKB > mp->kbB)
+         {
+            MMExpandK(1, pre, 0, 1, mp, maxKB);
+            mf = mp->mflop[0];
+         }
+         if (mf > mpB->mflop[0])
+            mpB = mp;
+         printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n",
+                mp->mbB, mp->nbB, mp->kbB, mf);
+      }
+      mp = mpB = giveRunAdv(sb, mpB, 0);
+      printf("   BEST L1C=%lu, nblks=%u B=(%u,%u,%u), MFLOPS=%.2f\n",
+             L1C_SZ, nblk, mp->mbB, mp->nbB, mp->kbB, mpB->mflop[0]);
+      PrintMMLine(stdout, mp);
+      mpB = CloneMMNode(mpB);
+      mpB->next = tb;
+      tb = mpB;
+   }
+   GetMMLabelName(pre, NULL);
    KillAllMMNodes(sb);
+   KillAllMMNodes(ub);
+   WriteMMFileWithPath(pre, "res", "fipgen.sum", tb);
+   KillAllMMNodes(tb);
 }
 
 int main(int nargs, char **args)
@@ -44050,6 +44349,4 @@ int main(int nargs, char **args)
    assert(ub);  /* for now, when finished just output genned */
    gb = ReadMMFileWithPath(pre, "res", "gipgemmPF.sum");
    doSrch(pre, gb, ub);
-   KillAllMMNodes(gb);
-   KillAllMMNodes(ub);
 }
