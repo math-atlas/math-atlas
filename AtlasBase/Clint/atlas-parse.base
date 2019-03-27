@@ -157,12 +157,15 @@ struct CPNode
  */
 #define MMF_RIGHT      21  /* 1: Right, else Left */
 #define MMF_UPPER      22  /* 1: Upper, else Lower */
-#define MMF_MAXBIT     23
+#define MMF_NCBLK      23  /* nblk in cache takes bits 23,24,25 */
+#define MMF_LLPC       26  /* nblks fit in LLPC, else L1 cache */
+#define MMF_MAXBIT     27
 #define MMF_ALLPF ( (1<<MMF_PFACOLS)|(1<<MMF_PFABLK)|(1<<MMF_PFBCOLS) \
                     |(1<<MMF_PFCELTS) )
 #define MMF_MVSET  ( (1<<MMF_MVA) | (1<<MMF_MVB) | (1<<MMF_MVC) | (1<<MMF_CPC) )
 #define MMF_MVDEF  ( (1<<MMF_MVA) | (1<<MMF_MVB) )
-#define MMF_DIFFMSK (~((1<<MMF_KCLN)|MMF_MVSET|(1<<MMF_RIGHT)|(1<<MMF_UPPER)))
+#define MMF_DIFFMSK (~((1<<MMF_KCLN)|MMF_MVSET|(1<<MMF_RIGHT)|(1<<MMF_UPPER)| \
+                       (7<<MMF_NCBLK)|(1<<MMF_LLPC)))
 #define MMF_STKBTS (1<<MMF_KCLN)
 #define MMF_DEFAULT ( (1<<MMF_AOUTER) | MMF_MVDEF )
 #ifndef  FLAG_IS_SET
@@ -2222,6 +2225,14 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @endwhile
 @ROUT mmread
+   sp = strstr(ln, "NCBLK=");
+   if (sp)
+   {
+      unsigned int nblk;
+      assert(sscanf(sp+6, "%u", &nblk) == 1);
+      nblk &= 0x7;
+      p->flag |= nblk << MMF_NCBLK;
+   }
    sp = strstr(ln, "OPMV=");
    if (sp)
    {
@@ -2231,7 +2242,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
    }
 @multidef fl 
    X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB
-   KUISKB NOBCAST BREG1 KCLN FKO COMPLEX RIGHT UPPER
+   KUISKB NOBCAST BREG1 KCLN FKO COMPLEX RIGHT UPPER LLPC
 @endmultidef
 
 @ROUT cpread
@@ -2392,6 +2403,14 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @endwhile
 
 @ROUT mmread 
+   {
+      unsigned int nblk = (np->flag>>MMF_NCBLK)&0x7;
+      if (nblk)
+      {
+         if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
+         i += fprintf(fpout, "NCBLK=%u ", nblk);
+      }
+   }
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "OPMV=%d ", ATL_MMF_MVGET(np->flag));
 @whiledef kw ivar kbmin kbmax pref pfLS vlen kvec blask
@@ -2409,7 +2428,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    @define kwd @@
    @multidef kw
       X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB
-      KUISKB NOBCAST FKO KCLN BREG1 COMPLEX RIGHT UPPER
+      KUISKB NOBCAST FKO KCLN BREG1 COMPLEX RIGHT UPPER LLPC
    @endmultidef
 @ROUT cpread
 @multidef kw SYRK SYMM TRMM TRSM

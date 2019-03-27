@@ -16151,7 +16151,7 @@ void doPrefNBs(char pre, int flg)
  * 3) 1 blk in LLPC: do only in-loop prefetch
  * On systems where LLPC bandwidth not sufficient to run FPU at peak,
  * we'll detect this by fact that tuned NB fits in L1 when different than LLPC.
- * Give later search hints as to size tuned for by setting ivar:
+ * Give later search hints as to size tuned for by setting iflag:
  * 1st 3 bits are the number of blocks in the cache, 4th bit if set means
  * tuned for LLPC, else L1.  No bits set is asymptotic block.
  */
@@ -16204,7 +16204,7 @@ void doPrefNBs(char pre, int flg)
  * May need to abandon square to fit this case.
  */
    tny = CloneMMNode(nopf);
-   tny->ivar = 5;
+   tny->flag |= 5 << MMF_NCBLK;
    #ifdef L1C_SZ
    nelt = L1C_SZ>>szSH;
    if (1)
@@ -16252,7 +16252,7 @@ void doPrefNBs(char pre, int flg)
                                 1, 0, -1);
    tryAllPref(pre, flg, 1, "5 L1 BLOCKS", tny);
    tny->next = mp = CloneMMNode(nopf);
-   mp->ivar = 1;
+   mp->flag |= 1<<MMF_NCBLK;
    getBlkFromBudget_one(1.0, nelt, maxB, mu,nu,kuN, &mp->mbB,&mp->nbB,&mp->kbB);
    if (KUISKB)
       mp->ku = mp->kbB;
@@ -16267,7 +16267,7 @@ void doPrefNBs(char pre, int flg)
    {    /* tny Q: 5blks->1blk */
       ATL_mmnode_t *b3, *b4;
       mp = b3 = CloneMMNode(nopf);
-      mp->ivar = 3;
+      mp->flag |= 3<<MMF_NCBLK;
       getBlkFromBudget_allP('0', 1.0, nelt, maxB, mu, nu, kuN, 
                             &mp->mbB, &mp->nbB, &mp->kbB);
       if (KUISKB)
@@ -16309,7 +16309,7 @@ void doPrefNBs(char pre, int flg)
             b4 = b4a;
             printf("Keeping An wt (%u,%u,%u)\n", b4->mbB, b4->nbB, b4->kbB);
          }
-         b4->ivar = 4;
+         b4->flag |= 4 << MMF_NCBLK;
       }
 /*
  *    Add b3 to queue, whish is presently tny->b1
@@ -16341,9 +16341,9 @@ void doPrefNBs(char pre, int flg)
       b -= U;
       if (b > big->nbB)
          goto NO_LLPC;
-      nopf->ivar = 16;  /* set 4th bit for all remaining LLPC cases */
+      nopf->flag |= 1 << MMF_LLPC; /* all remaining cases for LLPC */
       mp = p5 = CloneMMNode(nopf);
-      mp->ivar |= 5;
+      mp->flag |= 5 << MMF_NCBLK;
       mp->mbB = mp->nbB = mp->kbB = b;
       if (KUISKB)
          mp->ku = b;
@@ -16361,7 +16361,7 @@ void doPrefNBs(char pre, int flg)
       if (b > p5->nbB)
       {
          p5->next = mp = p4 = CloneMMNode(nopf);
-         mp->ivar |= 4;
+         p5->flag |= 4 << MMF_NCBLK;
          mp->mbB = mp->nbB = mp->kbB = b;
          if (KUISKB)
             mp->ku = b;
@@ -16382,7 +16382,7 @@ void doPrefNBs(char pre, int flg)
       if (b > p4->nbB)
       {
          p4->next = mp = p3 = CloneMMNode(nopf);
-         mp->ivar |= 3;
+         mp->flag |= 3 << MMF_NCBLK;
          mp->mbB = mp->nbB = mp->kbB = b;
          if (KUISKB)
             mp->ku = b;
@@ -16404,7 +16404,7 @@ void doPrefNBs(char pre, int flg)
       if (b > p3->nbB)  /* if already tuned, don't retune */
       {
          p3->next = mp = p1 = CloneMMNode(nopf);
-         mp->ivar |= 1;
+         mp->flag |= 1 << MMF_NCBLK;
          mp->mbB = mp->nbB = mp->kbB = b;
          if (KUISKB)
             mp->ku = b;
@@ -16469,6 +16469,14 @@ NO_LLPC:
    KillAllMMNodes(tny);
 }
 
+void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
+/*
+ * use rank-8 and rank-32 update to figure out cache regions for rank-K.
+ * Want to try filling cache with 5 blocks (2*C+2*A+B),
+ */
+{
+}
+
 int main(int nargs, char **args)
 {
    ATL_mmnode_t *mp;
@@ -16491,6 +16499,7 @@ int main(int nargs, char **args)
       refineMUNU_mvec(pre, flg, mp, urs);
    free(urs);
    DoBlock(pre, flg, mp);
+   DoRankK(pre, flg, mp);
    KillMMNode(mp);
    doPrefNBs(pre, flg);
    return(0);
@@ -43825,7 +43834,7 @@ void pruneUserCases(char pre, double thresh)
 
    gb = ReadMMFileWithPath(pre, "res", "gipgemmPF.sum");
    assert(gb);
-   INLLPC = gb->ivar & 16;
+   INLLPC = FLAG_IS_SET(gb->flag, MMF_LLPC);
    for (mp=gb; mp->next; mp = mp->next);
    NB = mp->nbB;
    KillAllMMNodes(gb);
@@ -44002,14 +44011,24 @@ void doSrch
    ATL_mmnode_t *ap;      /* asymptotic case ptr from gb */
    ATL_mmnode_t *ab;      /* kernels that are OK to use for asymptotic case */
    ATL_mmnode_t *pb;      /* kernels to try in LLPC > L1 */
+   ATL_mmnode_t *qb=NULL; /* kernels with square blocking factors */
    ATL_mmnode_t *pgb;     /* smallest LLPC generated case, if it exists */
    ATL_mmnode_t *sb=NULL; /* smallest-case kernels */
    ATL_mmnode_t *tb;      /* tuned kernels for each cache context */
    ATL_mmnode_t *mp, *mpB, *prev=NULL;
    int maxD = (pre == 'd' || pre == 'z') ? 480 : 512;
+   int minKB;             /* always safe to use KB at least this big */
    int MB, NB, KB, nkern, nelim=0;
    double mfB=0.0;
 
+   tb = TimeMMFileWithPath(pre, "res", "fipgen.sum", 0, 1, 0, 1, 0, -1);
+   if (tb)
+   {
+      KillAllMMNodes(tb);
+      KillAllMMNodes(gb);
+      KillAllMMNodes(ub);
+      return;
+   }
    assert(gb);
    gb = ReverseMMQ(gb);  /* go from smallest to least */
    ap = gb;              /* asymptotic case always last orig order */
@@ -44108,29 +44127,48 @@ void doSrch
    for (mpB=mp=ab; mp; mp = mp->next)
    {
       double mf;
+      ATL_mmnode_t *sq;
       printf("   TUNING B FOR %s, PRESENT B=(%u,%u,%u), mf=%.2f:\n", 
              GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB,
              mp->mflop ? mp->mflop[0]:0.0);
       GetMMLabelName(pre, NULL);
-      mf = MMExpandMNK(1, pre, 0, 0, 0, NULL, maxD, mp);
+      mf = MMExpandMNK(1, pre, 0, 1, 0, NULL, maxD, mp);
+      sq = CloneMMNode(mp);
+      MMExpandSQ(1, pre, 0, 1, 0, maxD, sq);
+      sq->next = qb;
+      qb = sq;
       if (mf > mpB->mflop[0])
          mpB = mp;
-      printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n", 
-             mp->mbB, mp->nbB, mp->kbB, mf);
+      printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f, SQ=%u, %.2f\n", 
+             mp->mbB, mp->nbB, mp->kbB, mf, sq->kbB, sq->mflop[0]);
       PrintMMLine(stdout, mp);
    }
+   {
+      ATL_mmnode_t *gp;
+      gp = FindMaxMflopMMQ(qb, 0);
+      gp = giveRunAdv(qb, gp, 0);
+      gp = CloneMMNode(gp);
+      KillAllMMNodes(qb);
+      WriteMMFileWithPath(pre, "res", "ipsqgen.sum", gp);
+      KillMMNode(gp);
+   }
    mpB = giveRunAdv(ab, mpB, 0);
-   KillAllMMNodes(ab);
    tb = CloneMMNode(mpB);
+   KillAllMMNodes(ab);
+/*
+ * Any KB less than the asymptotic's KB will be done via outer product, and
+ * so we can use a KB at least this large w/o fear of overflowing user's K
+ */
+   minKB = tb->kbB;
 /*
  * Loop over LLPC cache contexts
  */
    #if defined(LLPC_LVL) && LLPC_LVL > 1 && LLPC_SZ > L1C_SZ
    pb = CloneMMQueue(ub);
-   while (gb && (gb->ivar & 16))
+   while (gb && FLAG_IS_SET(gb->flag, MMF_LLPC))
    {
       ATL_mmnode_t *basp;
-      const unsigned int nblk = gb->ivar&0x7;
+      const unsigned int nblk = (gb->flag >> MMF_NCBLK)&0x7;
 
       mp = gb;
 /*
@@ -44214,6 +44252,11 @@ void doSrch
                 GetMMLabelName(pre, mp), mp->mbB, mp->nbB, mp->kbB,
                 mp->mflop ? mp->mflop[0]:0.0);
          mf = MMExpandMNK(1, pre, 0, 1, LLPC_SZ, wrkSetOK, maxD, mp);
+         if (maxD < minKB)
+         {
+            MMExpandK(1, pre, 0, 1, mp, minKB);
+            mf = mp->mflop[0];
+         }
          if (mf > mpB->mflop[0])
             mpB = mp;
          printf("   BEST B=(%u,%u,%u), MFLOPS=%.2f\n",
@@ -44244,7 +44287,7 @@ void doSrch
    maxD = Mmax(maxD, mp->kbB);
    while (gb)
    {
-      const unsigned int nblk = gb->ivar;
+      const unsigned int nblk = (gb->flag>>MMF_NCBLK)&0x7;
       int maxB=maxD;
 /*
  *    compute next times max block size, and advance to next cache case 
@@ -44312,6 +44355,7 @@ void doSrch
          while (wrkSetOK(L1C_SZ, mp, mp->mbB, mp->nbB, maxKB))
             maxKB += ku;
          maxKB -= ku;
+         maxKB = (maxKB > minKB) ? minKB : maxKB;
          if (maxKB > maxB && maxKB > mp->kbB)
          {
             MMExpandK(1, pre, 0, 1, mp, maxKB);
