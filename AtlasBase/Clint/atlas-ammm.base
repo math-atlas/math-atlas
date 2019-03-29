@@ -16472,9 +16472,73 @@ NO_LLPC:
 void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
 /*
  * use rank-8 and rank-32 update to figure out cache regions for rank-K.
- * Want to try filling cache with 5 blocks (2*C+2*A+B),
+ * If LLPC can support holding a page of rows of an NB=NU block, then we
+ * tune a case with movA=0, movB=movC=1, to simulate doing the rank-K
+ * as row-panels where a large A can be reusued from cache:
+ *    Mp = (CS-NU*K)/(2*(NU+K))
+ *
+ * On other hand, when K gets to large or LLPC=L1, then row-wise access
+ * can cause TLB thrash, so we instead want to tune for doing rank-K by
+ * column panels, with movA=movC=1, movB=0, where the best shape is
+ * MB=MU with maximul NB to get best reuse of moving A.  However, this
+ * shape is often constrained in size due thrashing TLB when copy ammm C
+ * back into col-major.  Basic fit is: N=FLOOR(NTLB/NU)*NU, 
+ *    2*M*N + 2*M*K + N*K = CS; M(2*(N+K)) = CS-N*K
+ *    M = (CS-N*K)/(2*(N+K))
+ * If NTLB isn't figured out, can use safe values like 32 for old machines,
+ * or 80 for more recent.
  */
 {
+   #if 0
+   ATL_mmnode_t *p8, *p32, *pL;
+   int ntlb;
+   const int szSH=(pre=='d'||pre=='z') ? 3 : 2;
+   unsigned long nelt, M8, M32, M1;
+
+   #if defined(TLB_PLVLS) && TLB_PLVLS > 1
+      ntlb = TOTPTLB;
+   #elif defined(NTLB0) && NTLB0 > 31
+      ntlb = NTLB0;
+   #else
+      #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
+         #if defined(ATL_AVX)
+            ntlb = 80;
+         #else
+            ntlb = 32;
+         #endif
+      #elif defined(GAS_ARM64)
+         ntlb = 120;
+      #elif defined(GAS_ARM32)
+         ntlb = 32;
+      #elif defined(GAS_PPC)
+         ntlb = 240;
+      #else
+         ntlb = 32;
+      #endif
+   #endif
+/*
+ * Read in last level private cache size, and don't believe < 4K
+ */
+   #ifdef LLPC_SZ
+       nelt = LLPC_SZ;
+   #else
+       nelt = L1C_SZ;
+   #endif
+   if (nelt < 4*1024)
+      nelt = 4*1024;
+   nelt >>= szSH;
+   M8  = (nelt-mp->nu*8)/(2*(mp->nu+8))
+   M32 = (nelt-mp->nu*32)/(2*(mp->nu+32))
+   if ((M8<<szSH) >= 4096)
+   {
+   }
+   p32 = CloneMMNode(mp);
+   while (32%p32->ku)
+      p32->ku--;
+   p8 = CloneMMNode(p32);
+   while (32%p8->ku)
+      p8->ku--;
+   #endif
 }
 
 int main(int nargs, char **args)
@@ -44394,3 +44458,4 @@ int main(int nargs, char **args)
    gb = ReadMMFileWithPath(pre, "res", "gipgemmPF.sum");
    doSrch(pre, gb, ub);
 }
+@ROUT uopsrch
