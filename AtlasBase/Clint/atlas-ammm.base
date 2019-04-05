@@ -16526,16 +16526,16 @@ void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
    if (nelt < 4*1024)
       nelt = 4*1024;
    nelt >>= szSH;
-   M8  = (nelt-mp->nu*8)/(2*(mp->nu+8));
    M32 = (nelt-mp->nu*32)/(2*(mp->nu+32));
-   if ((M8<<szSH) >= 4096)
-   {
-   }
    p32 = CloneMMNode(mp);
+   p32->kbB = 32;
    p32->flag &= ~MMF_ALLPF;
    p32->flag &= ~MMF_MVSET;
    p32->flag |= 1<<MMF_MVC;  /* always MVC for rank-K */
    p32->kvec = (p32->kvec) ? p32->kvec : 1;
+   p32->mflop[0] = 0.0;
+   p32->mbB = p32->mu;
+   p32->nbB = p32->nu;
    while (32%p32->ku && p32->ku > p32->kvec)
       p32->ku -= p32->kvec;
 /*
@@ -16543,8 +16543,26 @@ void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
  */
    if ((nelt<<szSH) <= Mmax(L1C_SZ,4096))
    {
+      double used;
+      #if defined(TOTPTLB) && TOTPTLB > 16
+         int maxN = TOTPTLB
+      #elif defined(TOTTLB) && TOTTLB > 16
+         int maxN = TOTTLB;
+      #else
+         int maxN = 32;
+      #endif
       p32->flag |= 1<<MMF_MVA;
-      assert(0);  /* not happening now */
+      printf("Expanding M&N to safe TLB limit of %u:\n", maxN);
+      MMExpandMN(1, pre, 0, 1, maxN, p32);
+      used = (p32->mbB<<1)*(p32->nbB+p32->kbB) + p32->nbB*p32->kbB;
+      printf("BEST B=(%u,%u,%u), using %.2f of cache, mf=%.2f\n",
+             p32->mbB, p32->nbB, p32->kbB, used/nelt, p32->mflop[0]);
+      printf("Expanding M only past safe TLB limit of %u:\n", maxN);
+      if (p32->mbB < M32+p32->mu)
+         MMExpandMorN(1, pre, 0, 1, p32, 0, M32+p32->mu);
+      used = (p32->mbB<<1)*(p32->nbB+p32->kbB) + p32->nbB*p32->kbB;
+      printf("BEST B=(%u,%u,%u), using %.2f of cache, mf=%.2f\n",
+             p32->mbB, p32->nbB, p32->kbB, used/nelt, p32->mflop[0]);
    }
 /*
  * For large cache, try setting large MB, NB=NU, and moving row-wise
@@ -16555,7 +16573,7 @@ void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
       ATL_mmnode_t *mp;
       p32->flag |= 1<<MMF_MVB;
       p32->nbB = p32->nu;
-      MMExpandMorN(1, pre, 0, 1, p32, 0, M32+mp->mu);
+      MMExpandMorN(1, pre, 0, 1, p32, 0, M32+p32->mu);
       used = (p32->nbB << 1)*(p32->mbB+p32->kbB) + p32->mbB*p32->kbB;
       printf("BEST B=(%u,%u,%u), using %.2f of cache, mf=%.2f\n",
              p32->mbB, p32->nbB, p32->kbB, used/nelt, p32->mflop[0]);
@@ -16563,20 +16581,10 @@ void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
  *    mp will be for small problems where M < m32->mbB, and we will use it
  *    to see if L1 blocking provides an advantage
  */
-      p32->next = mp = CloneMMNode(p32);
       tryAllPref(pre, flg, 1, "rank-32 LLPC BLOCK", p32);
-@BEGINSKIP
-      p8 = CloneMMNode(p32);
-      p8->kbB = 8;
-      while (32%p8->ku && p8->ku > p8->kvec)
-         p8->ku -= p8->kvec;
-      MMExpandMorN(1, pre, 0, 1, p8, 0, M8+mp->mu);
-      used = (p8->nbB << 1)*(p8->mbB+p8->kbB) + p8->mbB*p8->kbB;
-      printf("BEST B=(%u,%u,%u), using %.2f of cache, mf=%.2f\n",
-             p8->mbB, p8->nbB, p8->kbB, used/nelt, p8->mflop[0]);
-@ENDSKIP
    }
-
+   WriteMMFileWithPath(pre, "res", "gop32", p32);
+   KillMMNode(p32);
 }
 
 int main(int nargs, char **args)
