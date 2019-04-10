@@ -16489,10 +16489,10 @@ void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
  * or 80 for more recent.
  */
 {
-   ATL_mmnode_t *p8, *p32, *pL;
+   ATL_mmnode_t *p8, *p32, *pL, *ip;
    int ntlb;
    const int szSH=(pre=='d'||pre=='z') ? 3 : 2;
-   unsigned long nelt, M8, M32, M1;
+   unsigned long nelt, M32, M1;
 
    #if defined(TLB_PLVLS) && TLB_PLVLS > 1
       ntlb = TOTPTLB;
@@ -16526,6 +16526,9 @@ void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
    if (nelt < 4*1024)
       nelt = 4*1024;
    nelt >>= szSH;
+   p32 = TimeMMFileWithPath(pre, "res", "gop32.sum", 0, 1, 0, 1, 0, -1);
+   if (p32)
+      goto GOT32;
    M32 = (nelt-mp->nu*32)/(2*(mp->nu+32));
    p32 = CloneMMNode(mp);
    p32->kbB = 32;
@@ -16545,7 +16548,7 @@ void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
    {
       double used;
       #if defined(TOTPTLB) && TOTPTLB > 16
-         int maxN = TOTPTLB
+         int maxN = TOTPTLB;
       #elif defined(TOTTLB) && TOTTLB > 16
          int maxN = TOTTLB;
       #else
@@ -16577,13 +16580,80 @@ void DoRankK(char pre, int flg, ATL_mmnode_t *mp)
       used = (p32->nbB << 1)*(p32->mbB+p32->kbB) + p32->mbB*p32->kbB;
       printf("BEST B=(%u,%u,%u), using %.2f of cache, mf=%.2f\n",
              p32->mbB, p32->nbB, p32->kbB, used/nelt, p32->mflop[0]);
-/*
- *    mp will be for small problems where M < m32->mbB, and we will use it
- *    to see if L1 blocking provides an advantage
- */
-      tryAllPref(pre, flg, 1, "rank-32 LLPC BLOCK", p32);
    }
+   tryAllPref(pre, flg, 1, "rank-32 BLOCK", p32);
    WriteMMFileWithPath(pre, "res", "gop32.sum", p32);
+GOT32:
+   ip = TimeMMFileWithPath(pre, "res", "fipgen.sum", 0, 1, 0, 1, 0, -1);
+   if (ip)
+   {
+      int KB, MA;
+      while (ip->next)         /* find last, asymptotic kernel */
+         ip = KillMMNode(ip);
+/*
+ *    Choose maximum KB that we will solve using rank-K instead of inner prod
+ */
+      KB = ip->kbB;
+      if (FLAG_IS_SET(ip->flag, MMF_KRUNTIME))
+      {
+         if (ip->ku <= 8)
+            KB += 2*ip->ku;
+         else if (ip->ku <= 32)
+            KB += ip->ku;
+      }
+      KillMMNode(ip);
+      MA = (nelt-mp->nu*KB)/(2*(mp->nu+KB));
+      p32->next = mp = CloneMMNode(p32);
+      mp->flag &= ~MMF_ALLPF;
+      mp->flag &= ~MMF_MVSET;
+      mp->flag |= 1<<MMF_MVC;  /* always MVC for rank-K */
+      mp->mflop[0] = 0;
+      mp->mbB = mp->mu;
+      mp->nbB = mp->nu;
+      mp->kbB = KB;
+/*
+ *    L1 cache timing can only go down column
+ */
+      if ((nelt<<szSH) <= Mmax(L1C_SZ,4096) || (MA<<szSH) < 2048)
+      {
+         double used;
+         #if defined(TOTPTLB) && TOTPTLB > 16
+            int maxN = TOTPTLB;
+         #elif defined(TOTTLB) && TOTTLB > 16
+            int maxN = TOTTLB;
+         #else
+            int maxN = 32;
+         #endif
+         mp->flag |= 1<<MMF_MVA;
+         printf("Expanding M&N to safe TLB limit of %u:\n", maxN);
+         MMExpandMN(1, pre, 0, 1, maxN, mp);
+         used = (mp->mbB<<1)*(mp->nbB+mp->kbB) + mp->nbB*mp->kbB;
+         printf("BEST B=(%u,%u,%u), using %.2f of cache, mf=%.2f\n",
+                mp->mbB, mp->nbB, mp->kbB, used/nelt, mp->mflop[0]);
+         printf("Expanding M only past safe TLB limit of %u:\n", maxN);
+         if (mp->mbB < M32+mp->mu)
+            MMExpandMorN(1, pre, 0, 1, mp, 0, M32+mp->mu);
+         used = (mp->mbB<<1)*(mp->nbB+mp->kbB) + mp->nbB*mp->kbB;
+         printf("BEST B=(%u,%u,%u), using %.2f of cache, mf=%.2f\n",
+                mp->mbB, mp->nbB, mp->kbB, used/nelt, mp->mflop[0]);
+      }
+/*
+ * For large cache, try setting large MB, NB=NU, and moving row-wise
+ */
+      else
+      {
+         double used;
+         mp->flag |= 1<<MMF_MVB;
+         mp->nbB = mp->nu;
+         MMExpandMorN(1, pre, 0, 1, mp, 0, MA+mp->mu);
+         used = (mp->nbB << 1)*(mp->mbB+mp->kbB) + mp->mbB*mp->kbB;
+         printf("BEST B=(%u,%u,%u), using %.2f of cache, mf=%.2f\n",
+                mp->mbB, mp->nbB, mp->kbB, used/nelt, mp->mflop[0]);
+      }
+      tryAllPref(pre, flg, 1, "rank-K ASYMP BLOCK", mp);
+      WriteMMFileWithPath(pre, "res", "gopgen.sum", p32);
+      KillMMNode(mp);
+   }
    KillMMNode(p32);
 }
 
@@ -16612,6 +16682,7 @@ int main(int nargs, char **args)
    DoRankK(pre, flg, mp);
    KillMMNode(mp);
    doPrefNBs(pre, flg);
+   GetJoinedLines(NULL);
    return(0);
 }
 @ROUT ATL_ammmABC
