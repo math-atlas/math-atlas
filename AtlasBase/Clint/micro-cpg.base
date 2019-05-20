@@ -19,6 +19,7 @@
 @endifdef
 @SKIP TRI = 1 means lower triangular C (SYRK)
 @iif TRI = 1
+   @define SYRKU @0@ 
    @define ma @1@
    @define na @1@
    @iif mu ! nu
@@ -26,7 +27,9 @@
          @iexp ma @(nu) @(mu) / 
          @iexp mma @(ma) @(nu) *
          @iif mu ! mma
-           @abort "mu (@(mu)) must be multiple of nu (@(nu))"  
+           @abort "mu (@(mu)) must be multiple of nu (@(nu))" 
+           @SKIP Now unrestricted SYRK is supported 
+           @iexp SYKRU 1 
          @endiif
          @skip @print ************ma = @(ma)
       @endiif
@@ -35,6 +38,8 @@
          @iexp nna @(na) @(mu) *
          @iif nu ! nna
            @abort "nu (@(nu)) must be multiple of mu (@(mu))"  
+           @SKIP Now unrestricted SYRK is supported 
+           @iexp SYKRU 1 
          @endiif
          @skip @print ************na = @(na)
       @endiif
@@ -428,6 +433,31 @@
    @undef j
    @undef i
 @ENDPROC
+@SKIP full blocks with multiplication 
+@BEGINPROC donaBlock m_ n_ mn_
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @define m @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(m_)
+         @iexp k @(j) @(mu) * @(i) +
+         @callproc doElement @(i) @(j) @(k)+kk*@(mn_) 
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif m_ = mu
+            C@(j) += @(mu);
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef m
+   @undef k
+   @undef j
+   @undef i
+@ENDPROC
+@SKIP ******** parameterized GEMM implementation ************** 
 @SKIP handles square blocks 
 @BEGINPROC doBlock m_ n_ p_
    @define i @dum@
@@ -500,29 +530,139 @@
          }
    @undef j
 @ENDPROC
-@SKIP full blocks with multiplication 
-@BEGINPROC donaBlock m_ n_ mn_
-   @define i @dum@
-   @define j @dum@
-   @define k @dum@
-   @define m @dum@
-   @iexp j 0
-   @iwhile j < @(n_)
-      @iexp i 0
-      @iwhile i < @(m_)
-         @iexp k @(j) @(mu) * @(i) +
-         @callproc doElement @(i) @(j) @(k)+kk*@(mn_) 
-         @iexp i @(i) 1 +
-      @endiwhile
-      @iif m_ = mu
-            C@(j) += @(mu);
-      @endiif
-      @iexp j @(j) 1 +
-   @endiwhile
-   @undef m
-   @undef k
-   @undef j
-   @undef i
+@SKIP ******** parameterized unrestricted SYRK implementation ************** 
+@SKIP handles rolled rectangual blocks, used for cleanup as well
+@SKIP we are skipping the i-loop to make it work with cleanup 
+@BEGINPROC doTrBlocksRolled mu_ nu_ tstmu_
+         unsigned int mu=N-i, ii, jj, nblks;
+@ROUT C2BLK `         const @(typ) *C0 = C + i; `          
+@ROUT BLK2C `         @(typ) *C0 = C + i; `          
+@ROUT C2BLK `         @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `         const @(typ) *p = rw + cinc; `     
+   @iif tstmu_ = 1
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+   @endiif
+         in = i + mu;
+         for (jj=0; jj < @(nu_); jj++, C0 += ldc, p += @(mu))
+         {
+            for (ii=0; ii < @(mu_); ii++)
+            {
+               @callproc doElementUR ii 0 C ii p 
+            }
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan;
+@ENDPROC
+@SKIP handles unrolled rectangual blocks, used for cleanup as well
+@BEGINPROC doTrBlocksUR 
+      for (; (i+@(mu)) < N; i = in)
+      {
+         unsigned int nblks;
+@ROUT C2BLK `         @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `         const @(typ) *p = rw + cinc; `          
+@ROUT blk2C `        @declare "         @(typ) " n n ";"`
+@ROUT C2blk `        @declare "         const @(typ) " n n ";"`
+         *C0=C+i
+         @define j @1@
+         @iwhile j < @(nu)
+            @iexp i @(j) -1 +
+            *C@(j)=C@(i)+ldc
+            @iexp j @(j) 1 +
+         @endiwhile
+      @enddeclare
+         in = i + @(mu);
+         @callproc doBlock @(mu) @(nu) p 
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan;
+      }
+@ENDPROC
+@BEGINPROC doTrBlocksMuUR mu_ nu_
+         for (; (i+@(mu)) < N; i = in)
+         {
+            unsigned int jj, nblks;
+@ROUT C2BLK `            const @(typ) *C0 = C + i; `          
+@ROUT BLK2C `            @(typ) *C0 = C + i; `          
+@ROUT C2BLK `            @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `            const @(typ) *p = rw + cinc; `          
+            in = i + @(mu);
+            for (jj=0; jj < @(nu_); jj++, C0 += ldc, p += @(mu))
+            {
+            @iexp i 0
+            @iwhile i < @(mu_)
+               @callproc doElementUR @(i) 0 C @(i) p 
+               @iexp i @(i) 1 +
+            @endiwhile
+            } 
+            nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+            rwpan = nblks*@(bs);
+            rw += rwpan;
+         }
+@ENDPROC
+@BEGINPROC doTrBlocksNuUR mu_ nu_ 
+      for (; i < N; i = in)
+      {
+         unsigned int ii, nblks, mu=N-i;
+@ROUT C2BLK `         @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `         const @(typ) *p = rw + cinc; `          
+@ROUT blk2C `        @declare "         @(typ) " n n ";"`
+@ROUT C2blk `        @declare "         const @(typ) " n n ";"`
+         *C0=C+i
+         @define j @1@
+         @iwhile j < @(nu)
+            @iexp i @(j) -1 +
+            *C@(j)=C@(i)+ldc
+            @iexp j @(j) 1 +
+         @endiwhile
+      @enddeclare
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+         in = i + mu;
+         for (ii=0; ii < @(mu_); ii++)
+         {
+            @iexp j 0
+            @iwhile j < @(nu_)
+               @callproc doElementUR ii @(j) C @(mu)*@(j)+ii p
+               @iexp j @(j) 1 +
+            @endiwhile
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan;
+      }
+@ENDPROC
+@SKIP handles diagonal crossing blocks, implement rolled version first
+@BEGINPROC doDiagBlock mu_ nu_
+/*
+ *    Handling of diagonal blocks for this colpan 
+ */
+      for (; i < jn; i = in)
+      {
+         unsigned int mu=N-i, ii, jj, nblks;
+@ROUT C2BLK `         const @(typ) *C0 = C + i; `          
+@ROUT BLK2C `         @(typ) *C0 = C + i; `          
+@ROUT C2BLK `         @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `         const @(typ) *p = rw + cinc; `          
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+         in = i + mu;
+@SKIP /* based on full/cleanup, nu can be const or var */
+         for (jj=0; jj < @(nu_); jj++, C0 += ldc, p += @(mu)) 
+         {
+            const unsigned int J=j+jj;
+            for (ii=0; ii < mu; ii++)
+            {
+               const unsigned int I=i+ii;
+               if (I >= J)
+               {
+                  @callproc doElementUR ii 0 C ii p 
+               }
+            }
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan; /* finished all blocks in rowpanel */
+         rW = (in <= jn) ? rw : rW;
+      }
 @ENDPROC
 /*
  * Main Loop:
@@ -754,6 +894,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
 @endiif
 @SKIP ******************** SYRK copy: real type ********************************
 @iif TRI = 1
+@iif SYRKU = 0
    const unsigned int mf = M/@(mu), nf = N/@(nu);
    const unsigned int m = mf*@(mu), n = nf*@(nu), mr = M-m, nr = N-n;
    @iif mEn = 1
@@ -967,6 +1108,115 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    default:;
    }
 @endiif
+@endiif
+@endiif
+@iif SYRKU ! 0
+@SKIP ***************** unrestricted syrk implementation **********************
+   int j, jn, cinc, rwpan;
+   unsigned int pansz = @(bs);
+   const size_t incC = ldc*@(nu);
+@ROUT C2BLK `   @(typ) *rW=b, *rw; `
+@ROUT BLK2C `   const @(typ) *rW=b, *rw; `
+/*
+ * NOTE: we assume N=M, always square for syrk 
+ */
+   @iif ML_NO = 0 
+      @iif ML_NUR ! 0
+   const unsigned int nf = N/@(nu);
+   const unsigned int n = nf*@(nu), nr = N-n;
+      @endiif
+/*
+ * NU colpan: Full panel, without cleanup (N direction)
+ */
+      @iif ML_NUR ! 0 
+   for (cinc=j=0; j < n; j = jn, C += incC, cinc += @(bs))
+      @endiif
+   @SKIP ***** Nu rolled, no need of Nu cleanup 
+      @iif ML_NUR = 0
+   for (cinc=j=0; j < N; j = jn, C += incC, cinc += @(bs))
+      @endiif
+   {
+      unsigned int i, in, nd;
+      @iif ML_NUR = 0
+      unsigned int nu = N-j;
+      nu = (nu >= @(nu)) ? @(nu) : nu;
+      jn = j + nu;      /* main loop, full NU block */
+      @endiif
+      @iif ML_NUR ! 0
+      jn = j + @(nu);      /* main loop, full NU block */
+      @endiif
+      i = (j/@(mu))*@(mu);
+      rw = rW;
+/*
+ *    handle the diagonal-crossing blocks first
+ *    NOTE: this can be full-MU block or partial----> no unrolling right now 
+ */
+      @iif ML_NUR ! 0
+         @callproc doDiagBlock mu @(nu)
+      @endiif
+      @iif ML_NUR = 0
+         @callproc doDiagBlock mu nu
+      @endiif
+/*
+ *    Full block after diagonal crossing, n=m  
+ */
+      @iif ML_MUNU = 1
+         @callproc doTrBlocksUR
+      @endiif
+      @SKIP only MU unrolling.. ML_MU true for both MU and MUNU
+      @iif ML_NUR = 0
+         @callproc doTrBlocksMuUR @(mu) nu
+      @endiif
+      @iif ML_MUR = 0 
+         @callproc doTrBlocksNuUR mu @(nu)
+      @endiif
+      @iif ML_MUR = 1 
+/*
+ *    MU cleanup 
+ */   
+      if (i < N)
+      {
+         @iif ML_MUNU = 1
+            @callproc doTrBlocksRolled mu @(nu) 0
+         @endiif
+         @iif ML_MUR = 1
+            @callproc doTrBlocksRolled mu nu 0
+         @endiif 
+      }
+      @endiif 
+   }
+   @endiif
+@BEGINSKIP
+*
+*  Following codes execute for three cases: 
+*     NU unrolled, both unrolled and no unroll 
+*     So, condition: if ML_MUR = 0 || ML_MUNU = 1 
+@ENDSKIP
+   @iif @iexp 1 @(ML_MUNU) = 0 @(ML_MUR) = |
+      @iif ML_NO = 0
+/*
+ * cleanup in N dimension
+ */
+   if (j < N)
+      @endiif
+      @iif ML_NO = 1
+   for (cinc=j=0; j < N; j = jn, C += incC, cinc += @(bs)) 
+      @endiif 
+   {
+      unsigned int  i, in, nu = N-j, nd, nblks;
+      jn = j + nu;
+      i = (j/@(mu))*@(mu);
+      rw = rW;
+      @callproc doDiagBlock mu nu 
+/*
+ *    full blocks before diagonal 
+ */
+      for (; i < N; i = in)
+      {
+         @callproc doTrBlocksRolled mu nu 1
+      }
+   }
+   @endiif 
 @endiif
 @SKIP ********** END of SYRK copy: real type ***********************************
 @endiif
