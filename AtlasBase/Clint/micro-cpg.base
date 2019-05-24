@@ -19,29 +19,40 @@
 @endifdef
 @SKIP TRI = 1 means lower triangular C (SYRK)
 @iif TRI = 1
-   @define ma @1@
-   @define na @1@
-   @iif mu ! nu
-      @iif mu > nu
-         @iexp ma @(nu) @(mu) / 
-         @iexp mma @(ma) @(nu) *
-         @iif mu ! mma
-           @abort "mu (@(mu)) must be multiple of nu (@(nu))" 
+@BEGINSKIP ====================================================================
+********** SYRK COPY: from now on, we are using unrestricted syrk copies
+********** If you want to enable restricted copy for testing or timing purpose
+********** init SYRKU with 0
+@ENDSKIP   ====================================================================
+@ifdef ! SYRKU
+   @SKIP @define SYRKU @1@  
+   @define SYRKU @0@  
+@endifdef
+   @iif SYRKU = 0
+      @define ma @1@
+      @define na @1@
+      @iif mu ! nu
+         @iif mu > nu
+            @iexp ma @(nu) @(mu) / 
+            @iexp mma @(ma) @(nu) *
+            @iif mu ! mma
+            @SKIP @abort "mu (@(mu)) must be multiple of nu (@(nu))" 
+            @endiif
+            @skip @print ************ma = @(ma)
          @endiif
-         @skip @print ************ma = @(ma)
-      @endiif
-      @iif nu > mu
-         @iexp na @(mu) @(nu) / 
-         @iexp nna @(na) @(mu) *
-         @iif nu ! nna
-           @abort "nu (@(nu)) must be multiple of mu (@(mu))"  
+         @iif nu > mu
+            @iexp na @(mu) @(nu) / 
+            @iexp nna @(na) @(mu) *
+            @iif nu ! nna
+            @abort "nu (@(nu)) must be multiple of mu (@(mu))"  
+            @endiif
+            @skip @print ************na = @(na)
          @endiif
-         @skip @print ************na = @(na)
+         @define mEn @0@
       @endiif
-      @define mEn @0@
-   @endiif
-   @iif mu = nu
-      @define mEn @1@
+      @iif mu = nu
+         @define mEn @1@
+      @endiif
    @endiif
 @endiif
 @SKIP ****************** bitvector for parameterized unrolling *****************
@@ -467,8 +478,9 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @endiif
 }
 @endiif
-@SKIP ******************** Restricted SYRK copy: real type *********************
 @iif TRI = 1
+@iif SYRKU = 0
+@SKIP ******************** Restricted SYRK copy: real type *********************
 @SKIP handles diagonal blocks when mu = nu 
 @SKIP IN: mu, nu, beta, alpha
 @BEGINPROC doDiBlock n_
@@ -1434,6 +1446,472 @@ void Mjoin(ATL_USERCPMM,_L2UT)
 @endiif
 }
 @ROUT C2blk `#endif`
+@endiif
+@SKIP ********************** Unrestricted SYRK copy: Real Type *****************
+@iif SYRKU ! 0
+@SKIP handles rolled rectangual blocks, used for cleanup as well
+@BEGINPROC doTrBlocksRolled mu_ nu_ tstmu_
+         unsigned int mu=N-i, ii, jj, nblks;
+@ROUT C2BLK `         const @(typ) *C0 = C + i; `          
+@ROUT BLK2C `         @(typ) *C0 = C + i; `          
+@ROUT C2BLK `         @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `         const @(typ) *p = rw + cinc; `     
+   @iif tstmu_ = 1
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+   @endiif
+         in = i + mu;
+         for (jj=0; jj < @(nu_); jj++, C0 += ldc, p += @(mu))
+         {
+            for (ii=0; ii < @(mu_); ii++)
+            {
+               @callproc doElement ii 0 C ii p 
+            }
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan;
+@ENDPROC
+@SKIP handles unrolled rectangual blocks, used for cleanup as well
+@BEGINPROC doTrBlocksUR 
+      for (; (i+@(mu)) < N; i = in)
+      {
+         unsigned int nblks;
+@ROUT C2BLK `         @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `         const @(typ) *p = rw + cinc; `          
+@ROUT blk2C `        @declare "         @(typ) " n n ";"`
+@ROUT C2blk `        @declare "         const @(typ) " n n ";"`
+         *C0=C+i
+         @define j @1@
+         @iwhile j < @(nu)
+            @iexp i @(j) -1 +
+            *C@(j)=C@(i)+ldc
+            @iexp j @(j) 1 +
+         @endiwhile
+      @enddeclare
+         in = i + @(mu);
+         @callproc doBlock @(mu) @(nu) p 
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan;
+      }
+@ENDPROC
+@BEGINPROC doTrBlocksMuUR mu_ nu_
+         for (; (i+@(mu)) < N; i = in)
+         {
+            unsigned int jj, nblks;
+@ROUT C2BLK `            const @(typ) *C0 = C + i; `          
+@ROUT BLK2C `            @(typ) *C0 = C + i; `          
+@ROUT C2BLK `            @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `            const @(typ) *p = rw + cinc; `          
+            in = i + @(mu);
+            for (jj=0; jj < @(nu_); jj++, C0 += ldc, p += @(mu))
+            {
+            @iexp i 0
+            @iwhile i < @(mu_)
+               @callproc doElement @(i) 0 C @(i) p 
+               @iexp i @(i) 1 +
+            @endiwhile
+            } 
+            nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+            rwpan = nblks*@(bs);
+            rw += rwpan;
+         }
+@ENDPROC
+@BEGINPROC doTrBlocksNuUR mu_ nu_ 
+      for (; i < N; i = in)
+      {
+         unsigned int ii, nblks, mu=N-i;
+@ROUT C2BLK `         @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `         const @(typ) *p = rw + cinc; `          
+@ROUT blk2C `        @declare "         @(typ) " n n ";"`
+@ROUT C2blk `        @declare "         const @(typ) " n n ";"`
+         *C0=C+i
+         @define j @1@
+         @iwhile j < @(nu)
+            @iexp i @(j) -1 +
+            *C@(j)=C@(i)+ldc
+            @iexp j @(j) 1 +
+         @endiwhile
+      @enddeclare
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+         in = i + mu;
+         for (ii=0; ii < @(mu_); ii++)
+         {
+            @iexp j 0
+            @iwhile j < @(nu_)
+               @callproc doElement ii @(j) C @(mu)*@(j)+ii p
+               @iexp j @(j) 1 +
+            @endiwhile
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan;
+      }
+@ENDPROC
+@SKIP handles diagonal crossing blocks, implement rolled version first
+@BEGINPROC doDiagBlock mu_ nu_
+/*
+ *    Handling of diagonal blocks for this colpan 
+ */
+      for (; i < jn; i = in)
+      {
+         unsigned int mu=N-i, ii, jj, nblks;
+@ROUT C2BLK `         const @(typ) *C0 = C + i; `          
+@ROUT BLK2C `         @(typ) *C0 = C + i; `          
+@ROUT C2BLK `         @(typ) *p = rw + cinc; `          
+@ROUT BLK2C `         const @(typ) *p = rw + cinc; `          
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+         in = i + mu;
+@SKIP /* based on full/cleanup, nu can be const or var */
+         for (jj=0; jj < @(nu_); jj++, C0 += ldc, p += @(mu)) 
+         {
+            const unsigned int J=j+jj;
+            for (ii=0; ii < mu; ii++)
+            {
+               const unsigned int I=i+ii;
+               if (I >= J)
+               {
+                  @callproc doElement ii 0 C ii p 
+               }
+            }
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan; /* finished all blocks in rowpanel */
+         rW = (in <= jn) ? rw : rW;
+      }
+@ENDPROC
+@BEGINSKIP
+*** We are only unrolling the main loop here, parameterized for both dimension  
+@ENDSKIP
+/*
+ * Main Loop:
+ @iif bvML = 0
+ * Both Rolled
+ @endiif
+ @iif ML_MUR ! 0
+ * Mu unrolled
+ @endiif
+ @iif ML_NUR ! 0
+ * Nu unrolled
+ @endiif
+ */
+@iif cpvl = 1
+void @(rtnm)
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   @ROUT blk2C
+   const @(typ) alpha,  /* scalar for b */
+   const @(typ) *b,     /* matrix stored in @(mu)x@(nu)-major order */
+   const @(typ) beta,   /* scalar for C */
+   @(typ) *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+   @ROUT C2blk
+   const @(typ) alpha,  /* scalar for C */
+   const @(typ) *C,     /* matrix to be copied to access-major format */
+   const size_t ldc,    /* stride between row elements */
+   const @(typ) beta,   /* scalar for b */
+   @(typ) *b            /* matrix stored in @(mu)x@(nu)-major order */
+   @ROUT C2blk blk2C
+)
+@endiif
+@iif cpvl > 1
+static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha, 
+                         const @(typ) *b, const SCALAR beta, 
+                         @(typ) *C, ATL_CSZT ldc)
+@endiif
+{
+   int j, jn, cinc, rwpan;
+   unsigned int pansz = @(bs);
+   const size_t incC = ldc*@(nu);
+@ROUT C2BLK `   @(typ) *rW=b, *rw; `
+@ROUT BLK2C `   const @(typ) *rW=b, *rw; `
+/*
+ * NOTE: we assume N=M, always square for syrk 
+ */
+   @iif ML_NO = 0 
+      @iif ML_NUR ! 0
+   const unsigned int nf = N/@(nu);
+   const unsigned int n = nf*@(nu), nr = N-n;
+      @endiif
+/*
+ * NU colpan: Full panel, without cleanup (N direction)
+ */
+      @iif ML_NUR ! 0 
+   for (cinc=j=0; j < n; j = jn, C += incC, cinc += @(bs))
+      @endiif
+   @SKIP ***** Nu rolled, no need of Nu cleanup 
+      @iif ML_NUR = 0
+   for (cinc=j=0; j < N; j = jn, C += incC, cinc += @(bs))
+      @endiif
+   {
+      unsigned int i, in, nd;
+      @iif ML_NUR = 0
+      unsigned int nu = N-j;
+      nu = (nu >= @(nu)) ? @(nu) : nu;
+      jn = j + nu;      /* main loop, full NU block */
+      @endiif
+      @iif ML_NUR ! 0
+      jn = j + @(nu);      /* main loop, full NU block */
+      @endiif
+      i = (j/@(mu))*@(mu);
+      rw = rW;
+/*
+ *    handle the diagonal-crossing blocks first
+ *    NOTE: this can be full-MU block or partial----> no unrolling right now 
+ */
+      @iif ML_NUR ! 0
+         @callproc doDiagBlock mu @(nu)
+      @endiif
+      @iif ML_NUR = 0
+         @callproc doDiagBlock mu nu
+      @endiif
+/*
+ *    Full block after diagonal crossing, n=m  
+ */
+      @iif ML_MUNU = 1
+         @callproc doTrBlocksUR
+      @endiif
+      @SKIP only MU unrolling.. ML_MU true for both MU and MUNU
+      @iif ML_NUR = 0
+         @callproc doTrBlocksMuUR @(mu) nu
+      @endiif
+      @iif ML_MUR = 0 
+         @callproc doTrBlocksNuUR mu @(nu)
+      @endiif
+      @iif ML_MUR = 1 
+/*
+ *    MU cleanup 
+ */   
+      if (i < N)
+      {
+         @iif ML_MUNU = 1
+            @callproc doTrBlocksRolled mu @(nu) 0
+         @endiif
+         @iif ML_MUR = 1
+            @callproc doTrBlocksRolled mu nu 0
+         @endiif 
+      }
+      @endiif 
+   }
+   @endiif
+@BEGINSKIP
+*
+*  Following codes execute for three cases: 
+*     NU unrolled, both unrolled and no unroll 
+*     So, condition: if ML_MUR = 0 || ML_MUNU = 1 
+@ENDSKIP
+   @iif @iexp 1 @(ML_MUNU) = 0 @(ML_MUR) = |
+      @iif ML_NO = 0
+/*
+ * cleanup in N dimension
+ */
+   if (j < N)
+      @endiif
+      @iif ML_NO = 1
+   for (cinc=j=0; j < N; j = jn, C += incC, cinc += @(bs)) 
+      @endiif 
+   {
+      unsigned int  i, in, nu = N-j, nd, nblks;
+      jn = j + nu;
+      i = (j/@(mu))*@(mu);
+      rw = rW;
+      @callproc doDiagBlock mu nu 
+/*
+ *    full blocks before diagonal 
+ */
+      for (; i < N; i = in)
+      {
+         @callproc doTrBlocksRolled mu nu 1
+      }
+   }
+   @endiif
+}
+@SKIP ************** Unrestricted SYRK L2UT ************************************ 
+@SKIP this proc handles single element
+@SKIP IN : alpha, beta, C, b 
+@BEGINPROC doElementT r_ c_ C_ k_ b_
+   @iif alpha = 1
+      @iif beta = 0
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = @(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = @(C_)@(c_)[@(r_)];`
+      @endiif
+      @iif beta = 1
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] += @(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] += @(C_)@(c_)[@(r_)];`
+      @endiif
+      @iif beta = -1
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = @(b_)[@(k_)] - @(C_)@(c_)[@(r_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = @(C_)@(c_)[@(r_)] - @(b_)[@(k_)];`
+      @endiif
+      @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = beta*@(C_)@(c_)[@(r_)] + @(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = beta*@(b_)[@(k_)] + @(C_)@(c_)[@(r_)];`
+      @endiif
+   @endiif
+   @iif alpha = -1
+      @iif beta = 0
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = -@(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = -@(C_)@(c_)[@(r_)];`
+      @endiif
+      @iif beta = 1
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] -= @(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] -= @(C_)@(c_)[@(r_)];`
+      @endiif
+      @iif beta = -1
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = -@(C_)@(c_)[@(r_)] - @(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = -@(C_)@(c_)[@(r_)] - @(b_)[@(k_)];`
+      @endiif
+      @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = beta*@(C_)@(c_)[@(r_)] - @(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = beta*@(b_)[@(k_)] - @(C_)@(c_)[@(r_)];`
+      @endiif
+   @endiif
+   @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+      @iif beta = 0
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = alpha*@(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = alpha*@(C_)@(c_)[@(r_)];`
+      @endiif
+      @iif beta = 1
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] += alpha*@(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] += alpha*@(C_)@(c_)[@(r_)];`
+      @endiif
+      @iif beta = -1
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = alpha*@(b_)[@(k_)] - @(C_)@(c_)[@(r_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = alpha*@(C_)@(c_)[@(r_)] - @(b_)[@(k_)];`
+      @endiif
+      @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C `                  @(C_)@(c_)[@(r_)] = beta*@(C_)@(c_)[@(r_)] + alpha*@(b_)[@(k_)];`
+@ROUT C2blk `                  @(b_)[@(k_)] = beta*@(b_)[@(k_)] + alpha*@(C_)@(c_)[@(r_)];`
+      @endiif
+   @endiif
+@ENDPROC
+@SKIP handles full block 
+@BEGINPROC doBlockT m_ n_
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(m_)
+         @iexp k @(i) @(mu) * @(j) +
+         @callproc doElementT @(i) @(j) C @(k) b  
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif m_ = mu
+            C@(j) += @(mu);
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef k
+   @undef j
+   @undef i
+@ENDPROC
+@ROUT C2blk `#if 0`
+#ifndef Mjoin
+   #define Mjoin(pre, nam) my_join(pre, nam)
+   #define my_join(pre, nam) pre ## nam
+#endif
+/*
+ * The block is assumed to store L, this function does a transpose while
+ * copying so that it is transferred with Upper portion of C
+ */
+void Mjoin(ATL_USERCPMM,_L2UT)
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   @ROUT blk2C
+   const @(typ) alpha,  /* scalar for b */
+   const @(typ) *b,     /* matrix stored in @(mu)x@(nu)-major order */
+   const @(typ) beta,   /* scalar for C */
+   @(typ) *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+   @ROUT C2blk
+   const @(typ) alpha,  /* scalar for C */
+   const @(typ) *C,     /* matrix to be copied to access-major format */
+   const size_t ldc,    /* stride between row elements */
+   const @(typ) beta,   /* scalar for b */
+   @(typ) *b            /* matrix stored in @(mu)x@(nu)-major order */
+   @ROUT C2blk blk2C
+)
+{
+   size_t j, jn;
+   const size_t incCm = ldc*@(mu);
+/*
+ * NOTE: we assume N=M, always square for syrk 
+ */
+   const size_t nf = N/@(nu);
+   const size_t n = nf*@(nu), nr = N-n;
+/*
+ * since it's upper transpose case, the direction of @(mu) and NU interchanged
+ */
+   for (j=0; j < N; j = jn, C += incCm)
+   {
+      size_t i, in, nu;
+      size_t mu = N-j;
+      mu = (mu >= @(mu)) ? @(mu) : mu;
+      jn = j + mu;
+      nu = @(nu);
+/*
+ *    for upper triangle, blocks whose do not intersect with diagonal follow:
+ *               y0 > x1 => j > (in-1)
+ *                       => j > i+nu-1
+ *    access of C-workspace is consecutive
+ */
+      for (i=0; j > (i+nu-1); i=in, b += @(bs) )
+      {
+@ROUT C2BLK `        @(typ) *rw0 = b; `
+@ROUT BLK2C `        const @(typ) *rw0 = b; `
+@ROUT C2BLK `        const @(typ) *C0 = C+i; `
+@ROUT BLK2C `        @(typ) *C0 = C+i; `
+         unsigned int ii, jj;
+         size_t nu = N-i;
+         nu = (nu >= @(nu)) ? @(nu) : nu;
+         in = i + nu;
+         for (jj=0; jj < mu; jj++, C0 += ldc, rw0++)
+         {
+@ROUT C2BLK `           @(typ) *pr = rw0; `
+@ROUT BLK2C `           const @(typ) *pr = rw0; `
+            for (ii=0; ii < nu; ii++, pr += @(mu))
+            {
+               @callproc doElementT ii 0 C 0 pr 
+            }
+         }
+      }
+/*
+ *    intersection occurs at later blocks
+ */
+      for ( ; i < jn; i=in, b += @(bs))
+      {
+@ROUT C2BLK `        @(typ) *rw0 = b; `
+@ROUT BLK2C `        const @(typ) *rw0 = b; `
+@ROUT C2BLK `        const @(typ) *C0 = C+i; `
+@ROUT BLK2C `        @(typ) *C0 = C+i; `
+         unsigned int ii, jj;
+         size_t nu = N-i;
+         nu = (nu >= @(nu)) ? @(nu) : nu;
+         in = i + nu;
+         for (jj=0; jj < mu; jj++, C0 += ldc, rw0++)
+         {
+@ROUT C2BLK `           @(typ) *pr = rw0; `
+@ROUT BLK2C `           const @(typ) *pr = rw0; `
+            size_t J=j+jj;
+            for (ii=0; ii < nu; ii++, pr += @(mu))
+            {
+               size_t I=i+ii;
+               if (I <= J)
+               {
+                  @callproc doElementT ii 0 C 0 pr 
+               }
+            }
+         }
+      }
+   }
+}
+@ROUT C2blk `#endif`
+@endiif
 @endiif
 @SKIP ******************** Complex data type ***********************************
 @PRE C Z
