@@ -27,6 +27,7 @@
 @ifdef ! SYRKU
    @SKIP @define SYRKU @1@  
    @define SYRKU @0@  
+   @SKIP @define SYRKU @0@  
 @endifdef
    @iif SYRKU = 0
       @define ma @1@
@@ -480,7 +481,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
 @endiif
 @iif TRI = 1
 @iif SYRKU = 0
-@SKIP ******************** Restricted old SYRK copy: real type *****************
+@SKIP ***************** Restricted old SYRK copy: real type ********************
 @SKIP handles diagonal blocks when mu = nu 
 @SKIP IN: mu, nu, beta, alpha
 @BEGINPROC doDiBlock n_
@@ -1693,9 +1694,11 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iif ML_MUNU ! 0
             @callproc doTrBlocksRolled mu @(nu) 0
          @endiif
-         @iif ML_MUR ! 0
-            @callproc doTrBlocksRolled mu nu 0
-         @endiif 
+         @iif ML_MUNU = 0
+            @iif ML_MUR ! 0
+               @callproc doTrBlocksRolled mu nu 0
+            @endiif 
+         @endiif
       }
       @endiif 
    }
@@ -1816,7 +1819,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @undef i
 @ENDPROC
 @SKIP handles rolled blocks
-@BEGINPROC doTrBlocksRolled 
+@BEGINPROC doTrBlockTsRolled 
       for (i=0; j > (i+nu-1); i=in, b += @(bs))
       {
 @ROUT C2BLK `        @(typ) *rw0 = b; `
@@ -1839,8 +1842,9 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       }
 @ENDPROC
 @SKIP handles fully unrolled blocks 
-@BEGINPROC doTrBlocksUR 
+@BEGINPROC doTrBlockTsUR 
    @define i @dum@
+   @define j @dum@
       for (i=0; j > (i+nu-1); i=in, b += @(bs))
       {
 @ROUT blk2C `        @declare "         @(typ) " n n ";"`
@@ -1857,6 +1861,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @SKIP *** MU & NU interchanged 
          @callproc doBlockT @(nu) @(mu) b 0
       }
+   @undef j
    @undef i
 @ENDPROC
 @SKIP handles MU unrolled blocks NOT.. MU & NU interchanged... 
@@ -1866,7 +1871,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       since MU & NU interchanged for L2UT... That means, MuUR actually unrolls
       NU with respect to normal copies
 @ENDSKIP   ******************************************************************** 
-@BEGINPROC doTrBlocksMuUR mu_ nu_ 
+@BEGINPROC doTrBlockTsMuUR mu_ nu_ 
    @define i @dum@
    @define k @dum@
       for (i=0; j > (i+nu-1); i=in, b += @(bs) )
@@ -1890,7 +1895,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @undef k
    @undef i
 @ENDPROC
-@BEGINPROC doTrBlocksNuUR mu_ nu_ 
+@BEGINPROC doTrBlockTsNuUR mu_ nu_ 
    @define i @dum@
       for (i=0; j > (i+nu-1); i=in, b += @(bs) )
       {
@@ -1921,7 +1926,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    @undef i
 @ENDPROC
 @SKIP handles diagonal crossing blocks, implement rolled version first
-@BEGINPROC doDiagBlock mu_ 
+@BEGINPROC doDiagBlockT mu_ 
       for ( ; i < jn; i=in, b += @(bs))
       {
 @ROUT C2BLK `        @(typ) *rw0 = b; `
@@ -2014,14 +2019,14 @@ void Mjoin(ATL_USERCPMM,_L2UT)
  *    access of C-workspace is consecutive
  */
       @iif ML_MUNU = 1
-         @callproc doTrBlocksUR 
+         @callproc doTrBlockTsUR 
       @endiif
       @SKIP ML_NO = 1 => ML_NUR and ML_MUR can not both be 0 
       @iif ML_NUR = 0
-         @callproc doTrBlocksMuUR mu @(nu)
+         @callproc doTrBlockTsMuUR mu @(nu)
       @endiif
       @iif ML_MUR = 0 
-         @callproc doTrBlocksNuUR @(mu) nu
+         @callproc doTrBlockTsNuUR @(mu) nu
       @endiif
 @BEGINSKIP
       NOTE: Since cleanup in M dimension will always be handled by diagonal 
@@ -2032,10 +2037,10 @@ void Mjoin(ATL_USERCPMM,_L2UT)
  *    intersection occurs at later blocks
  */
       @iif ML_NUR = 0
-         @callproc doDiagBlock mu 
+         @callproc doDiagBlockT mu 
       @endiif
       @iif ML_NUR ! 0
-         @callproc doDiagBlock @(mu) 
+         @callproc doDiagBlockT @(mu) 
       @endiif
    }
 /*
@@ -2058,11 +2063,11 @@ void Mjoin(ATL_USERCPMM,_L2UT)
  *                       => j > i+nu-1
  *    access of C-workspace is consecutive
  */      
-      @callproc doTrBlocksRolled 
+      @callproc doTrBlockTsRolled 
 /*
  *    intersection occurs at later blocks
  */
-      @callproc doDiagBlock mu 
+      @callproc doDiagBlockT mu 
    }
 }
 @ROUT C2blk `#endif`
@@ -2300,6 +2305,330 @@ void Mjoin(ATL_USERCPMM,_L2UT)
                   @(pr_)[@(k_)] = r0 + r1;
                   @(pi_)[@(k_)] = i0 + i1;
                }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+@ENDPROC
+@SKIP handles single Transpose element 
+@BEGINPROC doElementT c_ ir_ ii_ C_ k_ rC_ iC_ 
+         @iif alpha = 1
+            @iif beta = 0
+@ROUT blk2C 
+            @(C_)@(c_)[@(ir_)] = @(rC_)[@(k_)];
+            #ifdef Conj_
+               @(C_)@(c_)[@(ii_)] = -@(iC_)[@(k_)];
+            #else
+               @(C_)@(c_)[@(ii_)] = @(iC_)[@(k_)];
+            #endif
+@ROUT C2blk 
+            @(rC_)[@(k_)] = @(C_)@(c_)[@(ir_)];
+            #ifdef Conj_
+               @(iC_)[@(k_)] = -@(C_)@(c_)[@(ii_)];
+            #else
+               @(iC_)[@(k_)] = @(C_)@(c_)[@(ii_)];
+            #endif
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            @(C_)@(c_)[@(ir_)] += @(rC_)[@(k_)];
+            #ifdef Conj_
+               @(C_)@(c_)[@(ii_)] -= @(iC_)[@(k_)];
+            #else
+               @(C_)@(c_)[@(ii_)] += @(iC_)[@(k_)];
+            #endif
+@ROUT C2blk 
+            @(rC_)[@(k_)] += @(C_)@(c_)[@(ir_)];
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            @(C_)@(c_)[@(ir_)] = @(rC_)[@(k_)] - @(C_)@(c_)[@(ir_)];
+            #ifdef Conj_
+               @(C_)@(c_)[@(ii_)] = -@(iC_)[@(k_)] - @(C_)@(c_)[@(ii_)];
+            #else
+               @(C_)@(c_)[@(ii_)] = @(iC_)[@(k_)] - @(C_)@(c_)[@(ii_)];
+            #endif
+@ROUT C2blk 
+            @(rC_)[@(k_)] = @(C_)@(c_)[@(ir_)] - @(rC_)[@(k_)];
+            #ifdef Conj_
+               @(iC_)[@(k_)] = @(C_)@(c_)[@(ii_)] + @(iC_)[@(k_)];
+            #else
+               @(iC_)[@(k_)] = @(C_)@(c_)[@(ii_)] - @(iC_)[@(k_)];
+            #endif
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=@(C_)@(c_)[@(ir_)], ic=@(C_)@(c_)[@(ii_)];
+               register @(typ) rr=@(rC_)[@(k_)];
+               #ifdef Conj_
+                  register @(typ) ir = -@(iC_)[@(k_)];
+               #else
+                  register @(typ) ir =  @(iC_)[@(k_)];
+               #endif
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               @(C_)@(c_)[@(ir_)] = rr;
+               @(C_)@(c_)[@(ii_)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=@(rC_)[@(k_)], ic=@(iC_)[@(k_)];
+               register @(typ) rr=@(C_)@(c_)[@(ir_)];
+               #ifdef Conj_
+                  register @(typ) ir = -@(C_)@(c_)[@(ii_)];
+               #else
+                  register @(typ) ir =  @(C_)@(c_)[@(ii_)];
+               #endif
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               @(rC_)[@(k_)] = rr;
+               @(iC_)[@(k_)] = ic;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iif alpha = -1
+            @iif beta = 0
+@ROUT blk2C 
+            @(C_)@(c_)[@(ir_)] = -@(rC_)[@(k_)];
+            #ifdef Conj_
+               @(C_)@(c_)[@(ii_)] = @(iC_)[@(k_)];
+            #else
+               @(C_)@(c_)[@(ii_)] = -@(iC_)[@(k_)];
+            #endif
+@ROUT C2blk 
+            @(rC_)[@(k_)] = -@(C_)@(c_)[@(ir_)];
+            #ifdef Conj_
+               @(iC_)[@(k_)] = @(C_)@(c_)[@(ii_)];
+            #else
+               @(iC_)[@(k_)] = -@(C_)@(c_)[@(ii_)];
+            #endif
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            @(C_)@(c_)[@(ir_)] -= @(rC_)[@(k_)];
+            #ifdef Conj_
+               @(C_)@(c_)[@(ii_)] += @(iC_)[@(k_)];
+            #else
+               @(C_)@(c_)[@(ii_)] -= @(iC_)[@(k_)];
+            #endif
+@ROUT C2blk 
+            @(rC_)[@(k_)] -= @(C_)@(c_)[@(ir_)];
+            #ifdef Conj_
+               @(iC_)[@(k_)] += @(C_)@(c_)[@(ii_)];
+            #else
+               @(iC_)[@(k_)] -= @(C_)@(c_)[@(ii_)];
+            #endif
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            @(C_)@(c_)[@(ir_)] = -@(C_)@(c_)[@(ir_)] - @(rC_)[@(k_)];
+            #ifdef Conj_
+               @(C_)@(c_)[@(ii_)] = @(iC_)[@(k_)] - @(C_)@(c_)[@(ii_)];
+            #else
+               @(C_)@(c_)[@(ii_)] = -@(C_)@(c_)[@(ii_)] - @(iC_)[@(k_)];
+            #endif
+@ROUT C2blk 
+            @(rC_)[@(k_)] = -@(C_)@(c_)[@(ir_)] - @(rC_)[@(k_)];
+            #ifdef Conj_
+               @(iC_)[@(k_)] = @(C_)@(c_)[@(ii_)] - @(iC_)[@(k_)];
+            #else
+               @(iC_)[@(k_)] = -@(C_)@(c_)[@(ii_)] - @(iC_)[@(k_)];
+            #endif
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=@(C_)@(c_)[@(ir_)], ic=@(C_)@(c_)[@(ii_)];
+               register @(typ) rr = -@(rC_)[@(k_)];
+               #ifdef Conj_
+                  register @(typ) ir = @(iC_)[@(k_)];
+               #else
+                  register @(typ) ir = -@(iC_)[@(k_)];
+               #endif
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               @(C_)@(c_)[@(ir_)] = rr;
+               @(C_)@(c_)[@(ii_)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=@(rC_)[@(k_)], ic=@(iC_)[@(k_)];
+               register @(typ) rr = -@(C_)@(c_)[@(ir_)];
+               #ifdef Conj_
+                  register @(typ) ir =  @(C_)@(c_)[@(ii_)];
+               #else
+                  register @(typ) ir = -@(C_)@(c_)[@(ii_)];
+               #endif
+               rr += rc * rb;
+               ir += ic * rb;
+               rr -= ic * ib;
+               ir += rc * ib;
+               @(rC_)[@(k_)] = rr;
+               @(iC_)[@(k_)] = ic;
+            }
+@ROUT blk2C C2blk
+            @endiif
+         @endiif
+         @iif @iexp @(alpha) 1 ! @(alpha) -1 ! &
+            @iif beta = 0
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=@(rC_)[@(k_)];
+               #ifdef Conj_
+                  const register @(typ) ic = -@(iC_)[@(k_)];
+               #else
+                  const register @(typ) ic =  @(iC_)[@(k_)];
+               #endif
+               register @(typ) rr, ir;
+               rr = rc * ra;
+               ir = ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               @(C_)@(c_)[@(ir_)] = rr;
+               @(C_)@(c_)[@(ii_)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=@(C_)@(c_)[@(ir_)];
+               #ifdef Conj_
+                  const register @(typ) ic = -@(C_)@(c_)[@(ii_)];
+               #else
+                  const register @(typ) ic =  @(C_)@(c_)[@(ii_)];
+               #endif
+               register @(typ) rr, ir;
+               rr  = rc * ra;
+               ir  = ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               @(rC_)[@(k_)] = rr;
+               @(iC_)[@(k_)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = 1
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=@(rC_)[@(k_)];
+               #ifdef Conj_
+                  const register @(typ) ic = -@(iC_)[@(k_)];
+               #else
+                  const register @(typ) ic =  @(iC_)[@(k_)];
+               #endif
+               register @(typ) rr=@(C_)@(c_)[@(ir_)], ir=@(C_)@(c_)[@(ii_)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               @(C_)@(c_)[@(ir_)] = rr;
+               @(C_)@(c_)[@(ii_)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=@(C_)@(c_)[@(ir_)];
+               #ifdef Conj_
+                  const register @(typ) ic = -@(C_)@(c_)[@(ii_)];
+               #else
+                  const register @(typ) ic =  @(C_)@(c_)[@(ii_)];
+               #endif
+               register @(typ) rr=@(rC_)[@(k_)], ir=@(iC_)[@(k_)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               @(rC_)[@(k_)] = rr;
+               @(iC_)[@(k_)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif beta = -1
+@ROUT blk2C 
+            { 
+               const register @(typ) rc=@(rC_)[@(k_)];
+               #ifdef Conj_
+                  const register @(typ) ic = -@(iC_)[@(k_)];
+               #else
+                  const register @(typ) ic =  @(iC_)[@(k_)];
+               #endif
+               register @(typ) rr = -@(C_)@(c_)[@(ir_)], ir = -@(C_)@(c_)[@(ii_)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               @(C_)@(c_)[@(ir_)] = rr;
+               @(C_)@(c_)[@(ii_)] = ir;
+            }
+@ROUT C2blk 
+            { 
+               const register @(typ) rc=@(C_)@(c_)[@(ir_)];
+               #ifdef Conj_
+                  const register @(typ) ic = -@(C_)@(c_)[@(ii_)];
+               #else
+                  const register @(typ) ic =  @(C_)@(c_)[@(ii_)];
+               #endif
+               register @(typ) rr = -@(rC_)[@(k_)], ir = -@(iC_)[@(k_)];
+               rr += rc * ra;
+               ir += ic * ra;
+               rr -= ic * ia;
+               ir += rc * ia;
+               @(rC_)[@(k_)] = rr;
+               @(iC_)[@(k_)] = ir;
+            }
+@ROUT blk2C C2blk
+            @endiif
+            @iif @iexp @(beta) 0 ! @(beta) 1 ! & @(beta) -1 ! &
+@ROUT blk2C 
+            {
+               register @(typ) rc=@(C_)@(c_)[@(ir_)], ic=@(C_)@(c_)[@(ii_)];
+               register @(typ) rB=@(rC_)[@(k_)], r0, i0, r1, i1;
+               #ifdef Conj_
+                  register @(typ) iB = -@(iC_)[@(k_)];
+               #else
+                  register @(typ) iB =  @(iC_)[@(k_)];
+               #endif
+               r0  = rb * rc;
+               r1  = ra * rB;
+               i0  = rb * ic;
+               i1  = ra * iB;
+               r0 -= ib * ic;
+               i1 += ib * rc;
+               r1 -= ia * iB;
+               i1 += ia * rB;
+               @(C_)@(c_)[@(ir_)] = r0 + r1;
+               @(C_)@(c_)[@(ii_)] = i0 + i1;
+            }
+@ROUT C2blk 
+            {
+               register @(typ) rB=@(C_)@(c_)[@(ir_)];
+               #ifdef Conj_
+                  register @(typ) iB = -@(C_)@(c_)[@(ii_)];
+               #else
+                  register @(typ) iB =  @(C_)@(c_)[@(ii_)];
+               #endif
+               register @(typ) rc=@(rC_)[@(k_)], ic=@(iC_)[@(k_)], r0, i0, r1, i1;
+               r0  = rb * rc;
+               r1  = ra * rB;
+               i0  = rb * ic;
+               i1  = ra * iB;
+               r0 -= ib * ic;
+               i1 += ib * rc;
+               r1 -= ia * iB;
+               i1 += ia * rB;
+               @(rC_)[@(k_)] = r0 + r1;
+               @(iC_)[@(k_)] = i0 + i1;
+            }
 @ROUT blk2C C2blk
             @endiif
          @endiif
@@ -2636,6 +2965,8 @@ void @(rtnm)
    @ROUT C2blk blk2C
 )
 @endiif
+@SKIP *** NOTE: copied following declaration of a2c_1 from old version, don't 
+@SKIP     think it is used anymore
 @iif cpvl > 1
 static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha, 
                          const @(typ) *b, const SCALAR beta, 
@@ -3565,7 +3896,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
 }
 @SKIP ***************** SYRK L2UT : complex type *******************************
 @SKIP handles single element 
-@BEGINPROC doElementT c_ ir_ ii_ k_ 
+@BEGINPROC doElementTm c_ ir_ ii_ k_ 
          @iif alpha = 1
             @iif beta = 0
 @ROUT blk2C 
@@ -3902,7 +4233,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iexp ir @(i) @(i) +
          @iexp ii @(ir) 1 +
          @iexp k @(i) @(mu) * @(j) +
-            @callproc doElementT @(j) @(ir) @(ii) @(k) 
+            @callproc doElementTm @(j) @(ir) @(ii) @(k) 
          @iexp i @(i) 1 +
       @endiwhile
       @iexp i @(mu) @(mu) +
@@ -3931,7 +4262,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iexp ir @(i) @(i) +
          @iexp ii @(ir) 1 +
          @iexp k @(i) @(mu) * @(j) +
-         @callproc doElementT @(j) @(ir) @(ii) kk+@(k)  
+         @callproc doElementTm @(j) @(ir) @(ii) kk+@(k)  
          @iexp i @(i) 1 +
       @endiwhile
       @iexp i @(m_) @(m_) +
@@ -3958,7 +4289,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iexp ir @(i) @(i) +
          @iexp ii @(ir) 1 +
          @iexp k @(i) @(mu_) * @(j) +
-         @callproc doElementT @(j) @(ir) @(ii) @(k)  
+         @callproc doElementTm @(j) @(ir) @(ii) @(k)  
          @iexp i @(i) 1 +
       @endiwhile
       @iexp i @(inc_) @(inc_) +
@@ -3993,13 +4324,13 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @endiif
          @iexp ii @(ir) 1 +
          @iexp k @(i) @(mu) * @(j) +
-            @callproc doElementT @(h) @(ir) @(ii) @(k) 
+            @callproc doElementTm @(h) @(ir) @(ii) @(k) 
 @ROUT blk2C 
          @iexp ir @(i) @(i) +
          @iexp ii @(ir) 1 +
          @iexp k @(i) @(mu) * @(j) +
          @iif j } i
-            @callproc doElementT @(j) @(ir) @(ii) @(k) 
+            @callproc doElementTm @(j) @(ir) @(ii) @(k) 
          @endiif
 @ROUT blk2C C2blk
          @iexp i @(i) 1 +
@@ -4035,7 +4366,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iif j } i
          @iexp ir @(r) @(r) +
          @iexp ii @(ir) 1 +
-      @callproc doElementT @(c) @(ir) @(ii) kk+@(k)
+      @callproc doElementTm @(c) @(ir) @(ii) kk+@(k)
          @endiif
 @ROUT C2blk
          @iif j < i
@@ -4048,7 +4379,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @endiif
          @iexp ir @(r) @(r) +
          @iexp ii @(ir) 1 +
-      @callproc doElementT @(c) @(ir) @(ii) kk+@(k)
+      @callproc doElementTm @(c) @(ir) @(ii) kk+@(k)
 @ROUT blk2C C2blk
          @iexp i @(i) 1 +
       @endiwhile
@@ -4088,7 +4419,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iif j } i
             @iexp ir @(i) @(i) +
             @iexp ii @(ir) 1 +
-            @callproc doElementT @(j) @(ir) @(ii) @(k)
+            @callproc doElementTm @(j) @(ir) @(ii) @(k)
          @endiif
          @iexp i @(i) 1 +
       @endiwhile
@@ -4134,7 +4465,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
             @iif i < @(t)
                @iexp ir @(i) @(i) +
                @iexp ii @(ir) 1 +
-         @callproc doElementT @(j) @(ir) @(ii) @(k)  
+         @callproc doElementTm @(j) @(ir) @(ii) @(k)  
             @endiif   
          @endiif
          @iexp i @(i) 1 +
@@ -4389,6 +4720,181 @@ void Mjoin(ATL_USERCPMM,_L2UT)
 @endiif
 @iif SYRKU ! 0
 @SKIP ***************** Unrestricted SYRK copy: complex type *******************
+@SKIP handles full block
+@BEGINPROC doBlockU m_ n_ rC_ iC_ cinc_
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @define ir @dum@
+   @define ii @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(m_)
+         @iexp ir @(i) @(i) +
+         @iexp ii @(ir) 1 +
+         @iexp k @(j) @(mu) * @(i) +
+         @callproc doElement @(j) @(ir) @(ii) C @(k) @(rC_) @(iC_) 
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif cinc_ ! 0
+         @iexp i @(mu) @(mu) +
+         @iif m_ = mu
+            C@(j) += @(i);
+         @endiif
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef ii
+   @undef ir
+   @undef k
+   @undef j
+   @undef i
+@ENDPROC
+@SKIP handles rolled rectangual blocks, used for cleanup as well
+@BEGINPROC doTrBlocksRolled mu_ nu_ tstmu_
+         unsigned int mu=N-i, ii, jj, nblks;
+@ROUT C2BLK `         const @(typ) *C0 = C + (i<<1); `          
+@ROUT BLK2C `         @(typ) *C0 = C + (i<<1); `          
+@ROUT C2BLK `         @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+@ROUT BLK2C `         const @(typ) *pr = rw + cinc, *pi = iw + cinc; `     
+   @iif tstmu_ = 1
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+   @endiif
+         in = i + mu;
+         for (jj=0; jj < @(nu_); jj++, C0 += ldc2, pr += @(mu), pi += @(mu))
+         {
+            for (ii=0; ii < @(mu_); ii++)
+            {
+               unsigned int rk = ii + ii, ik = rk + 1;
+               @callproc doElement 0 rk ik C ii pr pi 
+            }
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan; iw += rwpan;
+@ENDPROC
+@SKIP handles unrolled rectangual blocks, used for cleanup as well
+@BEGINPROC doTrBlocksUR 
+      for (; (i+@(mu)) < N; i = in)
+      {
+         unsigned int nblks;
+@ROUT C2BLK `         @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+@ROUT BLK2C `         const @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+@ROUT blk2C `        @declare "         @(typ) " n n ";"`
+@ROUT C2blk `        @declare "         const @(typ) " n n ";"`
+         *C0=C+(i<<1)
+         @define j @1@
+         @iwhile j < @(nu)
+            @iexp i @(j) -1 +
+            *C@(j)=C@(i)+ldc2
+            @iexp j @(j) 1 +
+         @endiwhile
+      @enddeclare
+         in = i + @(mu);
+         @callproc doBlockU @(mu) @(nu) pr pi 1 
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan; iw += rwpan;
+      }
+@ENDPROC
+@BEGINPROC doTrBlocksMuUR mu_ nu_
+   @define i @dum@
+   @define ir @dum@
+   @define ii @dum@
+         for (; (i+@(mu)) < N; i = in)
+         {
+            unsigned int jj, nblks;
+@ROUT C2BLK `            const @(typ) *C0 = C + (i<<1); `          
+@ROUT BLK2C `            @(typ) *C0 = C + (i<<1); `          
+@ROUT C2BLK `            @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+@ROUT BLK2C `            const @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+            in = i + @(mu);
+            for (jj=0; jj < @(nu_); jj++, C0 += ldc2, pr += @(mu), pi += @(mu))
+            {
+            @iexp i 0
+            @iwhile i < @(mu_)
+               @iexp ir @(i) @(i) +
+               @iexp ii @(ir) 1 +
+               @callproc doElement 0 @(ir) @(ii) C @(i) pr pi 
+               @iexp i @(i) 1 +
+            @endiwhile
+            } 
+            nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+            rwpan = nblks*@(bs);
+            rw += rwpan; iw += rwpan;
+         }
+   @undef ii
+   @undef ir
+   @undef i
+@ENDPROC
+@BEGINPROC doTrBlocksNuUR mu_ nu_ 
+      for (; i < N; i = in)
+      {
+         unsigned int ii, nblks, mu=N-i;
+@ROUT C2BLK `         @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+@ROUT BLK2C `         const @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+@ROUT blk2C `        @declare "         @(typ) " n n ";"`
+@ROUT C2blk `        @declare "         const @(typ) " n n ";"`
+         *C0=C+(i<<1)
+         @define j @1@
+         @iwhile j < @(nu)
+            @iexp i @(j) -1 +
+            *C@(j)=C@(i)+ldc2
+            @iexp j @(j) 1 +
+         @endiwhile
+      @enddeclare
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+         in = i + mu;
+         for (ii=0; ii < @(mu_); ii++)
+         {
+            unsigned int rk = (ii<<1), ik = (ii<<1)+1;
+            @iexp j 0
+            @iwhile j < @(nu_)
+               @callproc doElement @(j) rk ik C @(mu)*@(j)+ii pr pi
+               @iexp j @(j) 1 +
+            @endiwhile
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan; iw += rwpan;
+      }
+@ENDPROC
+@SKIP handles diagonal crossing blocks, implement rolled version first
+@BEGINPROC doDiagBlock mu_ nu_
+/*
+ *    Handling of diagonal blocks for this colpan 
+ */
+      for (; i < jn; i = in)
+      {
+         unsigned int mu=N-i, ii, jj, nblks;
+@ROUT C2BLK `         const @(typ) *C0 = C + (i<<1); `          
+@ROUT BLK2C `         @(typ) *C0 = C + (i<<1); `          
+@ROUT C2BLK `         @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+@ROUT BLK2C `         const @(typ) *pr = rw + cinc, *pi = iw + cinc; `          
+         mu = (mu >= @(mu)) ? @(mu) : mu;
+         in = i + mu;
+@SKIP /* based on full/cleanup, nu can be const or var */
+         for (jj=0; jj < @(nu_); jj++, C0 += ldc2, pr += @(mu), pi += @(mu)) 
+         {
+            const unsigned int J=j+jj;
+            for (ii=0; ii < mu; ii++)
+            {
+               unsigned int rk = (ii<<1), ik = (ii<<1)+1;
+               const unsigned int I=i+ii;
+               if (I >= J)
+               {
+                  @callproc doElement 0 rk ik C ii pr pi 
+               }
+            }
+         }
+         nblks = (in-1+@(nu)) / @(nu);  /* # of row blocks in this panel */
+         rwpan = nblks*@(bs);
+         rw += rwpan; iw += rwpan; /* finished all blocks in rowpanel */
+         rW = (in <= jn) ? rw : rW;
+         iW = (in <= jn) ? iw : iW;
+      }
+@ENDPROC
 /*
  * Main Loop:
  @iif bvML = 0
@@ -4439,8 +4945,8 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    const register @(typ) rb=(*beta), ib=beta[1];
    @endiif
    const size_t incC = (ldc*@(nu))<<1, ldc2 = ldc+ldc;
-@ROUT C2BLK `   @(typ) *rW=b, *rw; `
-@ROUT BLK2C `   const @(typ) *rW=b, *rw; `
+@ROUT C2BLK `   @(typ) *rW=rC, *iW=iC, *rw, *iw; `
+@ROUT BLK2C `   const @(typ) *rW=rC, *iW=iC, *rw, *iw; `
 /*
  * NOTE: we assume N=M, always square for syrk 
  */
@@ -4471,6 +4977,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       @endiif
       i = (j/@(mu))*@(mu);
       rw = rW;
+      iw = iW;
 /*
  *    handle the diagonal-crossing blocks first
  *    NOTE: this can be full-MU block or partial----> no unrolling right now 
@@ -4503,9 +5010,11 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
          @iif ML_MUNU = 1
             @callproc doTrBlocksRolled mu @(nu) 0
          @endiif
-         @iif ML_MUR = 1
-            @callproc doTrBlocksRolled mu nu 0
-         @endiif 
+         @iif ML_MUNU = 0
+            @iif ML_MUR = 1
+               @callproc doTrBlocksRolled mu nu 0
+            @endiif 
+         @endiif
       }
       @endiif 
    }
@@ -4531,6 +5040,7 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
       jn = j + nu;
       i = (j/@(mu))*@(mu);
       rw = rW;
+      iw = iW;
       @callproc doDiagBlock mu nu 
 /*
  *    full blocks before diagonal 
@@ -4542,6 +5052,309 @@ static INLINE void a2c_1(const size_t M, const size_t N, const @(typ) alpha,
    }
    @endiif
 }
+@SKIP ***************** Unrestricted SYRK L2UT : complex type ******************
+@SKIP handles full subblock
+@BEGINPROC doBlockT m_ n_ rC_ iC_ cinc_
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @define ir @dum@
+   @define ii @dum@
+   @iexp j 0
+   @iwhile j < @(n_)
+      @iexp i 0
+      @iwhile i < @(m_)
+         @iexp ir @(i) @(i) +
+         @iexp ii @(ir) 1 +
+         @iexp k @(i) @(mu) * @(j) +
+            @callproc doElementT @(j) @(ir) @(ii) C @(k) @(rC_) @(iC_) 
+         @iexp i @(i) 1 +
+      @endiwhile
+      @iif cinc_ ! 0
+         @iexp i @(mu) @(mu) +
+         @iif m_ = mu
+            C@(j) += @(i);
+         @endiif
+      @endiif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @undef ii
+   @undef ir
+   @undef k
+   @undef j
+   @undef i
+@ENDPROC
+@SKIP handles rolled blocks
+@BEGINPROC doTrBlockTsRolled 
+      for (i=0; j > (i+nu-1); i=in, rC += @(bs), iC += @(bs))
+      {
+@ROUT C2BLK `        @(typ) *rw0 = rC, *iw0 = iC; `
+@ROUT BLK2C `        const @(typ) *rw0 = rC, *iw0 = iC; `
+@ROUT C2BLK `        const @(typ) *C0 = C+(i<<1); `
+@ROUT BLK2C `        @(typ) *C0 = C+(i<<1); `
+         unsigned int ii, jj;
+         size_t nu = N-i;
+         nu = (nu >= @(nu)) ? @(nu) : nu;
+         in = i + nu;
+         for (jj=0; jj < mu; jj++, C0 += ldc2, rw0++, iw0++)
+         {
+@ROUT C2BLK `           @(typ) *pr = rw0, *pi = iw0; `
+@ROUT BLK2C `           const @(typ) *pr = rw0, *pi = iw0; `
+            for (ii=0; ii < nu; ii++, pr += @(mu), pi += @(mu))
+            {
+               unsigned int rk = (ii<<1), ik = (ii<<1)+1; 
+               @callproc doElementT 0 rk ik C 0 pr pi 
+            }
+         }
+      }
+@ENDPROC
+@SKIP handles fully unrolled blocks 
+@BEGINPROC doTrBlockTsUR 
+   @define i @dum@
+   @define j @dum@
+      for (i=0; j > (i+nu-1); i=in, rC += @(bs), iC += @(bs))
+      {
+@ROUT blk2C `        @declare "         @(typ) " n n ";"`
+@ROUT C2blk `        @declare "         const @(typ) " n n ";"`
+         *C0=C+(i<<1)
+         @define j @1@
+         @iwhile j < @(mu)
+            @iexp i @(j) -1 +
+            *C@(j)=C@(i)+ldc2
+            @iexp j @(j) 1 +
+         @endiwhile
+      @enddeclare
+         in = i + @(nu);
+         @SKIP *** MU & NU interchanged 
+         @callproc doBlockT @(nu) @(mu) rC iC 0
+      }
+   @undef j
+   @undef i
+@ENDPROC
+@SKIP handles MU unrolled blocks NOT.. MU & NU interchanged... 
+@BEGINSKIP ********************************************************************
+      NOTE: L2UT code is located in the same file as the normal copy..
+      So, to make it similar as the normal copy, we are unrolling NU direction 
+      since MU & NU interchanged for L2UT... That means, MuUR actually unrolls
+      NU with respect to normal copies
+@ENDSKIP   ******************************************************************** 
+@BEGINPROC doTrBlockTsMuUR mu_ nu_ 
+   @define i @dum@
+   @define k @dum@
+   @define ir @dum@
+   @define ii @dum@
+      for (i=0; j > (i+nu-1); i=in, rC += @(bs), iC += @(bs) )
+      {
+@ROUT C2BLK `        @(typ) *pr = rC, *pi = iC; `
+@ROUT BLK2C `        const @(typ) *pr = rC, *pi = iC; `
+@ROUT C2BLK `        const @(typ) *C0 = C+(i<<1); `
+@ROUT BLK2C `        @(typ) *C0 = C+(i<<1); `
+         unsigned int jj;
+         in = i + @(nu);
+         for (jj=0; jj < @(mu_); jj++, C0 += ldc2, pr++, pi++)
+         {
+            @iexp i 0
+            @iwhile i < @(nu_)
+               @iexp k @(mu) @(i) *
+               @iexp ir @(i) @(i) +
+               @iexp ii @(ir) 1 +
+               @callproc doElementT 0 @(ir) @(ii) C @(k) pr pi 
+               @iexp i @(i) 1 +
+            @endiwhile
+         }
+      }
+   @undef ii
+   @undef ir
+   @undef k
+   @undef i
+@ENDPROC
+@BEGINPROC doTrBlockTsNuUR mu_ nu_ 
+      for (i=0; j > (i+nu-1); i=in, rC += @(bs), iC += @(bs) )
+      {
+         unsigned int ii;
+@ROUT C2BLK `         @(typ) *pr = rC, *pi = iC; `          
+@ROUT BLK2C `         const @(typ) *pr = rC, *pi = iC; `          
+@ROUT blk2C `        @declare "         @(typ) " n n ";"`
+@ROUT C2blk `        @declare "         const @(typ) " n n ";"`
+         *C0=C+(i<<1)
+         @define j @1@
+         @iwhile j < @(mu)
+            @iexp i @(j) -1 +
+            *C@(j)=C@(i)+ldc2
+            @iexp j @(j) 1 +
+         @endiwhile
+      @enddeclare
+         nu = (nu >= @(nu)) ? @(nu) : nu;
+         in = i + nu;
+         for (ii=0; ii < nu; ii++, p+=@(mu))
+         {
+            unsigned int rk = (ii<<1), ik = (ii<<1)+1;
+            @iexp j 0
+            @iwhile j < @(mu_)
+               @callproc doElementT @(j) rk ik C @(j) pr pi
+               @iexp j @(j) 1 +
+            @endiwhile
+         }
+      }
+@ENDPROC
+@SKIP handles diagonal crossing blocks, implement rolled version first
+@BEGINPROC doDiagBlockT mu_ 
+      for ( ; i < jn; i=in, rC += @(bs), iC += @(bs))
+      {
+@ROUT C2BLK `        @(typ) *rw0 = rC, *iw0 = iC; `
+@ROUT BLK2C `        const @(typ) *rw0 = rC, *iw0 = iC; `
+@ROUT C2BLK `        const @(typ) *C0 = C+(i<<1); `
+@ROUT BLK2C `        @(typ) *C0 = C+(i<<1); `
+         unsigned int ii, jj;
+         size_t nu = N-i;
+         nu = (nu >= @(nu)) ? @(nu) : nu;
+         in = i + nu;
+         for (jj=0; jj < @(mu_); jj++, C0 += ldc2, rw0++, iw0++)
+         {
+@ROUT C2BLK `           @(typ) *pr = rw0, *pi = iw0; `
+@ROUT BLK2C `           const @(typ) *pr = rw0, *pi = iw0; `
+            size_t J=j+jj;
+            for (ii=0; ii < nu; ii++, pr += @(mu), pi += @(mu))
+            {
+               unsigned int rk = (ii<<1), ik = (ii<<1)+1;
+               size_t I=i+ii;
+               if (I <= J)
+               {
+                  @callproc doElementT 0 rk ik C 0 pr pi 
+               }
+            }
+         }
+      }
+@ENDPROC
+@ROUT C2blk `#if 0`
+#ifndef Mjoin
+   #define Mjoin(pre, nam) my_join(pre, nam)
+   #define my_join(pre, nam) pre ## nam
+#endif
+/*
+ * The block is assumed to store L, this function does a transpose while
+ * copying so that it is transferred with Upper portion of C
+ */
+#ifdef Conj_
+void Mjoin(ATL_USERCPMM,_L2UH)
+#else
+void Mjoin(ATL_USERCPMM,_L2UT)
+#endif
+(
+   const size_t M,      /* number of rows in A */
+   const size_t N,      /* number of columns in A */
+   const @(typ) *alpha, /* scalar for b */
+   @ROUT blk2C
+   const @(typ) *rC,    /* real block stored in @(mu)x@(nu)-major order */
+   const @(typ) *iC,    /* imag block stored in @(mu)x@(nu)-major order */
+   const @(typ) *beta,  /* scalar for C */
+   @(typ) *C,           /* matrix to be copied to access-major format */
+   const size_t ldc     /* stride between row elements */
+   @ROUT C2blk
+   const @(typ) *C,     /* matrix to be copied to access-major format */
+   const size_t ldc,    /* stride between row elements */
+   const @(typ) *beta,  /* scalar for C */
+   @(typ) *rC,          /* real block stored in @(mu)x@(nu)-major order */
+   @(typ) *iC           /* imag block stored in @(mu)x@(nu)-major order */
+   @ROUT C2blk blk2C
+)
+{
+   size_t j, jn;
+   const size_t incCm = (ldc*@(mu))<<1, ldc2 = ldc + ldc;
+   @iif alpX ! 0
+   const register @(typ) ra=(*alpha), ia=alpha[1];
+   @endiif
+   @iif betX ! 0
+   const register @(typ) rb=(*beta), ib=beta[1];
+   @endiif
+/*
+ * NOTE: we assume N=M, always square for syrk 
+ * MU & NU interchanged 
+ */
+   @iif ML_NO = 0
+      @iif ML_NUR ! 0
+   const size_t nf = N/@(mu);
+   const size_t n = nf*@(mu), nr = N-n;
+      @endiif
+/*
+ * since it's upper transpose case, the direction of @(mu) and NU interchanged
+ */
+      @iif ML_NUR = 0
+   for (j=0; j < N; j = jn, C += incCm)
+      @endiif
+      @iif ML_NUR ! 0
+   for (j=0; j < n; j = jn, C += incCm)
+      @endiif
+   {
+      size_t i, in, nu;
+      @iif ML_NUR = 0
+      size_t mu = N-j;
+      mu = (mu >= @(mu)) ? @(mu) : mu;
+      jn = j + mu;
+      @endiif
+      @iif ML_NUR ! 0
+      jn = j + @(mu);
+      @endiif
+      nu = @(nu);
+/*
+ *    for upper triangle, blocks whose do not intersect with diagonal follow:
+ *               y0 > x1 => j > (in-1)
+ *                       => j > i+nu-1
+ *    access of C-workspace is consecutive
+ */
+      @iif ML_MUNU = 1
+         @callproc doTrBlockTsUR 
+      @endiif
+      @SKIP ML_NO = 1 => ML_NUR and ML_MUR can not both be 0 
+      @iif ML_NUR = 0
+         @callproc doTrBlockTsMuUR mu @(nu)
+      @endiif
+      @iif ML_MUR = 0 
+         @callproc doTrBlockTsNuUR @(mu) nu
+      @endiif
+@BEGINSKIP
+      NOTE: Since cleanup in M dimension will always be handled by diagonal 
+      crossing block, we should not need any clean up in that direction 
+      for full block...
+@ENDSKIP
+/*
+ *    intersection occurs at later blocks
+ */
+      @iif ML_NUR = 0
+         @callproc doDiagBlockT mu 
+      @endiif
+      @iif ML_NUR ! 0
+         @callproc doDiagBlockT @(mu) 
+      @endiif
+   }
+/*
+ * cleanup in N dimension 
+ */
+   if (j < N)
+   @endiif
+   @iif ML_NO ! 0
+   for (j=0; j < N; j = jn, C += incCm)
+   @endiif
+   {
+      size_t i, in, nu;
+      size_t mu = N-j;
+      mu = (mu >= @(mu)) ? @(mu) : mu;
+      jn = j + mu;
+      nu = @(nu);
+/*
+ *    for upper triangle, blocks whose do not intersect with diagonal follow:
+ *               y0 > x1 => j > (in-1)
+ *                       => j > i+nu-1
+ *    access of C-workspace is consecutive
+ */      
+      @callproc doTrBlockTsRolled 
+/*
+ *    intersection occurs at later blocks
+ */
+      @callproc doDiagBlockT mu 
+   }
+}
+@ROUT C2blk `#endif`
 @endiif
 @endiif
 @ROUT blk2C_x87
