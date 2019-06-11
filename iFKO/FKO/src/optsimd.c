@@ -2024,7 +2024,7 @@ int VectorizeStage1(void)
    LOOPQ *lp;
    INSTQ *ip, *ipn;
    struct ptrinfo *pi0, *pi;
-   int flag, k, i, n, j;
+   int flag, k, dk, i, n, j;
    char ln[1024];
 
    if (!optloop)
@@ -2113,7 +2113,8 @@ int VectorizeStage1(void)
    {
       sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
       j = lp->vvscal[i+1] = STdef(ln, k, 0);
-      SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
+      dk = AddDerefEntry(-REG_SP, j, -j, 0, j);
+      SToff[j-1].sa[2] = dk;
    }
    SaveFKOState(1);
    return(0);
@@ -3221,7 +3222,7 @@ int SpeculativeVectorAnalysis()
  * incremental algorithm without explicitly figuring out all the paths
  */
 {
-   int i, j, n, k;
+   int i, j, n, k, dk;
    LOOPPATH *vpath;
    LOOPQ *lp;
    short *sp;
@@ -3421,7 +3422,8 @@ int SpeculativeVectorAnalysis()
       {
          sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
          j = lp->vvscal[i+1] = STdef(ln, k, 0);
-         SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
+         dk = AddDerefEntry(-REG_SP, j, -j, 0, j);
+         SToff[j-1].sa[2] = dk;
       }
       /*
        * Save fko

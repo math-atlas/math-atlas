@@ -10,6 +10,52 @@
 @iif kmaj = 1
    @iexp kmaj 0 0 +
 @endiif
+@SKIP ************ Adding new bitvectors to parameterized unrolling ************ 
+@BEGINSKIP
+   NOTE: cpUR bit location meanings: 
+      0/1   : Main Loop, Unroll in NU/MU dimension
+      1/2   : Main Loop, Unroll in KU dimension
+      2/4   : Cleanup Loop, Unroll in MU/NU dimension
+      3/8   : Cleanup Loop, Unroll in KU dimension
+@ENDSKIP
+@SKIP **** made fully unroll default for both main loop and cleanup loop
+@ifdef ! cpUR
+   @iexp cpUR 15
+@endifdef
+@BEGINSKIP
+   We are splitting two bits each for main loop and cleanup and creating two 
+   seperate bitvectors: bvML and bvCU
+   Now we created two flags: one for main loop and other for cleanup loop
+   bvML : bitvector with following meanings:
+      0 : no unroll in any dimension
+      1 : unroll NU/MU dimension (no-transpose/transpose)
+      2 : unroll KU dimension
+      3 : unroll both dimension
+   bvCU : bitvector with following meanings: 
+      0 : no unroll in any dimension
+      1 : unroll NU/MU dimension (no-transpose/transpose)
+      2 : unroll KU dimension
+      3 : unroll both dimension
+   NOTE: Unlike C-copy, A copy does support all 16 cases
+@ENDSKIP
+@iexp bvML @(cpUR) 3 &
+@iexp bvCU 2 @(cpUR) r
+@BEGINSKIP
+   to make code more readable, I create two flag to represent to each bits
+   ML_KUR, ML_NUR
+   CU_KUR, CU_NUR
+@ENDSKIP
+@iexp ML_NUR @(bvML) 1 &
+@iexp ML_KUR @(bvML) 2 &
+@iexp ML_NUKU @(bvML) 3 =
+@iexp ML_NO @(bvML) 0 = 
+@print ML_NUR=@(ML_NUR) ML_KUR=@(ML_KUR) ML_NUKU=@(ML_NUKU) 
+@iexp CU_NUR @(bvCU) 1 &
+@iexp CU_KUR @(bvCU) 2 &
+@iexp CU_NUKU @(bvCU) 3 =
+@iexp CU_NO @(bvCU) 0 = 
+@SKIP @print CU_NUR = @(CU_NUR) CU_KUR = @(CU_KUR)
+@SKIP **************************************************************************
 @ROUT ATL_cam2amb ATL_ram2amb ATL_muxnu2mat
 #include "atlas_misc.h"
 @beginskip
@@ -137,6 +183,141 @@
 @endifdef
 @iif kmaj ! 0
    @define ku @@(kmaj)@
+@SKIP *** this proc handles one full block
+@BEGINPROC doBlockNuKu
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @define ib @dum@
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+@ROUT ATL_am2cm
+            A@(j)[i+@(k)] = @(malp)b[@(ib)];
+@ROUT ATL_cm2am ammmtst
+            b[@(ib)] = @(malp)A@(j)[i+@(k)];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @undef ib
+   @undef k
+   @undef j
+   @undef i
+@ENDPROC
+@SKIP *** this proc handles one full block with KU unrolled 
+@BEGINPROC doBlockKu nu_
+   @define k @dum@
+            ATL_UINT jj;
+            @(cnst)TYPE *rA = A0;
+            @(cnstb)TYPE *p = b;
+            for (jj=0; jj < @(nu_); jj++, rA += lda, p+=@(ku))
+            {
+      @iexp k 0 
+      @iwhile k < @(ku)
+@ROUT ATL_am2cm
+               rA[i+@(k)] = @(malp)p[@(k)];
+@ROUT ATL_cm2am ammmtst
+               p[@(k)] = @(malp)rA[i+@(k)];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+         @iexp k @(k) 1 +
+      @endiwhile
+            }
+   @undef k
+@ENDPROC
+@SKIP *** this proc handles one full block with NU unrolled 
+@BEGINPROC doBlockNu ku_
+   @define j @dum@
+   @define ib @dum@
+            ATL_UINT ii;
+            for (ii=0; ii < @(ku_); ii++)
+            {
+      @iexp j 0 
+      @iwhile j < @(nu)
+            @iexp ib @(j) @(ku) *
+@ROUT ATL_am2cm
+               A@(j)[i+ii] = @(malp)b[@(ib)+ii];
+@ROUT ATL_cm2am ammmtst
+               b[@(ib)+ii] = @(malp)A@(j)[i+ii];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+         @iexp j @(j) 1 +
+      @endiwhile
+            }
+   @undef j
+   @undef ib
+@ENDPROC
+@SKIP *** this proc handles one full block in both rolled 
+@BEGINPROC doBlockRolled nu_ ku_
+            ATL_UINT jj;
+            @(cnst)TYPE *rA = A0;
+            @(cnstb)TYPE *p = b;
+            for (jj=0; jj < @(nu_); jj++, rA += lda, p+=@(ku))
+            {
+               ATL_UINT ii;
+               for (ii=0; ii < @(ku_); ii++)
+               {
+@ROUT ATL_am2cm
+                  rA[i+ii] = @(malp)p[ii];
+@ROUT ATL_cm2am ammmtst
+                  p[ii] = @(malp)rA[i+ii];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+               }
+            }
+@ENDPROC
+@SKIP *** this proc handles K-cleanup block 
+@BEGINPROC doKCuBlockNuKu
+   @define j @dum@
+   @define ib @dum@
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp ib @(j) @(ku) *
+@ROUT ATL_am2cm
+            A@(j)[i] = @(malp)b[@(ib)];
+@ROUT ATL_cm2am ammmtst
+            b[@(ib)] = @(malp)A@(j)[i];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+         @iexp j @(j) 1 +
+      @endiwhile
+   @undef ib
+   @undef j
+@ENDPROC
+@SKIP *** this proc handles K-cleanup block 
+@BEGINPROC doKCuBlockRolled nu_
+   @define k @dum@
+            ATL_UINT jj;
+            @(cnst)TYPE *rA = A0;
+            @(cnstb)TYPE *p = b;
+            for (jj=0; jj < @(nu_); jj++, rA += lda, p+=@(ku))
+            {
+@ROUT ATL_am2cm
+               rA[i] = @(malp)p[0];
+@ROUT ATL_cm2am ammmtst
+               p[0] = @(malp)rA[i];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+            }
+   @undef k
+@ENDPROC 
+@SKIP *** this proc handles K-cleanup block 
+@BEGINPROC doKCuBlockNu nu_
+   @define j @dum@
+   @define ib @dum@
+      @iexp j 0 
+      @iwhile j < @(nu_)
+         @iexp ib @(j) @(ku) *
+@ROUT ATL_am2cm
+            A@(j)[i] = @(malp)b[@(ib)];
+@ROUT ATL_cm2am ammmtst
+            b[@(ib)] = @(malp)A@(j)[i];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+         @iexp j @(j) 1 +
+      @endiwhile
+   @undef ib
+   @undef j
+@ENDPROC 
 @ROUT ATL_am2cm
 /* 
  * This routine copies from k-vectorized access-major block b to column-major
@@ -185,6 +366,11 @@ void ATL_USERCPMM       /* column- to access-major */
    ATL_CSZT n = (N/@(nu))*@(nu), k = (K/@(ku))*@(ku), incA = lda*@(nu), nr=N-n;
    ATL_CSZT KK = ((K+@(ku)-1)/@(ku))*@(ku);
    ATL_SZT i, j;
+@iexp NA1 1
+@iif @iexp 0 @(ML_NUR) ! 0 @(CU_NUR) ! |
+   @iexp NA1 0
+@endiif 
+@iif NA1 = 0
    @declare "   @(cnst)TYPE " n n ";"
       *A0=A
       @define j @1@
@@ -194,31 +380,43 @@ void ATL_USERCPMM       /* column- to access-major */
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
+@endiif
+@iif NA1 ! 0
+   @(cnst)TYPE *A0=A;
+@endiif
    @iexp binc @(nu) @(ku) *
-
+   /* Main loop */
    for (j=0; j < n; j += @(nu))
    {
       for (i=0; i < k; i += @(ku), b += @(binc))
       {
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @iexp k 0 0 +
-         @iwhile k < @(ku)
-            @iexp ib @(j) @(ku) *
-            @iexp ib @(ib) @(k) +
-@ROUT ATL_am2cm
-            A@(j)[i+@(k)] = @(malp)b[@(ib)];
-@ROUT ATL_cm2am ammmtst
-            b[@(ib)] = @(malp)A@(j)[i+@(k)];
-@ROUT ATL_am2cm ATL_cm2am ammmtst
-            @iexp k @(k) 1 +
-         @endiwhile
-         @iexp j @(j) 1 +
-      @endiwhile
+         @iif ML_NUKU ! 0 
+            @callproc doBlockNuKu
+         @endiif
+         @iif ML_NUKU = 0
+            @iif ML_KUR ! 0
+               @callproc doBlockKu @(nu)
+            @endiif
+            @iif ML_NUR ! 0
+               @callproc doBlockNu @(ku)
+            @endiif
+            @iif ML_NO ! 0
+               @callproc doBlockRolled @(nu) @(ku)
+            @endiif
+         @endiif
       }
-      if (k != KK)
+      if (k != KK) /* K-cleanup */
       {
 @ROUT ATL_cm2am ammmtst
+      /* zero padding the whole block first*/ 
+   @iif CU_NUKU = 0
+         ATL_UINT ii, jj;
+         TYPE *p = b; 
+         for (jj=0; jj < @(nu); jj++, p+=@(ku))
+            for (ii=0; ii < @(ku); ii++)
+               p[ii] = 0.0;
+   @endiif
+   @iif CU_NUKU ! 0
       @iexp j 0 0 +
       @iwhile j < @(nu)
          @iexp k 0 0 +
@@ -231,29 +429,37 @@ void ATL_USERCPMM       /* column- to access-major */
          @iexp j @(j) 1 +
                     0.0;
       @endiwhile
+   @endiif
 @ROUT ATL_am2cm ATL_cm2am ammmtst
          for (; i < K; i++, b++)
          {
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @iexp ib @(j) @(ku) *
-@ROUT ATL_am2cm
-            A@(j)[i] = @(malp)b[@(ib)];
-@ROUT ATL_cm2am ammmtst
-            b[@(ib)] = @(malp)A@(j)[i];
-@ROUT ATL_am2cm ATL_cm2am ammmtst
-         @iexp j @(j) 1 +
-      @endiwhile
+            @iif CU_NUKU ! 0
+               @callproc doKCuBlockNuKu
+            @endiif
+            @iif CU_NUKU = 0
+               @iif CU_NUR ! 0
+                  @callproc doKCuBlockNu @(nu)
+               @endiif
+               @iif CU_NUR = 0
+                  @callproc doKCuBlockRolled @(nu)
+               @endiif
+            @endiif
          }
          b += @(binc) - K + k;
       }
+   @iif NA1 = 0
       @iexp j 0 0 +
       @iwhile j < @(nu)
       A@(j) += incA;
       @iexp j @(j) 1 +
       @endiwhile
+   @endiif
+   @iif NA1 ! 0
+      A0 += incA;
+   @endiif
    }
-   switch(nr)
+@iif CU_NUKU ! 0 
+   switch(nr) /* N-cleanup */
    {
    @iexp n 1 0 +
    @iwhile n < @(nu)
@@ -331,10 +537,140 @@ void ATL_USERCPMM       /* column- to access-major */
    @endiwhile
    default:;
    }
+@endiif
+@iif CU_NUKU = 0
+   if (nr) /* N-cleanup */
+   {
+      for (i=0; i < k; i += @(ku), b += @(binc))
+      {
+      @iif CU_KUR ! 0
+         @callproc doBlockKu nr
+      @endiif
+      @iif CU_KUR = 0
+         @callproc doBlockRolled nr @(ku)
+      @endiif
+@ROUT ATL_cm2am ammmtst
+         /* zero padding */
+         for (; jj < @(nu); jj++, p+=@(ku))
+         {
+      @iif CU_KUR ! 0
+         @iexp j 0 
+         @iwhile j < @(ku)
+            p[@(j)] = 0.0;
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif CU_KUR = 0
+            ATL_UINT ii;
+            for (ii=0; ii < @(ku); ii++)
+               p[ii] = 0.0;
+      @endiif
+         }
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+      }
+      if (k != KK)
+      {
+@ROUT ATL_cm2am ammmtst
+      /* zero padding the whole block first*/ 
+      @SKIP @iif CU_NO ! 0
+         ATL_UINT jj;
+         TYPE *p = b; 
+         for (jj=0; jj < @(nu); jj++, p+=@(ku))
+         {
+            ATL_UINT ii;
+            for (ii=0; ii < @(ku); ii++)
+            {
+               p[ii] = 0.0;
+            }
+         }
+      @SKIP @endiif
+      @BEGINSKIP ****skipping unrolling the zero padding when not fully unrolled     
+      @iif CU_NO = 0
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp k 0 0 +
+            @iwhile k < @(ku)
+               @iexp ib @(j) @(ku) *
+               @iexp ib @(ib) @(k) +
+               b[@(ib)] = 
+               @iexp k @(k) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+                    0.0;
+         @endiwhile
+      @endiif
+      @ENDSKIP 
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+         for (; i < K; i++, b++)
+         {
+            @callproc doKCuBlockRolled nr 
+@ROUT ATL_cm2am ammmtst
+            /* zero padding */
+            for (; jj < @(nu); jj++, p+=@(ku))
+               p[0] = 0.0;
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+         }
+         b += @(binc) - K + k;
+      }
+   }
+@endiif
 }
 @ROUT ammmtst `#endif`
 @endiif
 @iif kmaj = 0
+@SKIP ****** handles unrolled block copy
+@BEGINPROC doBlockNu nu_
+   @define j @dum@
+   @define k @dum@
+   @define jk @dum@
+      @iexp j 0 0 +
+      @iwhile j < @(nu_)
+         @iexp jk @(dupB) @(j) *
+         @iexp k @(dupB) -1 +
+@ROUT ATL_cm2am ammmtst
+         @iwhile k > 0
+         b[@(jk)+@(k)] =
+            @iexp k @(k) -1 +
+         @endiwhile
+         b[@(jk)] = @(malp)A@(j)[i];
+@ROUT ATL_am2cm
+         A@(j)[i] = @(malp)b[@(jk)];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+      @iexp j @(j) 1 +
+      @endiwhile
+   @undef jk
+   @undef k
+   @undef j
+@ENDPROC
+@SKIP ***** handles rolled block copy 
+@BEGINPROC doBlockRolled nu_
+         ATL_UINT jj;
+         @(cnst)TYPE *rA = A0;
+         @(cnstb)TYPE *p = b;
+      @iif dupB = 1
+         for (jj=0; jj < @(nu_); jj++, rA += lda, p++)
+         {
+@ROUT ATL_cm2am ammmtst
+            *p = @(malp)rA[i];
+@ROUT ATL_am2cm
+            rA[i] = @(malp)(*p);
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+         }
+      @endiif
+      @iif dupB > 1
+         for (jj=0; jj < @(nu_); jj++, rA += lda, p+=@(dupB))
+         {
+@ROUT ATL_cm2am ammmtst
+            ATL_UINT ii;
+            TYPE a0 = rA[i];
+            for (ii=0; ii < @(dupB); ii++)
+               p[ii] = @(malp)a0;
+@ROUT ATL_am2cm
+            rA[i] = @(malp)p[0];
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+         }
+      @endiif
+@ENDPROC
 @ROUT ATL_am2cm
 /*
  * Copies from (M-vectorized) access-major storage block b back to column-
@@ -390,6 +726,14 @@ void ATL_USERCPMM       /* col-access matx to access-major blk */
       @define KB @K@
    @endiif
    ATL_SZT i, j;
+   @iif CU_NUR = 0
+   ATL_CSZT nr = N-n;
+   @endiif
+@iexp NA1 1
+@iif @iexp 0 @(ML_NUR) ! 0 @(CU_NUR) ! |
+   @iexp NA1 0
+@endiif 
+   @iif NA1 = 0
    @declare "   @(cnst)TYPE " n n ";"
       *A0=A
       @define j @1@
@@ -399,48 +743,58 @@ void ATL_USERCPMM       /* col-access matx to access-major blk */
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
-   @undef cnst
+   @endiif
+   @iif NA1 ! 0
+   @(cnst)TYPE *A0 = A;
+   @endiif
+   @SKIP @undef cnst
 
    for (j=0; j < n; j += @(nu))
    {
       for (i=0; i < K; i++, b += @(incdup))
       {
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @iexp jk @(dupB) @(j) *
-         @iexp k @(dupB) -1 +
-@ROUT ATL_cm2am ammmtst
-         @iwhile k > 0
-         b[@(jk)+@(k)] =
-            @iexp k @(k) -1 +
-         @endiwhile
-         b[@(jk)] = @(malp)A@(j)[i];
-@ROUT ATL_am2cm
-         A@(j)[i] = @(malp)b[@(jk)];
-@ROUT ATL_am2cm ATL_cm2am ammmtst
-      @iexp j @(j) 1 +
-      @endiwhile
+         @iif ML_NUR ! 0
+            @callproc doBlockNu @(nu)
+         @endiif
+         @iif ML_NUR = 0
+            @callproc doBlockRolled @(nu)
+         @endiif
       }
+   @iif NA1 = 0
       @iexp j 0 0 +
       @iwhile j < @(nu)
       A@(j) += incA;
       @iexp j @(j) 1 +
       @endiwhile
+   @endiif
+   @iif NA1 ! 0
+      A0 += incA;
+   @endiif
    @iif ku > 1
 @ROUT ATL_am2cm
       b += ZSKIP;
 @ROUT ATL_cm2am ammmtst
       for (;i < KK; i++, b += @(incdup))
+   @iif ML_NUR ! 0
       @iexp j 0
       @iwhile j < @(nu)
          b[@(j)] =
          @iexp j @(j) 1 +
       @endiwhile
                 ATL_rzero;
+   @endiif
+   @iif ML_NUR = 0
+      {
+         ATL_UINT jj;
+         for (jj=0; jj < @(nu); jj++)
+            b[jj] = ATL_rzero;
+      }
+   @endiif
 @ROUT ATL_am2cm ATL_cm2am ammmtst
    @endiif
    }
    @mif nu ! "1
+      @iif CU_NUR ! 0
    switch(N-n)
    {
    @iexp n 1 0 +
@@ -493,6 +847,31 @@ void ATL_USERCPMM       /* col-access matx to access-major blk */
    @endiwhile
    default:;
    }
+      @endiif
+      @SKIP **** rolled cleanup **** 
+      @iif CU_NUR = 0
+   if (nr)
+   {
+      for (i=0; i < K; i++, b += @(incdup))
+      {
+         @callproc doBlockRolled nr 
+@ROUT ATL_cm2am ammmtst
+         for (; jj < @(nu); jj++, p++)
+            *p = ATL_rzero;
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+      }
+@ROUT ATL_cm2am ammmtst
+   @iif ku > 1
+      for (; i < KK; i++, b += @(incdup))
+      {
+         ATL_UINT ii;
+         for (ii=0; ii < @(nu); ii++)
+            b[ii] = ATL_rzero;
+      }
+   @endiif
+@ROUT ATL_am2cm ATL_cm2am ammmtst
+   }
+      @endiif
    @endmif
 }
 @ROUT ammmtst `#endif`
@@ -517,6 +896,207 @@ void ATL_USERCPMM       /* col-access matx to access-major blk */
 @endifdef
 @iif kmaj ! 0
    @iexp ku2 @(ku) @(ku) +
+@SKIP *** handles element
+@BEGINPROC doElement A_ j_ k2_ rA_ iA_ ib_
+            @mif nalp ! "X
+@ROUT ATL_cam2cm
+                  @(A_)@(j_)[i+@(k2_)] = @(malp)@(rA_)[@(ib_)];
+               #ifdef Conj_
+                  @(A_)@(j_)[i+@(k2_)+1] = @(calp)@(iA_)[@(ib_)];
+               #else
+                  @(A_)@(j_)[i+@(k2_)+1] = @(malp)@(iA_)[@(ib_)];
+               #endif
+@ROUT ATL_ccm2am cammmtst
+               @(rA_)[@(ib_)] = @(malp)@(A_)@(j_)[i+@(k2_)];
+               #ifdef Conj_
+                  @(iA_)[@(ib_)] = @(calp)@(A_)@(j_)[i+@(k2_)+1];
+               #else
+                  @(iA_)[@(ib_)] = @(malp)@(A_)@(j_)[i+@(k2_)+1];
+               #endif
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+            @endmif
+            @mif nalp = "X
+@ROUT ATL_cam2cm
+               rv = @(rA_)[@(ib_)];
+               #ifdef Conj_
+                  iv = @(iA_)[@(ib_)];
+               #else
+                  iv = -@(iA_)[@(ib_)];
+               #endif
+               @(A_)@(j_)[i+@(k2_)] = rv*ra - iv*ia;
+               @(A_)@(j_)[i+@(k2_)+1] = rv*ia + iv*ra;
+@ROUT ATL_ccm2am cammmtst
+               rv = @(A_)@(j_)[i+@(k2_)];
+               #ifdef Conj_
+                  iv = -@(A_)@(j_)[i+@(k2_)+1];
+               #else
+                  iv = @(A_)@(j_)[i+@(k2_)+1];
+               #endif
+               @(rA_)[@(ib_)] = rv*ra - iv*ia;
+               @(iA_)[@(ib_)] = rv*ia + iv*ra;
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+            @endmif
+@ENDPROC
+@SKIP *** this proc handles one full block
+@BEGINPROC doBlockNuKu
+   @define i @dum@
+   @define j @dum@
+   @define k @dum@
+   @define ib @dum@
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp k2 @(k) @(k) +
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+               @callproc doElement A @(j) @(k2) rA iA @(ib) 
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @undef ib
+   @undef k
+   @undef j
+   @undef i
+@ENDPROC
+@SKIP *** this proc handles one full block with KU unrolled 
+@BEGINPROC doBlockKu nu_
+   @define k @dum@
+   @define k2 @dum@
+            ATL_UINT jj;
+            @(cnst)TYPE *pA0 = A0;
+            @(cnstb)TYPE *pr = rA, *pi = iA;
+            for (jj=0; jj < @(nu_); jj++, pA0 += lda2, pr+=@(ku), pi+=@(ku))
+            {
+      @iexp k 0 
+      @iwhile k < @(ku)
+         @iexp k2 @(k) @(k) +
+               @SKIP rA[i+@(k)] = @(malp)p[@(k)];
+               @callproc doElement pA 0 @(k2) pr pi @(k) 
+         @iexp k @(k) 1 +
+      @endiwhile
+            }
+   @undef k2
+   @undef k
+@ENDPROC
+@SKIP *** this proc handles one full block with NU unrolled 
+@BEGINPROC doBlockNu ku_
+   @define j @dum@
+   @define ib @dum@
+            ATL_UINT ii;
+            for (ii=0; ii < @(ku_); ii++)
+            {
+      @iexp j 0 
+      @iwhile j < @(nu)
+            @iexp ib @(j) @(ku) *
+               @SKIP ** real case : A@(j)[i+ii] = @(malp)b[@(ib)+ii];
+               @SKIP @callproc doElement A @(j) ii*2 rA iA @(ib)+ii 
+               @callproc doElement A @(j) (ii<<1) rA iA @(ib)+ii 
+         @iexp j @(j) 1 +
+      @endiwhile
+            }
+   @undef j
+   @undef ib
+@ENDPROC
+@SKIP *** this proc handles one full block in both rolled 
+@BEGINPROC doBlockRolled nu_ ku_
+            ATL_UINT jj;
+            @(cnst)TYPE *pA0 = A0;
+            @(cnstb)TYPE *pr = rA, *pi = iA;
+            for (jj=0; jj < @(nu_); jj++, pA0 += lda2, pr+=@(ku), pi+=@(ku))
+            {
+               ATL_UINT ii;
+               for (ii=0; ii < @(ku_); ii++)
+               {
+                  @SKIP rA[i+ii] = @(malp)p[ii];
+                  @SKIP @callproc doElement pA 0 (ii<<1) pr pi ii
+                  @callproc doElement pA 0 ii*2 pr pi ii
+               }
+            }
+@ENDPROC
+@SKIP *** handles single element for cleanup
+@SKIP *** NOTE: **** FIXME: call doElement with k2=0
+@BEGINPROC doCuElement A_ j_ rA_ iA_ ib_ 
+            @mif nalp ! "X
+@ROUT ATL_ccm2am cammmtst
+            @(rA_)[@(ib_)] = @(malp)@(A_)@(j_)[i];
+            #ifdef Conj_
+               @(iA_)[@(ib_)] = @(calp)@(A_)@(j_)[i+1];
+            #else
+               @(iA_)[@(ib_)] = @(malp)@(A_)@(j_)[i+1];
+            #endif
+@ROUT ATL_cam2cm
+            @(A_)@(j_)[i] = @(malp)@(rA_)[@(ib_)];
+            #ifdef Conj_
+               @(A_)@(j_)[i+1] = @(calp)@(iA_)[@(ib_)];
+            #else
+               @(A_)@(j_)[i+1] = @(malp)@(iA_)[@(ib_)];
+            #endif
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+            @endmif
+            @mif nalp = "X
+@ROUT ATL_ccm2am cammmtst
+            rv = @(A_)@(j_)[i];
+            #ifdef Conj_
+               iv = -@(A_)@(j_)[i+1];
+            #else
+               iv = @(A_)@(j_)[i+1];
+            #endif
+            @(rA_)[@(ib_)] = rv*ra - iv*ia;
+            @(iA_)[@(ib_)] = rv*ia + iv*ra;
+@ROUT ATL_cam2cm
+            rv = @(rA_)[@(ib_)];
+            #ifdef Conj_
+               iv = -@(iA_)[@(ib_)];
+            #else
+               iv = @(iA_)[@(ib_)];
+            #endif
+            @(A_)@(j_)[i] = rv*ra - iv*ia;
+            @(A_)@(j_)[i+1] = rv*ia + iv*ra;
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+            @endmif
+@ENDPROC
+@SKIP *** this proc handles K-cleanup block 
+@BEGINPROC doKCuBlockNuKu
+   @define j @dum@
+   @define ib @dum@
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp ib @(j) @(ku) *
+            @callproc doCuElement A @(j) rA iA @(ib) 
+         @iexp j @(j) 1 +
+      @endiwhile
+   @undef ib
+   @undef j
+@ENDPROC
+@SKIP *** this proc handles K-cleanup block 
+@BEGINPROC doKCuBlockRolled nu_
+   @define k @dum@
+            ATL_UINT jj;
+            @(cnst)TYPE *pA0 = A0;
+            @(cnstb)TYPE *pr = rA, *pi = iA;
+            for (jj=0; jj < @(nu_); jj++, pA0 += lda2, pr+=@(ku), pi+=@(ku))
+            {
+               @SKIP rA[i] = @(malp)p[0];
+               @callproc doCuElement pA 0 pr pi 0 
+            }
+   @undef k
+@ENDPROC 
+@SKIP *** this proc handles K-cleanup block 
+@BEGINPROC doKCuBlockNu nu_
+   @define j @dum@
+   @define ib @dum@
+      @iexp j 0 
+      @iwhile j < @(nu_)
+         @iexp ib @(j) @(ku) *
+            @SKIP A@(j)[i] = @(malp)b[@(ib)];
+            @callproc doCuElement A @(j) rA iA @(ib)
+         @iexp j @(j) 1 +
+      @endiwhile
+   @undef ib
+   @undef j
+@ENDPROC 
 @ROUT ATL_cam2cm
 void ATL_USERCPMM
 (
@@ -574,6 +1154,11 @@ void ATL_USERCPMM
    const register TYPE ra=(*alpha), ia=alpha[1];
    register TYPE rv, iv;
    @endmif
+@iexp NA1 1
+@iif @iexp 0 @(ML_NUR) ! 0 @(CU_NUR) ! |
+   @iexp NA1 0
+@endiif 
+@iif NA1 = 0
    @declare "   @(cnst)TYPE " n n ";"
       *A0=A
       @define j @1@
@@ -583,65 +1168,42 @@ void ATL_USERCPMM
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
+@endiif
+@iif NA1 ! 0
+   @(cnst)TYPE *A0=A;
+@endiif
    @iexp binc @(nu) @(ku) *
 
    for (j=0; j < n; j += @(nu))
    {
       for (i=0; i < k2; i += @(ku2), rA += @(binc), iA += @(binc))
       {
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @iexp k 0 0 +
-         @iwhile k < @(ku)
-            @iexp k2 @(k) @(k) +
-            @iexp ib @(j) @(ku) *
-            @iexp ib @(ib) @(k) +
-            @mif nalp ! "X
-@ROUT ATL_cam2cm
-         A@(j)[i+@(k2)] = @(malp)rA[@(ib)];
-         #ifdef Conj_
-            A@(j)[i+@(k2)+1] = @(calp)iA[@(ib)];
-         #else
-            A@(j)[i+@(k2)+1] = @(malp)iA[@(ib)];
-         #endif
-@ROUT ATL_ccm2am cammmtst
-         rA[@(ib)] = @(malp)A@(j)[i+@(k2)];
-         #ifdef Conj_
-            iA[@(ib)] = @(calp)A@(j)[i+@(k2)+1];
-         #else
-            iA[@(ib)] = @(malp)A@(j)[i+@(k2)+1];
-         #endif
-@ROUT ATL_cam2cm ATL_ccm2am cammmtst
-            @endmif
-            @mif nalp = "X
-@ROUT ATL_cam2cm
-         rv = rA[@(ib)];
-         #ifdef Conj_
-            iv = iA[@(ib)];
-         #else
-            iv = -iA[@(ib)];
-         #endif
-         A@(j)[i+@(k2)] = rv*ra - iv*ia;
-         A@(j)[i+@(k2)+1] = rv*ia + iv*ra;
-@ROUT ATL_ccm2am cammmtst
-         rv = A@(j)[i+@(k2)];
-         #ifdef Conj_
-            iv = -A@(j)[i+@(k2)+1];
-         #else
-            iv = A@(j)[i+@(k2)+1];
-         #endif
-         rA[@(ib)] = rv*ra - iv*ia;
-         iA[@(ib)] = rv*ia + iv*ra;
-@ROUT ATL_cam2cm ATL_ccm2am cammmtst
-            @endmif
-            @iexp k @(k) 1 +
-         @endiwhile
-         @iexp j @(j) 1 +
-      @endiwhile
+      @iif ML_NUKU ! 0
+         @callproc doBlockNuKu 
+      @endiif
+      @iif ML_NUKU = 0
+         @iif ML_KUR ! 0
+            @callproc doBlockKu @(nu) 
+         @endiif
+         @iif ML_NUR ! 0
+            @callproc doBlockNu @(ku) 
+         @endiif
+         @iif ML_NO ! 0
+            @callproc doBlockRolled @(nu) @(ku) 
+         @endiif
+      @endiif
       }
       if (k != KK)
       {
 @ROUT ATL_ccm2am cammmtst
+   @iif CU_NUKU = 0
+         ATL_UINT ii, jj;
+         TYPE *pr = rA, *pi = iA;
+         for (jj=0; jj < @(nu); jj++, pr+=@(ku), pi+=@(ku))
+            for (ii=0; ii < @(ku); ii++)
+               pr[ii] = pi[ii] = 0.0;
+   @endiif
+   @iif CU_NUKU ! 0
       @iexp j 0 0 +
       @iwhile j < @(nu)
          @iexp k 0 0 +
@@ -654,62 +1216,37 @@ void ATL_USERCPMM
          @iexp j @(j) 1 +
                     0.0;
       @endiwhile
+   @endiif
 @ROUT ATL_cam2cm ATL_ccm2am cammmtst
          for (; i < K2; i += 2, rA++, iA++)
          {
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @iexp ib @(j) @(ku) *
-            @mif nalp ! "X
-@ROUT ATL_ccm2am cammmtst
-            rA[@(ib)] = @(malp)A@(j)[i];
-            #ifdef Conj_
-               iA[@(ib)] = @(calp)A@(j)[i+1];
-            #else
-               iA[@(ib)] = @(malp)A@(j)[i+1];
-            #endif
-@ROUT ATL_cam2cm
-            A@(j)[i] = @(malp)rA[@(ib)];
-            #ifdef Conj_
-               A@(j)[i+1] = @(calp)iA[@(ib)];
-            #else
-               A@(j)[i+1] = @(malp)iA[@(ib)];
-            #endif
-@ROUT ATL_cam2cm ATL_ccm2am cammmtst
-            @endmif
-            @mif nalp = "X
-@ROUT ATL_ccm2am cammmtst
-            rv = A@(j)[i];
-            #ifdef Conj_
-               iv = -A@(j)[i+1];
-            #else
-               iv = A@(j)[i+1];
-            #endif
-            rA[@(ib)] = rv*ra - iv*ia;
-            iA[@(ib)] = rv*ia + iv*ra;
-@ROUT ATL_cam2cm
-            rv = rA[@(ib)];
-            #ifdef Conj_
-               iv = -iA[@(ib)];
-            #else
-               iv = iA[@(ib)];
-            #endif
-            A@(j)[i] = rv*ra - iv*ia;
-            A@(j)[i+1] = rv*ia + iv*ra;
-@ROUT ATL_cam2cm ATL_ccm2am cammmtst
-            @endmif
-         @iexp j @(j) 1 +
-      @endiwhile
+            @iif CU_NUKU ! 0
+               @callproc doKCuBlockNuKu 
+            @endiif
+            @iif CU_NUKU = 0
+               @iif CU_NUR ! 0
+                  @callproc doKCuBlockNu @(nu)
+               @endiif
+               @iif CU_NUR = 0
+                  @callproc doKCuBlockRolled @(nu)
+               @endiif
+            @endiif
          }
          rA += @(binc) - K + k;
          iA += @(binc) - K + k;
       }
+   @iif NA1 = 0
       @iexp j 0 0 +
       @iwhile j < @(nu)
       A@(j) += incA;
       @iexp j @(j) 1 +
       @endiwhile
+   @endiif
+   @iif NA1 ! 0
+      A0 += incA;
+   @endiif
    }
+@iif CU_NUKU ! 0 
    switch(nr)
    {
    @iexp n 1 0 +
@@ -857,10 +1394,157 @@ void ATL_USERCPMM
    @endiwhile
    default:;
    }
+@endiif
+@iif CU_NUKU = 0
+   if (nr) /* N-cleanup */
+   {
+      for (i=0; i < k2; i += @(ku2), rA += @(binc), iA += @(binc))
+      {
+      @iif CU_KUR ! 0
+         @callproc doBlockKu nr
+      @endiif
+      @iif CU_KUR = 0
+         @callproc doBlockRolled nr @(ku)
+      @endiif
+@ROUT ATL_ccm2am cammmtst
+         /* zero padding */
+         for (; jj < @(nu); jj++, pr+=@(ku), pi+=@(ku))
+         {
+      @iif CU_KUR ! 0
+         @iexp j 0 
+         @iwhile j < @(ku)
+            pr[@(j)] = pi[@(j)] = 0.0;
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif CU_KUR = 0
+            ATL_UINT ii;
+            for (ii=0; ii < @(ku); ii++)
+               pr[ii] = pi[ii] = 0.0;
+      @endiif
+         }
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+      }
+      if (k != KK)
+      {
+@ROUT ATL_ccm2am cammmtst
+      /* zero padding the whole block first*/ 
+      @SKIP @iif CU_NO ! 0
+         ATL_UINT ii, jj;
+         TYPE *pr = rA, *pi = iA; 
+         for (jj=0; jj < @(nu); jj++, pr+=@(ku), pi+=@(ku))
+            for (ii=0; ii < @(ku); ii++)
+               pi[ii] = pr[ii] = 0.0;
+      @SKIP @endiif
+      @BEGINSKIP ***skipping unrolling the zero padding when not fully unrolled     
+      @iif CU_NO = 0
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp k 0 0 +
+            @iwhile k < @(ku)
+               @iexp ib @(j) @(ku) *
+               @iexp ib @(ib) @(k) +
+               iA[@(ib)] = rA[@(ib)] =
+               @iexp k @(k) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+                    0.0;
+         @endiwhile
+      @endiif
+      @ENDSKIP 
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+         for (; i < K2; i+=2, rA++, iA++)
+         {
+            @callproc doKCuBlockRolled nr 
+@ROUT ATL_ccm2am cammmtst
+            /* zero padding */
+            for (; jj < @(nu); jj++, pr+=@(ku), pi+=@(ku))
+               pr[0] = pi[0] = 0.0;
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+         }
+         rA += @(binc) - K + k;
+         iA += @(binc) - K + k;
+      }
+   }
+@endiif
 }
 @ROUT cammmtst `#endif`
 @endiif
 @iif kmaj = 0
+@SKIP *** handles single cell
+@BEGINPROC doElement A_ j_ rA_ iA_  
+         @mif nalp = "X
+@ROUT ATL_ccm2am cammmtst
+            rv = @(A_)@(j_)[i];
+            #ifdef Conj_
+               iv = -@(A_)@(j_)[i+1];
+            #else
+               iv = @(A_)@(j_)[i+1];
+            #endif
+            @(rA_)[@(j_)] = rv*ra - iv*ia;
+            @(iA_)[@(j_)] = rv*ia + iv*ra;
+@ROUT ATL_cam2cm
+            rv = @(rA_)[@(j_)];
+            #ifdef Conj_
+               iv = -@(iA_)[@(j_)];
+            #else
+               iv = @(iA_)[@(j_)];
+            #endif
+            @(A_)@(j_)[i] = rv*ra - iv*ia;
+            @(A_)@(j_)[i+1] = rv*ia + iv*ra;
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+         @endmif
+         @mif nalp ! "X
+@ROUT ATL_ccm2am cammmtst
+            @(rA_)[@(j_)] = @(malp)@(A_)@(j_)[i];
+            #ifdef Conj_
+               @(iA_)[@(j_)] = @(calp)@(A_)@(j_)[i+1];
+            #else
+               @(iA_)[@(j_)] = @(malp)@(A_)@(j_)[i+1];
+            #endif
+@ROUT ATL_cam2cm
+            @(A_)@(j_)[i] = @(malp)@(rA_)[@(j_)];
+            #ifdef Conj_
+               @(A_)@(j_)[i+1] = @(calp)@(iA_)[@(j_)];
+            #else
+               @(A_)@(j_)[i+1] = @(malp)@(iA_)[@(j_)];
+            #endif
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+         @endmif
+@ENDPROC
+@SKIP *** handles block unrolled 
+@BEGINPROC doBlockNu nu_
+      @iexp j 0 0 +
+      @iwhile j < @(nu_)
+         @callproc doElement A @(j) rA iA  
+      @iexp j @(j) 1 +
+      @endiwhile
+@ENDPROC
+@SKIP *** handles one block rolled 
+@BEGINPROC doBlockRolled nu_
+         ATL_UINT jj;
+         @(cnst)TYPE *pA0 = A0;
+         @(cnstb)TYPE *pr = rA, *pi = iA;
+         for (jj=0; jj < @(nu_); jj++, pA0 += lda2, pr++, pi++)
+         {
+            @callproc doElement pA 0 pr pi 
+         }
+@ENDPROC
+@SKIP *** Handles cleanup rolled block only 
+@BEGINPROC doCuBlockRolled 
+         @callproc doBlockRolled nr
+         for (; jj < @(nu); jj++, pr++, pi++)
+            pr[0] = pi[0] = ATL_rzero;
+@ENDPROC
+@SKIP *** zero padding on K dimension
+@BEGINPROC doKzeroPadRolled
+      for (i=0; i < KR; i++, rA += @(nu), iA += @(nu))
+      {
+         ATL_UINT ii; 
+         for (ii=0; ii < @(nu); ii++)
+            rA[ii] = iA[ii] = ATL_rzero;
+      }
+@ENDPROC
 @ROUT ATL_cam2cm
 @beginskip
 #ifdef Conj_
@@ -917,6 +1601,7 @@ void ATL_cm2am
 @ROUT ATL_cam2cm ATL_ccm2am cammmtst
 {
    ATL_CSZT K2=K+K, lda2=lda+lda, n = (N/@(nu))*@(nu), incA = lda2*@(nu);
+   ATL_CSZT nr = N-n;
    @iif ku > 1
    ATL_CSZT KK = ((K+@(ku)-1)/@(ku))*@(ku), KR=KK-K;
 @ROUT ATL_cam2cm  `   ATL_CINT ZINC = KR*@(nu)`
@@ -927,6 +1612,11 @@ void ATL_cm2am
    register TYPE rv, iv;
    @endmif
    @iexp nu2 @(nu) @(nu) +
+@iexp NA1 1
+@iif @iexp 0 @(ML_NUR) ! 0 @(CU_NUR) ! |
+   @iexp NA1 0
+@endiif 
+   @iif NA1 = 0
    @declare "   @(cnst)TYPE " n n ";"
       *A0=A
       @define j @1@
@@ -936,59 +1626,27 @@ void ATL_cm2am
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
-
+   @endiif
+   @iif NA1 ! 0
+   @(cnst)TYPE *A0 = A;
+   @endiif
    for (j=0; j < n; j += @(nu))
    {
       for (i=0; i < K2; i += 2, rA += @(nu), iA += @(nu))
       {
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @mif nalp = "X
-@ROUT ATL_ccm2am cammmtst
-         rv = A@(j)[i];
-         #ifdef Conj_
-            iv = -A@(j)[i+1];
-         #else
-            iv = A@(j)[i+1];
-         #endif
-         rA[@(j)] = rv*ra - iv*ia;
-         iA[@(j)] = rv*ia + iv*ra;
-@ROUT ATL_cam2cm
-         rv = rA[@(j)];
-         #ifdef Conj_
-            iv = -iA[@(j)];
-         #else
-            iv = iA[@(j)];
-         #endif
-         A@(j)[i] = rv*ra - iv*ia;
-         A@(j)[i+1] = rv*ia + iv*ra;
-@ROUT ATL_cam2cm ATL_ccm2am cammmtst
-         @endmif
-         @mif nalp ! "X
-@ROUT ATL_ccm2am cammmtst
-         rA[@(j)] = @(malp)A@(j)[i];
-         #ifdef Conj_
-            iA[@(j)] = @(calp)A@(j)[i+1];
-         #else
-            iA[@(j)] = @(malp)A@(j)[i+1];
-         #endif
-@ROUT ATL_cam2cm
-         A@(j)[i] = @(malp)rA[@(j)];
-         #ifdef Conj_
-            A@(j)[i+1] = @(calp)iA[@(j)];
-         #else
-            A@(j)[i+1] = @(malp)iA[@(j)];
-         #endif
-@ROUT ATL_cam2cm ATL_ccm2am cammmtst
-         @endmif
-      @iexp j @(j) 1 +
-      @endiwhile
+         @iif ML_NUR ! 0
+            @callproc doBlockNu @(nu)
+         @endiif
+         @iif ML_NUR = 0
+            @callproc doBlockRolled @(nu)
+         @endiif
       }
    @iif ku > 1
 @ROUT ATL_cam2cm
       rA += ZINC;
       iA += ZINC;
 @ROUT ATL_ccm2am cammmtst
+   @iif ML_NUR ! 0
       for (i=0; i < KR; i++, rA += @(nu), iA += @(nu))
       @iexp j 0
       @iwhile j < @(nu)
@@ -996,15 +1654,25 @@ void ATL_cm2am
       @iexp j @(j) 1 +
       @endiwhile
                          ATL_rzero;
+   @endiif
+   @iif ML_NUR = 0
+      @callproc doKzeroPadRolled
+   @endiif
 @ROUT ATL_cam2cm ATL_ccm2am cammmtst
    @endiif
+   @iif NA1 = 0
       @iexp j 0 0 +
       @iwhile j < @(nu)
       A@(j) += incA;
       @iexp j @(j) 1 +
       @endiwhile
+   @endiif
+   @iif NA1 ! 0
+      A0 += incA;
+   @endiif
    }
    @mif nu ! "1
+@iif CU_NUR ! 0
    switch(N-n)
    {
    @iexp n 1 0 +
@@ -1078,6 +1746,21 @@ void ATL_cm2am
    @endiwhile
    default:;
    }
+@endiif
+@iif CU_NUR = 0
+   if (nr)
+   {
+      for (i=0; i < K2; i += 2, rA += @(nu), iA += @(nu))
+      {
+         @callproc doCuBlockRolled 
+      }
+@ROUT ATL_ccm2am cammmtst
+   @iif ku > 1
+      @callproc doKzeroPadRolled 
+   @endiif
+@ROUT ATL_cam2cm ATL_ccm2am cammmtst
+   }
+@endiif
    @endmif
 }
 @ROUT cammmtst `#endif`
@@ -1085,6 +1768,108 @@ void ATL_cm2am
 @ROUT ATL_am2rm ATL_rm2am ammmtst
 @iif kmaj ! 0
    @define ku @@(kmaj)@
+@SKIP **** handles full block fully unrolled 
+@BEGINPROC doBlockMuKu mu_ ku_
+   @define i @dum@
+   @define j @dum@
+   @define ip @dum@
+   @iexp i 0 0 +
+   @iwhile i < @(mu_)
+      @iexp j 0 0 +
+      @iwhile j < @(ku_)
+         @iexp ip @(i) @(ku_) *
+         @iexp ip @(ip) @(j) +
+@ROUT ATL_am2rm
+         A@(j)[i+@(i)] = @(malp)pp[@(ip)];
+@ROUT ATL_rm2am ammmtst
+         pp[@(ip)] = @(malp)A@(j)[i+@(i)];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i @(i) 1 +
+   @endiwhile
+   @undef ip
+   @undef j
+   @undef i
+@ENDPROC
+@SKIP **** handles full block unrolled MU  
+@BEGINPROC doBlockMu ku_ 
+   @define j @dum@
+   @define ip @dum@
+         ATL_UINT jj;
+         @(cnst)TYPE *rA = A0;
+         @(cnstb)TYPE *p = pp;
+         for(jj=0; jj < @(ku_); jj++, rA +=lda, p++) 
+         {
+      @iexp j 0 
+      @iwhile j < @(mu)
+         @iexp ip @(j) @(ku) *
+@ROUT ATL_am2rm
+            rA[i+@(j)] = @(malp)p[@(ip)];
+@ROUT ATL_rm2am ammmtst
+            p[@(ip)] = @(malp)rA[i+@(j)];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+         @iexp j @(j) 1 +
+      @endiwhile
+         }
+   @undef ip
+   @undef j
+@ENDPROC
+@SKIP **** handles full block unrolled KU  
+@BEGINPROC doBlockKu mu_ 
+   @define j @dum@
+         ATL_UINT ii;
+         @(cnstb)TYPE *p = pp;
+         for(ii=0; ii < @(mu_); ii++, p+=@(ku)) 
+         {
+      @iexp j 0 0 +
+      @iwhile j < @(ku)
+@ROUT ATL_am2rm
+            A@(j)[i+ii] = @(malp)p[@(j)];
+@ROUT ATL_rm2am ammmtst
+            p[@(j)] = @(malp)A@(j)[i+ii];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+         @iexp j @(j) 1 +
+      @endiwhile
+         }
+   @undef j
+@ENDPROC
+@SKIP **** handles full block rolled 
+@BEGINPROC doBlockRolled mu_ ku_ 
+         ATL_UINT jj;
+         @(cnst)TYPE *rA = A0;
+         @(cnstb)TYPE *p = pp;
+         for(jj=0; jj < @(ku_); jj++, rA +=lda, p++)
+         {
+            ATL_UINT ii;
+            @(cnstb)TYPE *w = p;
+            for(ii=0; ii < @(mu_); ii++, w+=@(ku_)) 
+            {
+@ROUT ATL_am2rm
+               rA[i+ii] = @(malp)(*w);
+@ROUT ATL_rm2am ammmtst
+               *w = @(malp)rA[i+ii];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+            }
+         }
+@ENDPROC
+@SKIP ****** handles K-cleanup in rolled, without zero padding 
+@BEGINPROC doKCuBlockRolled mu_ ku_
+         ATL_UINT jj;
+         @(cnst)TYPE *rA = A0;
+         @(cnstb)TYPE *p = pp;
+         for(jj=0; jj < @(ku_); jj++, rA +=lda, p++)
+         {
+            ATL_UINT ii;
+            @(cnstb)TYPE *w = p;
+            for(ii=0; ii < @(mu_); ii++, w+=@(ku)) 
+@ROUT ATL_am2rm
+               rA[i+ii] = @(malp)(*w);
+@ROUT ATL_rm2am ammmtst
+               *w = @(malp)rA[i+ii];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+         }
+@ENDPROC
 @ROUT ATL_am2rm
 void ATL_USERCPMM       /* access-major blk to row-major matrix */
 (
@@ -1127,8 +1912,13 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
 {
    ATL_CSZT MM = ((M+@(mu)-1)/@(mu))*@(mu), KK = ((K+@(ku)-1)/@(ku))*@(ku);
    ATL_CSZT pansz = @(mu)*KK, m = M/@(mu)*@(mu), mr = M-m, incA = @(ku)*lda;
-   ATL_CSZT k = (K/@(ku))*@(ku);
+   ATL_CSZT k = (K/@(ku))*@(ku), kr = K-k;
    ATL_SZT i, j;
+@iexp NA1 1
+@iif @iexp 0 @(ML_KUR) ! 0 @(CU_KUR) ! |
+   @iexp NA1 0
+@endiif 
+@iif NA1 = 0
    @declare "   @(cnst)TYPE " n n ";"
       *A0=A
       @iexp j 0 1 +
@@ -1138,6 +1928,10 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
+@endiif
+@iif NA1 ! 0
+   @(cnst)TYPE *A0=A;
+@endiif
    @iexp incb @(ku) @(mu) *
 
    for (j=0; j < k; j += @(ku), b += @(incb))
@@ -1146,23 +1940,22 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
 
       for (i=0; i < m; i += @(mu), pp += pansz)
       {
-   @iexp i 0 0 +
-   @iwhile i < @(mu)
-      @iexp j 0 0 +
-      @iwhile j < @(ku)
-         @iexp ip @(i) @(ku) *
-         @iexp ip @(ip) @(j) +
-@ROUT ATL_am2rm
-         A@(j)[i+@(i)] = @(malp)pp[@(ip)];
-@ROUT ATL_rm2am ammmtst
-         pp[@(ip)] = @(malp)A@(j)[i+@(i)];
-@ROUT ATL_am2rm ATL_rm2am ammmtst
-         @iexp j @(j) 1 +
-      @endiwhile
-      @iexp i @(i) 1 +
-   @endiwhile
+         @iif ML_NUKU ! 0
+            @callproc doBlockMuKu @(mu) @(ku)
+         @endiif
+         @iif ML_NUKU = 0
+            @iif ML_NUR ! 0 
+               @callproc doBlockMu @(ku)
+            @endiif
+            @iif ML_KUR ! 0 
+               @callproc doBlockKu @(mu)
+            @endiif
+            @iif ML_NO ! 0
+               @callproc doBlockRolled @(mu) @(ku)
+            @endiif
+         @endiif
       }
-      if (m != M)
+      if (m != M) /* M cleanup */
       {
          @(cnstb)TYPE *p;
 /*
@@ -1170,15 +1963,27 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
  */
          for (p=pp; i < M; i++, p += @(ku))
          {
-   @iexp j 0 0 +
-   @iwhile j < @(ku)
+      @iif CU_KUR ! 0
+         @iexp j 0 0 +
+         @iwhile j < @(ku)
 @ROUT ATL_rm2am ammmtst
             p[@(j)] = @(malp)A@(j)[i];
 @ROUT ATL_am2rm
             A@(j)[i] = @(malp)p[@(j)];
 @ROUT ATL_am2rm ATL_rm2am ammmtst
-      @iexp j @(j) 1 +
-   @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif CU_KUR = 0
+            ATL_UINT jj;
+            @(cnst)TYPE *rA = A0;
+            for (jj=0; jj < @(ku); jj++, rA+=lda)
+@ROUT ATL_rm2am ammmtst
+               p[jj] = @(malp)rA[i];
+@ROUT ATL_am2rm
+               rA[i] = @(malp)p[jj];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+      @endiif
          }
 @ROUT ATL_rm2am ammmtst
 /*
@@ -1186,14 +1991,22 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
  */
          for (; i < MM; i++, p += @(ku))
          {
-   @iexp j 0 0 +
-   @iwhile j < @(ku)
+      @iif CU_KUR ! 0
+         @iexp j 0 0 +
+         @iwhile j < @(ku)
             p[@(j)] = 0.0;
-      @iexp j @(j) 1 +
-   @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif CU_KUR = 0
+            ATL_UINT jj;
+            for (jj=0; jj < @(ku); jj++)
+               p[jj] = 0.0;
+      @endiif
          }
 @ROUT ATL_am2rm ATL_rm2am ammmtst
       }
+@iif NA1 = 0
 /*
  * Update column-ptrs from A
  */
@@ -1202,10 +2015,15 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
       A@(j) += incA;
       @iexp j @(j) 1 +
    @endiwhile
+@endiif
+@iif NA1 ! 0
+      A0 += incA;
+@endiif
    }
 /*
  * Check for final, partial K-panel that needs to be padded wt zeros
  */
+@iif CU_NUKU ! 0
    switch(K-k)
    {
    @iexp r @(ku) -1 +
@@ -1284,6 +2102,68 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
    @endiwhile
    default:;
    }
+@endiif
+@iif CU_NUKU = 0
+   if (kr)
+   {
+      @(cnstb)TYPE *pp = b;   /* panel ptr */
+      for (i=0; i < m; i += @(mu), pp += pansz)
+      {
+         @iif CU_NUR ! 0
+            @callproc doBlockMu kr
+         @endiif
+         @iif CU_NUR = 0
+            @callproc doKCuBlockRolled @(mu) kr
+         @endiif
+@ROUT ATL_rm2am ammmtst
+         /* zero padding */
+         for (; jj < @(ku); jj++, p++)
+         {
+      @iif CU_NUR ! 0
+         @iexp j 0 0 +
+         @iwhile j < @(mu)
+            @iexp ip @(j) @(ku) *
+            p[@(ip)] = 0.0;
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif CU_NUR = 0
+            ATL_UINT ii;
+            TYPE *w = p;
+            for (ii=0; ii < @(mu); ii++, w+=@(ku))
+               *w = 0.0;
+      @endiif
+         }
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+      }
+      if (m != M)
+      {
+         @(cnstb)TYPE *p = pp; 
+         for ( ; i < M; i++, p+=@(ku))
+         {
+            ATL_UINT jj;
+            @(cnst)TYPE *rA = A0;
+            for (jj=0; jj < kr; jj++, rA+=lda)
+@ROUT ATL_rm2am ammmtst
+               p[jj] = @(malp)rA[i];
+            for ( ; jj < @(ku); jj++)
+               p[jj] = 0.0;
+         }
+/*
+ *       Zero rest of M remainder subblock
+ */
+         for (; i < MM; i++, p += @(ku))
+         {
+            ATL_UINT jj;
+            for (jj=0; jj < @(ku); jj++)
+               p[jj] = 0.0;
+@ROUT ATL_am2rm
+               rA[i] = @(malp)p[jj];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+         }
+      }
+   }
+@endiif
 }
 @ROUT ammmtst `#endif`
 @endiif
@@ -1291,6 +2171,58 @@ void ATL_USERCPMM       /* row-major matrix to access-major block */
    @define dupB @1@
 @ROUT ATL_am2rm ATL_rm2am ammmtst
 @iif kmaj = 0
+@SKIP *** handles block unrolled 
+@BEGINPROC doBlockMU mu_
+   @define i @dum@
+   @define k @dum@
+   @define ik @dum@
+      @iexp i 0 0 +
+      @iwhile i < @(mu_)
+         @iexp ik @(dupB) @(i) *
+@ROUT ATL_rm2am ammmtst
+         @iexp k @(dupB) -1 +
+         @iwhile k > 0
+         pp[@(ik)+@(k)] =
+            @iexp k @(k) -1 +
+         @endiwhile
+         pp[@(ik)] = @(malp)A[@(i)];
+@ROUT ATL_am2rm
+         A[@(i)] = @(malp)pp[@(ik)];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+      @iexp i @(i) 1 +
+      @endiwhile
+   @undef ik 
+   @undef k 
+   @undef i 
+@ENDPROC
+@SKIP *** handles block rolled
+@BEGINPROC doBlockRolled mu_
+         ATL_UINT ii;
+      @iif dupB = 1
+         for (ii=0; ii < @(mu_); ii++)
+         {
+@ROUT ATL_rm2am ammmtst
+            pp[ii] = @(malp)A[ii];
+@ROUT ATL_am2rm
+            A[ii] = @(malp)pp[ii];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+         }
+      @endiif
+      @iif dupB > 1
+         @(cnstb)TYPE *p = pp;
+         for (ii=0; ii < @(mu_); ii++, p+=@(dupB))
+         {
+@ROUT ATL_rm2am ammmtst
+            ATL_UINT jj;
+            TYPE a0 = A[ii];
+            for (jj=0; jj < @(dupB); jj++)
+               p[jj] = @(malp)a0;
+@ROUT ATL_am2rm
+            A[ii] = @(malp)p[0];
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+         }
+      @endiif
+@ENDPROC
 @ROUT ATL_am2rm
 @beginskip
 @iif dupB > 1
@@ -1353,23 +2285,15 @@ void ATL_USERCPMM       /* row-access matrix to access-major block */
       @(cnstb)TYPE *pp = b;  /* panel ptr */
       for (i=0; i < m; i += @(mu), pp += pansz, A += @(mu))
       {
-      @iexp i 0 0 +
-      @iwhile i < @(mu)
-         @iexp ik @(dupB) @(i) *
-@ROUT ATL_rm2am ammmtst
-         @iexp k @(dupB) -1 +
-         @iwhile k > 0
-         pp[@(ik)+@(k)] =
-            @iexp k @(k) -1 +
-         @endiwhile
-         pp[@(ik)] = @(malp)A[@(i)];
-@ROUT ATL_am2rm
-         A[@(i)] = @(malp)pp[@(ik)];
-@ROUT ATL_am2rm ATL_rm2am ammmtst
-      @iexp i @(i) 1 +
-      @endiwhile
+      @iif ML_NUR ! 0
+         @callproc doBlockMU @(mu)
+      @endiif 
+      @iif ML_NUR = 0
+         @callproc doBlockRolled @(mu) 
+      @endiif
       }
       @mif mu ! "1
+         @iif CU_NUR ! 0
       switch(mr)
       {
       @iexp n 1 0 +
@@ -1407,6 +2331,28 @@ void ATL_USERCPMM       /* row-access matrix to access-major block */
       @endiwhile
       default:;
       }
+         @endiif
+         @iif CU_NUR = 0
+      if (mr)
+      {
+            @callproc doBlockRolled mr 
+@ROUT ATL_rm2am ammmtst
+      @iif dupB = 1
+         for (; ii < @(mu); ii++)
+            pp[ii] = ATL_rzero;
+      @endiif
+      @iif dupB > 1
+         @(cnstb)TYPE *p = pp;
+         for (; ii < @(mu); ii++, p+=@(dupB))
+         {
+            ATL_UINT jj;
+            for (jj=0; jj < @(dupB); jj++)
+               p[jj] = ATL_rzero;
+         }
+      @endiif
+@ROUT ATL_am2rm ATL_rm2am ammmtst
+      }
+         @endiif
       @endmif
    }
 @ROUT ATL_rm2am ammmtst
@@ -1418,6 +2364,7 @@ void ATL_USERCPMM       /* row-access matrix to access-major block */
       @iif ku > 2
          TYPE *pp = b;
          for (j=0; j < KR; j++, pp += @(mu)) /* zero KR*mu block */
+      @iif CU_KUR ! 0
          @iexp i 0
          @iwhile i < @(mu)
             pp[@(i)] =
@@ -1425,13 +2372,28 @@ void ATL_USERCPMM       /* row-access matrix to access-major block */
          @endiwhile
                     ATL_rzero;
       @endiif
+      @iif CU_KUR = 0
+         {
+            ATL_UINT ii;
+            for (ii=0; ii < @(mu); ii++)
+               pp[ii] = ATL_rzero;
+         }
+      @endiif
+      @endiif
       @iif ku == 2
+      @iif CU_NUR ! 0
          @iexp i 0
          @iwhile i < @(mu)
          b[@(i)] =
          @iexp i @(i) 1 +
          @endiwhile
                  ATL_rzero;
+      @endiif
+      @iif CU_NUR = 0
+         ATL_UINT ii;
+         for (ii=0; ii < @(mu); ii++)
+            b[ii] = ATL_rzero;
+      @endiif
       @endiif
       }
    }
@@ -1445,6 +2407,210 @@ void ATL_USERCPMM       /* row-access matrix to access-major block */
 @ROUT ATL_cam2rm ATL_crm2am cammmtst
 @iif kmaj ! 0
    @define ku @@(kmaj)@
+@SKIP ***** handles single element 
+@BEGINPROC doElement A_ j_ i2_ pr_ pi_ ib_
+         @mif nalp ! "X
+@ROUT ATL_crm2am cammmtst
+               @(pr_)[@(ib_)] = @(malp)@(A_)@(j_)[i+@(i2_)];
+               #ifdef Conj_
+                  @(pi_)[@(ib_)] = @(calp)@(A_)@(j_)[i+@(i2_)+1];
+               #else
+                  @(pi_)[@(ib_)] = @(malp)@(A_)@(j_)[i+@(i2_)+1];
+               #endif
+@ROUT ATL_cam2rm
+               @(A_)@(j_)[i+@(i2_)] = @(malp)@(pr_)[@(ib_)];
+               #ifdef Conj_
+                  @(A_)@(j_)[i+@(i2_)+1] = @(calp)@(pi_)[@(ib_)];
+               #else
+                  @(A_)@(j_)[i+@(i2_)+1] = @(malp)@(pi_)[@(ib_)];
+               #endif
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
+         @endmif
+         @mif nalp = "X
+@ROUT ATL_crm2am cammmtst
+               rv = @(A_)@(j_)[i+@(i2_)];
+               #ifdef Conj_
+                  iv = -@(A_)@(j_)[i+@(i2_)+1];
+               #else
+                  iv = @(A_)@(j_)[i+@(i2_)+1];
+               #endif
+               @(pr_)[@(ib_)] = rv*ra - iv*ia;
+               @(pi_)[@(ib_)] = rv*ia + iv*ra;
+@ROUT ATL_cam2rm
+               rv = @(pr_)[@(ib_)];
+               #ifdef Conj_
+                  iv = -@(pi_)[@(ib_)];
+               #else
+                  iv = @(pi_)[@(ib_)];
+               #endif
+               @(A_)@(j_)[i+@(i2_)] = rv*ra - iv*ia;
+               @(A_)@(j_)[i+@(i2_)+1] = rv*ia + iv*ra;
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
+         @endmif
+@ENDPROC
+@SKIP handles block 
+@BEGINPROC doBlockMuKu mu_ ku_ 
+   @define i @dum@
+   @define i2 @dum@
+   @define j @dum@
+   @define ip @dum@
+   @iexp i 0 0 +
+   @iwhile i < @(mu_)
+      @iexp i2 @(i) @(i) +
+      @iexp j 0 0 +
+      @iwhile j < @(ku_)
+         @iexp ip @(i) @(ku_) *
+         @iexp ip @(ip) @(j) +
+            @callproc doElement A @(j) @(i2) pr pi @(ip) 
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i @(i) 1 +
+   @endiwhile
+   @undef ip
+   @undef j
+   @undef i2
+   @undef i
+@ENDPROC
+@SKIP **** handles full block unrolled MU  
+@BEGINPROC doBlockMu ku_ 
+   @define j @dum@
+   @define i2 @dum@
+   @define ip @dum@
+         ATL_UINT jj;
+         @(cnst)TYPE *pA0 = A0;
+         @(cnstb)TYPE *pr0 = pr, *pi0 = pi;
+         for(jj=0; jj < @(ku_); jj++, pA0 +=lda2, pr0++, pi0++) 
+         {
+      @iexp j 0 
+      @iwhile j < @(mu)
+         @iexp i2 @(j) @(j) +
+         @iexp ip @(j) @(ku) *
+            @callproc doElement pA 0 @(i2) pr0 pi0 @(ip) 
+         @iexp j @(j) 1 +
+      @endiwhile
+         }
+   @undef ip
+   @undef i2
+   @undef j
+@ENDPROC
+@SKIP **** handles full block unrolled KU  
+@BEGINPROC doBlockKu mu_ 
+   @define j @dum@
+   @define kk @dum@
+         ATL_UINT ii;
+         @(cnstb)TYPE *pr0 = pr, *pi0 = pi;
+         @iexp kk @(mu_) @(mu_) +
+         for(ii=0; ii < @(kk); ii+=2, pr0+=@(ku), pi0+=@(ku)) 
+         {
+      @iexp j 0 0 +
+      @iwhile j < @(ku)
+            @SKIP A@(j)[i+ii] = @(malp)p[@(j)];
+         @callproc doElement A @(j) ii pr0 pi0 @(j) 
+         @iexp j @(j) 1 +
+      @endiwhile
+         }
+   @undef kk
+   @undef j
+@ENDPROC
+@SKIP **** handles full block rolled 
+@BEGINPROC doBlockRolled mu_ ku_ 
+   @define kk @dum@
+         ATL_UINT jj;
+         @(cnst)TYPE *pA0 = A0;
+         @(cnstb)TYPE *pr0 = pr, *pi0 = pi;
+         for(jj=0; jj < @(ku_); jj++, pA0 +=lda2, pr0++, pi0++)
+         {
+            ATL_UINT ii;
+            @(cnstb)TYPE *rw = pr0, *iw = pi0;
+            @iexp kk @(mu_) @(mu_) +
+            for(ii=0; ii < @(kk); ii+=2, rw+=@(ku), iw+=@(ku)) 
+            {
+               @callproc doElement pA 0 ii rw iw 0 
+            }
+         }
+   @undef kk
+@ENDPROC
+@SKIP *** FIXME: modify doElement with work with 
+@BEGINPROC doCuElement A_ j_ rr_ ii_ ip_ 
+      @mif nalp ! "X
+@ROUT ATL_crm2am cammmtst
+               @(rr_)[@(ip_)] = @(malp)@(A_)@(j_)[i];
+               #ifdef Conj_
+                  @(ii_)[@(ip_)] = @(calp)@(A_)@(j_)[i+1];
+               #else
+                  @(ii_)[@(ip_)] = @(malp)@(A_)@(j_)[i+1];
+               #endif
+@ROUT ATL_cam2rm
+               @(A_)@(j_)[i] = @(malp)@(rr_)[@(ip_)];
+               #ifdef Conj_
+                  @(A_)@(j_)[i+1] = @(calp)@(ii_)[@(ip_)];
+               #else
+                  @(A_)@(j_)[i+1] = @(malp)@(ii_)[@(ip_)];
+               #endif
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
+      @endmif
+      @mif nalp = "X
+@ROUT ATL_crm2am cammmtst
+               rv = @(A_)@(j_)[i];
+               #ifdef Conj_
+                  iv = -@(A_)@(j_)[i+1];
+               #else
+                  iv = @(A_)@(j_)[i+1];
+               #endif
+               @(rr_)[@(ip_)] = rv*ra - iv*ia;
+               @(ii_)[@(ip_)] = rv*ia + iv*ra;
+@ROUT ATL_cam2rm
+               rv = @(rr_)[@(ip_)];
+               #ifdef Conj_
+                  iv = -@(ii_)[@(ip_)];
+               #else
+                  iv = @(ii_)[@(ip_)];
+               #endif
+               @(A_)@(j_)[i] = rv*ra - iv*ia;
+               @(A_)@(j_)[i+1] = rv*ia + iv*ra;
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
+      @endmif
+@ENDPROC 
+@SKIP **** handles full block unrolled MU  
+@BEGINPROC doCuBlockMu ku_ 
+   @define j @dum@
+   @define i2 @dum@
+   @define ip @dum@
+         ATL_UINT jj;
+         @(cnst)TYPE *pA0 = A0;
+         @(cnstb)TYPE *pr0 = pr, *pi0 = pi;
+         for(jj=0; jj < @(ku_); jj++, pA0 +=lda2, pr0++, pi0++) 
+         {
+      @iexp j 0 
+      @iwhile j < @(mu)
+         @iexp i2 @(j) @(j) +
+         @iexp ip @(j) @(ku) *
+            @callproc doElement pA 0 @(i2) pr0 pi0 @(ip) 
+         @iexp j @(j) 1 +
+      @endiwhile
+         }
+   @undef ip
+   @undef i2
+   @undef j
+@ENDPROC
+@SKIP **** handles K-cleanup block rolled FIXME: no diff with doBlockRolled!!! 
+@BEGINPROC doKCuBlockRolled mu_ ku_ 
+   @define kk @dum@
+         ATL_UINT jj;
+         @(cnst)TYPE *pA0 = A0;
+         @(cnstb)TYPE *pr0 = pr, *pi0 = pi;
+         for(jj=0; jj < @(ku_); jj++, pA0 +=lda2, pr0++, pi0++)
+         {
+            ATL_UINT ii;
+            @(cnstb)TYPE *rw = pr0, *iw = pi0;
+            @iexp kk @(mu_) @(mu_) +
+            for(ii=0; ii < @(kk); ii+=2, rw+=@(ku), iw+=@(ku)) 
+            {
+               @callproc doElement pA 0 ii rw iw 0 
+            }
+         }
+   @undef kk 
+@ENDPROC
 @ROUT ATL_cam2rm
 void ATL_USERCPMM       /* access- to row-major */
 (
@@ -1498,11 +2664,17 @@ void ATL_USERCPMM       /* row- to access-major */
    ATL_CSZT MM = ((M+@(mu)-1)/@(mu))*@(mu), KK = ((K+@(ku)-1)/@(ku))*@(ku);
    ATL_CSZT pansz = @(mu)*KK, m = M/@(mu)*@(mu), mr = M-m, k = (K/@(ku))*@(ku);
    ATL_CSZT K2=K+K, m2 = m+m, lda2=lda+lda, M2 = M+M, incA = @(ku)*lda2;
+   ATL_CSZT kr = K-k;
    ATL_SZT i, j;
    @mif nalp = "X
    const register TYPE ra=(*alpha), ia=alpha[1];
    register TYPE rv, iv;
    @endmif
+@iexp NA1 1
+@iif @iexp 0 @(ML_KUR) ! 0 @(CU_KUR) ! |
+   @iexp NA1 0
+@endiif 
+@iif NA1 = 0
    @declare "   @(cnst)TYPE " n n ";"
       *A0=A
       @iexp j 0 1 +
@@ -1512,6 +2684,10 @@ void ATL_USERCPMM       /* row- to access-major */
          @iexp j @(j) 1 +
       @endiwhile
    @enddeclare
+@endiif
+@iif NA1 ! 0
+   @(cnst)TYPE *A0=A;
+@endiif
    @iexp incb @(ku) @(mu) *
 
    for (j=0; j < k; j += @(ku), rA += @(incb), iA += @(incb))
@@ -1520,55 +2696,20 @@ void ATL_USERCPMM       /* row- to access-major */
 
       for (i=0; i < m2; i += @(mu2), pr += pansz, pi += pansz)
       {
-   @iexp i 0 0 +
-   @iwhile i < @(mu)
-      @iexp i2 @(i) @(i) +
-      @iexp j 0 0 +
-      @iwhile j < @(ku)
-         @iexp ip @(i) @(ku) *
-         @iexp ip @(ip) @(j) +
-         @mif nalp ! "X
-@ROUT ATL_crm2am cammmtst
-         pr[@(ip)] = @(malp)A@(j)[i+@(i2)];
-         #ifdef Conj_
-            pi[@(ip)] = @(calp)A@(j)[i+@(i2)+1];
-         #else
-            pi[@(ip)] = @(malp)A@(j)[i+@(i2)+1];
-         #endif
-@ROUT ATL_cam2rm
-         A@(j)[i+@(i2)] = @(malp)pr[@(ip)];
-         #ifdef Conj_
-            A@(j)[i+@(i2)+1] = @(calp)pi[@(ip)];
-         #else
-            A@(j)[i+@(i2)+1] = @(malp)pi[@(ip)];
-         #endif
-@ROUT ATL_cam2rm ATL_crm2am cammmtst
-         @endmif
-         @mif nalp = "X
-@ROUT ATL_crm2am cammmtst
-         rv = A@(j)[i+@(i2)];
-         #ifdef Conj_
-            iv = -A@(j)[i+@(i2)+1];
-         #else
-            iv = A@(j)[i+@(i2)+1];
-         #endif
-         pr[@(ip)] = rv*ra - iv*ia;
-         pi[@(ip)] = rv*ia + iv*ra;
-@ROUT ATL_cam2rm
-         rv = pr[@(ip)];
-         #ifdef Conj_
-            iv = -pi[@(ip)];
-         #else
-            iv = pi[@(ip)];
-         #endif
-         A@(j)[i+@(i2)] = rv*ra - iv*ia;
-         A@(j)[i+@(i2)+1] = rv*ia + iv*ra;
-@ROUT ATL_cam2rm ATL_crm2am cammmtst
-         @endmif
-         @iexp j @(j) 1 +
-      @endiwhile
-      @iexp i @(i) 1 +
-   @endiwhile
+         @iif ML_NUKU ! 0
+            @callproc doBlockMuKu @(mu) @(ku) 
+         @endiif 
+         @iif ML_NUKU = 0
+            @iif ML_NUR ! 0 
+               @callproc doBlockMu @(ku)
+            @endiif
+            @iif ML_KUR ! 0 
+               @callproc doBlockKu @(mu)
+            @endiif
+            @iif ML_NO ! 0
+               @callproc doBlockRolled @(mu) @(ku)
+            @endiif
+         @endiif
       }
       if (m != M)
       {
@@ -1578,48 +2719,21 @@ void ATL_USERCPMM       /* row- to access-major */
  */
          for (rr=pr, ii=pi; i < M2; i += 2, rr += @(ku), ii += @(ku))
          {
-   @iexp j 0 0 +
-   @iwhile j < @(ku)
-      @mif nalp ! "X
-@ROUT ATL_crm2am cammmtst
-            rr[@(j)] = @(malp)A@(j)[i];
-            #ifdef Conj_
-               ii[@(j)] = @(calp)A@(j)[i+1];
-            #else
-               ii[@(j)] = @(malp)A@(j)[i+1];
-            #endif
-@ROUT ATL_cam2rm
-            A@(j)[i] = @(malp)rr[@(j)];
-            #ifdef Conj_
-               A@(j)[i+1] = @(calp)ii[@(j)];
-            #else
-               A@(j)[i+1] = @(malp)ii[@(j)];
-            #endif
-@ROUT ATL_cam2rm ATL_crm2am cammmtst
-      @endmif
-      @mif nalp = "X
-@ROUT ATL_crm2am cammmtst
-         rv = A@(j)[i];
-         #ifdef Conj_
-            iv = -A@(j)[i+1];
-         #else
-            iv = A@(j)[i+1];
-         #endif
-         rr[@(j)] = rv*ra - iv*ia;
-         ii[@(j)] = rv*ia + iv*ra;
-@ROUT ATL_cam2rm
-         rv = rr[@(j)];
-         #ifdef Conj_
-            iv = -ii[@(j)];
-         #else
-            iv = ii[@(j)];
-         #endif
-         A@(j)[i] = rv*ra - iv*ia;
-         A@(j)[i+1] = rv*ia + iv*ra;
-@ROUT ATL_cam2rm ATL_crm2am cammmtst
-      @endmif
-      @iexp j @(j) 1 +
-   @endiwhile
+      @iif CU_KUR ! 0
+         @iexp j 0 0 +
+         @iwhile j < @(ku)
+            @callproc doCuElement A @(j) rr ii @(j) 
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif CU_KUR = 0
+            ATL_UINT jj;
+            @(cnst)TYPE *pA0 = A0;
+            for (jj=0; jj < @(ku); jj++, pA0+=lda2)
+            {
+               @callproc doCuElement pA 0 rr ii jj 
+            }
+      @endiif
          }
 @ROUT ATL_crm2am cammmtst
 /*
@@ -1627,14 +2741,22 @@ void ATL_USERCPMM       /* row- to access-major */
  */
          for (i=M; i < MM; i++, rr += @(ku), ii += @(ku))
          {
-   @iexp j 0 0 +
-   @iwhile j < @(ku)
+      @iif CU_KUR ! 0
+         @iexp j 0 0 +
+         @iwhile j < @(ku)
             ii[@(j)] = rr[@(j)] = 0.0;
-      @iexp j @(j) 1 +
-   @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif CU_KUR = 0
+            ATL_UINT jj;
+            for (jj=0; jj < @(ku); jj++)
+               ii[jj] = rr[jj] = 0.0;
+      @endiif
          }
 @ROUT ATL_cam2rm ATL_crm2am cammmtst
       }
+@iif NA1 = 0
 /*
  * Update column-ptrs from A
  */
@@ -1643,10 +2765,15 @@ void ATL_USERCPMM       /* row- to access-major */
       A@(j) += incA;
       @iexp j @(j) 1 +
    @endiwhile
+@endiif
+@iif NA1 ! 0
+      A0 += incA;
+@endiif
    }
 /*
  * Check for final, partial K-panel that needs to be padded wt zeros
  */
+@iif CU_NUKU ! 0
    switch(K-k)
    {
    @iexp r @(ku) -1 +
@@ -1792,10 +2919,147 @@ void ATL_USERCPMM       /* row- to access-major */
    @endiwhile
    default:;
    }
+@endiif
+@iif CU_NUKU = 0
+   if (kr)
+   {
+      @(cnstb)TYPE *pr = rA, *pi = iA;   /* panel ptrs */
+      for (i=0; i < m2; i += @(mu2), pr += pansz, pi += pansz)
+      {
+         @iif CU_NUR ! 0
+            @callproc doCuBlockMu kr
+         @endiif
+         @iif CU_NUR = 0
+         @callproc doKCuBlockRolled @(mu) kr
+         @endiif
+@ROUT ATL_crm2am cammmtst
+         /* zero padding */
+         for(; jj < @(ku); jj++, pr0++, pi0++) 
+         {
+      @iif CU_NUR ! 0
+         @iexp j 0 0 +
+         @iwhile j < @(mu)
+            @iexp ip @(j) @(ku) *
+            pi0[@(ip)] = pr0[@(ip)] = 0.0;
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+      @iif CU_NUR = 0
+            ATL_UINT kk;
+            TYPE *rw = pr0, *iw = pi0;
+            for (kk=0; kk < @(mu); kk++, rw+=@(ku), iw+=@(ku))
+               *rw = *iw = 0.0;
+      @endiif 
+         }
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
+      }
+      if (m != M)
+      {
+         @(cnstb)TYPE *rr, *ii;
+/*
+ *       Copy partial M remainder subblock
+ */
+         for (rr=pr, ii=pi; i < M2; i += 2, rr += @(ku), ii += @(ku))
+         {
+            ATL_UINT jj; 
+            @(cnst)TYPE *pA0 = A0;
+            for (jj=0; jj < kr; jj++, pA0+=lda2)
+            {
+@ROUT ATL_crm2am cammmtst
+               @callproc doCuElement pA 0 rr ii jj 
+            }
+            for (; jj < @(ku); jj++)
+               rr[jj] = ii[jj] = 0.0;
+         }
+/*
+ *       zero rest of M remainder subblock 
+ */
+         for (i=M; i < MM; i++, rr+=@(ku), ii+=@(ku))
+         {
+            ATL_UINT jj;
+            for (jj=0; jj < @(ku); jj++)
+               rr[jj] = ii[jj] = 0.0;
+         }
+@ROUT ATL_cam2rm 
+               @callproc doCuElement pA 0 rr ii jj 
+            }
+         }
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
+      }
+   }
+@endiif
 }
 @ROUT cammmtst `#endif`
 @endiif
 @iif kmaj = 0
+@SKIP *** handles single cell 
+@BEGINPROC doElement A_ i2_ pr_ pi_ i_
+         @mif nalp = "X
+@ROUT ATL_crm2am cammmtst
+            rv = @(A_)[@(i2_)];
+            #ifdef Conj_
+               iv = -@(A_)[@(i2_)+1];
+            #else
+               iv = @(A_)[@(i2_)+1];
+            #endif
+            @(pr_)[@(i_)] = rv*ra - iv*ia;
+            @(pi_)[@(i_)] = rv*ia + iv*ra;
+@ROUT ATL_cam2rm
+            rv = @(pr_)[@(i_)];
+            #ifdef Conj_
+               iv = -@(pi_)[@(i_)];
+            #else
+               iv = @(pi_)[@(i_)];
+            #endif
+            @(A_)[@(i2_)] = rv*ra - iv*ia;
+            @(A_)[@(i2_)+1] = rv*ia + iv*ra;
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
+         @endmif
+         @mif nalp ! "X
+@ROUT ATL_crm2am cammmtst
+            @(pr_)[@(i_)] = @(malp)@(A_)[@(i2_)];
+            #ifdef Conj_
+               @(pi_)[@(i_)] = @(calp)@(A_)[@(i2_)+1];
+            #else
+               @(pi_)[@(i_)] = @(malp)@(A_)[@(i2_)+1];
+            #endif
+@ROUT ATL_cam2rm
+            @(A_)[@(i2_)] = @(malp)@(pr_)[@(i_)];
+            #ifdef Conj_
+               @(A_)[@(i2_)+1] = @(calp)@(pi_)[@(i_)];
+            #else
+               @(A_)[@(i2_)+1] = @(malp)@(pi_)[@(i_)];
+            #endif
+@ROUT ATL_cam2rm ATL_crm2am cammmtst
+         @endmif
+@ENDPROC
+@SKIP *** handles single block unrolled 
+@BEGINPROC doBlockMu
+   @define i @dum@
+   @define i2 @dum@
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @iexp i2 @(i) @(i) +
+         @callproc doElement A @(i2) pr pi @(i)
+      @iexp i @(i) 1 +
+      @endiwhile
+   @undef i2
+   @undef i
+@ENDPROC
+@SKIP *** handles single block unrolled 
+@BEGINPROC doBlockRolled mu_
+         ATL_UINT ii;
+         for (ii=0; ii < @(mu_); ii++)
+         {
+            @callproc doElement A (ii<<1) pr pi ii
+         }
+@ENDPROC
+@SKIP *** handles single cleanup block unrolled 
+@BEGINPROC doCuBlockRolled mu_
+         @callproc doBlockRolled @(mu_)
+         for (; ii < @(mu); ii++)
+            pr[ii] = pi[ii] = ATL_rzero;
+@ENDPROC
 @ROUT ATL_cam2rm
 @beginskip
 #ifdef Conj_
@@ -1865,51 +3129,15 @@ void ATL_USERCPMM       /* row- to access-major */
       @(cnstb)TYPE *pr = rA, *pi = iA;  /* panel ptrs */
       for (i=0; i < m2; i += @(mu2), pr += pansz, pi += pansz, A += @(mu2))
       {
-      @iexp i 0 0 +
-      @iwhile i < @(mu)
-         @iexp i2 @(i) @(i) +
-         @mif nalp = "X
-@ROUT ATL_crm2am cammmtst
-         rv = A[@(i2)];
-         #ifdef Conj_
-            iv = -A[@(i2)+1];
-         #else
-            iv = A[@(i2)+1];
-         #endif
-         pr[@(i)] = rv*ra - iv*ia;
-         pi[@(i)] = rv*ia + iv*ra;
-@ROUT ATL_cam2rm
-         rv = pr[@(i)];
-         #ifdef Conj_
-            iv = -pi[@(i)];
-         #else
-            iv = pi[@(i)];
-         #endif
-         A[@(i2)] = rv*ra - iv*ia;
-         A[@(i2)+1] = rv*ia + iv*ra;
-@ROUT ATL_cam2rm ATL_crm2am cammmtst
-         @endmif
-         @mif nalp ! "X
-@ROUT ATL_crm2am cammmtst
-         pr[@(i)] = @(malp)A[@(i2)];
-         #ifdef Conj_
-            pi[@(i)] = @(calp)A[@(i2)+1];
-         #else
-            pi[@(i)] = @(malp)A[@(i2)+1];
-         #endif
-@ROUT ATL_cam2rm
-         A[@(i2)] = @(malp)pr[@(i)];
-         #ifdef Conj_
-            A[@(i2)+1] = @(calp)pi[@(i)];
-         #else
-            A[@(i2)+1] = @(malp)pi[@(i)];
-         #endif
-@ROUT ATL_cam2rm ATL_crm2am cammmtst
-         @endmif
-      @iexp i @(i) 1 +
-      @endiwhile
+      @iif ML_NUR ! 0
+         @callproc doBlockMu
+      @endiif
+      @iif ML_NUR = 0
+         @callproc doBlockRolled @(mu)
+      @endiif
       }
       @mif mu ! "1
+   @iif CU_NUR ! 0
       switch(mr)
       {
       @iexp n 1 0 +
@@ -1969,6 +3197,13 @@ void ATL_USERCPMM       /* row- to access-major */
       @endiwhile
       default:;
       }
+   @endiif
+   @iif CU_NUR = 0
+      if (mr)
+      {
+         @callproc doCuBlockRolled mr
+      }
+   @endiif
       @endmif
    }
 @ROUT ATL_crm2am cammmtst
@@ -1980,20 +3215,36 @@ void ATL_USERCPMM       /* row- to access-major */
       @iif ku > 2
          TYPE *pr = rA, *pi = iA;
          for (j=0; j < KR; j++, pr += @(mu), pi += @(mu)) /* zero KR*mu block */
+         @iif CU_KUR ! 0
          @iexp i 0
          @iwhile i < @(mu)
             pr[@(i)] = pi[@(i)] =
          @iexp i @(i) 1 +
          @endiwhile
                             ATL_rzero;
+         @endiif
+         @iif CU_KUR = 0
+         {
+            ATL_UINT ii;
+            for (ii=0; ii < @(mu); ii++)
+               pr[ii] = pi[ii] = ATL_rzero;
+         }
+         @endiif
       @endiif
       @iif ku == 2
+         @iif CU_KUR ! 0
          @iexp i 0
          @iwhile i < @(mu)
          rA[@(i)] = iA[@(i)] =
          @iexp i @(i) 1 +
          @endiwhile
                          ATL_rzero;
+         @endiif
+         @iif CU_KUR = 0
+            ATL_UINT ii;
+            for (ii=0; ii < @(mu); ii++)
+               rA[ii] = iA[ii] = ATL_rzero;
+         @endiif
       @endiif
       }
    }

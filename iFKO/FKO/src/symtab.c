@@ -716,7 +716,7 @@ void CreateLocalDerefs()
  * For paras, moves para # to SToff[].sa[0].
  */
 {
-   short k;
+   short k, j;
    int fl;
    /*short st; */
    /*int i, vl, stype;*/
@@ -728,17 +728,23 @@ void CreateLocalDerefs()
       if (IS_PARA(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+         j = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+         SToff[k].sa[2] = j;
          SToff[k].sa[3] = 0; /* by default 0, remain 0 for 1D array */
       }
       else if (IS_LOCAL(fl))
       {
 #if 0         
          if (!IS_VECELEM(fl))
-            SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+         {
+            j = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+            SToff[k].sa[2] = j;
+         }
          else
-            SToff[k].sa[2] = AddDerefEntry(-REG_SP, SToff[k].sa[0], -k-1, 0, 
-                                           k+1);
+         {
+            j =  AddDerefEntry(-REG_SP, SToff[k].sa[0], -k-1, 0, k+1);
+            SToff[k].sa[2] = j;
+         }
 /*
  *       adding scalars for each vector elements
  *       For local, SToff[].sa[0] is unused. we used this to point the parent 
@@ -746,7 +752,8 @@ void CreateLocalDerefs()
  */
          if (IS_VEC(fl))
          {
-            SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+            j = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+            SToff[k].sa[2] = j;
             SToff[k].sa[1] = 0; /* will be changed later! */
             vl = vtype2elem(FLAG2TYPE(fl));
             if (IS_VFLOAT(fl))
@@ -765,11 +772,18 @@ void CreateLocalDerefs()
             }
          }
          else if (IS_VECELEM(fl))
-            SToff[k].sa[2] = AddDerefEntry(-REG_SP, SToff[k].sa[0],-k-1,0, k+1);
+         {
+            j = AddDerefEntry(-REG_SP, SToff[k].sa[0],-k-1,0, k+1);
+            SToff[k].sa[2] = j;
+         }
          else
-            SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+         {
+            j = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+            SToff[k].sa[2] = j; 
+         }
 #else
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+         j = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+         SToff[k].sa[2] = j;
 #endif
       }
    }

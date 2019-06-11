@@ -6,7 +6,17 @@ ICON	[0-9]+
 HCON	"0x"[0-9,A-F]+
 ID	[A-Za-z][A-Za-z0-9_]*
 ROUTNAM "ROUTINE"[ \t\v]+ID
+%x C_COMMENT
 %%
+<INITIAL>{
+"/*"              BEGIN(C_COMMENT);
+}
+<C_COMMENT>{
+"*/"      BEGIN(INITIAL);
+[^*\n]+   { } /* skip comments */
+"*"       { } /* skip the lone star */
+\n        { yylineno++; } /* NOTE: we are not passing the comment to HIL here */ 
+}
 "//"[^\n]*\n    { lnno++; strcpy(yylval.str, yytext+2); return(TCOMMENT); }
 [\t \v]		{}
 [\n]    {lnno++;}
@@ -95,5 +105,4 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "_PREFETCHR"    { return(PREFETCHR); }
 "_PREFETCHW"    { return(PREFETCHW); }
 {ID}      { sprintf(yylval.str, "%s", yytext); return(NAME); }
-
 %%
