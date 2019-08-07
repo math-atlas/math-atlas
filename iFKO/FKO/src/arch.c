@@ -6,6 +6,9 @@
 #include "fko.h"
 struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
                *ParaDerefQ=NULL;   /* Derefs created for parameters */
+/*
+ * ISIZE: INT register size, mainly used in arch.c  
+ */
 #ifdef X86_64
    #define ISIZE 8
 #else
@@ -18,7 +21,12 @@ short type2len(int type)
 /*
  * Majedul: in X86_64, PTR is 64 bit but INT is still 32 bit. So, the size of
  * T_INT should be 4 byte; otherwise, it will create problem in loop unroll 
- * for INT array (itst9.b). ArchPtrIsLong may not be appropriate here.    
+ * for INT array (itst9.b). ArchPtrIsLong may not be appropriate here.  
+ * FIXME: 
+ * Since int register size is 64bit in X86_64, we can promote INT as 64 bit. 
+ *    Need to check unrolling of itst9.b test-case to fix the bug 
+ * We may wan tot introduce int64, int32 style int types to avoid 
+ *    the confusion. 
  */   
 #if 0   
    #ifdef ArchPtrIsLong
@@ -28,19 +36,24 @@ short type2len(int type)
    #endif
 #endif
    if (type == T_DOUBLE) len = 8;
+#ifdef X86
    else if (IS_VEC(type))
-      #if defined(X86) && defined(AVX)
+   {
+      #if defined(AVX512)
+         len = 64;
+      #elif defined(AVX)
          len = 32;
       #else      
          len = 16;
       #endif
+   }
+#endif
    return(len);
 }
 
 short type2shift(int type)
 {
    short len=2;
-/* Majedul: ArchPtrIsLong may not be appropriate here. */   
 #if 0    
    #ifdef  ArchPtrIsLong 
       if (type == T_DOUBLE || type == T_INT) len = 3;
@@ -49,12 +62,16 @@ short type2shift(int type)
    #endif
 #endif
    if (type == T_DOUBLE) len = 3;
+#ifdef X86
    else if (IS_VEC(type))
-      #if defined(X86) && defined(AVX)
+      #if defined(AVX512)
+         len = 6;
+      #elif defined(AVX)
          len = 5;
       #else
          len = 4;
       #endif
+#endif
    return(len);
 }
 
@@ -65,17 +82,35 @@ short vtype2elem(int type)
  */
 {
    short nelem;
-   #if defined(AVX)
-      if (type == T_VDOUBLE)
-         nelem = 4;
-      else if (type == T_VFLOAT) 
+   if (type == T_VDOUBLE)
+      #if defined(AVX512)
          nelem = 8;
-   #else
-      if (type == T_VDOUBLE)
-         nelem = 2;
-      else if (type == T_VFLOAT) 
+      #elif defined(AVX)
          nelem = 4;
-   #endif
+      #else
+         nelem = 2;
+      #endif
+   else if (type == T_VFLOAT) 
+      #if defined(AVX512)
+         nelem = 16;
+      #elif defined(AVX)
+         nelem = 8;
+      #else /* SSE */
+         nelem = 4;
+      #endif
+/*
+ * NOTE: we don't support short int as a vector type although we use it 
+ * internally in compiler generated code in X8664. 
+ * FIXME: Considering promoting short int as a TYPE for X8664... 
+ */
+   else if (type == T_VINT) 
+      #if defined(AVX512)
+         nelem = 16;
+      #elif defined(AVX)
+         nelem = 8;
+      #else /* SSE */
+         nelem = 4;
+      #endif
    else
       fko_error(__LINE__, "Must be a vector type!");
    return nelem;
@@ -86,7 +121,9 @@ short GetVecAlignByte()
  * alignment needed in bytes for vector unit
  */
 {
-   #if defined(AVX)
+   #if defined(AVX512)
+      return(64);
+   #elif defined(AVX)
       return(32);
    #else
       return(16);
@@ -358,12 +395,10 @@ int GetArchAlign(int nvd, int nvf, int nvi, int nd, int nf, int nl, int ni)
  */
 {
    #ifdef X86_64
-/*    return(16); */
 /* 
- *    Majedul: Required alignment is changed for AVX. 32 byte alignment may be
- *    required.
+ *    X86_64: AMD64 ABI, stack also aligned on 16 bytes boundary
  */   
-      #ifdef AVX
+      #ifdef ArchHasVec
          int align = 0;
          if (nvd) align = FKO_DVLEN*8;
          else if (nvf) align = FKO_SVLEN*4;
@@ -375,7 +410,7 @@ int GetArchAlign(int nvd, int nvf, int nvi, int nd, int nf, int nl, int ni)
       #else
          return (16);
       #endif
-   #else
+   #else /* X86_32 and other systems(OSX_PPC): kept from old ifko code */
    int align = 0;
       #ifdef ArchHasVec
          if (nvd) align = FKO_DVLEN*8;
@@ -1060,7 +1095,13 @@ void Extern2Local(INSTQ *next, int rsav)
  */
       assert(reg1 <= NSR);
             
-      #ifdef AVX   
+      #if defined(AVX512)   
+         fnam[0] = '@';
+         fnam[1] = 'z';
+         fnam[2] = 'm';
+         fnam[3] = 'm';
+         fnam[5] = '\0';
+      #elif defined(AVX)
          fnam[0] = '@';
          fnam[1] = 'y';
          fnam[2] = 'm';
