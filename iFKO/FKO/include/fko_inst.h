@@ -205,6 +205,7 @@ enum inst
    VDMAX,                      /* vr0 = max(vr1,vr2) */
    VDMIN,                      /* vr0 = min(vr1,vr2) */
    VDHADD,                     /* vr0 = HADD(vr1), HADD(vr2)*/
+   VDHADDL,                    /* Low half: vr0 = HADD(vr1), HADD(vr2)*/
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  * NOTE: it will only be used to load data. repeatble optimizations skip it
@@ -217,11 +218,12 @@ enum inst
  */
    VDCMOV1,                      /* vr0 = vr2? vr0 : vr1 */ 
    VDCMOV2,                      /* vr0 = vr2? vr1 : vr0 */ 
-
-   VDSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
+   VDMOVHALF, 
+   VDSHUF,                    /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
           /* [int32] is split into 8 4 bit words; 1st word indicates which */
           /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
           /* starting in vr0[0], and ending in vr1[N], N=veclen-1 */
+   VDSHUFLO,
    VDHIHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[1], vr0[1] = vr2[1] */
    VDLOHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[0], vr0[1] = vr2[0] */
 /*
@@ -255,6 +257,7 @@ enum inst
    VFMAX,                      /* vr0 = max(vr1,vr2) */
    VFMIN,                      /* vr0 = min(vr1,vr2) */
    VFHADD,                     /* vr0 = HADD(vr1), HADD(vr2)*/
+   VFHADDL,                    /* low half: vr0 = HADD(vr1), HADD(vr2)*/
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  * NOTE: it will only be used to load data. repeatble optimizations skip it
@@ -267,11 +270,12 @@ enum inst
  */
    VFCMOV1,                      /* vr0 = vr2? vr0 : vr1 */
    VFCMOV2,                      /* vr0 = vr2? vr1 : vr0 */
-
+   VFMOVHALF,
    VFSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
           /* [int32] is split into 8 4 bit words; 1st word indicates which */
           /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
           /* starting in vr0[0], and ending in vr1[N], N=veclen-1 */
+   VFSHUFLO,
    VFHIHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[1], vr0[1] = vr2[1] */
    VFLOHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[0], vr0[1] = vr2[0] */
 /*
@@ -624,6 +628,7 @@ char *instmnem[] =
    "VDMAX",
    "VDMIN",
    "VDHADD",
+   "VDHADDL",
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  */
@@ -633,7 +638,9 @@ char *instmnem[] =
  */
    "VDCMOV1",
    "VDCMOV2",
+   "VDMOVHALF",
    "VDSHUF",
+   "VDSHUFLO",
    "VDHIHALF",
    "VDLOHALF",
 /*
@@ -661,6 +668,7 @@ char *instmnem[] =
    "VFMAX",
    "VFMIN",
    "VFHADD",
+   "VFHADDL",
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  */
@@ -670,7 +678,9 @@ char *instmnem[] =
  */
    "VFCMOV1",
    "VFCMOV2",
+   "VFMOVHALF",
    "VFSHUF",
+   "VFSHUFLO",
    "VFHIHALF",
    "VFLOHALF",
 /*
@@ -1022,10 +1032,15 @@ char *instmnem[] =
                               (i_) == DIVS   || (i_) == UDIVS || \
                               (i_) == CMPS   || (i_) == MOVS || \
                               (i_) == NEGS  )
-
+#if 0
 #define IS_SHUFFLE_OP(i_)   ( (i_) == VFSHUF   || (i_) == VDSHUF || \
                               (i_) == VSSHUF   || (i_) == VISHUF )
-
+#else
+#define IS_SHUFFLE_OP(i_)   ( (i_) == VFSHUF   || (i_) == VDSHUF || \
+                              (i_) == VSSHUF   || (i_) == VISHUF || \
+                              (i_) == VFSHUFLO || (i_) == VDSHUFLO || \
+                              (i_) == VFMOVHALF || (i_) == VDMOVHALF )
+#endif
 #define IS_IREG2VREG_OP(i_) ( (i_) == VGR2VR16 || (i_) == VGR2VR32 || \
                               (i_) == VGR2VR64 )
 
