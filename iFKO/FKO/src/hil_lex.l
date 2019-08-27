@@ -21,7 +21,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 [\t \v]		{}
 [\n]    {lnno++;}
 [-]?{ICON}"."{ICON}([eE][-+]?{ICON})?[fF] { sscanf(yytext, "%f", &yylval.fnum);  
-       return(FCONST); }
+       return(FCONST); } /* NOTE: fpconst must have 'f' at the end, like: C */
 [-]?{ICON}"\."{ICON}([eE][-+]?{ICON})? { yylval.dnum = atof(yytext); 
        return(DCONST); }
 {ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }

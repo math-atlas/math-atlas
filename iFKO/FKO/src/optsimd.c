@@ -3538,7 +3538,22 @@ void AddVectorInitReduction(LOOPQ *lp)
                               SToff[lp->vvscal[i+1]-1].sa[2], 0);
             if (vld == VDLD)
             {
-            #if defined(X86) && defined(AVX)
+            #if defined(AVX512)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDMOVHALF, -r1,
+                                 -r0, STiconstlookup(0x13));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUFLO, -r1,
+                                 -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUFLO, -r1,
+                                 -r0, STiconstlookup(0x3715));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #elif defined(AVX)
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
                                  -r0, STiconstlookup(0x3276));
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
@@ -3549,7 +3564,7 @@ void AddVectorInitReduction(LOOPQ *lp)
                                  -r1);
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
                                  SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
-            #else
+            #else /* SSE */
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
                                  -r0, STiconstlookup(0x33));
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
@@ -3560,7 +3575,26 @@ void AddVectorInitReduction(LOOPQ *lp)
             }
             else
             {
-            #if defined(X86) && defined(AVX)
+            #if defined(AVX512)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFMOVHALF, -r1,
+                                 -r0, STiconstlookup(0x13));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
+                                 -r1, -r0, STiconstlookup(0x7654FEDC));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
+                                 -r1, -r0, STiconstlookup(0x765432BA));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
+                                 -r1, -r0, STiconstlookup(0x76CD3289));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #elif defined(AVX)
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
                                  -r1, -r0, STiconstlookup(0x7654FEDC));
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
@@ -5181,8 +5215,22 @@ int RedundantVectorTransform(LOOPQ *lp)
                   inst = VDMIN;
                else
                   assert(0);
-
-            #if defined(X86) && defined(AVX)
+            #if defined(AVX512)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDMOVHALF, -r1,
+                                 -r0, STiconstlookup(0x13));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUFLO, -r1,
+                                 -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUFLO, -r1,
+                                 -r0, STiconstlookup(0x3715));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #elif defined(AVX)
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
                                  -r0, STiconstlookup(0x3276));
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
@@ -5212,8 +5260,26 @@ int RedundantVectorTransform(LOOPQ *lp)
                   inst = VFMIN;
                else
                   assert(0);
-
-            #if defined(X86) && defined(AVX)
+            #if defined(AVX512)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFMOVHALF, -r1,
+                                 -r0, STiconstlookup(0x13));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
+                                 -r1, -r0, STiconstlookup(0x7654FEDC));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
+                                 -r1, -r0, STiconstlookup(0x765432BA));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
+                                 -r1, -r0, STiconstlookup(0x76CD3289));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #elif defined(AVX)
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
                                  -r1, -r0, STiconstlookup(0x7654FEDC));
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
@@ -5228,7 +5294,7 @@ int RedundantVectorTransform(LOOPQ *lp)
                                  -r0,-r0,-r1);
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
                                  SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
-            #else
+            #else /* SSE */
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
                                  -r1, -r0, STiconstlookup(0x3276));
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
@@ -5770,7 +5836,22 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0)
                                 "%s", STname[vscal-1]);
               ip = InsNewInst(bp0, ip, NULL, VFLD, -r0, 
                               SToff[lp->vvscal[i]-1].sa[2], 0);
-               #if defined(X86) && defined(AVX)
+               #if defined(AVX512)
+                  ip = InsNewInst(bp0, ip, NULL, VFMOVHALF, -r1,
+                                 -r0, STiconstlookup(0x13));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0, -r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSHUFLO, -r1, -r0, 
+                                    STiconstlookup(0x7654FEDC));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSHUFLO, -r1, -r0, 
+                                    STiconstlookup(0x765432BA));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSHUFLO, -r1, -r0, 
+                                    STiconstlookup(0x76CD3289));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSTS, 
+                                    SToff[lp->vscal[i]-1].sa[2], -r0, 0);
+               #elif defined(AVX)
                   ip = InsNewInst(bp0, ip, NULL, VFSHUF, -r1, -r0, 
                                     STiconstlookup(0x7654FEDC));
                   ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
@@ -5799,7 +5880,19 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0)
                                 "%s",STname[vscal-1]);
               ip = InsNewInst(bp0, ip, NULL, VDLD, -r0, 
                               SToff[lp->vvscal[i]-1].sa[2], 0);
-               #if defined(X86) && defined(AVX)
+               #if defined(AVX512)
+                  ip = InsNewInst(bp0, ip, NULL, VDMOVHALF, -r1,
+                                 -r0, STiconstlookup(0x13));
+                  ip = InsNewInst(bp0, ip, NULL,VDADD,-r0, -r0, -r1);
+                  ip = InsNewInst(bp0, ip, NULL, VDSHUFLO, -r1, -r0, 
+                                    STiconstlookup(0x3276));
+                  ip = InsNewInst(bp0, ip, NULL,VDADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VDSHUFLO, -r1, -r0, 
+                                    STiconstlookup(0x3715));
+                  ip = InsNewInst(bp0, ip, NULL,VDADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VDSTS,
+                                    SToff[lp->vscal[i]-1].sa[2], -r0, 0);
+               #elif defined(AVX)
                   ip = InsNewInst(bp0, ip, NULL, VDSHUF, -r1, -r0, 
                                     STiconstlookup(0x3276));
                   ip = InsNewInst(bp0, ip, NULL,VDADD,-r0,-r0,-r1);
@@ -8866,6 +8959,7 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
       }
 /*
  *    combine the two XMM into YMM
+ *    FIXME: AVX512 ??? 
  */
       if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
       #ifdef X86_64
@@ -9012,6 +9106,9 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
                           "Reduce vector for %s", 
                            STname[scal-1]);
 /*   step : 1  amax = HMAX(Vamax) --- floating point */
+/*
+ *    FIXME: AVX512 ??? 
+ */
       if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag) ) 
       {
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFLD, -r0,
@@ -9409,8 +9506,26 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
                      inst = VDMIN;
                   else
                      assert(0);
-
-               #if defined(X86) && defined(AVX)
+/*
+ *             FIXME: create a single function to generate the reduction 
+ *             sequence.. to avoid updating this for a new system in many places
+ */
+               #if defined(AVX512)
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDMOVHALF, 
+                                    -r1, -r0, STiconstlookup(0x13));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUFLO, 
+                                    -r1, -r0, STiconstlookup(0x3276));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                                    -r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUFLO, 
+                                    -r1, -r0, STiconstlookup(0x3715));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                                    -r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                    SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+               #elif defined(AVX)
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
                                     -r0, STiconstlookup(0x3276));
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
@@ -9421,7 +9536,7 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
                                     -r1);
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
                                     SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
-               #else
+               #else /* SSE */
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
                                     -r0, STiconstlookup(0x33));
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
@@ -9441,7 +9556,11 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
                   else
                      assert(0);
 
-               #if defined(X86) && defined(AVX)
+               #if defined(AVX512)
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFMOVHALF, 
+                                    -r1, -r0, STiconstlookup(0x13));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFADD, -r0,
+                                    -r0, -r1);
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
                                     -r1, -r0, STiconstlookup(0x7654FEDC));
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
@@ -9456,7 +9575,22 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
                                     -r0,-r0,-r1);
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
                                     SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
-               #else
+               #elif defined(AVX)
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                    -r1, -r0, STiconstlookup(0x7654FEDC));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                    -r0,-r0,-r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                    -r1, -r0, STiconstlookup(0x765432BA));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                    -r0,-r0,-r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                    -r1, -r0, STiconstlookup(0x76CD3289));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                    -r0,-r0,-r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                    SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+               #else /* SSE */
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
                                     -r1, -r0, STiconstlookup(0x3276));
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
@@ -14023,7 +14157,7 @@ SLP_VECTOR *AddVecInst(PACK *pk, BBLOCK *vbp, SLP_VECTOR *vlist, INT_BVI livein,
 
 /*
  * NOTE: Algorithm for general cases:
- * [ Not implemented here ]
+ * [ Not implemented here since we avoid packing and unpacking]
  * 1. pack Vi = <ai, ai+1, ...> when <ai, ai+1,...> are live-in at the entry of
  * block. Place it at the predecessor of the block. add Vi in live vector-list
  *
