@@ -350,19 +350,25 @@ void KillPackTable()
    TNPACK = 0;
 }
 
-/*Majedul: Changed for AVX*/
+/*Majedul: Changed for AVX... shifted to arch.c */
+#if 0
+   #ifdef X86
 int Type2Vlen(int type)
 {
    if (type == T_VDOUBLE || type == T_DOUBLE)
-
-   #if defined(X86) && defined(AVX)
+   
+   #if defined(AVX512)
+       return(8);
+   #elif defined(AVX)
        return(4);
    #else
        return(2);   
    #endif
 
    else if (type == T_VFLOAT || type == T_FLOAT)
-   #if defined(X86) && defined(AVX)
+   #if defined(AVX512)
+       return(16);
+   #elif defined(AVX)
        return(8);
    #else
        return(4);
@@ -371,6 +377,8 @@ int Type2Vlen(int type)
    else
    return(1);
 }
+   #endif
+#endif
 
 ILIST *FindPrevStore(INSTQ *ipstart, short var, INT_BVI blkvec, INT_BVI ivseen)
 /*
@@ -878,11 +886,16 @@ INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, short fptr, int fa_label)
  * NOTE: right now, it is hard-coded for AVX and SSE. Later, we need to 
  * generalize it for any architecture
  */
-   #ifdef AVX
+#if 0
+   #if defined(AVX512)
+      hconst = 0x3F;      
+   #elif defined(AVX)
       hconst = 0x1F;      
    #else
       hconst = 0x0F;
    #endif
+#endif
+   hconst = GetVecAlignTestB(); 
    k = STiconstlookup(hconst);
    r0 = GetReg(T_INT); /*ptr is loaded in int reg*/
 /*
@@ -4516,6 +4529,7 @@ static enum inst
    short vlen;
    enum inst vsld, vsst, vshuf;
    short sregs[TNFR], vregs[TNFR];
+   int vtype;
 
 /*
  * Need at least one path to vectorize
@@ -4528,13 +4542,16 @@ static enum inst
  */
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
+      vtype = T_VFLOAT;
       sinst = sfinsts;
       vinst = vfinsts;
       vcmpinst = vfcmpinsts;
-      #if defined(X86) && defined(AVX)
-         vlen = 8;
-      #else
-         vlen = 4;
+      #if 0
+         #if defined(X86) && defined(AVX)
+            vlen = 8;
+         #else
+            vlen = 4;
+         #endif
       #endif
       vsld = VFLDS;
       vsst = VFSTS;
@@ -4544,6 +4561,7 @@ static enum inst
    }
    else
    {
+      vtype = T_VDOUBLE;
       vsld = VDLDS;
       vsst = VDSTS;
       vshuf = VDSHUF;
@@ -4551,13 +4569,16 @@ static enum inst
       vinst = vdinsts;
       vcmpinst = vdcmpinsts;
       vld = VDLD;
-      #if defined(X86) && defined(AVX)
-         vlen = 4;
-      #else
-         vlen = 2;
+      #if 0
+         #if defined(X86) && defined(AVX)
+            vlen = 4;
+         #else
+            vlen = 2;
+         #endif
       #endif
       vst = VDST;
    }
+   vlen = vtype2elem(vtype);
 /*
    r0 = GetReg(FLAG2TYPE(lp->vflag));
    r1 = GetReg(FLAG2TYPE(lp->vflag));
@@ -5028,6 +5049,7 @@ int RedundantVectorTransform(LOOPQ *lp)
    short vlen;
    enum inst vsld, vsst, vshuf;
    short sregs[TNFR], vregs[TNFR];
+   int vtype;
    /*short *sp;*/
 
 /*
@@ -5035,12 +5057,15 @@ int RedundantVectorTransform(LOOPQ *lp)
  */
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
+      vtype = T_VFLOAT;
       sinst = sfinsts;
       vinst = vfinsts;
-      #if defined(X86) && defined(AVX)
-         vlen = 8;
-      #else
-         vlen = 4;
+      #if 0
+         #if defined(X86) && defined(AVX)
+            vlen = 8;
+         #else
+            vlen = 4;
+         #endif
       #endif
       vsld = VFLDS;
       vsst = VFSTS;
@@ -5050,19 +5075,23 @@ int RedundantVectorTransform(LOOPQ *lp)
    }
    else
    {
+      vtype = T_VDOUBLE;
       vsld = VDLDS;
       vsst = VDSTS;
       vshuf = VDSHUF;
       sinst = sdinsts;
       vinst = vdinsts;
       vld = VDLD;
-      #if defined(X86) && defined(AVX)
-         vlen = 4;
-      #else
-         vlen = 2;
+      #if 0
+         #if defined(X86) && defined(AVX)
+            vlen = 4;
+         #else
+            vlen = 2;
+         #endif
       #endif
       vst = VDST;
    }
+   vlen = vtype2elem(vtype);
 /*
  * Remove loop control logic from loop, and disallow simdification if
  * index is used in loop
@@ -8844,12 +8873,17 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
    short flag;
    short ireg, r1, r2 ;
    enum inst vst, vgr2vr, vshuf;
+   int vtype;
    /*enum inst vld;*/
 /*
  * FIXME: new implementation only works for X8664. expland this.    
  */
+   #ifndef AVX2
+      fko_error(__LINE__, "Only supported for AVX2 for now!!!");
+   #endif
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
+      vtype = T_FLOAT;
       /*vld = VLD;*/
       vst = VST;
       #ifdef X86_64
@@ -8858,10 +8892,11 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
          vshuf = VISHUF;
       #endif
       vgr2vr = VGR2VR32;
-      vlen = 8;
+      /*vlen = 8;*/
    }
    else if (IS_DOUBLE(lp->vflag) || IS_VDOUBLE(lp->vflag))
    {
+      vtype = T_VDOUBLE;
       #ifdef X86_32
          fko_error(__LINE__, "Shadow VRC only supported on X8664 for double");
       #endif
@@ -8869,10 +8904,11 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
       vst = VST;
       vshuf = VISHUF;
       vgr2vr = VGR2VR64;
-      vlen = 4;
+      /*vlen = 4;*/
    }
    else
       fko_error(__LINE__,"Unsupported type for vectorization!\n");
+   vlen = vtype2elem(vtype);
   /*
    *  vector init based on variable type
    */
@@ -9732,10 +9768,12 @@ int RcVecTransform(LOOPQ *lp)
          vcmov1 = VICMOV1;
       #endif
       /*vcmov2 = VSCMOV2;*/
-#if defined (X86) && defined(AVX)
+#if 0
+   #if defined (X86) && defined(AVX)
       vlen = 8;
-#else
+   #else
       vlen = 4;
+   #endif
 #endif
    }
    else
@@ -9745,12 +9783,15 @@ int RcVecTransform(LOOPQ *lp)
       viinsts = vi_insts;
       vcmov1 = VICMOV1;
       /*vcmov2 = VICMOV2;*/
-#if defined (X86) && defined(AVX)
+#if 0
+   #if defined (X86) && defined(AVX)
       vlen = 4;
-#else
+   #else
       vlen = 2;
+   #endif
 #endif
    }
+   vlen = vtype2elem(FLAG2TYPE(lp->vflag));
 /*
  * Remove loop control logic from loop, and disallow simdification if
  * index is used in loop
@@ -10662,11 +10703,7 @@ void UnalignLoopSpecialization(LOOPQ *lp)
  * loop-info..
  * So, place test at the end of each predecessor of the header of loop..
  */
-#ifdef AVX
-   halign = 0x1F;
-#else
-   halign = 0x0F;
-#endif
+   halign = GetVecAlignTestB();
    k = STiconstlookup(halign);
    lsAlabel = STlabellookup("_FKO_LOOP_SPEC_ALIGN"); 
    rvar = InsertNewLocal("_RES_ALIGN",T_INT);

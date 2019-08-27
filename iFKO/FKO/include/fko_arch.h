@@ -850,6 +850,8 @@ short type2shift(int type);
 void FeedbackArchInfo(FILE *fpout);
 int RevealArchMemUses(void);
 short vtype2elem(int type);
+short Type2Vlen(int type);
 short iName2Reg(char *rname);
 short GetVecAlignByte();
+short GetVecAlignTestB();
 #endif

@@ -130,6 +130,17 @@ short GetVecAlignByte()
    #endif
 }
 
+short GetVecAlignTestB()
+{
+   #if defined(AVX512)
+      return(0x3F);
+   #elif defined(AVX)
+      return(0x1F);
+   #else /* SSE */
+      return(0xF);
+   #endif
+}
+
 int RevealArchMemUses(void)
 /*
  * reveals all the mem uses for DTabs/DTnzero, 
@@ -270,6 +281,16 @@ int RevealArchMemUses(void)
    return nchanges;
 }
 #endif
+/*
+ * returns VLEN (number of element from type, return 1 if scalar )
+ */
+short Type2Vlen(int type) /* used in optsimd.. shifted here */
+{
+   if (type == T_VDOUBLE || type == T_VFLOAT || type == T_VINT)
+      return(vtype2elem(type));
+   else
+      return(1);
+}
 
 void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs, 
                   int *nf0, int *fregs, int *nd0, int *dregs)
