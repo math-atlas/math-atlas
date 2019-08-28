@@ -9597,15 +9597,15 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
                                     -r1, -r0, STiconstlookup(0x13));
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFADD, -r0,
                                     -r0, -r1);
-                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
                                     -r1, -r0, STiconstlookup(0x7654FEDC));
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
                                     -r0,-r0,-r1);
-                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
                                     -r1, -r0, STiconstlookup(0x765432BA));
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
                                     -r0,-r0,-r1);
-                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUFLO,
                                     -r1, -r0, STiconstlookup(0x76CD3289));
                   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
                                     -r0,-r0,-r1);
