@@ -369,6 +369,10 @@
 
 #ifdef X86_32
    #define IMPLICITICC 1
+   #ifdef AVX512
+      #define VCCDONE
+      #define NVCC 7                        /* can't use K0 */
+   #endif
    #define NIR 8
    #define NSIR 3
    #define NFR   8                      /* # of float regs */
@@ -409,6 +413,7 @@
          char *archxmmregs[TNFR] =
             {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6",
             "@xmm7", "@st"};
+         char *VCCREGS[NVCC] = {"k1", "k2", "k3", "k4", "k5", "k6", "k7"};
       #elif defined AVX
          char *archfregs[TNFR] =
             {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6",
@@ -425,6 +430,9 @@
       extern char *archiregs[NIR], *archfregs[TNFR];
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
                  fcalleesave[TNFR], fcallersave[TNFR];
+      #ifdef AVX512
+         extern char *VCCREGS[NVCC];
+      #endif
    #endif
    #define archvfregs archfregs
    #define archvdregs archfregs
@@ -436,12 +444,16 @@
 
 #ifdef X86_64
    #define IMPLICITICC 1
+   #define IMPLICITFCC 1
+   #define IMPLICITDCC 1
+/*
+ * NOTE: k-reg is AVX-512 is essentially for vector unit. Scalar CMP, even
+ * for floating point uses CFLAGS instead... So, we are introducing VCC 
+ * register set to represent K-regs 
+ */
    #ifdef AVX512
-      #define FCCDONE
-      #define NFCC 7                  /* can't use K0 */
-   #else
-      #define IMPLICITFCC 1
-      #define IMPLICITDCC 1
+      #define VCCDONE
+      #define NVCC 7                        /* can't use K0 */
    #endif
    #define NSR  8
    #define NIR 16
@@ -514,7 +526,7 @@
          {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
          "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
          "@xmm15"};
-         char *FCCREGS[NFCC] = {"k1", "k2", "k3", "k4", "k5", "k6", "k7"};
+         char *VCCREGS[NVCC] = {"k1", "k2", "k3", "k4", "k5", "k6", "k7"};
       #elif defined(AVX)
          char *archfregs[NFR] = 
          {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6", "@ymm7",
@@ -535,7 +547,7 @@
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
                  fcalleesave[NFR], fcallersave[NFR];
       #ifdef AVX512
-         extern char *FCCREGS[NFCC];
+         extern char *VCCREGS[NVCC];
       #endif
       /*extern char *archxmmregs[NFR];*/
    #endif
@@ -545,7 +557,6 @@
    #define archviregs archfregs
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
-   
 #endif
 
 #ifdef PPC
@@ -676,6 +687,11 @@
 #ifndef NFCC
    #define NFCC 1
 #endif
+#ifdef AVX512
+   #ifndef NVCC
+      #define NVCC 1
+   #endif
+#endif
 #ifndef LASTREG
    #ifdef VIREGBEG   /* added at last to support T_VINT */
       #define LASTREG (VIREGBEG+NVIR)
@@ -693,8 +709,22 @@
 #ifndef FCC0
    #define FCC0 (ICC0+NICC+1)
 #endif
-#ifndef PCREG
-   #define PCREG (FCC0 + NFCC)
+/*
+ * Added to introduce VCC to support K-regs in AVX512
+ * FIXME: we can generalize the idea of VCC for all systems... just alias with
+ * FCC which doesn't have this seprately 
+ */
+#ifdef AVX512
+   #ifndef VCC0
+      #define VCC0 (FCC0+NFCC+1)
+   #endif
+   #ifndef PCREG
+      #define PCREG (VCC0 + NVCC)
+   #endif
+#else /* no need of VCC for all other systems */
+   #ifndef PCREG
+      #define PCREG (FCC0 + NFCC)
+   #endif
 #endif
 #ifndef TNREG
    #define TNREG (PCREG+1)
@@ -730,7 +760,14 @@
 #ifndef FCCEND
    #define FCCEND (FCCBEG + NFCC)
 #endif
-
+#ifdef AVX512
+   #ifndef VCCBEG
+      #define VCCBEG VCC0
+   #endif
+   #ifndef VCCEND
+      #define VCCEND (VCCBEG + NVCC)
+   #endif
+#endif
 #ifndef ICCDONE
    #if NICC != 1
       #error "if ICCREGS is undefined, NICC must be 1!!"
@@ -749,6 +786,18 @@
       char *FCCREGS[1] = {"fcc"};
    #else
       extern char *FCCREGS[1];
+   #endif
+#endif
+#ifdef AVX512
+   #ifndef VCCDONE
+      #if VFCC != 1
+         #error "if FCCREGS is undefined, NFCC must be 1!!"
+      #endif
+      #ifdef ARCH_DECLARE
+         char *VCCREGS[1] = {"vcc"};
+      #else
+         extern char *VCCREGS[1];
+      #endif
    #endif
 #endif
 

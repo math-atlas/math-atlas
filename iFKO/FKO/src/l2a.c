@@ -3716,13 +3716,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	                             archvdregs[-VDREGBEG-op2],
                                      archvdregs[-VDREGBEG-op1],
 	                             archvdregs[-VDREGBEG-op1],
-                                     FCCREGS[-FCC0-op3]);
+                                     VCCREGS[-VCC0-op3]);
             else
                ap->next = PrintAssln("\tvblendmpd\t%s,%s,%s,%s\n", 
                                      GetDregOrDeref(op2),
 	                             archvdregs[-VDREGBEG-op1],
 	                             archvdregs[-VDREGBEG-op1],
-                                     FCCREGS[-FCC0-op3]);
+                                     VCCREGS[-VCC0-op3]);
          #elif defined(AVX) 
                assert( (op1 < 0) && (op3 < 0));
                if (op2 < 0) /* only src2(here op2) can be mem */
@@ -3750,7 +3750,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op1],
 	                          archvdregs[-VDREGBEG-op2],
 	                          archvdregs[-VDREGBEG-op1],
-                                  FCCREGS[-FCC0-op3]);
+                                  VCCREGS[-VCC0-op3]);
          #elif defined(AVX) 
             assert( (op1 < 0) && (op3 < 0) && (op2 < 0));
             ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
@@ -4736,12 +4736,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmpps\t$0,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmpps\t$0,%s,%s,%s\n",
                                      archvfregs[-VFREGBEG-op3],
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmpps\t$0,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -4759,12 +4759,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmpps\t$4,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmpps\t$4,%s,%s,%s\n",
                                      archvfregs[-VFREGBEG-op3],
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmpps\t$4,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -4782,12 +4782,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmpps\t$1,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmpps\t$1,%s,%s,%s\n",
                                      archvfregs[-VFREGBEG-op3],
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmpps\t$1,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -4805,12 +4805,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmpps\t$2,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmpps\t$2,%s,%s,%s\n",
                                      archvfregs[-VFREGBEG-op3],
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmpps\t$2,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -4828,12 +4828,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmpps\t$0x0E,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmpps\t$0x0E,%s,%s,%s\n",
                                      archvfregs[-VFREGBEG-op3],
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmpps\t$0x0E,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -4852,12 +4852,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmpps\t$0D,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmpps\t$0D,%s,%s,%s\n",
                                      archvfregs[-VFREGBEG-op3],
                                      archvfregs[-VFREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmpps\t$0x0D,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -4965,12 +4965,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmppd\t$0,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmppd\t$0,%s,%s,%s\n",
                                      archvdregs[-VDREGBEG-op3],
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmppd\t$0,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -4988,12 +4988,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmppd\t$4,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmppd\t$4,%s,%s,%s\n",
                                      archvdregs[-VDREGBEG-op3],
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmppd\t$4,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -5011,12 +5011,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmppd\t$1,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmppd\t$1,%s,%s,%s\n",
                                      archvdregs[-VDREGBEG-op3],
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmppd\t$1,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -5034,12 +5034,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmppd\t$2,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmppd\t$2,%s,%s,%s\n",
                                      archvdregs[-VDREGBEG-op3],
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmppd\t$2,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -5061,12 +5061,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmppd\t$0x0E,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmppd\t$0x0E,%s,%s,%s\n",
                                      archvdregs[-VDREGBEG-op3],
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmppd\t$0x0E,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -5085,12 +5085,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tvcmppd\t$0x0D,%s,%s,%s\n",
                                      GetDeref(op3),
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
             else
                ap->next = PrintAssln("\tvcmppd\t$0x0D,%s,%s,%s\n",
                                      archvdregs[-VDREGBEG-op3],
                                      archvdregs[-VDREGBEG-op2],
-                                     FCCREGS[-FCC0-op1]);
+                                     VCCREGS[-VCC0-op1]);
          #elif defined(AVX)
             ap->next = PrintAssln("\tvcmppd\t$0x0D,%s,%s,%s\n",
                                   GetDregOrDeref(op3),
@@ -5194,13 +5194,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	                                archvfregs[-VFREGBEG-op2],
                                         archvfregs[-VFREGBEG-op1],
 	                                archvfregs[-VFREGBEG-op1],
-                                        FCCREGS[-FCC0-op3]);
+                                        VCCREGS[-VCC0-op3]);
                else
                   ap->next = PrintAssln("\tvblendmps\t%s,%s,%s,%s\n", 
                                         GetDeref(op2),
 	                                archvfregs[-VFREGBEG-op1],
 	                                archvfregs[-VFREGBEG-op1],
-                                        FCCREGS[-FCC0-op3]);
+                                        VCCREGS[-VCC0-op3]);
             #elif defined(AVX) 
                assert( (op1 < 0) && (op3 < 0));
                if (op2 < 0) /* only src2(here op2) can be mem */
@@ -5232,7 +5232,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvfregs[-VFREGBEG-op1],
 	                             archvfregs[-VFREGBEG-op2],
 	                             archvfregs[-VFREGBEG-op1],
-                                    FCCREGS[-FCC0-op3]);
+                                    VCCREGS[-VCC0-op3]);
             #elif defined(AVX) 
                assert( (op1 < 0) && (op3 < 0) && (op2 < 0));
                   ap->next = PrintAssln("\tvblendvps\t%s,%s,%s,%s\n", 
@@ -5522,7 +5522,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
                     archvfregs[-VFREGBEG-op1]);
          }
          else
-            fko_error(__LINE__, "Not supported this SHUF for AVX512 yet");
+            fko_error(__LINE__, "Not supported this SHUF(%d) for AVX512 yet", 
+                      SToff[op3-1].i);
    #else
          cp = imap2cmap(SToff[op3-1].i); /* return hex char */ 
 /*       
@@ -6703,13 +6704,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	                          archviregs[-VIREGBEG-op2],
                                   archviregs[-VIREGBEG-op1],
 	                          archviregs[-VIREGBEG-op1],
-                                  FCCREGS[-FCC0-op3]); /* k-regs */
+                                  VCCREGS[-VCC0-op3]); /* k-regs */
          else
             ap->next = PrintAssln("\tvpblendmd\t%s,%s,%s,%s\n", 
                                   GetDeref(op2),
 	                          archviregs[-VIREGBEG-op1],
 	                          archviregs[-VIREGBEG-op1],
-                                  FCCREGS[-FCC0-op3]);
+                                  VCCREGS[-VCC0-op3]);
          break;
       case VICMOV1:
          assert( (op1 < 0) && (op3 < 0));
@@ -6718,13 +6719,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	                          archviregs[-VIREGBEG-op2],
                                   archviregs[-VIREGBEG-op1],
 	                          archviregs[-VIREGBEG-op1],
-                                  FCCREGS[-FCC0-op3]); /* k-regs */
+                                  VCCREGS[-VCC0-op3]); /* k-regs */
          else
             ap->next = PrintAssln("\tvpblendmq\t%s,%s,%s,%s\n", 
                                   GetDeref(op2),
 	                          archviregs[-VIREGBEG-op1],
 	                          archviregs[-VIREGBEG-op1],
-                                  FCCREGS[-FCC0-op3]);
+                                  VCCREGS[-VCC0-op3]);
          break;
       case VSCMOV2:   /* dest = (mask==0)? src: dest */
          assert(op1 < 0 && op3 < 0 && op2 < 0);
@@ -6732,7 +6733,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archviregs[-VIREGBEG-op1],
 	                       archviregs[-VIREGBEG-op2],
 	                       archviregs[-VIREGBEG-op1],
-                               FCCREGS[-FCC0-op3]);
+                               VCCREGS[-VCC0-op3]);
          break;
       case VICMOV2:
          assert(op1 < 0 && op3 < 0 && op2 < 0);
@@ -6740,7 +6741,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archviregs[-VIREGBEG-op1],
 	                       archviregs[-VIREGBEG-op2],
 	                       archviregs[-VIREGBEG-op1],
-                               FCCREGS[-FCC0-op3]);
+                               VCCREGS[-VCC0-op3]);
          break;
    #elif defined(AVX2)  
 /*
