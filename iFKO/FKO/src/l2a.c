@@ -3149,11 +3149,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
 /*
- *    FIXME: vpinsrd works on 32 bit ireg like: eax instead of rax...
- *    Only 8 of the 16 IREG has 32 bit version. If we don't make SREG visible,
- *    it will eventually cause problem. 
- *    sirk3amax => -rc -V -Ps b A 0 4 -P all 0 128 -U 2
- *    NOTE: added an assertion here
+ *    FIXED: vpinsrd works on 32 bit ireg like: eax instead of rax... 
+ *    Extended to support all 16 registers as 32 bit regs   
  */
       case VGR2VR32:
          op1 = -op1;
@@ -3166,9 +3163,6 @@ struct assmln *lil2ass(BBLOCK *bbase)
          else if (op1 >= VIREGBEG && op1 < VIREGEND)
             op1 = op1 - VIREGBEG + DREGBEG;
          op1 = -op1;
-         #ifdef X86_64
-            assert((-op2) >= IREGBEG && (-op2) < (IREGBEG + NSR) );
-         #endif
          #if defined(AVX512) || defined(AVX)
             /*ap->next = PrintAssln("\tpinsrw\t%s,%s,%s\n", GetIregOrConst(op3),
                                   archiregs[-IREGBEG-op2],
@@ -3985,8 +3979,23 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *       for other shuffles 
  */
          if (op1 == op2 && SToff[op3-1].i == 0)
+         {
+         #if 0
             ap->next = PrintAssln("\tvpermpd\t$0x%x,%s,%s\n",
                     0, archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tunpcklpd\t%s,%s\n",
+                       archxmmregs[-VDREGBEG-op2], archxmmregs[-VDREGBEG-op1]);
+            ap=ap->next;
+            ap->next = PrintAssln("\tvinsertf128\t$1,%s,%s,%s\n",
+                    archxmmregs[-VDREGBEG-op2], archymmregs[-VDREGBEG-op1], 
+                    archymmregs[-VDREGBEG-op1]);
+            ap=ap->next;
+            ap->next = PrintAssln("\tvinsertf32x8\t$1,%s,%s,%s\n",
+                    archymmregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1], 
+                    archvdregs[-VDREGBEG-op1]);
+         #endif
+         }
          else
             fko_error(__LINE__, "Not supported this SHUF (%d) for AVX512 yet", 
                      SToff[op3-1].i);
@@ -4259,6 +4268,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*
  *    Two special shuffle, specially needed in avx
  */
+   #ifndef AVX512
       case VDHIHALF:
 /*
  *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[1]; vr0[1] = vr2[1]; 
@@ -4304,6 +4314,41 @@ struct assmln *lil2ass(BBLOCK *bbase)
             fko_error(__LINE__, "Not implemented this instruction in SSE yet!");
          #endif
          break;
+      #else /* AVX512 */
+      case VDHIHALFL:
+/*
+ *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[1]; vr0[1] = vr2[1]; 
+ */
+         if ( op3 > 0)
+            ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
+                                   GetDeref(op3), 
+                                   archymmregs[-VDREGBEG-op2], 
+                                   archymmregs[-VDREGBEG-op1]);
+         else
+            ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
+                                  archymmregs[-VDREGBEG-op3], 
+                                  archymmregs[-VDREGBEG-op2], 
+                                  archymmregs[-VDREGBEG-op1]);
+            
+         break;
+
+      case VDLOHALFL:
+/*
+ *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[0]; vr0[1] = vr2[0]; 
+ */
+         if ( op3 > 0)
+            ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                  GetDeref(op3), 
+                                  archymmregs[-VDREGBEG-op2], 
+                                  archymmregs[-VDREGBEG-op1]);
+         else
+            ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                  archymmregs[-VDREGBEG-op3], 
+                                  archymmregs[-VDREGBEG-op2], 
+                                  archymmregs[-VDREGBEG-op1]);
+            
+         break;
+      #endif
 /*
  * Only x86 and PowerPC have single prec vector instructions
  */
@@ -4943,11 +4988,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
 
 /*
  *    Mov masks the sign bits of all floats to low 4/8 bits of ireg 
- *    NOTE: not supported for ZMM regs 
  */
-   #ifndef AVX512
       case VFSBTI:
-         #ifdef AVX
+         #if defined(AVX)
             ap->next = PrintAssln("\tvmovmskps\t%s,%s\n",
                                    archvfregs[-VFREGBEG-op2],
                                    archiregs[-IREGBEG-op1]);      
@@ -4957,7 +5000,6 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                    archiregs[-IREGBEG-op1]);
          #endif
          break;
-   #endif
       
       case VDCMPWEQ:
          #if defined(AVX512)
@@ -5150,8 +5192,22 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
 #endif         
 /*
+ *    NOTE: for AVX512, we need to move from k-regs to iregs.. X64: sregs 
+ */
+   #ifdef AVX512
+      case VCCTI: 
+            ap->next = PrintAssln("\tkmovw\t%s,%s\n",
+                                   VCCREGS[-VCC0-op2],
+                                 #ifdef X86_64
+                                   archsregs[-IREGBEG-op1]); 
+                                 #else
+                                   archiregs[-IREGBEG-op1]); 
+                                 #endif
+         break;
+   #endif
+/*
  *    Mov masks the sign bits of all doubles to low 2/4 bits of ireg
- *    NOTE: not supported for ZMM registers 
+ *    NOTE: AVX512 doesn't support it for ZMM regs  
  */
    #ifndef AVX512
       case VDSBTI:
@@ -5159,7 +5215,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tvmovmskpd\t%s,%s\n",
                                    archvdregs[-VDREGBEG-op2],
                                    archiregs[-IREGBEG-op1]);      
-         # else
+         #else
             ap->next = PrintAssln("\tmovmskpd\t%s,%s\n",
                                    archvdregs[-VDREGBEG-op2],
                                    archiregs[-IREGBEG-op1]);
@@ -5268,7 +5324,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          cp = imap2cmap(SToff[op3-1].i); /* return hex char */
          if (cp[1] == 1 && cp[0] == 2) /* lower to lower */
             #if defined(AVX512)
-               ap->next = PrintAssln("\tvextractf64x4\t$0,%s,%s\n",
+               ap->next = PrintAssln("\tvextractf32x8\t$0,%s,%s\n",
                                      archvfregs[-VFREGBEG-op2], 
                                      archymmregs[-VFREGBEG-op1]);
             #elif defined(AVX)
@@ -5280,7 +5336,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #endif
          else if (cp[1] == 1 && cp[0] == 3) /* upper to lower */
             #if defined(AVX512)
-               ap->next = PrintAssln("\tvextractf64x4\t$1,%s,%s\n",
+               ap->next = PrintAssln("\tvextractf32x8\t$1,%s,%s\n",
                                      archvfregs[-VFREGBEG-op2], 
                                      archymmregs[-VFREGBEG-op1]);
             #elif defined(AVX)
@@ -5292,7 +5348,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #endif
          else if (cp[1] == 2 && cp[0] == 0) /* lower to upper */
             #if defined(AVX512)
-               ap->next = PrintAssln("\tvinsert64x4\t$0,%s,%s,%s\n",
+               ap->next = PrintAssln("\tvinsert32x8\t$0,%s,%s,%s\n",
                                      archxmmregs[-VFREGBEG-op2],
                                      archvfregs[-VFREGBEG-op1],
                                      archvfregs[-VFREGBEG-op1]);
@@ -5832,6 +5888,40 @@ struct assmln *lil2ass(BBLOCK *bbase)
             fko_error(__LINE__, "Not implemented this instruction in SSE yet!");
          #endif
          break;
+      #else /* AVX512 : implement YMM version */
+      case VFHIHALFL:
+/*
+ *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[1]; vr0[1] = vr2[1]; 
+ */
+         if ( op3 > 0)
+            ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
+                                  GetDeref(op3), 
+                                  archymmregs[-VFREGBEG-op2], 
+                                  archymmregs[-VFREGBEG-op1]);
+         else
+            ap->next = PrintAssln("\tvperm2f128\t$0x31,%s,%s,%s\n",
+                                  archymmregs[-VFREGBEG-op3], 
+                                  archymmregs[-VFREGBEG-op2], 
+                                  archymmregs[-VFREGBEG-op1]);
+            
+         break;
+
+      case VFLOHALFL:
+/*
+ *       vr0[1,0], vr1[1,0], vr2[1,0]: vr0[0] = vr1[0]; vr0[1] = vr2[0]; 
+ */
+         if ( op3 > 0)
+            ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                  GetDeref(op3), 
+                                  archymmregs[-VFREGBEG-op2], 
+                                  archymmregs[-VFREGBEG-op1]);
+         else
+            ap->next = PrintAssln("\tvperm2f128\t$0x20,%s,%s,%s\n",
+                                  archymmregs[-VFREGBEG-op3], 
+                                  archymmregs[-VFREGBEG-op2], 
+                                  archymmregs[-VFREGBEG-op1]);
+            
+         break;
       #endif
 #endif
       case PREFR:
@@ -5977,8 +6067,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             op1 = -op1;
             op2 = -op2;
          #if defined(AVX512) || defined(AVX)
-            #ifdef X86_64
-            assert((-op1) <= (IREGBEG+NSR));
+            #ifdef X86_64 
             ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
                                   archxmmregs[-VIREGBEG-op2],
                                   archsregs[-IREGBEG-op1]);

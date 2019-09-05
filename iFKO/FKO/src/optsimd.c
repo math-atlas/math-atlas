@@ -3793,13 +3793,20 @@ void SpecVecPathXform(BLIST *scope, LOOPQ *lp)
                if (inst == FCMP)
                {
                   vcmpinst = vfcmpinsts;
-                  mskinst = VFSBTI;
+                  #ifndef AVX512
+                     mskinst = VFSBTI;
+                  #endif
                }
                else
                {
                   vcmpinst = vdcmpinsts;
-                  mskinst = VDSBTI;
+                  #ifndef AVX512
+                     mskinst = VDSBTI;
+                  #endif
                }
+               #ifdef AVX512
+                  mskinst = VCCTI;
+               #endif
 /*
  *             check for the next inst. Right now assume the next instruction
  *             would always be one of the conditional branch
@@ -3866,7 +3873,13 @@ void SpecVecPathXform(BLIST *scope, LOOPQ *lp)
                      }
                   }
                }
-#ifdef AVX
+#if defined(AVX512)
+/*
+ *             AVX512, destination is k-regs (VCCREGS)
+ */
+               vrd = VCC0;
+               ip->inst[1] = -vrd;
+#elif defined(AVX)
 /*
  *             get new vregs for the destination, no vld as it is not uses but
  *             sets
@@ -3893,7 +3906,18 @@ void SpecVecPathXform(BLIST *scope, LOOPQ *lp)
  *             NOTE: in vector path, no integer is used. So, we can safely
  *             use a int reg.
  */
+            #if defined(AVX512) && defined(X86_64)
+/*
+ *             FIXED: X86_64 can now use all 16 registers as 32bit register 
+ *             NOTE: no need to convert the 32 bit to 64bit value... 
+ *             Intel Manual: 3-13 vol-1
+ *             *** 32-bit operands generate a 32-bit result, zero-extended to a 
+ *             64-bit result in the destination general-purpose register.
+ */
+               ir = GetReg(T_SHORT);
+            #else
                ir = GetReg(T_INT);
+            #endif
                ip = InsNewInst(bl->blk, ip, NULL, mskinst, -ir, -vrd, 0);
 /*
  *             NOTE: 
@@ -4366,7 +4390,7 @@ int SpecVecXform(LOOPQ *lp, int unroll)
    assert(VPATH!=-1);
    scope = PATHS[VPATH]->blocks;
 
-   vlen = Type2Vlen(lp->vflag);
+   vlen = Type2Vlen(FLAG2TYPE(lp->vflag));
    URbase = unroll? vlen*unroll: vlen;
 
 /*
@@ -6469,7 +6493,7 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int dups, BLIST *ftheads,
  * HERE HERE, why dasum (with if clause) with vector backup/recovery 
  * provides better performance!!!
  */
-  AddVectorRecover(lp, bp0, dups > Type2Vlen(lp->vflag)? 0 : 1);
+  AddVectorRecover(lp, bp0, dups > Type2Vlen(FLAG2TYPE(lp->vflag))? 0 : 1);
 /*
  * Here, we start vector to scalar update
  */
@@ -7020,7 +7044,7 @@ int SpecSIMDLoop(int SB_UR)
 #endif
   
    unroll = (SB_UR < 2)? 1: SB_UR;
-   lbSclRes = ScalarRestart(lp, Type2Vlen(lp->vflag)*unroll);
+   lbSclRes = ScalarRestart(lp, Type2Vlen(FLAG2TYPE(lp->vflag))*unroll);
 /*
  * Consider only vector path now. Need to add some analysis for various vars
  * to implemnt backup stages.
@@ -8656,7 +8680,9 @@ int RcVectorAnalysis(LOOPQ *lp)
  * check whether integer scalar meets the required constrain for shadow VRC
  * AVX2 is required for shadow VRC
  */
-#if defined(AVX2)
+#if defined (AVX512)
+   fko_error(__LINE__, "Shadow RC not supported on AVX512 yet!"); 
+#elif defined(AVX2)
    if (isIscal) 
    {
       if (isShadowPossible(lp))
@@ -11942,7 +11968,7 @@ INSTQ *InitPack(ILIST **ilam, int nptr, INSTQ *uinst, short **pts)
 /*
  *       for simplicity, we won't handle pack with less than vlen inst
  */
-         len = Type2Vlen(pk->vflag);
+         len = Type2Vlen(FLAG2TYPE(pk->vflag));
          /*fprintf(stderr, "pack=%d len=%d vlen=%d\n", i, len, pk->vlen);*/
          if (pk->vlen != len)
             pk->isVec = 0;
@@ -14455,6 +14481,7 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
    SLP_VECTOR *vl;
    INT_BVI iv1; 
    INSTQ *iptp, *iptn, *iph;
+   INSTQ *ipp, *ipn, *ipt;
    
    if (!vlist)  /* no vector to init */ 
       return;  
@@ -14482,7 +14509,9 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
       vec = SToff[vl->vec-1].sa[2];
       if (IS_DOUBLE(STflag[vl->vec-1]) || IS_VDOUBLE(STflag[vl->vec-1]))
       {
-         #ifdef AVX
+         #if defined (AVX512)
+            fko_error(__LINE__, "AVX512 implemntation needed! ");
+         #elif defined(AVX)
             assert(vl->svars[0] == 4);
             s0 = SToff[vl->svars[1]-1].sa[2];
             s1 = SToff[vl->svars[2]-1].sa[2];
@@ -14697,7 +14726,9 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
       }
       else if (IS_FLOAT(STflag[vl->vec-1]) || IS_VFLOAT(STflag[vl->vec-1]))
       {
-         #ifdef AVX
+         #if defined(AVX512)
+            fko_error(__LINE__, "AVX512 implemntation needed! ");
+         #elif defined(AVX)
             assert(vl->svars[0] == 8);
             s0 = SToff[vl->svars[1]-1].sa[2];
             s1 = SToff[vl->svars[2]-1].sa[2];
@@ -14995,7 +15026,9 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
       vec = SToff[vl->vec-1].sa[2];
       if (IS_DOUBLE(STflag[vl->vec-1]) || IS_VDOUBLE(STflag[vl->vec-1]))
       {
-         #ifdef AVX
+         #if defined(AVX512)
+            fko_error(__LINE__, "AVX512 implemntation needed! ");
+         #elif defined(AVX)
             assert(vl->svars[0] == 4);
             s0 = SToff[vl->svars[1]-1].sa[2];
             s1 = SToff[vl->svars[2]-1].sa[2];
@@ -15268,7 +15301,9 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
       }
       else if (IS_FLOAT(STflag[vl->vec-1]) || IS_VFLOAT(STflag[vl->vec-1]))
       {
-         #ifdef AVX
+         #if defined(AVX512) 
+            fko_error(__LINE__, "AVX512 implemntation needed! ");
+         #elif defined(AVX)
             assert(vl->svars[0] == 8);
             s0 = SToff[vl->svars[1]-1].sa[2];
             s1 = SToff[vl->svars[2]-1].sa[2];
@@ -16118,6 +16153,1089 @@ int CountRvarVect(BBLOCK *blk, SLP_VECTOR *vlist)
    return(nr); 
 }
 
+#ifdef AVX512  /* new vvrsum for AVX512 */
+
+INSTQ *VREG512to256(short type, INSTQ *ip, short *s, short *t, int nv, 
+                    short vreg0, short vreg1, short vreg2)
+/*
+ * ASSUMPTION: we have nv+1 temporary t variable
+ */
+{
+   int i; 
+   enum inst vld, vst, vmvh; 
+
+   if (type == T_VFLOAT)
+   {
+      vld = VFLD;
+      vst = VFST;
+      vmvh = VFMOVHALF;
+   }
+   else if ( type == T_VDOUBLE)
+   {
+      vld = VDLD;
+      vst = VDST;
+      vmvh = VDMOVHALF;
+   }
+   else
+      fko_error(__LINE__, "Unsupported Vector Type!");
+
+/*
+ *     t0_ = _mm512_extractf32x8_ps(s0_, 0); 
+ *     tn_ = _mm512_extractf32x8_ps(s0_, 1); 
+ *     t0_ = _mm256_add_ps(t0_, tn_); 
+ *     similarly, t1, t2, t3 ...  
+ */
+   assert(ip);
+   for (i=0; i < nv; i++)
+   {
+      ip->next = NewInst(NULL, ip, NULL, vld, -vreg0, s[i], 0);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, vmvh, -vreg1, -vreg0, 
+                         STiconstlookup(0x12)); /* lower to lower */
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, vst, t[i] , -vreg1, 0 );
+      ip = ip->next;          
+      
+      ip->next = NewInst(NULL, ip, NULL, vld, -vreg0, s[i], 0);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, vmvh, -vreg1, -vreg0, 
+                         STiconstlookup(0x13)); /* upper to lower */
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, vst, t[nv] , -vreg1, 0 ); 
+      ip = ip->next;          
+      
+      ip->next = NewInst(NULL, ip, NULL, vld, -vreg0, t[i], 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, ip, NULL, vld, -vreg1, t[nv], 0);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, VFADD, -vreg0, -vreg0, -vreg1 );
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, vst, t[i], -vreg0, 0); 
+      ip = ip->next;          
+   }
+
+   return(ip);
+}
+
+INSTQ *FVVRSUM8_256(INSTQ *ip, short *t, short vreg0, short vreg1, 
+                    short vreg2)
+/*
+ * FIXME: it's effectively AVX implementation.. why don't we merge it and keep
+ * singe implementation for all simd units 
+ */
+{
+   int i;
+/*
+ *    Apply VVRSUM8 for AVX registers : ATL_vvrsum8_256()  
+ *       input: s0, s1, s2, s3, s4, s5, s6, s7
+ *       out: vs
+ *       tmp: ns0, ns1, ns2, ns4, ns6, 
+ *
+ *       ns0 = HADD(s0, s1);
+ *       ns2 = HADD(s2, s3);
+ *       ns4 = HADD(s4, s5);
+ *       ns6 = HADD(s6, s7);
+ *       
+ *       ns0 = HADD (ns0, ns2);
+ *       ns4 = HADD (ns4, ns6);
+ *
+ *       ns1 = PERMUTE2f128(ns0, ns4, 0x31);
+ *       ns0 = PERMUTE2f128(ns0, ns4, 0x20);
+ *       
+ *       vs = VADD(ns0, ns1);
+ */
+   for (i=0; i < 8 ; i+=2)
+   {
+      /*s0 = HADD(s0, s1);*/
+      ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[i], 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[i+1], 0);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, VFHADDL, -vreg0, -vreg0, -vreg1);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, VFST, t[i], -vreg0, 0); 
+      ip = ip->next;          
+   }
+   for (i=0; i < 8; i+=4)
+   {
+      /*s0 = HADD(s0, s2);*/
+      ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[i], 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[i+2], 0);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, VFHADDL, -vreg0, -vreg0, -vreg1);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, VFST, t[i], -vreg0, 0); 
+      ip = ip->next;          
+
+   }
+   /*s1 = PERMUTE2f128(s0, s4, 0x31);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[4], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFHIHALFL, -vreg0, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[1], -vreg0, 0); 
+   ip = ip->next;          
+   
+   /*s0 = PERMUTE2f128(s0, s4, 0x20);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[4], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFLOHALFL, -vreg0, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;          
+   
+   /*s0 = VADD(s0, s1);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFADD, -vreg0, -vreg0, -vreg1 );
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;         
+
+   return(ip);
+}
+
+INSTQ *FVVRSUM4_256(INSTQ *ip, short *t, short vreg0, short vreg1, 
+                    short vreg2)
+{
+   int i;
+   
+   /*s0 = HADD(s0, s1);*/
+   /*s2 = HADD(s2, s3);*/
+   for (i=0; i < 4 ; i+=2)
+   {
+      ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[i], 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[i+1], 0);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, VFHADDL, -vreg2, -vreg0, -vreg1);
+      ip = ip->next;          
+      ip->next = NewInst(NULL, ip, NULL, VFST, t[i], -vreg2, 0); 
+      ip = ip->next;          
+   }
+   /*s0 = HADD(s0, s2);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[2], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFHADDL, -vreg2, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg2, 0); 
+   ip = ip->next;          
+   
+   /*s1 = PERMUTE2f128(s0, s0, 0x31);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFHIHALFL, -vreg1, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[1], -vreg1, 0); 
+   ip = ip->next;          
+   
+   /*s0 = PERMUTE2f128(s0, s0, 0x20);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLOHALFL, -vreg0, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;   
+   
+   /*s0 = VADD(s0, s2);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[2], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFADD, -vreg0, -vreg0, -vreg1 );
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;         
+
+   return(ip);
+}
+
+INSTQ *FVVRSUM2_256(INSTQ *ip, short *t, short vreg0, short vreg1, 
+                    short vreg2)
+{
+   /*s0 = HADD(s0, s1);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFHADDL, -vreg2, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg2, 0); 
+   ip = ip->next;          
+   
+   /*s0 = HADD(s0, s0);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFHADDL, -vreg0, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;          
+   
+   /*s1 = PERMUTE2f128(s0, s0, 0x31);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFHIHALFL, -vreg1, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[1], -vreg1, 0); 
+   ip = ip->next;          
+  
+   /*s0 = PERMUTE2f128(s0, s0, 0x20);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLOHALFL, -vreg0, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;   
+   
+   /*s0 = VADD(s0, s1);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFADD, -vreg0, -vreg0, -vreg1 );
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;         
+
+   return(ip);
+}
+
+INSTQ *FVVRSUM1_256(INSTQ *ip, short *t, short vreg0, short vreg1, 
+                short vreg2)
+{
+   /*t0 = HADD(t0, t0);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFHADDL, -vreg1, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg1, 0); 
+   ip = ip->next;          
+   
+   /*t0 = HADD(t0, t0);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFHADDL, -vreg0, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;          
+   
+   /*t1 = PERMUTE2f128(t0, t0, 0x31);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFHIHALFL, -vreg1, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[1], -vreg1, 0); 
+   ip = ip->next;          
+   
+   /*t0 = PERMUTE2f128(t0, t0, 0x20);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLOHALFL, -vreg0, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;   
+   
+   /*t0 = VADD(t0, t1);*/
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFADD, -vreg0, -vreg0, -vreg1 );
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VFST, t[0], -vreg0, 0); 
+   ip = ip->next;         
+
+   return(ip);
+}
+
+/*
+ * AVX512 implementation of VVRSUM: previous version  
+ */
+INSTQ *FVVRSUM16(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[9]; 
+   short vs;
+   short s[16];
+   short vreg0, vreg1, vreg2;
+   const int nv = 16;
+   char ln[128];
+   static int vid = 0;
+
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < 8+1; i++)
+   {
+      sprintf(vname, "_NVRS16_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VFLOAT);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VFLOAT);
+   vreg1 = GetReg(T_VFLOAT);
+   vreg2 = GetReg(T_VFLOAT);
+   
+
+   sprintf(ln, "VVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 8 elements 
+ */
+   ip = VREG512to256(T_VFLOAT, ip, s, t, 8, vreg0, vreg1, vreg2); 
+   ip = FVVRSUM8_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFST, vs, -vreg1, 0); 
+   ip = ip->next;          
+/*
+ * VVRSUM for last 8 elements 
+ */
+   ip = VREG512to256(T_VFLOAT, ip, s+8, t, 8, vreg0, vreg1, vreg2); 
+   ip = FVVRSUM8_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to upper half of vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x20)); /* lower to upper */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFST, vs, -vreg1, 0); 
+   ip = ip->next;         
+   
+   GetReg(-1);
+   
+   return(ip0);
+}
+
+INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[9]; 
+   short vs;
+   short s[8];
+   short vreg0, vreg1, vreg2;
+   const int nv = 8;
+   char ln[128];
+   static int vid = 0;
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < 8+1; i++)
+   {
+      sprintf(vname, "_NVRS8_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VFLOAT);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VFLOAT);
+   vreg1 = GetReg(T_VFLOAT);
+   vreg2 = GetReg(T_VFLOAT);
+   
+
+   sprintf(ln, "VVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 8 elements 
+ */
+   ip = VREG512to256(T_VFLOAT, ip, s, t, 8, vreg0, vreg1, vreg2); 
+   ip = FVVRSUM8_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFST, vs, -vreg1, 0); 
+   ip = ip->next;          
+   
+   GetReg(-1);
+
+   return(ip0);
+}
+
+INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[5]; 
+   short vs;
+   short s[4];
+   short vreg0, vreg1, vreg2;
+   const int nv = 4;
+   char ln[128];
+   static int vid = 0;
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < 4+1; i++)
+   {
+      sprintf(vname, "_NVRS4_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VFLOAT);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VFLOAT);
+   vreg1 = GetReg(T_VFLOAT);
+   vreg2 = GetReg(T_VFLOAT);
+   
+
+   sprintf(ln, "VVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 8 elements 
+ */
+   ip = VREG512to256(T_VFLOAT, ip, s, t, 4, vreg0, vreg1, vreg2); 
+   ip = FVVRSUM4_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFST, vs, -vreg1, 0); 
+   ip = ip->next;          
+   
+   GetReg(-1);
+
+   return(ip0);
+}
+
+INSTQ *FVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[3]; 
+   short vs;
+   short s[2];
+   short vreg0, vreg1, vreg2;
+   const int nv = 2;
+   char ln[128];
+   static int vid = 0;
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < 2+1; i++)
+   {
+      sprintf(vname, "_NVRS2_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VFLOAT);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VFLOAT);
+   vreg1 = GetReg(T_VFLOAT);
+   vreg2 = GetReg(T_VFLOAT);
+   
+
+   sprintf(ln, "VVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 8 elements 
+ */
+   ip = VREG512to256(T_VFLOAT, ip, s, t, 2, vreg0, vreg1, vreg2); 
+   ip = FVVRSUM2_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFST, vs, -vreg1, 0); 
+   ip = ip->next;          
+   
+   GetReg(-1);
+
+   return(ip0);
+}
+
+INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[2]; 
+   short vs;
+   short s[1];
+   short vreg0, vreg1, vreg2;
+   const int nv = 1;
+   char ln[128];
+   static int vid = 0;
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < 1+1; i++)
+   {
+      sprintf(vname, "_NVRS1_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VFLOAT);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VFLOAT);
+   vreg1 = GetReg(T_VFLOAT);
+   vreg2 = GetReg(T_VFLOAT);
+   
+
+   sprintf(ln, "VVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 8 elements 
+ */
+   ip = VREG512to256(T_VFLOAT, ip, s, t, 1, vreg0, vreg1, vreg2); 
+   ip = FVVRSUM1_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VFLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VFST, vs, -vreg1, 0); 
+   ip = ip->next;          
+   
+   GetReg(-1);
+
+   return(ip0);
+}
+
+/*
+ * Double precision 
+ */
+INSTQ *DVVRSUM4_256(INSTQ *ip, short *t, short vreg0, short vreg1, 
+                short vreg2)
+{
+   /*t0 = HADD(s0, s1);  rd, rs1, rs2 */
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDHADDL, -vreg2, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[0], -vreg2, 0); 
+   ip = ip->next;          
+
+   /*t2 = HADD(s2, s3);*/
+   ip->next= NewInst(NULL, ip, NULL, VDLD, -vreg0, t[2], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[3], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDHADDL, -vreg2, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[2], -vreg2, 0); 
+   ip = ip->next;          
+   
+   /*ns1 = PERMUTE2F128(ns0, ns2, 0x31);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[2], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDHIHALFL, -vreg2, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[1], -vreg2, 0); 
+   ip = ip->next;          
+
+   /*ns0 = PERMUTE2F128(ns0, ns2, 0x20);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[2], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDLOHALFL, -vreg0, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[0], -vreg0, 0); 
+   ip = ip->next;          
+   
+   /*t0 = VADD(ns0, ns1);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDADD, -vreg0, -vreg0, -vreg1 );
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[0], -vreg0, 0); 
+   ip = ip->next;         
+
+   return(ip);
+}
+
+INSTQ *DVVRSUM2_256(INSTQ *ip, short *t, short vreg0, short vreg1, 
+                short vreg2)
+{
+   /*ns0 = HADD(s0, s1);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDHADDL, -vreg2, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[0], -vreg2, 0); 
+   ip = ip->next;         
+
+   /*ns1 = PERMUTE2f128(ns0, s1, 0x31);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDHIHALFL, -vreg2, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[1], -vreg2, 0); 
+   ip = ip->next;          
+
+   /*t0 = VADD(ns0, ns1);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDADD, -vreg2, -vreg0, -vreg1 );
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[0], -vreg2, 0); 
+   ip = ip->next;         
+
+   return(ip);
+}
+
+INSTQ *DVVRSUM1_256(INSTQ *ip, short *t, short vreg0, short vreg1, 
+                short vreg2)
+{
+   /*ns0 = HADD(s0, s0);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDHADDL, -vreg1, -vreg0, -vreg0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[0], -vreg1, 0); 
+   ip = ip->next;         
+
+   /*ns1 = PERMUTE2f128(ns0, s0, 0x31);*/
+   /*ns1 = PERMUTE2f128(ns0, ns0, 0x31);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[0], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDHIHALFL, -vreg2, -vreg0, -vreg1);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[1], -vreg2, 0); 
+   ip = ip->next;          
+
+   /*t0 = VADD(ns0, ns1);*/
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg1, t[1], 0);
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDADD, -vreg2, -vreg0, -vreg1 );
+   ip = ip->next;          
+   ip->next = NewInst(NULL, ip, NULL, VDST, t[0], -vreg2, 0); 
+   ip = ip->next;          
+
+   return(ip);
+}
+
+INSTQ *DVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[9]; 
+   short vs;
+   short s[8];
+   short vreg0, vreg1, vreg2;
+   const int nv = 8;
+   char ln[128];
+   static int vid = 0;
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < 8+1; i++)
+   {
+      sprintf(vname, "_NDVRS8_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VDOUBLE);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VDOUBLE);
+   vreg1 = GetReg(T_VDOUBLE);
+   vreg2 = GetReg(T_VDOUBLE);
+   
+
+   sprintf(ln, "DVVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 4 elements 
+ */
+   ip = VREG512to256(T_VDOUBLE, ip, s, t, 4, vreg0, vreg1, vreg2); 
+   ip = DVVRSUM4_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDST, vs, -vreg1, 0); 
+   ip = ip->next;          
+/*
+ * VVRSUM for last 4 elements 
+ */
+   ip = VREG512to256(T_VDOUBLE, ip, s+4, t, 4, vreg0, vreg1, vreg2); 
+   ip = DVVRSUM4_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to upper half of vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x20)); /* lower to upper */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDST, vs, -vreg1, 0); 
+   ip = ip->next;         
+   
+   GetReg(-1);
+
+   return(ip0);
+}
+
+INSTQ *DVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[5]; 
+   short vs;
+   short s[4];
+   short vreg0, vreg1, vreg2;
+   const int nv = 4;
+   char ln[128];
+   static int vid = 0;
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < nv+1; i++)
+   {
+      sprintf(vname, "_NDVRS4_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VDOUBLE);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VDOUBLE);
+   vreg1 = GetReg(T_VDOUBLE);
+   vreg2 = GetReg(T_VDOUBLE);
+   
+
+   sprintf(ln, "DVVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 8 elements 
+ */
+   ip = VREG512to256(T_VDOUBLE, ip, s, t, 4, vreg0, vreg1, vreg2); 
+   ip = DVVRSUM4_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDST, vs, -vreg1, 0); 
+   ip = ip->next;          
+   
+   GetReg(-1);
+
+   return(ip0);
+}
+
+INSTQ *DVVRSUM2(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[3]; 
+   short vs;
+   short s[2];
+   short vreg0, vreg1, vreg2;
+   const int nv = 2;
+   char ln[128];
+   static int vid = 0;
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < nv+1; i++)
+   {
+      sprintf(vname, "_NDVRS2_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VDOUBLE);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VDOUBLE);
+   vreg1 = GetReg(T_VDOUBLE);
+   vreg2 = GetReg(T_VDOUBLE);
+   
+
+   sprintf(ln, "DVVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 8 elements 
+ */
+   ip = VREG512to256(T_VDOUBLE, ip, s, t, 2, vreg0, vreg1, vreg2); 
+   ip = DVVRSUM2_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDST, vs, -vreg1, 0); 
+   ip = ip->next;          
+   
+   GetReg(-1);
+
+   return(ip0);
+}
+
+INSTQ *DVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
+{
+   int i;
+   SLP_VECTOR *vl;
+   INSTQ *ip, *ip0;
+   char vname[64];
+   short t[5]; 
+   short vs;
+   short s[4];
+   short vreg0, vreg1, vreg2;
+   const int nv = 1;
+   char ln[128];
+   static int vid = 0;
+
+   vs = SToff[vd->vec-1].sa[2];
+/*
+ * init s var
+ * Assumption: must have 16 vec  
+ */
+   vl = rvl;
+   for (i=0; i < nv; i++)
+   {
+      assert(vl && vl->vec);
+      s[i] = SToff[vl->vec-1].sa[2];
+      vl = vl->next;
+   }
+/*
+ * create tmp vectors, not needed to save them in list
+ * NOTE: var names are copied inside symbol table
+ */
+   for (i=0; i < nv+1; i++)
+   {
+      sprintf(vname, "_NDVRS1_%d", vid++);
+      t[i] = InsertNewLocal(vname, T_VDOUBLE);
+      t[i] = SToff[t[i]-1].sa[2];
+   }
+   
+   vreg0 = GetReg(T_VDOUBLE);
+   vreg1 = GetReg(T_VDOUBLE);
+   vreg2 = GetReg(T_VDOUBLE);
+   
+
+   sprintf(ln, "DVVRSUM_%d begins", nv);
+   ip = ip0 = NewInst(NULL, NULL, ip, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, STstrconstlookup(ln), 0, 0);
+   ip = ip->next;
+/*
+ * VVRSUM for 1st 8 elements 
+ */
+   ip = VREG512to256(T_VDOUBLE, ip, s, t, 1, vreg0, vreg1, vreg2); 
+   ip = DVVRSUM1_256(ip, t, vreg0, vreg1, vreg2); 
+/*
+ * t0 has the result of lower half of the vector
+ * shift it to vs 
+ */
+   ip->next = NewInst(NULL, ip, NULL, VDLD, -vreg0, t[0], 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDMOVHALF, -vreg1, -vreg0, 
+                      STiconstlookup(0x12)); /* lower to lower */
+   ip = ip->next;
+   ip->next = NewInst(NULL, ip, NULL, VDST, vs, -vreg1, 0); 
+   ip = ip->next;          
+   
+   GetReg(-1);
+
+   return(ip0);
+}
+
+#else  /* AVX or SSE */
 
 INSTQ *FVVRSUM8(SLP_VECTOR *rvl, SLP_VECTOR *vd)
 {
@@ -17051,6 +18169,7 @@ INSTQ *FVVRSUM1(SLP_VECTOR *rvl, SLP_VECTOR *vd)
    return(ip0);
 
 }
+#endif  /* end of AVX/SSE */ 
 
 INSTQ *InstVVRSUM(SLP_VECTOR *rvl, int len, SLP_VECTOR *vd)
 {
@@ -17074,6 +18193,9 @@ INSTQ *InstVVRSUM(SLP_VECTOR *rvl, int len, SLP_VECTOR *vd)
          case 8:
             ip = FVVRSUM8(rvl, vd);
             break;
+         case 16:
+            ip = FVVRSUM16(rvl, vd);
+            break;
          default:
             fko_error(__LINE__, "not supported fvvrsum for %d\n", len);
       }
@@ -17090,6 +18212,9 @@ INSTQ *InstVVRSUM(SLP_VECTOR *rvl, int len, SLP_VECTOR *vd)
             break;
          case 4:
             ip = DVVRSUM4(rvl, vd);
+            break;
+         case 8:
+            ip = DVVRSUM8(rvl, vd);
             break;
          default:
             fko_error(__LINE__, "not supported dvvrsum for %d\n", len);
@@ -17203,10 +18328,14 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
  * added at the end of ipn 
  */
 {
-   short vr0;
+   short vr0, vr1;
    INSTQ *ip;
    SLP_VECTOR *vl;
    short s0, s1, s2, s3, s4, s5, s6, s7, vec;
+#ifdef AVX512
+   short s8, s9, s10, s11, s12, s13, s14, s15;
+#endif
+   enum inst vshuf;
 /*
  * find the last inst
  */
@@ -17223,18 +18352,20 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
       vec = SToff[vl->vec-1].sa[2];
       if (IS_DOUBLE(vl->flag) || IS_VDOUBLE(vl->flag) )
       {
-         #ifdef AVX
-            assert(vl->svars[0] == 4);  
-            s0 = SToff[vl->svars[1]-1].sa[2];
-            s1 = SToff[vl->svars[2]-1].sa[2];
-            s2 = SToff[vl->svars[3]-1].sa[2];
-            s3 = SToff[vl->svars[4]-1].sa[2];
-               
+         #if defined(AVX512) || defined (AVX)
+            #ifdef AVX512
+               vshuf = VDSHUFLO;
+               assert(vl->svars[0] == 8);  
+            #else
+               vshuf = VDSHUF;
+               assert(vl->svars[0] == 4);  
+            #endif
             vr0 = GetReg(T_VDOUBLE);
             /*PrintComment(blk, NULL, NULL, "Scatter of vector %s", 
                            STname[vl->vec-1]);*/
             if (nelem > 0)
             {
+               s0 = SToff[vl->svars[1]-1].sa[2];
                ip->next = NewInst(NULL, ip, NULL, VDLD, -vr0, vec, 0);
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VDSTS, s0, -vr0, 0);
@@ -17242,7 +18373,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 1)
             {
-               ip->next = NewInst(NULL, ip, NULL, VDSHUF, -vr0, -vr0, 
+               s1 = SToff[vl->svars[2]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x3211));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VDSTS, s1, -vr0, 0);
@@ -17250,7 +18382,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 2)
             {
-               ip->next = NewInst(NULL, ip, NULL, VDSHUF, -vr0, -vr0, 
+               s2 = SToff[vl->svars[3]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                             STiconstlookup(0x3232));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VDSTS, s2, -vr0, 0);
@@ -17258,13 +18391,57 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 3)
             {
-               ip->next = NewInst(NULL, ip, NULL, VDSHUF, -vr0, -vr0, 
+               s3 = SToff[vl->svars[4]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x3211));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VDSTS, s3, -vr0, 0);
                ip = ip->next;
             }
-            
+            #ifdef AVX512
+            if (nelem > 4)
+            {
+               vr1 = GetReg(T_VDOUBLE);
+               s4 = SToff[vl->svars[5]-1].sa[2];
+               /*ip->next = NewInst(NULL, ip, NULL, VDLD, -vr0, vec, 0);
+               ip = ip->next;*/
+/* 
+ *             copy it to lower half from upper 
+ */
+               ip->next = NewInst(NULL, ip, NULL, VDMOVHALF, -vr1, -vr0, 
+                         STiconstlookup(0x13)); /* upper to lower */
+               ip = ip->next;          
+               ip->next = NewInst(NULL, ip, NULL, VDSTS, s4, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 5)
+            {
+               s5 = SToff[vl->svars[6]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x3211));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VDSTS, s5, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 6)
+            {
+               s6 = SToff[vl->svars[7]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                            STiconstlookup(0x3232));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VDSTS, s2, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 7)
+            {
+               s7 = SToff[vl->svars[8]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x3211));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VDSTS, s7, -vr1, 0);
+               ip = ip->next;
+            }
+            #endif
          #else
             assert(vl->svars[0] == 2);
             s0 = SToff[vl->svars[1]-1].sa[2];
@@ -17293,22 +18470,21 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
       }
       else if (IS_FLOAT(vl->flag) || IS_VFLOAT(vl->flag))
       {
-         #ifdef AVX
-            assert(vl->svars[0] == 8);
-            s0 = SToff[vl->svars[1]-1].sa[2];
-            s1 = SToff[vl->svars[2]-1].sa[2];
-            s2 = SToff[vl->svars[3]-1].sa[2];
-            s3 = SToff[vl->svars[4]-1].sa[2];
-            s4 = SToff[vl->svars[5]-1].sa[2];
-            s5 = SToff[vl->svars[6]-1].sa[2];
-            s6 = SToff[vl->svars[7]-1].sa[2];
-            s7 = SToff[vl->svars[8]-1].sa[2];
+         #if defined(AVX512) || defined(AVX)
+            #ifdef AVX512
+               vshuf = VFSHUFLO;
+               assert(vl->svars[0] == 16);  
+            #else
+               vshuf = VFSHUF;
+               assert(vl->svars[0] == 8);  
+            #endif
             vr0 = GetReg(T_VFLOAT);
                
             /*PrintComment(blk, NULL, NULL, "Scatter of vector %s", 
                            STname[vl->vec-1]);*/
             if (nelem > 0)
             {
+               s0 = SToff[vl->svars[1]-1].sa[2];
                ip->next = NewInst(NULL, ip, NULL, VFLD, -vr0, vec, 0);
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VFSTS, s0, -vr0, 0);
@@ -17316,7 +18492,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 1)
             {
-               ip->next = NewInst(NULL, ip, NULL, VFSHUF, -vr0, -vr0, 
+               s1 = SToff[vl->svars[2]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x76543211));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VFSTS, s1, -vr0, 0);
@@ -17324,7 +18501,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 2)
             {
-               ip->next = NewInst(NULL, ip, NULL, VFSHUF, -vr0, -vr0, 
+               s2 = SToff[vl->svars[3]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x76543322));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VFSTS, s2, -vr0, 0);
@@ -17332,7 +18510,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 3)
             {
-               ip->next = NewInst(NULL, ip, NULL, VFSHUF, -vr0, -vr0, 
+               s3 = SToff[vl->svars[4]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x76543232));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VFSTS, s3, -vr0, 0);
@@ -17340,7 +18519,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 4)
             {
-               ip->next = NewInst(NULL, ip, NULL, VFSHUF, -vr0, -vr0, 
+               s4 = SToff[vl->svars[5]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x76547654));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VFSTS, s4, -vr0, 0);
@@ -17348,7 +18528,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 5)
             {
-               ip->next = NewInst(NULL, ip, NULL, VFSHUF, -vr0, -vr0, 
+               s5 = SToff[vl->svars[6]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x76543211));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VFSTS, s5, -vr0, 0);
@@ -17356,7 +18537,8 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 6)
             {
-               ip->next = NewInst(NULL, ip, NULL, VFSHUF, -vr0, -vr0, 
+               s6 = SToff[vl->svars[7]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x76543322));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VFSTS, s6, -vr0, 0);
@@ -17364,12 +18546,91 @@ INSTQ *AddVectorScatterInst(INSTQ *ip0, SLP_VECTOR *vld, int nelem)
             }
             if (nelem > 7)
             {
-               ip->next = NewInst(NULL, ip, NULL, VFSHUF, -vr0, -vr0, 
+               s7 = SToff[vl->svars[8]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr0, -vr0, 
                                   STiconstlookup(0x76543232));
                ip = ip->next;
                ip->next = NewInst(NULL, ip, NULL, VFSTS, s7, -vr0, 0);
                ip = ip->next;
             }
+            #ifdef AVX512
+            if (nelem > 8)
+            {
+               s8 = SToff[vl->svars[9]-1].sa[2];
+               vr1 = GetReg(T_VFLOAT);
+/* 
+ *             copy it to lower half from upper 
+ */
+               ip->next = NewInst(NULL, ip, NULL, VFMOVHALF, -vr1, -vr0, 
+                         STiconstlookup(0x13)); /* upper to lower */
+               ip = ip->next;          
+               ip->next = NewInst(NULL, ip, NULL, VFSTS, s8, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 9)
+            {
+               s9 = SToff[vl->svars[10]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x76543211));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VFSTS, s9, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 10)
+            {
+               s10 = SToff[vl->svars[11]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x76543322));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VFSTS, s10, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 11)
+            {
+               s11 = SToff[vl->svars[12]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x76543232));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VFSTS, s11, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 12)
+            {
+               s12 = SToff[vl->svars[13]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x76547654));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VFSTS, s12, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 13)
+            {
+               s13 = SToff[vl->svars[14]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x76543211));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VFSTS, s13, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 14)
+            {
+               s14 = SToff[vl->svars[14]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x76543322));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VFSTS, s14, -vr1, 0);
+               ip = ip->next;
+            }
+            if (nelem > 15)
+            {
+               s15 = SToff[vl->svars[16]-1].sa[2];
+               ip->next = NewInst(NULL, ip, NULL, vshuf, -vr1, -vr1, 
+                                  STiconstlookup(0x76543232));
+               ip = ip->next;
+               ip->next = NewInst(NULL, ip, NULL, VFSTS, s15, -vr1, 0);
+               ip = ip->next;
+            }
+            #endif
             
          #else
             assert(vl->svars[0] == 4);
@@ -18337,7 +19598,6 @@ int PreSlpAccumExpans(LOOPQ *lp)
    assert(nac);
    for (i=1; i <= n; i++ )
       nac[i] = FindNumAccVar(lp->blocks, sp[i]);
-
    for (i=1; i <= n; i++)
    {
       if (nac[i] > 1)
@@ -19603,6 +20863,10 @@ int LoopNestVec(short *ptrs, int *bvlpl)
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
+#if 0
+   fprintf(stdout, "Print LIL after preSLP\n");
+   PrintInst(stdout, bbbase);
+#endif
 /*
  * NOTE: err==0 when optloop is successfully vectorized; even nothing else 
  */
@@ -19614,6 +20878,13 @@ int LoopNestVec(short *ptrs, int *bvlpl)
 #endif
    if (vo) KillVlist(vo);
    KillPackTable();
+
+#if 0
+   fprintf(stdout, "Print LIL after SLP\n");
+   PrintInst(stdout, bbbase);
+   fflush(stdout);
+   exit(0);
+#endif
 /*
  * NOTE: Change of plan!!! 
  * By default, SLP assumes all ptr aligned and analyzes the DT to decide 
@@ -20012,7 +21283,10 @@ int VecInfo(int bvec_only)
  *    Apply Redundant Computation to eliminate branches
  *    NOTE: we can apply shadow VRC for AVX2.
  */
-      #ifdef AVX
+      #if defined(AVX512)
+         fko_warn(__LINE__, "RC not supported for AVX512 yet!");
+         RC = 0;
+      #elif defined(AVX)
          if (optloop->LMU_flag & LMU_UNSAFE_RC) /* UNSAFE_RC mark up*/
             RC = 0;
          else

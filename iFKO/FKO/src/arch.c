@@ -285,9 +285,28 @@ int RevealArchMemUses(void)
  * returns VLEN (number of element from type, return 1 if scalar )
  */
 short Type2Vlen(int type) /* used in optsimd.. shifted here */
+/*
+ * NOTE: It is used in optsind.c and always consider floating type...
+ * and it doesn't diff between T_FLOAT and T_VFLOAT 
+ */
 {
-   if (type == T_VDOUBLE || type == T_VFLOAT || type == T_VINT)
-      return(vtype2elem(type));
+   if (type == T_VDOUBLE || type == T_DOUBLE)
+   
+   #if defined(AVX512)
+       return(8);
+   #elif defined(AVX)
+       return(4);
+   #else
+       return(2);   
+   #endif
+   else if (type == T_VFLOAT || type == T_FLOAT)
+   #if defined(AVX512)
+       return(16);
+   #elif defined(AVX)
+       return(8);
+   #else
+       return(4);
+   #endif
    else
       return(1);
 }

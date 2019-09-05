@@ -19,8 +19,6 @@
  * Provide detailed system-level information here.  Will be set using guesswork
  * later if not defined here
  */
-#define AVX512    /* testing AVX512 */
-#define VECDEF 1
 #if 0
 /*
  * SSE1 or SSE2 not sufficient.  Need SSE3 for vertical add.
@@ -121,6 +119,9 @@
       /*#define AVX*/
       /*#define SSE41*/
    #endif
+   #ifdef AVXZ /* somebody may call AVX512 as AVXZ */
+      #define AVX512 
+   #endif
    #ifdef AVX512 
       #define ArchHasMemBroadcast
       #define ArchHasFPthreeOps
@@ -185,7 +186,7 @@
    #endif
 
 #elif defined(X86)
-   #ifdef ARCH_HAS_MAC   /* defiend in fko_settings.h */    
+   #ifdef ARCH_HAS_MAC   /* defined in fko_settings.h */    
       #if ARCH_HAS_MAC == 1
          #define ArchHasMAC   /* defined internally */
          /*#define FMA4*/     /* get retarded */
@@ -455,7 +456,11 @@
       #define VCCDONE
       #define NVCC 7                        /* can't use K0 */
    #endif
-   #define NSR  8
+/*
+ * FIXED: we can use all 16 registers as 32bit register, why use only 8 
+ */
+   /*#define NSR  8*/
+   #define NSR  16
    #define NIR 16
    #define NSIR 3
    #ifdef AVX512
@@ -490,8 +495,16 @@
    #define FRETREG FREGBEG
    #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
+/*
+ *    NOTE: Looks like, we can use all 16 register as 32-bit registers...
+ *    Why are we using only 8 for 32 bit in X86_64 then... It solves the problem
+ *    of running out of SREG (where we must use sreg for the inst) 
+ */   
+      /*char *archsregs[NSR] = 
+      {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx"};*/
       char *archsregs[NSR] = 
-      {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx"};
+      {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx", 
+       "@r8d", "@r9d", "@r10d", "@r11d", "@r12d", "@r13d", "@r14d", "@r15d"};
       int  icallersave[NIR] = {0, 1,1,1,1,1,0,0, 1,1,1,1, 0,0,0,0};
       int  icalleesave[NIR] = {0, 0,0,0,0,0,1,1, 0,0,0,0, 1,1,1,1};
 /*
@@ -521,12 +534,16 @@
          char *archymmregs[NFR] = 
          {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6", "@ymm7",
          "@ymm8", "@ymm9", "@ymm10", "@ymm11", "@ymm12", "@ymm13", "@ymm14", 
-         "@ymm15"};
+         "@ymm15", "@ymm16", "@ymm17", "@ymm18", "@ymm19", "@ymm20", "@ymm21", 
+         "@ymm22", "@ymm23", "@ymm24", "@ymm25", "@ymm26", "@ymm27", "@ymm28", 
+         "@ymm29", "@ymm30", "@ymm31"};
          char *archxmmregs[NFR] = 
          {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
          "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
-         "@xmm15"};
-         char *VCCREGS[NVCC] = {"k1", "k2", "k3", "k4", "k5", "k6", "k7"};
+         "@xmm15", "@xmm16", "@xmm17", "@xmm18", "@xmm19", "@xmm20", "@xmm21", 
+         "@xmm22", "@xmm23", "@xmm24", "@xmm25", "@xmm26", "@xmm27", "@xmm28", 
+         "@xmm29", "@xmm30", "@xmm31"};
+         char *VCCREGS[NVCC] = {"@k1", "@k2", "@k3", "@k4", "@k5", "@k6", "@k7"};
       #elif defined(AVX)
          char *archfregs[NFR] = 
          {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6", "@ymm7",

@@ -2062,7 +2062,7 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
  */
    SetLoopControlFlag(lp, 0);
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
-   unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
+   unroll *= Type2Vlen(FLAG2TYPE(lp->vflag));  /* need to update Type2Vlen for AVX*/
 /*
  * Require one and only one post-tail; later do transformation to ensure this
  * for loops where it is not natively true
@@ -2767,7 +2767,7 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
       npf = unroll > 1 ? unroll : 1;
       npf *= type2len(FLAG2TYPE(flag));
       if (!IS_VEC(flag) && IS_VEC(lp->vflag))
-         npf *= Type2Vlen(lp->vflag);
+         npf *= Type2Vlen(FLAG2TYPE(lp->vflag));
       npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
       for (j=0; j < npf; j++)
       {
@@ -5756,7 +5756,7 @@ void FinalizeVectorCleanup(LOOPQ *lp, int unroll)
  */
    SetLoopControlFlag(lp, 0);
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
-   unroll *= Type2Vlen(lp->vflag);  
+   unroll *= Type2Vlen(FLAG2TYPE(lp->vflag));  
 /*
  * Require one and only one post-tail; later do transformation to ensure this
  * for loops where it is not natively true
@@ -5840,7 +5840,7 @@ void UnrollCleanup2(LOOPQ *lp, int unroll)
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
    
    if (!(VECT_FLAG & VECT_INTRINSIC))
-      unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
+      unroll *= Type2Vlen(FLAG2TYPE(lp->vflag));  
 /*
  * Require one and only one post-tail; later do transformation to ensure this
  * for loops where it is not natively true
@@ -7452,7 +7452,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *       4. covert to imask 
  *       5. st the imask ... use this mask to operate cmov for integer
  *
- *       FIXME: it would create problem for scalar version. Scalar cmov inst
+ *       FIXED: it would create problem for scalar version. Scalar cmov inst
  *       does depend on EFLAGS, not any reg/var in X86. converting the mask is 
  *       another issue... it would be complicated
  */

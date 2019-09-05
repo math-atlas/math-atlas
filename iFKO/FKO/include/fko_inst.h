@@ -227,6 +227,11 @@ enum inst
    VDHIHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[1], vr0[1] = vr2[1] */
    VDLOHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[0], vr0[1] = vr2[0] */
 /*
+ * FIXME: special for AVXZ, need to generalize it  
+ */
+   VDHIHALFL,                  /* vr0~2[1,0]: vr0[0] = vr1[1], vr0[1] = vr2[1] */
+   VDLOHALFL,                  /* vr0~2[1,0]: vr0[0] = vr1[0], vr0[1] = vr2[0] */
+/*
  * Single precision vector instructions
  * [memA] is a vector-aligned mem @ [mem] is any alignment
  */
@@ -278,6 +283,11 @@ enum inst
    VFSHUFLO,
    VFHIHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[1], vr0[1] = vr2[1] */
    VFLOHALF,                  /* vr0~2[1,0]: vr0[0] = vr1[0], vr0[1] = vr2[0] */
+/*
+ * FIXME: special for AVXZ, need to generalize it
+ */
+   VFHIHALFL,                  /* vr0~2[1,0]: vr0[0] = vr1[1], vr0[1] = vr2[1] */
+   VFLOHALFL,                  /* vr0~2[1,0]: vr0[0] = vr1[0], vr0[1] = vr2[0] */
 /*
  * x86-only instructions
  */
@@ -419,6 +429,7 @@ enum inst
  */
    VFSBTI,
    VDSBTI,
+   VCCTI,
 /*
  * Type conversion instructions
  */
@@ -643,6 +654,8 @@ char *instmnem[] =
    "VDSHUFLO",
    "VDHIHALF",
    "VDLOHALF",
+   "VDHIHALFL",
+   "VDLOHALFL",
 /*
  * Single precision vector inst
  */
@@ -683,6 +696,8 @@ char *instmnem[] =
    "VFSHUFLO",
    "VFHIHALF",
    "VFLOHALF",
+   "VFHIHALFL",
+   "VFLOHALFL",
 /*
  * x86-only instructions
  */
@@ -810,6 +825,7 @@ char *instmnem[] =
  */
    "VFSBTI",
    "VDSBTI",
+   "VCCTI",
 /*
  * Type conversion instructions
  */
