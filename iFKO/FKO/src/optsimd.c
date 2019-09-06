@@ -14469,10 +14469,257 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
    return(vlist);
 }
 
+/*
+ * Vector initialization LIL generation
+ */
+
+INSTQ *GetVecNSlpPacking(short type, BBLOCK *blk, int endpos, int isAcc, 
+                         short vec, short sc, short vreg0)
+/*
+ * Accumulator vector packing. Note: both stVec and stSc are SToff entry  
+ */
+{
+   INSTQ *ip;
+   INSTQ *ipprev=NULL, *ipnext=NULL; 
+   enum inst vld, vsld, vst, vshuf;
+   short stVec, stSc; 
+
+   stVec = SToff[vec-1].sa[2]; 
+   stSc = SToff[sc-1].sa[2]; 
+
+   if (IS_FLOAT(type) || IS_VFLOAT(type))
+   {
+      vld = VFLD;
+      vsld = VFLDS;
+      vshuf = VFSHUF;
+      vst = VFST;
+   }
+   else if (IS_DOUBLE(type) || IS_VDOUBLE(type))
+   {
+      vld = VDLD;
+      vsld = VDLDS;
+      vshuf = VDSHUF;
+      vst = VDST;
+   }
+   else
+      fko_error(__LINE__, "Not supported other than float or double types");
+
+   assert(blk);
+/*
+ * determine ipprev and ipnext for each cases 
+ * NOTE: At most either one of ipprev and ipnext should be non-NULL to avoid 
+ * confusion 
+ */
+   if (endpos) /* place at the end of the block (but before branch&CMP ) */
+   {
+      if (IS_BRANCH(blk->ainstN->inst[0]))
+         ipnext = blk->ainstN->prev;  /* CMP statement */
+   }
+   else /* place at the top of the block (after Label)*/
+   {
+      if (blk->ainst1->inst[0] == LABEL)
+         ipprev = blk->ainst1; 
+      else
+         ipnext = blk->ainst1;
+   }
+/*
+ * NOTE: V[F/D/I]LDS is converted into following two instructions in optreg to 
+ * make sure the upper elements of the vector register are zeros: 
+ *    V[F/D/I]ZERO vr
+ *    V[F/D/I]MOVS vr, r, vr 
+ */
+   #ifdef ADDCOMMENTS
+      ip = PrintComment(blk, ipprev, ipnext, "Packing Accumulator vector for %s",
+                        STname[vec-1]);
+      ip = InsNewInst(blk, ip, NULL, vsld, -vreg0, stSc, 0); 
+   #else
+      ip = InsNewInst(blk, ipprev, ipnext, vsld, -vreg0, stSc, 0); 
+   #endif
+      if (!isAcc)
+         ip = InsNewInst(blk, ip, NULL, vshuf,-vreg0,-vreg0, STiconstlookup(0)); 
+      ip = InsNewInst(blk, ip, NULL, vst, stVec, -vreg0, 0); 
+      return(ip);
+}
+
+INSTQ *GetVecSlpPacking(short type, BBLOCK *blk, int endpos, short vec, 
+      int nv, short *sc, short vreg0, short vreg1, short vreg2)
+{
+   int i;
+   INSTQ *ip;
+   INSTQ *ipprev=NULL, *ipnext=NULL; 
+   enum inst vld, vsld, vst, vshuf;
+   #if defined (AVX512)
+      short s[16];
+   #elif defined(AVX)
+      short s[8];
+   #else
+      short s[4]; 
+   #endif
+   short stVec;
+
+   stVec = SToff[vec-1].sa[2];
+   assert(blk);
+/*
+ * determine ipprev and ipnext for each cases 
+ * NOTE: At most either one of ipprev and ipnext should be non-NULL to avoid 
+ * confusion 
+ */
+   if (endpos) /* place at the end of the block (but before branch&CMP ) */
+   {
+      if (IS_BRANCH(blk->ainstN->inst[0]))
+         ipnext = blk->ainstN->prev;  /* CMP statement */
+   }
+   else /* place at the top of the block (after Label)*/
+   {
+      if (blk->ainst1->inst[0] == LABEL)
+         ipprev = blk->ainst1; 
+      else
+         ipnext = blk->ainst1;
+   }
+/*
+ * Inst to pack vector 
+ */
+   if (IS_FLOAT(type) || IS_VFLOAT(type))
+   {
+/* ============================ FLOAT ========================================*/
+   #if defined(AVX512)
+      assert(nv==16);
+      for (i=0; i < nv; i++)
+         s[i] = SToff[sc[i]-1].sa[2];
+      fko_error(__LINE__, "AVX512 implemntation needed! ");
+   #elif defined(AVX) 
+      assert(nv==8);
+      for (i=0; i < nv; i++)
+         s[i] = SToff[sc[i]-1].sa[2];
+      #ifdef SLPCOMMENTS
+         ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
+                            STname[vec-1]);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg0, s[6], 0);
+      #else
+         ip = InsNewInst(blk, ipprev, ipnext, VFLDS, -vreg0, s[6], 0);
+      #endif
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[7], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg0, 
+                          STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[4], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg2, s[5], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg1, -vreg2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+                          STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg0, 
+                          STiconstlookup(0xBA983210));
+               
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[2], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg2, s[3], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg1, -vreg2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+                         STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[0], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg2, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg1, -vreg2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+                          STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vreg0, 0);
+   #else /* SSE */
+      assert(nv==4);
+      for (i=0; i < nv; i++)
+         s[i] = SToff[sc[i]-1].sa[2];
+      #ifdef SLPCOMMENTS
+         ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
+                            STname[vec-1]);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[2], 0);
+      #else
+         ip = InsNewInst(blk, ipprev, ipnext, VFLDS, -vreg1, s[2], 0);
+      #endif
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg0, s[3], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg1, -vreg0, 
+                          STiconstlookup(0x5140));
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg0, s[0], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg2, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg2, 
+                          STiconstlookup(0x5140));
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+                          STiconstlookup(0x5410));
+         ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vreg0, 0);
+   #endif
+   }
+   else if (IS_DOUBLE(type) || IS_VDOUBLE(type))
+   {
+/* ============================ DOUBLE =======================================*/
+   #if defined(AVX512)
+         fko_error(__LINE__, "AVX512 implemntation needed! ");
+   #elif defined(AVX)
+      assert(nv==4);
+      for (i=0; i < nv; i++)
+         s[i] = SToff[sc[i]-1].sa[2];
+      #ifdef SLPCOMMENTS
+         ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
+                            STname[vec-1]);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg0, s[0], 0);
+      #else
+         ip = InsNewInst(blk, ipprev, ipnext, VDLDS, -vreg0, s[0], 0);
+      #endif
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg1, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vreg0, -vreg1, 
+                          STiconstlookup(0x3240));
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg1, s[2], 0);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg2, s[3], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vreg1, -vreg2, 
+                          STiconstlookup(0x3240));
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vreg0, -vreg1, 
+                          STiconstlookup(0x5410));
+         ip = InsNewInst(blk, ip, NULL, VDST, vec, -vreg0, 0);
+   #else /* SSE */
+      assert(nv==2);
+      for (i=0; i < nv; i++)
+         s[i] = SToff[sc[i]-1].sa[2];
+      #ifdef SLPCOMMENTS
+         ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
+                           STname[vec-1]);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg0, s[0], 0);
+      #else
+         ip = InsNewInst(blk, ipprev, ipnext, VDLDS, -vreg0, s[0], 0);
+      #endif
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg1, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vreg0, -vreg1, 
+                          STiconstlookup(0x20));
+         ip = InsNewInst(blk, ip, NULL, VDST, stVec, -vreg0, 0);
+      #endif
+   }
+   else
+      fko_error(__LINE__, "Not supported other than float or double types");
+
+   return(ip);
+}
+
+/*
+ * Vector unpacking / reduction 
+ */
+
+INSTQ *GetVecAccUnpacking()
+{
+}
+INSTQ *GetVecNAccUnpacking()
+{
+}
+
+INSTQ *GetVecSlpUnpacking()
+{
+}
+
 
 void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
 /*
- * FIXME: rewrite the function to remove the duplication
+ * FIXME: rewrite the function to remove the duplication 
+ * All options: 
+ *    1. vector init for NHZV (no hazard vectorization)
+ *    2. vector packing for SLP
+ *    3. position of the code (top/bottom of the block) 
  */
 {
    int i, n;
@@ -16458,7 +16705,7 @@ INSTQ *FVVRSUM1_256(INSTQ *ip, short *t, short vreg0, short vreg1,
 }
 
 /*
- * AVX512 implementation of VVRSUM: previous version  
+ * AVX512 implementation of VVRSUM  
  */
 INSTQ *FVVRSUM16(SLP_VECTOR *rvl, SLP_VECTOR *vd)
 {
@@ -16643,7 +16890,7 @@ INSTQ *FVVRSUM4(SLP_VECTOR *rvl, SLP_VECTOR *vd)
  * create tmp vectors, not needed to save them in list
  * NOTE: var names are copied inside symbol table
  */
-   for (i=0; i < 4+1; i++)
+   for (i=0; i < nv+1; i++)
    {
       sprintf(vname, "_NVRS4_%d", vid++);
       t[i] = InsertNewLocal(vname, T_VFLOAT);
