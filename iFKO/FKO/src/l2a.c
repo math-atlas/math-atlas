@@ -3649,6 +3649,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
 /*
  *    NOTE: VDHADD only on YMM regs on AVX512
+ *    FIXME: vhaddpd is not supported on YMM16~YMM31... !!!! 
  */
       case VDHADDL:
          #ifdef AVX512
@@ -3789,8 +3790,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #endif
          else if (cp[1] == 2 && cp[0] == 0) /* lower to upper */
             #if defined(AVX512)
-               ap->next = PrintAssln("\tvinsert64x4\t$0,%s,%s,%s\n",
-                                     archxmmregs[-VDREGBEG-op2],
+               ap->next = PrintAssln("\tvinsertf64x4\t$0,%s,%s,%s\n",
+                                     archymmregs[-VDREGBEG-op2],
                                      archvdregs[-VDREGBEG-op1],
                                      archvdregs[-VDREGBEG-op1]);
             #elif defined(AVX)
@@ -4724,6 +4725,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
 /*
  *    NOTE: VDHADD only on YMM regs on AVX512
+ *    FIXME: vhaddps is not supported on YMM16~YMM31... need to handle this 
  */
       case VFHADDL:
          #ifdef AVX512

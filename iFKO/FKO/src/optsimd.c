@@ -17112,19 +17112,21 @@ INSTQ *VREG512to256(short type, INSTQ *ip, short *s, short *t, int nv,
  */
 {
    int i; 
-   enum inst vld, vst, vmvh; 
+   enum inst vld, vst, vmvh, vadd; 
 
    if (type == T_VFLOAT)
    {
       vld = VFLD;
       vst = VFST;
       vmvh = VFMOVHALF;
+      vadd = VFADD;
    }
    else if ( type == T_VDOUBLE)
    {
       vld = VDLD;
       vst = VDST;
       vmvh = VDMOVHALF;
+      vadd = VDADD;
    }
    else
       fko_error(__LINE__, "Unsupported Vector Type!");
@@ -17158,7 +17160,7 @@ INSTQ *VREG512to256(short type, INSTQ *ip, short *s, short *t, int nv,
       ip = ip->next;
       ip->next = NewInst(NULL, ip, NULL, vld, -vreg1, t[nv], 0);
       ip = ip->next;          
-      ip->next = NewInst(NULL, ip, NULL, VFADD, -vreg0, -vreg0, -vreg1 );
+      ip->next = NewInst(NULL, ip, NULL, vadd, -vreg0, -vreg0, -vreg1 );
       ip = ip->next;          
       ip->next = NewInst(NULL, ip, NULL, vst, t[i], -vreg0, 0); 
       ip = ip->next;          
