@@ -14473,8 +14473,8 @@ SLP_VECTOR *SchVectorInst(BBLOCK *nsbp, BBLOCK *sbp, BBLOCK *vbp, INT_BVI livein
  * Vector initialization LIL generation
  */
 
-INSTQ *GetVecNSlpPacking(short type, BBLOCK *blk, int endpos, int isAcc, 
-                         short vec, short sc, short vreg0)
+INSTQ *GetVecNoSlpPacking(short type, BBLOCK *blk, int endpos, int isAcc, 
+                         short vec, short sc)
 /*
  * Accumulator vector packing. Note: both stVec and stSc are SToff entry  
  */
@@ -14482,6 +14482,7 @@ INSTQ *GetVecNSlpPacking(short type, BBLOCK *blk, int endpos, int isAcc,
    INSTQ *ip;
    INSTQ *ipprev=NULL, *ipnext=NULL; 
    enum inst vld, vsld, vst, vshuf;
+   short vreg0;
    short stVec, stSc; 
 
    stVec = SToff[vec-1].sa[2]; 
@@ -14493,6 +14494,7 @@ INSTQ *GetVecNSlpPacking(short type, BBLOCK *blk, int endpos, int isAcc,
       vsld = VFLDS;
       vshuf = VFSHUF;
       vst = VFST;
+      vreg0 = GetReg(T_VFLOAT);
    }
    else if (IS_DOUBLE(type) || IS_VDOUBLE(type))
    {
@@ -14500,6 +14502,7 @@ INSTQ *GetVecNSlpPacking(short type, BBLOCK *blk, int endpos, int isAcc,
       vsld = VDLDS;
       vshuf = VDSHUF;
       vst = VDST;
+      vreg0 = GetReg(T_VDOUBLE);
    }
    else
       fko_error(__LINE__, "Not supported other than float or double types");
@@ -14529,8 +14532,12 @@ INSTQ *GetVecNSlpPacking(short type, BBLOCK *blk, int endpos, int isAcc,
  *    V[F/D/I]MOVS vr, r, vr 
  */
    #ifdef ADDCOMMENTS
-      ip = PrintComment(blk, ipprev, ipnext, "Packing Accumulator vector for %s",
-                        STname[vec-1]);
+      if (!isACC)
+         ip = PrintComment(blk, ipprev, ipnext, 
+               "Packing vector for %s", STname[vec-1]);
+      else
+         ip = PrintComment(blk, ipprev, ipnext, 
+               "Packing Accumulator vector for %s", STname[vec-1]);
       ip = InsNewInst(blk, ip, NULL, vsld, -vreg0, stSc, 0); 
    #else
       ip = InsNewInst(blk, ipprev, ipnext, vsld, -vreg0, stSc, 0); 
@@ -14538,24 +14545,31 @@ INSTQ *GetVecNSlpPacking(short type, BBLOCK *blk, int endpos, int isAcc,
       if (!isAcc)
          ip = InsNewInst(blk, ip, NULL, vshuf,-vreg0,-vreg0, STiconstlookup(0)); 
       ip = InsNewInst(blk, ip, NULL, vst, stVec, -vreg0, 0); 
+      
+      GetReg(-1);
       return(ip);
 }
 
 INSTQ *GetVecSlpPacking(short type, BBLOCK *blk, int endpos, short vec, 
-      int nv, short *sc, short vreg0, short vreg1, short vreg2)
+      short *sc)
 {
    int i;
    INSTQ *ip;
    INSTQ *ipprev=NULL, *ipnext=NULL; 
    enum inst vld, vsld, vst, vshuf;
+   int nv;
    #if defined (AVX512)
       short s[16];
+      short vr0, vr1, vr2, vr3;
    #elif defined(AVX)
       short s[8];
+      short vr0, vr1, vr2;
    #else
-      short s[4]; 
+      short s[4];
+      short vr0;
    #endif
    short stVec;
+
 
    stVec = SToff[vec-1].sa[2];
    assert(blk);
@@ -14576,124 +14590,259 @@ INSTQ *GetVecSlpPacking(short type, BBLOCK *blk, int endpos, short vec,
       else
          ipnext = blk->ainst1;
    }
+   nv = sc[0];
 /*
  * Inst to pack vector 
  */
    if (IS_FLOAT(type) || IS_VFLOAT(type))
    {
 /* ============================ FLOAT ========================================*/
+      vr0 = GetReg(T_VFLOAT);
+      #if defined(AVX512) || defined(AVX)
+         vr1 = GetReg(T_VFLOAT);
+         vr2 = GetReg(T_VFLOAT);
+      #endif
+      #ifdef AVX512
+         vr3 = GetReg(T_VFLOAT);
+      #endif
    #if defined(AVX512)
-      assert(nv==16);
+      assert(nv==16)
       for (i=0; i < nv; i++)
-         s[i] = SToff[sc[i]-1].sa[2];
+         s[i] = SToff[sc[i+1]-1].sa[2];
+/*
+ *    populate upper half 
+ */
+      #ifdef SLPCOMMENTS
+         ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
+                            STname[vec-1]);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr3, s[6+8], 0);
+      #else
+         ip = InsNewInst(blk, ipprev, ipnext, VFLDS, -vr3, s[6], 0);
+      #endif
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[7+8], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr3, -vr1, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr3, -vr3, 
+                          STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[4+8], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[5+8], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr3, -vr1, 
+                          STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr3, -vr3, 
+                          STiconstlookup(0xBA983210));
+               
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[2+8], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[3+8], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr3, -vr1, 
+                         STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[0+8], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[1+8], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr3, -vr1, 
+                          STiconstlookup(0x76549810));
+         /*ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vr3, 0);*/
+/*
+ *       Populate lower half 
+ */
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr0, s[6], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[7], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr1, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                          STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[4], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[5], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr1, 
+                          STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                          STiconstlookup(0xBA983210));
+               
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[2], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[3], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr1, 
+                         STiconstlookup(0x76549810));
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[0], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr2, 
+                          STiconstlookup(0x76549180));
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr1, 
+                          STiconstlookup(0x76549810));
+/*
+ *       lower to upper
+ *       NOTE: VFMOVHALF inplicitly use the dest register 
+ */
+         ip = NewInst(blk, ip, NULL, VFMOVHALF, -vr0, -vr3, 
+                         STiconstlookup(0x20)); /* lower to upper */
+         
+         ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vr0, 0);
+
       fko_error(__LINE__, "AVX512 implemntation needed! ");
    #elif defined(AVX) 
       assert(nv==8);
       for (i=0; i < nv; i++)
-         s[i] = SToff[sc[i]-1].sa[2];
+         s[i] = SToff[sc[i+1]-1].sa[2];
       #ifdef SLPCOMMENTS
          ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
                             STname[vec-1]);
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg0, s[6], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr0, s[6], 0);
       #else
-         ip = InsNewInst(blk, ipprev, ipnext, VFLDS, -vreg0, s[6], 0);
+         ip = InsNewInst(blk, ipprev, ipnext, VFLDS, -vr0, s[6], 0);
       #endif
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[7], 0);
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[7], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr1, 
                           STiconstlookup(0x76549180));
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg0, 
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
                           STiconstlookup(0x76549810));
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[4], 0);
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg2, s[5], 0);
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg1, -vreg2, 
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[4], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[5], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr2, 
                           STiconstlookup(0x76549180));
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr1, 
                           STiconstlookup(0x76549810));
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg0, 
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
                           STiconstlookup(0xBA983210));
                
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[2], 0);
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg2, s[3], 0);
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg1, -vreg2, 
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[2], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[3], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr2, 
                           STiconstlookup(0x76549180));
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr1, 
                          STiconstlookup(0x76549810));
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[0], 0);
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg2, s[1], 0);
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg1, -vreg2, 
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[0], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr2, 
                           STiconstlookup(0x76549180));
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr1, 
                           STiconstlookup(0x76549810));
-         ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vreg0, 0);
+         ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vr0, 0);
    #else /* SSE */
       assert(nv==4);
       for (i=0; i < nv; i++)
-         s[i] = SToff[sc[i]-1].sa[2];
+         s[i] = SToff[sc[i+1]-1].sa[2];
       #ifdef SLPCOMMENTS
          ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
                             STname[vec-1]);
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg1, s[2], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr1, s[2], 0);
       #else
-         ip = InsNewInst(blk, ipprev, ipnext, VFLDS, -vreg1, s[2], 0);
+         ip = InsNewInst(blk, ipprev, ipnext, VFLDS, -vr1, s[2], 0);
       #endif
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg0, s[3], 0);
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg1, -vreg0, 
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr0, s[3], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr0, 
                           STiconstlookup(0x5140));
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg0, s[0], 0);
-         ip = InsNewInst(blk, ip, NULL, VFLDS, -vreg2, s[1], 0);
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg2, 
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr0, s[0], 0);
+         ip = InsNewInst(blk, ip, NULL, VFLDS, -vr2, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr2, 
                           STiconstlookup(0x5140));
-         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vreg0, -vreg1, 
+         ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr1, 
                           STiconstlookup(0x5410));
-         ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vreg0, 0);
+         ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vr0, 0);
    #endif
    }
    else if (IS_DOUBLE(type) || IS_VDOUBLE(type))
    {
 /* ============================ DOUBLE =======================================*/
+      vr0 = GetReg(T_VDOUBLE);
+      #if defined(AVX512) || defined(AVX)
+         vr1 = GetReg(T_VDOUBLE);
+         vr2 = GetReg(T_VDOUBLE);
+      #endif
+      #ifdef AVX512
+         vr3 = GetReg(T_VDOUBLE);
+      #endif
+
    #if defined(AVX512)
-         fko_error(__LINE__, "AVX512 implemntation needed! ");
-   #elif defined(AVX)
-      assert(nv==4);
+      assert(nv==8);
       for (i=0; i < nv; i++)
-         s[i] = SToff[sc[i]-1].sa[2];
+         s[i] = SToff[sc[i+1]-1].sa[2];
+/*
+ *    populate upper half 
+ */
       #ifdef SLPCOMMENTS
          ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
                             STname[vec-1]);
-         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg0, s[0], 0);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr3, s[0+4], 0);
       #else
-         ip = InsNewInst(blk, ipprev, ipnext, VDLDS, -vreg0, s[0], 0);
+         ip = InsNewInst(blk, ipprev, ipnext, VDLDS, -vr3, s[0+4], 0);
       #endif
-         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg1, s[1], 0);
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vreg0, -vreg1, 
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[1+4], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr3, -vr1, 
                           STiconstlookup(0x3240));
-         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg1, s[2], 0);
-         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg2, s[3], 0);
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vreg1, -vreg2, 
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[2+4], 0);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr2, s[3+4], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr1, -vr2, 
                           STiconstlookup(0x3240));
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vreg0, -vreg1, 
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr3, -vr1, 
                           STiconstlookup(0x5410));
-         ip = InsNewInst(blk, ip, NULL, VDST, vec, -vreg0, 0);
+/*
+ *    populate lower half
+ */
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr0, s[0], 0);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr1, 
+                          STiconstlookup(0x3240));
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[2], 0);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr2, s[3], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr1, -vr2, 
+                          STiconstlookup(0x3240));
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr1, 
+                          STiconstlookup(0x5410));
+/*
+ *       lower to upper 
+ */
+         ip = NewInst(blk, ip, NULL, VDMOVHALF, -vr0, -vr3, 
+                         STiconstlookup(0x20)); /* lower to upper */
+         ip = InsNewInst(blk, ip, NULL, VDST, stVec, -vr0, 0);
+   #elif defined(AVX)
+      assert(nv==4);
+      for (i=0; i < nv; i++)
+         s[i] = SToff[sc[i+1]-1].sa[2];
+      #ifdef SLPCOMMENTS
+         ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
+                            STname[vec-1]);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr0, s[0], 0);
+      #else
+         ip = InsNewInst(blk, ipprev, ipnext, VDLDS, -vr0, s[0], 0);
+      #endif
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr1, 
+                          STiconstlookup(0x3240));
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[2], 0);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr2, s[3], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr1, -vr2, 
+                          STiconstlookup(0x3240));
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr1, 
+                          STiconstlookup(0x5410));
+         ip = InsNewInst(blk, ip, NULL, VDST, stVec, -vr0, 0);
    #else /* SSE */
       assert(nv==2);
       for (i=0; i < nv; i++)
-         s[i] = SToff[sc[i]-1].sa[2];
+         s[i] = SToff[sc[i+1]-1].sa[2];
       #ifdef SLPCOMMENTS
          ip = PrintComment(blk, ipprev, ipnext, "Vector init: %s", 
                            STname[vec-1]);
-         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg0, s[0], 0);
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr0, s[0], 0);
       #else
-         ip = InsNewInst(blk, ipprev, ipnext, VDLDS, -vreg0, s[0], 0);
+         ip = InsNewInst(blk, ipprev, ipnext, VDLDS, -vr0, s[0], 0);
       #endif
-         ip = InsNewInst(blk, ip, NULL, VDLDS, -vreg1, s[1], 0);
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vreg0, -vreg1, 
+         ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[1], 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr1, 
                           STiconstlookup(0x20));
-         ip = InsNewInst(blk, ip, NULL, VDST, stVec, -vreg0, 0);
+         ip = InsNewInst(blk, ip, NULL, VDST, stVec, -vr0, 0);
       #endif
    }
    else
       fko_error(__LINE__, "Not supported other than float or double types");
-
+   
+   GetReg(-1);
    return(ip);
 }
 
@@ -14701,19 +14850,539 @@ INSTQ *GetVecSlpPacking(short type, BBLOCK *blk, int endpos, short vec,
  * Vector unpacking / reduction 
  */
 
-INSTQ *GetVecAccUnpacking()
+INSTQ *GetVecAccUnpacking(short type, BBLOCK *blk, int endpos, short vec, 
+      short sc)
 {
+   INSTQ *ip;
+   INSTQ *ipprev=NULL, *ipnext=NULL; 
+   short vr0, vr1;
+   short stVec, s0; 
+
+   stVec = SToff[vec-1].sa[2]; 
+   s0 = SToff[sc-1].sa[2];
+   assert(blk);
+/*
+ * determine ipprev and ipnext for each cases 
+ * NOTE: At most either one of ipprev and ipnext should be non-NULL to avoid 
+ * confusion 
+ */
+   if (endpos) /* place at the end of the block (but before branch&CMP ) */
+   {
+      if (IS_BRANCH(blk->ainstN->inst[0]))
+         ipnext = blk->ainstN->prev;  /* CMP statement */
+   }
+   else /* place at the top of the block (after Label)*/
+   {
+      if (blk->ainst1->inst[0] == LABEL)
+         ipprev = blk->ainst1; 
+      else
+         ipnext = blk->ainst1;
+   }
+   
+   vr0 = GetReg(T_VFLOAT);
+   vr1 = GetReg(T_VFLOAT);
+
+   if (IS_FLOAT(type) || IS_VFLOAT(type))
+   {
+      #if defined(AVX512)
+         #ifdef ADDCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Vector reduction: %s", 
+                              STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VFLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VFLD, -vr0, stVec, 0);
+         #endif
+         ip = InsNewInst(blk, ip, NULL, VFMOVHALF, -vr1,
+                                 -vr0, STiconstlookup(0x13));
+         ip = InsNewInst(blk, ip, NULL, VFADD, -vr0, -vr0, -vr1);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr0, 
+                         STiconstlookup(0x7654FEDC));
+         ip = InsNewInst(blk, ip, NULL,VFADD, -vr0, -vr0, -vr1);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr0, 
+                         STiconstlookup(0x765432BA));
+         ip = InsNewInst(blk, ip, NULL,VFADD, -vr0, -vr0, -vr1);
+         ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr0, 
+                         STiconstlookup(0x76CD3289));
+         ip = InsNewInst(blk, ip, NULL,VFADD, -vr0, -vr0, -vr1);
+         ip = InsNewInst(blk, ip, NULL, VFSTS, s0, -vr0, 0);
+      #elif defined(AVX)
+         #ifdef ADDCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Vector reduction: %s", 
+                                 STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VFLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VFLD, -vr0, stVec, 0);
+         #endif
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr0, 
+                                       STiconstlookup(0x7654FEDC));
+            ip = InsNewInst(blk, ip, NULL, VFADD, -vr0, -vr0, -vr1);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr0, 
+                                       STiconstlookup(0x765432BA));
+            ip = InsNewInst(blk, ip, NULL, VFADD, -vr0, -vr0, -vr1);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr0, 
+                                       STiconstlookup(0x76CD3289));
+            ip = InsNewInst(blk, ip, NULL, VFADD, -vr0, -vr0, -vr1);
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s0, -vr0, 0);
+      #else
+         #ifdef ADDCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Vector reduction: %s", 
+                                 STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VFLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VFLD, -vr0, stVec, 0);
+         #endif
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr0, 
+                                       STiconstlookup(0x3276));
+            ip = InsNewInst(blk, ip, NULL, VFADD, -vr0, -vr0, -vr1);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr1, -vr0, 
+                                       STiconstlookup(0x5555));
+            ip = InsNewInst(blk, ip, NULL, VFADD, -vr0, -vr0, -vr1);
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s0, -vr0, 0);
+      #endif
+   }
+   else if (IS_DOUBLE(type) || IS_VDOUBLE(type))
+   {
+      #if defined(AVX512)
+         #ifdef ADDCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Vector reduction: %s", 
+                                 STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VDLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VDLD, -vr0, stVec, 0);
+         #endif
+            ip = InsNewInst(blk, ip, NULL, VDMOVHALF, -vr1, -vr0, 
+                            STiconstlookup(0x13));
+            ip = InsNewInst(blk, ip, NULL, VDADD, -vr0, -vr0, -vr1);
+            ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr1, -vr0, 
+                            STiconstlookup(0x3276));
+            ip = InsNewInst(blk, ip, NULL, VDADD,-vr0,-vr0, -vr1);
+            ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr1, -vr0, 
+                            STiconstlookup(0x3715));
+            ip = InsNewInst(blk, ip, NULL,VDADD,-vr0, -vr0, -vr1);
+            ip = InsNewInst(blk, ip, NULL, VDSTS, s0, -vr0, 0);
+      #elif defined(AVX)
+         #ifdef ADDCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Vector reduction: %s", 
+                                 STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VDLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VDLD, -vr0, stVec, 0);
+         #endif
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr1, -vr0, 
+                                       STiconstlookup(0x3276));
+         ip = InsNewInst(blk, ip, NULL, VDADD, -vr0, -vr0, -vr1);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr1, -vr0, 
+                                       STiconstlookup(0x3715));
+         ip = InsNewInst(blk, ip, NULL, VDADD, -vr0, -vr0, -vr1);
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s0, -vr0, 0);
+      #else  /* SSE */
+      #endif
+   }
+   else
+      fko_error(__LINE__, "Supported types float and double\n"); 
+
+   GetReg(-1);
+   return(ip);
 }
-INSTQ *GetVecNAccUnpacking()
+INSTQ *GetVecNAccUnpacking(short type, BBLOCK *blk, int endpos, short vec, 
+                           short sc)
 {
+   INSTQ *ip;
+   INSTQ *ipprev=NULL, *ipnext=NULL; 
+   enum inst vld, vsst;
+   short vr0;
+   short stVec, stSc; 
+
+   stVec = SToff[vec-1].sa[2]; 
+   stSc = SToff[sc-1].sa[2]; 
+
+   if (IS_FLOAT(type) || IS_VFLOAT(type))
+   {
+      vld = VFLD;
+      vsst = VFSTS;
+      vr0 = GetReg(T_VFLOAT);
+   }
+   else if (IS_DOUBLE(type) || IS_VDOUBLE(type))
+   {
+      vld = VDLD;
+      vsst = VDSTS;
+      vr0 = GetReg(T_VDOUBLE);
+   }
+   else
+      fko_error(__LINE__, "Not supported other than float or double types");
+
+   assert(blk);
+/*
+ * determine ipprev and ipnext for each cases 
+ * NOTE: At most either one of ipprev and ipnext should be non-NULL to avoid 
+ * confusion 
+ */
+   if (endpos) /* place at the end of the block (but before branch&CMP ) */
+   {
+      if (IS_BRANCH(blk->ainstN->inst[0]))
+         ipnext = blk->ainstN->prev;  /* CMP statement */
+   }
+   else /* place at the top of the block (after Label)*/
+   {
+      if (blk->ainst1->inst[0] == LABEL)
+         ipprev = blk->ainst1; 
+      else
+         ipnext = blk->ainst1;
+   }
+      
+   #ifdef ADDCOMMENTS
+      ip = PrintComment(blk, ipprev, ipnext,
+                  "Reduce vector for %s", STname[vec-1]);
+      ip = InsNewInst(blk, ip, NULL, vld, -vr0, stVec, 0);
+   #else
+      ip = InsNewInst(blk, ipprev, ipnext, vld, -vr0, stVec, 0);
+   #endif
+      ip = InsNewInst(blk, ip, NULL, vsst, stSc, -vr0, 0);
+
+      GetReg(-1);
+      return(ip);
 }
 
-INSTQ *GetVecSlpUnpacking()
+INSTQ *GetVecSlpUnpacking(short type, BBLOCK *blk, int endpos, short vec, 
+         short *sc)
 {
+   int i, nv;
+   INSTQ *ip;
+   INSTQ *ipprev=NULL, *ipnext=NULL; 
+   enum inst vld, vsld, vst, vshuf;
+   short vr0;
+   #if defined (AVX512)
+      short s[16];
+      short vr1;
+   #elif defined(AVX)
+      short s[8];
+   #else
+      short s[4];
+   #endif
+   short stVec;
+
+
+   stVec = SToff[vec-1].sa[2];
+   assert(blk);
+/*
+ * determine ipprev and ipnext for each cases 
+ * NOTE: At most either one of ipprev and ipnext should be non-NULL to avoid 
+ * confusion 
+ */
+   if (endpos) /* place at the end of the block (but before branch&CMP ) */
+   {
+      if (IS_BRANCH(blk->ainstN->inst[0]))
+         ipnext = blk->ainstN->prev;  /* CMP statement */
+   }
+   else /* place at the top of the block (after Label)*/
+   {
+      if (blk->ainst1->inst[0] == LABEL)
+         ipprev = blk->ainst1; 
+      else
+         ipnext = blk->ainst1;
+   }
+   
+ 
+   if (IS_FLOAT(type) || IS_VFLOAT(type))
+   {
+      nv = sc[0];
+      vr0 = GetReg(T_VFLOAT);
+      #if defined(AVX512)
+         vr1 = GetReg(T_VFLOAT);
+         assert(nv==16);
+         for (i=0; i < nv; i++)
+            s[i] = SToff[sc[i+1]-1].sa[2];
+         #ifdef SLPCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Scatter of vector %s", 
+                        STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VFLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VFLD, -vr0, stVec, 0);
+         #endif
+/*
+ *       save higher half 
+ *       NOTE: some instructions may be zerrod the upper half 256 bit... save
+ *       the upper half... don't want to take any risk
+ */
+/*
+ *       upper to lower half 
+ */
+         ip = NewInst(blk, ip, NULL, VFMOVHALF, -vr1, -vr0, 
+                         STiconstlookup(0x13)); /* lower to upper */
+/*
+ *       handle lower part
+ */
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[0], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x76543211));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[1], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x76543322));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[2], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x76543232));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[3], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x76547654));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[4], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x76543211));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[5], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x76543322));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[6], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x76543232));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[7], -vr0, 0);
+/*
+ *    handle upper part 
+ */
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[0+8], -vr1, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x76543211));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[1+8], -vr1, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x76543322));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[2+8], -vr1, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x76543232));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[3+8], -vr1, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x76547654));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[4+8], -vr1, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x76543211));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[5+8], -vr1, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x76543322));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[6+8], -vr1, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x76543232));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[7+8], -vr1, 0);
+      #elif defined(AVX)
+         assert(nv==8);
+         for (i=0; i < nv; i++)
+            s[i] = SToff[sc[i+1]-1].sa[2];
+         #ifdef SLPCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Scatter of vector %s", 
+                        STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VFLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VFLD, -vr0, stVec, 0);
+         #endif
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[0], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x76543211));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[1], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x76543322));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[2], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x76543232));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[3], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x76547654));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[4], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x76543211));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[5], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x76543322));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[6], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x76543232));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[7], -vr0, 0);
+      #else /* SSE */
+         assert(nv==4);
+         for (i=0; i < nv; i++)
+            s[i] = SToff[sc[i+1]-1].sa[2];
+         #ifdef SLPCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Scatter of vector %s", 
+                        STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VFLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VFLD, -vr0, stVec, 0);
+         #endif
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[0], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x3211));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[1], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x3322));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[2], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VFSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x3232));
+            ip = InsNewInst(blk, ip, NULL, VFSTS, s[3], -vr0, 0);
+      #endif
+   }
+   else if (IS_DOUBLE(type) || IS_VDOUBLE(type))
+   {
+      nv = sc[0];
+      vr0 = GetReg(T_VDOUBLE);
+      #if defined(AVX512)
+         vr1 = GetReg(T_VDOUBLE);
+         assert(nv==8);
+         for (i=0; i < nv; i++)
+            s[i] = SToff[sc[i+1]-1].sa[2];
+         #ifdef SLPCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Scatter of vector %s", 
+                     STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VDLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VDLD, -vr0, stVec, 0);
+         #endif
+/*
+ *       save higher half 
+ */
+         ip = NewInst(blk, ip, NULL, VDMOVHALF, -vr1, -vr0, 
+                         STiconstlookup(0x13)); /* lower to upper */
+/*
+ *       handle lower half 
+ */
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[0], -vr0, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x3211));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[1], -vr0, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x3232));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[2], -vr0, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr0, -vr0, 
+                        STiconstlookup(0x3211));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[3], -vr0, 0);
+/*
+ *       handle upper half 
+ */
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[0+4], -vr1, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x3211));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[1+4], -vr1, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x3232));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[2+4], -vr1, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr1, -vr1, 
+                        STiconstlookup(0x3211));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[3+4], -vr1, 0);
+      
+      #elif defined(AVX)
+         assert(nv==4);
+         for (i=0; i < nv; i++)
+            s[i] = SToff[sc[i+1]-1].sa[2];
+         #ifdef SLPCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Scatter of vector %s", 
+                     STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VDLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VDLD, -vr0, stVec, 0);
+         #endif
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[0], -vr0, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x3211));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[1], -vr0, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x3232));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[2], -vr0, 0);
+         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr0, 
+                        STiconstlookup(0x3211));
+         ip = InsNewInst(blk, ip, NULL, VDSTS, s[3], -vr0, 0);
+      #else /* SSE */
+         assert(nv==2);
+         for (i=0; i < nv; i++)
+            s[i] = SToff[sc[i+1]-1].sa[2];
+         #ifdef SLPCOMMENTS
+            ip = PrintComment(blk, ipprev, ipnext, "Scatter of vector %s", 
+                        STname[vec-1]);
+            ip = InsNewInst(blk, ip, NULL, VDLD, -vr0, stVec, 0);
+         #else
+            ip = InsNewInst(blk, ipprev, ipnext, VDLD, -vr0, stVec, 0);
+         #endif
+            ip = InsNewInst(blk, ip, NULL, VDSTS, s[0], -vr0, 0);
+            ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr0, 
+                     STiconstlookup(0x11));
+            ip = InsNewInst(blk, ip, NULL, VDSTS, s[1], -vr0, 0);
+      #endif
+   }
+   else
+      fko_error(__LINE__, "Unsupported types in vectorization");
+
+   GetReg(-1);
+   return(ip);
 }
 
+int isAllSameScalar(short *s, short type)
+{
+   int i, nv; 
+
+   if (type == T_VFLOAT)
+   #if defined(AVX512)
+      nv = 16;
+   #elif defined(AVX)
+      nv = 8;
+   #else /* SSE */
+      nv = 4;
+   #endif
+   else if (type == T_VDOUBLE)
+   #if defined(AVX512)
+      nv = 8;
+   #elif defined(AVX)
+      nv = 4;
+   #else /* SSE */
+      nv = 2;
+   #endif
+   else
+      fko_error(__LINE__, "Unsupported types in SLP ");
+
+   assert(nv = s[0]);
+  
+   for (i=1; i < nv; i++)
+   {
+      if (s[1] != s[i+1])
+         return(0);
+   }
+
+   return(1);
+}
 
 void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
+/*
+ * FIXME: rewrite the function to remove the duplication 
+ * All options: 
+ *    1. vector init for NHZV (no hazard vectorization)
+ *    2. vector packing for SLP
+ *    3. position of the code (top/bottom of the block) 
+ */
+{
+   int i, n, nv;
+   short vec;
+   SLP_VECTOR *vl;
+   INT_BVI iv1; 
+   short type;
+
+   if (!vlist)  /* no vector to init */ 
+      return;  
+
+/*
+ * init all vectors in list 
+ */
+   for (vl=vlist; vl; vl=vl->next)
+   {
+      vec = SToff[vl->vec-1].sa[2];
+      if (IS_DOUBLE(STflag[vl->vec-1]) || IS_VDOUBLE(STflag[vl->vec-1]))
+         type = T_VDOUBLE;
+      else if (IS_FLOAT(STflag[vl->vec-1]) || IS_VFLOAT(STflag[vl->vec-1]))
+         type = T_VFLOAT;
+      else
+         fko_error(__LINE__, "Unsupported vector type in prologue!");
+     
+      if (isAllSameScalar(vl->svars, type))
+         GetVecNoSlpPacking(type, blk, endpos, vl->flag&NSLP_ACC, vl->vec, 
+               vl->svars[1]); 
+      else /* regular SLP */
+         GetVecSlpPacking(T_VDOUBLE, blk, endpos, vl->vec, vl->svars+1);
+   }
+}
+
+#if 0
+void AddSlpPrologue0(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
 /*
  * FIXME: rewrite the function to remove the duplication 
  * All options: 
@@ -15239,8 +15908,41 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
          fko_error(__LINE__, "Unsupported vector type in prologue!");
    }
 }
+#endif 
 
 void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
+{
+   int i, n;
+   short type;
+   SLP_VECTOR *vl;
+   INT_BVI iv1; 
+   
+   if (!vlist)  /* no vector to reduce */ 
+      return;  
+   
+   for (vl=vlist; vl; vl=vl->next)
+   {
+      if (IS_DOUBLE(STflag[vl->vec-1]) || IS_VDOUBLE(STflag[vl->vec-1]))
+         type = T_VDOUBLE;
+      else if (IS_FLOAT(STflag[vl->vec-1]) || IS_VFLOAT(STflag[vl->vec-1]))
+         type = T_VFLOAT;
+      else
+         fko_error(__LINE__, "unsupported type for SLP " );
+      
+      if (isAllSameScalar(vl->svars, type))
+      {
+         if (vl->flag&NSLP_ACC)
+            GetVecAccUnpacking(type, blk, endpos, vl->vec, vl->svars[1]); 
+         else
+            GetVecNAccUnpacking(type, blk, endpos, vl->vec, vl->svars[1]); 
+      }
+      else /* regular SLP */
+         GetVecSlpUnpacking(T_VDOUBLE, blk, endpos, vl->vec, vl->svars);
+   }
+}
+
+#if 0
+void AddSlpEpilogue0(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
 {
    int i, n;
    short vr0, vr1;
@@ -15814,6 +16516,7 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
          fko_error(__LINE__, "unsupported type for SLP " );
    }
 }
+#endif
 
 void FinalizeVecBlock(BBLOCK *lbp, BBLOCK *vbp)
 {
