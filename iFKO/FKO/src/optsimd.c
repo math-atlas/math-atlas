@@ -14774,26 +14774,26 @@ INSTQ *GetVecSlpPacking(short type, BBLOCK *blk, int endpos, short vec,
          ip = InsNewInst(blk, ipprev, ipnext, VDLDS, -vr3, s[0+4], 0);
       #endif
          ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[1+4], 0);
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr3, -vr1, 
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr3, -vr1, 
                           STiconstlookup(0x3240));
          ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[2+4], 0);
          ip = InsNewInst(blk, ip, NULL, VDLDS, -vr2, s[3+4], 0);
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr1, -vr2, 
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr1, -vr2, 
                           STiconstlookup(0x3240));
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr3, -vr1, 
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr3, -vr1, 
                           STiconstlookup(0x5410));
 /*
  *    populate lower half
  */
          ip = InsNewInst(blk, ip, NULL, VDLDS, -vr0, s[0], 0);
          ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[1], 0);
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr1, 
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr0, -vr1, 
                           STiconstlookup(0x3240));
          ip = InsNewInst(blk, ip, NULL, VDLDS, -vr1, s[2], 0);
          ip = InsNewInst(blk, ip, NULL, VDLDS, -vr2, s[3], 0);
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr1, -vr2, 
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr1, -vr2, 
                           STiconstlookup(0x3240));
-         ip = InsNewInst(blk, ip, NULL, VDSHUF, -vr0, -vr1, 
+         ip = InsNewInst(blk, ip, NULL, VDSHUFLO, -vr0, -vr1, 
                           STiconstlookup(0x5410));
 /*
  *       lower to upper 
@@ -15377,7 +15377,7 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
          GetVecNoSlpPacking(type, blk, endpos, vl->flag&NSLP_ACC, vl->vec, 
                vl->svars[1]); 
       else /* regular SLP */
-         GetVecSlpPacking(T_VDOUBLE, blk, endpos, vl->vec, vl->svars+1);
+         GetVecSlpPacking(T_VDOUBLE, blk, endpos, vl->vec, vl->svars);
    }
 }
 
