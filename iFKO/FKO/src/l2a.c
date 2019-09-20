@@ -426,6 +426,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
    uchar *cp;
    struct assmln *ahead=NULL, *ap;
    short inst, op1, op2, op3;
+   #ifdef AVX512
+      short p1, p2, p3, SP;
+   #endif
    #ifdef SPARC
       int SeenSave=0;
    #endif
@@ -3649,10 +3652,71 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
 /*
  *    NOTE: VDHADD only on YMM regs on AVX512
- *    FIXME: vhaddpd is not supported on YMM16~YMM31... !!!! 
+ *    FIXME: vhaddps is not supported on YMM16~YMM31 for AVX512...
+ *           We added a temporary solution by saving some ZMM to stack and use 
+ *           it. Need to handle it from register assignment 
  */
       case VDHADDL:
          #ifdef AVX512
+            p1 = op1; 
+            p2 = op2;
+            p3 = op3;
+            SP = -REG_SP;
+            /* op1 */            
+            if ((-op1) >= VDREGBEG + NVYM)
+            {
+               for (i=0; i < NVYM; i++)
+                  if (i != (-VDREGBEG-op2) && i != (-VDREGBEG-op3))
+                     break; 
+               assert(i!=NVYM);
+               op1 = -i-VDREGBEG;
+               ap->next = PrintAssln("\tvmovapd\t%s, %d(%s)\n",
+                                  archvdregs[-VDREGBEG-op1], VREGSAVE, 
+                                  archiregs[-IREGBEG-SP]);  
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovapd\t%s, %s\n",
+                                  archvdregs[-VDREGBEG-p1],  
+                                  archvdregs[-VDREGBEG-op1]);  
+               ap = ap->next;
+
+            }
+            /* op2 */            
+            if ((-op2) >= VDREGBEG + NVYM)
+            {
+               for (i=0; i < NVYM; i++)
+                  if (i != (-VDREGBEG-op1) && i != (-VDREGBEG-op3))
+                     break; 
+               assert(i!=NVYM);
+               op2 = -i-VDREGBEG;
+               ap->next = PrintAssln("\tvmovapd\t%s, %d(%s)\n",
+                                  archvdregs[-VDREGBEG-op2], VREGSAVE+64, 
+                                  archiregs[-IREGBEG-SP]);  
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovapd\t%s, %s\n",
+                                  archvdregs[-VDREGBEG-p2],  
+                                  archvdregs[-VDREGBEG-op2]);  
+               ap = ap->next;
+
+            }
+            /* op3 */
+            if (op3 < 0 && (-op3) >= VDREGBEG + NVYM)
+            {
+               for (i=0; i < NVYM; i++)
+                  if (i != (-VDREGBEG-op1) && i != (-VDREGBEG-op2))
+                     break; 
+               assert(i!=NVYM);
+               op3 = -i-VDREGBEG;
+               ap->next = PrintAssln("\tvmovapd\t%s, %d(%s)\n",
+                                  archvdregs[-VDREGBEG-op3], VREGSAVE+2*64, 
+                                  archiregs[-IREGBEG-SP]);  
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovapd\t%s, %s\n",
+                                  archvdregs[-VDREGBEG-p3],  
+                                  archvdregs[-VDREGBEG-op3]);  
+               ap = ap->next;
+
+            }
+            /* actual HADD inst */
             if (op3 > 0)
                ap->next = PrintAssln("\tvhaddpd\t%s,%s,%s\n",
                                      GetDeref(op3), 
@@ -3663,6 +3727,33 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archymmregs[-VDREGBEG-op3], 
                                      archymmregs[-VDREGBEG-op2], 
                                      archymmregs[-VDREGBEG-op1]);
+            /* copy it back to dest */
+            if (p1 != op1)
+            {
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovapd\t%s, %s\n",
+                                  archvdregs[-VDREGBEG-op1],  
+                                  archvdregs[-VDREGBEG-p1]); 
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovupd\t%d(%s), %s\n",
+                                  VREGSAVE, archiregs[-IREGBEG-SP],   
+                                  archvdregs[-VDREGBEG-op1]); 
+            }
+            if (p2 != op2)
+            {
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovupd\t%d(%s), %s\n",
+                                  VREGSAVE+64, archiregs[-IREGBEG-SP],   
+                                  archvdregs[-VDREGBEG-op2]); 
+            }
+            if (p3 != op3)
+            {
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovupd\t%d(%s), %s\n",
+                                  VREGSAVE+2*64, archiregs[-IREGBEG-SP],   
+                                  archvdregs[-VDREGBEG-op3]); 
+            }
+
          #else
             fko_error(__LINE__, "Only supported on AVX512");
          #endif
@@ -4724,11 +4815,72 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif   
          break;
 /*
- *    NOTE: VDHADD only on YMM regs on AVX512
- *    FIXME: vhaddps is not supported on YMM16~YMM31... need to handle this 
+ *    NOTE: VFHADD only on YMM regs on AVX512
+ *    FIXME: vhaddps is not supported on YMM16~YMM31 for AVX512...
+ *           We added a temporary solution by saving some ZMM to stack and use 
+ *           it. Need to handle it from register assignment 
  */
       case VFHADDL:
          #ifdef AVX512
+            p1 = op1; 
+            p2 = op2;
+            p3 = op3;
+            SP = -REG_SP;
+            /* op1 */            
+            if ((-op1) >= VFREGBEG + NVYM)
+            {
+               for (i=0; i < NVYM; i++)
+                  if (i != (-VFREGBEG-op2) && i != (-VFREGBEG-op3))
+                     break; 
+               assert(i!=NVYM);
+               op1 = -i-VFREGBEG;
+               ap->next = PrintAssln("\tvmovaps\t%s, %d(%s)\n",
+                                  archvfregs[-VFREGBEG-op1], VREGSAVE, 
+                                  archiregs[-IREGBEG-SP]);  
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovaps\t%s, %s\n",
+                                  archvfregs[-VFREGBEG-p1],  
+                                  archvfregs[-VFREGBEG-op1]);  
+               ap = ap->next;
+
+            }
+            /* op2 */            
+            if ((-op2) >= VFREGBEG + NVYM)
+            {
+               for (i=0; i < NVYM; i++)
+                  if (i != (-VFREGBEG-op1) && i != (-VFREGBEG-op3))
+                     break; 
+               assert(i!=NVYM);
+               op2 = -i-VFREGBEG;
+               ap->next = PrintAssln("\tvmovaps\t%s, %d(%s)\n",
+                                  archvfregs[-VFREGBEG-op2], VREGSAVE+64, 
+                                  archiregs[-IREGBEG-SP]);  
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovaps\t%s, %s\n",
+                                  archvfregs[-VFREGBEG-p2],  
+                                  archvfregs[-VFREGBEG-op2]);  
+               ap = ap->next;
+
+            }
+            /* op3 */
+            if (op3 < 0 && (-op3) >= VFREGBEG + NVYM)
+            {
+               for (i=0; i < NVYM; i++)
+                  if (i != (-VFREGBEG-op1) && i != (-VFREGBEG-op2))
+                     break; 
+               assert(i!=NVYM);
+               op3 = -i-VFREGBEG;
+               ap->next = PrintAssln("\tvmovaps\t%s, %d(%s)\n",
+                                  archvfregs[-VFREGBEG-op3], VREGSAVE+2*64, 
+                                  archiregs[-IREGBEG-SP]);  
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovaps\t%s, %s\n",
+                                  archvfregs[-VFREGBEG-p3],  
+                                  archvfregs[-VFREGBEG-op3]);  
+               ap = ap->next;
+
+            }
+            /* actual HADD inst */
             if (op3 > 0)
                ap->next = PrintAssln("\tvhaddps\t%s,%s,%s\n",
                                      GetDeref(op3), 
@@ -4739,6 +4891,32 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archymmregs[-VFREGBEG-op3], 
                                      archymmregs[-VFREGBEG-op2], 
                                      archymmregs[-VFREGBEG-op1]);
+            /* copy it back to dest */
+            if (p1 != op1)
+            {
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovaps\t%s, %s\n",
+                                  archvfregs[-VFREGBEG-op1],  
+                                  archvfregs[-VFREGBEG-p1]); 
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovaps\t%d(%s), %s\n",
+                                  VREGSAVE, archiregs[-IREGBEG-SP],   
+                                  archvfregs[-VFREGBEG-op1]); 
+            }
+            if (p2 != op2)
+            {
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovaps\t%d(%s), %s\n",
+                                  VREGSAVE+64, archiregs[-IREGBEG-SP],   
+                                  archvfregs[-VFREGBEG-op2]); 
+            }
+            if (p3 != op3)
+            {
+               ap = ap->next;
+               ap->next = PrintAssln("\tvmovaps\t%d(%s), %s\n",
+                                  VREGSAVE+2*64, archiregs[-IREGBEG-SP],   
+                                  archvfregs[-VFREGBEG-op3]); 
+            }
          #else
             fko_error(__LINE__, "Only supported on AVX512");
          #endif
@@ -5350,8 +5528,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #endif
          else if (cp[1] == 2 && cp[0] == 0) /* lower to upper */
             #if defined(AVX512)
-               ap->next = PrintAssln("\tvinsert32x8\t$0,%s,%s,%s\n",
-                                     archxmmregs[-VFREGBEG-op2],
+               ap->next = PrintAssln("\tvinsertf32x8\t$0,%s,%s,%s\n",
+                                     archymmregs[-VFREGBEG-op2],
                                      archvfregs[-VFREGBEG-op1],
                                      archvfregs[-VFREGBEG-op1]);
             #elif defined(AVX)

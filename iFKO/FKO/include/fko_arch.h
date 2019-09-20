@@ -470,6 +470,7 @@
       #define NSDR  32 
       #define NVDR  32
       #define NVFR  32
+      #define NVYM  16                      /* some inst only support 16 YMM */
    #else
       #define NFR   16                      /* # of float regs */
       #define NSFR  16 

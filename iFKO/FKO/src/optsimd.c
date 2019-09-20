@@ -14684,8 +14684,6 @@ INSTQ *GetVecSlpPacking(short type, BBLOCK *blk, int endpos, short vec,
                          STiconstlookup(0x20)); /* lower to upper */
          
          ip = InsNewInst(blk, ip, NULL, VFST, stVec, -vr0, 0);
-
-      fko_error(__LINE__, "AVX512 implemntation needed! ");
    #elif defined(AVX) 
       assert(nv==8);
       for (i=0; i < nv; i++)
@@ -15377,7 +15375,7 @@ void AddSlpPrologue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
          GetVecNoSlpPacking(type, blk, endpos, vl->flag&NSLP_ACC, vl->vec, 
                vl->svars[1]); 
       else /* regular SLP */
-         GetVecSlpPacking(T_VDOUBLE, blk, endpos, vl->vec, vl->svars);
+         GetVecSlpPacking(type, blk, endpos, vl->vec, vl->svars);
    }
 }
 
@@ -15937,7 +15935,7 @@ void AddSlpEpilogue(BBLOCK *blk, SLP_VECTOR *vlist, int endpos)
             GetVecNAccUnpacking(type, blk, endpos, vl->vec, vl->svars[1]); 
       }
       else /* regular SLP */
-         GetVecSlpUnpacking(T_VDOUBLE, blk, endpos, vl->vec, vl->svars);
+         GetVecSlpUnpacking(type, blk, endpos, vl->vec, vl->svars);
    }
 }
 

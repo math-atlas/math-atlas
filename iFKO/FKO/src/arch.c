@@ -2195,6 +2195,16 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    #ifdef X86_64
       int k; 
       int SaveRBP = 0;
+/*
+ *    NOTE: In AVX512, we can't use YMM16~YMM31 for some AVX instruction...
+ *    Register assignment currently cannot handle this... 
+ *    We are saving the vector register on stack to solve this problem 
+ *    temporarily... very bad solution performance wise.. !!! 
+ */
+      #ifdef AVX512
+         int valign;
+         extern int VRESAVE;  
+      #endif
    #endif
 /*
  * FIXED: is LOCSIZE updated? considering the vectorization!!!
@@ -2222,11 +2232,21 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    #else
       UpdateLocalDerefs(4);
    #endif
-#endif 
-   maxalign = align = LOCALIGN;
+#endif
+/*
+ * FIXME: We are keeping space to save Vector registers which we used in l2a for
+ * VDHADDL ... need to solve it from register assignment
+ */
+   #if defined(AVX512) && 1
+      maxalign = align = GetVecAlignByte();
+   #else
+      maxalign = align = LOCALIGN;
+   #endif
    lsize = LOCSIZE;
 /*
  * Find registers that need to be saved
+ * Why don't we consider vector register here ??? --needed to track calleesave
+ * register... need to consider only basic types
  */
    FindRegUsage(bbase, &nir, ir, &nfr, fr, &ndr, dr);
 /*
@@ -2297,7 +2317,6 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    #else
       if (!align) align = 4;
    #endif
-
 /* 
  * Find place to insert save statements
  */
@@ -2362,9 +2381,10 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
  *       and we save the last reg at 32(rsp). We can't save vector var from 
  *       32(rsp). We need to save that from 64(rsp). adding extra 8 byte will
  *       ensure that.
+ *       NOTE: It works for AVX512.. rsp is aligned by 64bytes and starting from
+ *       64(rsp) works for AVX512 as well. 
  */
          Loff += 8; /* add 8 to keep space as saving position starts from 8 */
-         
          SAVESP = 8; /* always save the rsp at 1st location for X64 */
          Soff +=8; /* keep space to save old stack pointer */
 /*
@@ -2372,6 +2392,10 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
  *       So, need to maintain multiple of align/maxalign
  */
          if (Loff % align) Loff = (Loff/align)*align + align;
+         #ifdef AVX512
+            VREGSAVE = Loff;
+            Loff += 3*(GetVecAlignByte());
+         #endif
       }
       else /* we need to maintain 16 byte alignment at most*/
       {
@@ -2403,8 +2427,12 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       fprintf(stderr, "tsize = %d\n",tsize);
       fprintf(stderr, "SAVESP = %d\n",SAVESP);
       
+      fprintf(stderr, "ndr=%d, nir=%d, nfr=%d\n", ndr, nir, nfr);
+   #if 0
       extern void PrintSymtabStaticMember(FILE *fpout);
       PrintSymtabStaticMember(stderr);
+   #endif
+
 #endif
 
    #else
@@ -2548,6 +2576,10 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    {
       PrintMajorComment(bbase, NULL, oldhead, "Adjust sp");
    }
+#if 0
+            fprintf(stderr, "****** VREGSAVE INDEX = %d, RSPSAVE=%d, REG_SP=%d\n", 
+                  VREGSAVE, RSPSAVE, REG_SP);
+#endif
    assert(oldhead->next->inst[0] == SUB && oldhead->next->inst[1] == -REG_SP &&
           oldhead->next->inst[2] == -REG_SP && oldhead->next->inst[3] ==
           STiconstlookup(-935));
