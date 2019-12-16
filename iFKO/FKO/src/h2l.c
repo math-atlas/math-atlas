@@ -1693,6 +1693,9 @@ void DoVecInit(short vid, struct slist *elem)
 }
 
 void DoReduce(short sid, short vid, char op, short iconst)
+/*
+ * FIXME: extend supports for AVX512 (VLEN=16) 
+ */
 {
    int i, k;
    int flag, ne, lgne;

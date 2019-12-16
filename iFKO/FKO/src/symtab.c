@@ -22,11 +22,19 @@ union valoff *SToff;
 int *STflag;
 short *STpts2;
 struct arrayinfo *STarr = NULL; /* to save information of multi-dim array*/
-INT_DTC *DTcon = NULL;
+INT_DTC *DTcon = NULL; /* larger const, specified by INT_DTC */
+
+
+INT32 *DTAc = NULL;    /* for arbitary const, multiple of 32 bit  */
 
 static int N=0, Nalloc=0; /* for Symbol table */
 static int Narr=0, TNarr=0; /* for array table */
 static int Ndc=0, TNdc=0;
+
+#if 1
+static int Nda=0, TNda=0;
+#define DACHUNK 256
+#endif
 
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 static int nviloc=0;
@@ -37,6 +45,9 @@ int LOCSIZE=0, LOCALIGN=0, NPARA=0;
 #define DTCHUNK 1024
 #define DCCHUNK 256
 #define MAXENTRY 32767 
+#define SHORT_MAX 32767
+#define SHORT_MIN -32768
+
 
 static void GetNewSymtab(int chunk)
 {
@@ -86,9 +97,9 @@ static short STnew(char *name, int flag, union valoff off)
    STflag[N] = flag;
    SToff[N] = off;
    STpts2[N] = 0;
-#if 1
-   assert(N!=MAXENTRY);
-#endif
+   #if IFKO_DEBUG_LEVEL >= 0
+      assert(N!=MAXENTRY);
+   #endif
    return(++N);
 }
 
@@ -147,7 +158,6 @@ short AddSTarr(short ptr, short ndim, short *ldas)
    for (i=0; i < (ndim-1); i++)
       ls[i] = ldas[i];
    
-   
    STarr[Narr].ptr = ptr;
    STarr[Narr].ndim = ndim;
    STarr[Narr].ldas = ls;
@@ -157,9 +167,9 @@ short AddSTarr(short ptr, short ndim, short *ldas)
  */
    STarr[Narr].cldas = NULL; 
    STarr[Narr].colptrs = NULL; 
-#if 1
-   assert(Narr!=MAXENTRY);
-#endif
+   #if IFKO_DEBUG_LEVEL >= 0
+      assert(Narr!=MAXENTRY);
+   #endif
    return (++Narr);
 }
 
@@ -208,9 +218,9 @@ static int DTCnew(INT_DTC val)
    if (Ndc == TNdc)
       GetNewDtcTable(DCCHUNK);
    DTcon[Ndc] = val;
-#if 1
-   assert(Ndc!=MAXENTRY);
-#endif
+   #if IFKO_DEBUG_LEVEL >= 0
+      assert(Ndc!=MAXENTRY);
+   #endif
    return(++Ndc);
 }
 
@@ -228,7 +238,9 @@ short DTClookup(INT_DTC val)
          return(i+1);
    }
    i = DTCnew(val);
-   assert(!((i<<1)&(1<<15))); /* <= 2^14-1*/
+   #if IFKO_DEBUG_LEVEL >= 0
+      assert(!((i<<1)&(1<<15))); /* <= 2^14-1*/
+   #endif
    return(i);
 }
 
@@ -243,8 +255,8 @@ INT_DTC GetDTcon(int val)
 
 void SetDTcon(int dt, INT_DTC con)
 {
-   int SHORT_MAX = 32767;
-   int SHORT_MIN = -32768;
+   /*int SHORT_MAX = 32767;*/
+   /*int SHORT_MIN = -32768;*/
    INT_DTC val;
 /*
  * we will save the const into a table if it is bigger than short type (16 bit)
@@ -257,7 +269,6 @@ void SetDTcon(int dt, INT_DTC con)
       val = DTClookup(con); 
       val = (val << 1) | 1;
       SToff[dt-1].sa[3] = val;
-      /*fprintf(stderr, "***********con=%d, val=%d\n");*/
    }
    else /*FIXME: most common case, make it as if-statement */
    {
@@ -265,7 +276,73 @@ void SetDTcon(int dt, INT_DTC con)
       SToff[dt-1].sa[3] = con;
    }
 }
-
+#if 1
+/*=============================================================================
+ * New const table... can be stored multiple const val at once 
+ */
+static void GetNewDTAcTable(int chunk)
+{
+   int i, n;
+   INT32 *newdt;
+   n = TNda + chunk;
+   newdt = malloc(sizeof(INT32)*n);
+   assert(newdt);
+   if (TNda > 0)
+   {
+      for (i=0; i < Nda; i++)
+         newdt[i] = DTAc[i];
+      free(DTAc);
+   }
+   DTAc = newdt;
+   TNda = n;
+}
+/*
+ * SAVE a list of val  
+ */
+static int DTAcnew(INT32 *val, int nc) /* nc = element count */
+{
+   int i, sz; 
+   #if IFKO_DEBUG_LEVEL >= 0
+      assert(Nda+nc<MAXENTRY);
+   #endif
+   sz = DACHUNK>nc?DACHUNK:nc;
+   if (Nda + nc >= TNda)
+      GetNewDTAcTable(sz);
+   for (i=0; i < nc; i++)
+      DTAc[Nda++] = val[i];
+   return(Nda);
+}
+/*
+ * Lookup and match all values 
+ */
+short DTAclookup(INT32 *val, int nc)
+/*
+ * index of DTAc table is kept as short so that it can be store in other data 
+ * structure. Additional check: nc is already allocated
+ */
+{
+   int i, j, id0;   
+   for (i=0; i < Nda-nc; i++)
+   {
+      if (DTAc[i] == val[0])
+      {
+         for (j=0; j < nc; j++)
+         {
+            if (DTAc[i+j] != val[j])
+               break;
+         }
+         if (j == nc)
+            return(i+1);
+      }
+   }
+/*
+ * not found, insert new list 
+ */
+   i = DTAcnew(val, nc);
+   return(i-nc); /* position of first entry */
+}
+/*============================================================================*/
+#endif
 short STdconstlookup(double f)
 /*
  * Searches for fp constant f in symbol table, allocating new entry if not

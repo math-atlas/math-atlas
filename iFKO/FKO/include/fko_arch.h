@@ -119,36 +119,53 @@
       /*#define AVX*/
       /*#define SSE41*/
    #endif
-   #ifdef AVX2
-      #define AVX /* AVX2 includes AVX plus some extra inst */
-      #define VINT_CMOV
-      #define INT_VEC
-      #define FKO_IVLEN 8
+   #ifdef AVXZ /* somebody may call AVX512 as AVXZ */
+      #define AVX512 
    #endif
-   #ifdef AVX
+   #ifdef AVX512 
       #define ArchHasMemBroadcast
       #define ArchHasFPthreeOps
       #define ArchHasVFPthreeOps
       #define ArchHasVINTthreeOps
       #define FP_VEC
-      #define FKO_SVLEN 8
+      #define FKO_SVLEN 16
       #define DP_VEC
-      #define FKO_DVLEN 4
-      /*#define INT_VEC*/
-      /*#define FKO_IVLEN 8*/
-   /*#elif defined(SSE41)*/ 
-   #else /* by default SSE4.1*/
-      /*#define INT_VEC*/
-      /*#define FKO_IVLEN 4*/
+      #define FKO_DVLEN 8
+      #define VINT_CMOV
+      #define INT_VEC
+      #define FKO_IVLEN 16
+   #else
+      #ifdef AVX2
+         #define AVX /* AVX2 includes AVX plus some extra inst */
+         #define VINT_CMOV
+         #define INT_VEC
+         #define FKO_IVLEN 8
+      #endif
+      #ifdef AVX
+         #define ArchHasMemBroadcast
+         #define ArchHasFPthreeOps
+         #define ArchHasVFPthreeOps
+         #define ArchHasVINTthreeOps
+         #define FP_VEC
+         #define FKO_SVLEN 8
+         #define DP_VEC
+         #define FKO_DVLEN 4
+         /*#define INT_VEC*/
+         /*#define FKO_IVLEN 8*/
+      /*#elif defined(SSE41)*/ 
+      #else /* by default SSE4.1*/
+         /*#define INT_VEC*/
+         /*#define FKO_IVLEN 4*/
 /*
- *    added synthetic inst in SSE to support mem broadcast
+ *       added synthetic inst in SSE to support mem broadcast
  */
-      #define ArchHasMemBroadcast
-      #define SSE3   /* sse4.1 includes sse3 */
-      #define FP_VEC
-      #define FKO_SVLEN 4
-      #define DP_VEC
-      #define FKO_DVLEN 2
+         #define ArchHasMemBroadcast
+         #define SSE3   /* sse4.1 includes sse3 */
+         #define FP_VEC
+         #define FKO_SVLEN 4
+         #define DP_VEC
+         #define FKO_DVLEN 2
+      #endif
    #endif
 #endif
 
@@ -169,7 +186,7 @@
    #endif
 
 #elif defined(X86)
-   #ifdef ARCH_HAS_MAC   /* defiend in fko_settings.h */    
+   #ifdef ARCH_HAS_MAC   /* defined in fko_settings.h */    
       #if ARCH_HAS_MAC == 1
          #define ArchHasMAC   /* defined internally */
          /*#define FMA4*/     /* get retarded */
@@ -353,6 +370,10 @@
 
 #ifdef X86_32
    #define IMPLICITICC 1
+   #ifdef AVX512
+      #define VCCDONE
+      #define NVCC 7                        /* can't use K0 */
+   #endif
    #define NIR 8
    #define NSIR 3
    #define NFR   8                      /* # of float regs */
@@ -383,7 +404,18 @@
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};   
       int  fcallersave[TNFR] = {1,1,1,1,1,1,1,1, 1};
       int  fcalleesave[TNFR] = {0,0,0,0,0,0,0,0, 0};
-      #ifdef AVX
+      #if defined AVX512
+         char *archfregs[TNFR] =
+            {"@zmm0", "@zmm1", "@zmm2", "@zmm3", "@zmm4", "@zmm5", "@zmm6",
+            "@zmm7", "@st"};
+         char *archymmregs[TNFR] =
+            {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6",
+            "@ymm7", "@st"};
+         char *archxmmregs[TNFR] =
+            {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6",
+            "@xmm7", "@st"};
+         char *VCCREGS[NVCC] = {"k1", "k2", "k3", "k4", "k5", "k6", "k7"};
+      #elif defined AVX
          char *archfregs[TNFR] =
             {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6",
             "@ymm7", "@st"};
@@ -399,6 +431,9 @@
       extern char *archiregs[NIR], *archfregs[TNFR];
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
                  fcalleesave[TNFR], fcallersave[TNFR];
+      #ifdef AVX512
+         extern char *VCCREGS[NVCC];
+      #endif
    #endif
    #define archvfregs archfregs
    #define archvdregs archfregs
@@ -412,15 +447,38 @@
    #define IMPLICITICC 1
    #define IMPLICITFCC 1
    #define IMPLICITDCC 1
-   #define NSR  8
+/*
+ * NOTE: k-reg is AVX-512 is essentially for vector unit. Scalar CMP, even
+ * for floating point uses CFLAGS instead... So, we are introducing VCC 
+ * register set to represent K-regs 
+ */
+   #ifdef AVX512
+      #define VCCDONE
+      #define NVCC 7                        /* can't use K0 */
+   #endif
+/*
+ * FIXED: we can use all 16 registers as 32bit register, why use only 8 
+ */
+   /*#define NSR  8*/
+   #define NSR  16
    #define NIR 16
    #define NSIR 3
-   #define NFR   16                      /* # of float regs */
-   #define NSFR  16 
-   #define NDR   16                      /* # of double regs */
-   #define NSDR  16 
-   #define NVDR  16
-   #define NVFR  16
+   #ifdef AVX512
+      #define NFR   32                      /* # of float regs */
+      #define NSFR  32 
+      #define NDR   32                      /* # of double regs */
+      #define NSDR  32 
+      #define NVDR  32
+      #define NVFR  32
+      #define NVYM  16                      /* some inst only support 16 YMM */
+   #else
+      #define NFR   16                      /* # of float regs */
+      #define NSFR  16 
+      #define NDR   16                      /* # of double regs */
+      #define NSDR  16 
+      #define NVDR  16
+      #define NVFR  16
+   #endif
    #define FREGBEG  (IREGBEG+NIR)
    #define DREGBEG  (FREGBEG+NFR)
    #define VFREGBEG (DREGBEG+NDR)
@@ -428,14 +486,26 @@
 /*
  * Majedul: adding VIR (vector Int reg bank)
  */
-   #define NVIR 16
+   #if defined(AVX512)
+      #define NVIR 32
+   #else
+      #define NVIR 16
+   #endif
    #define VIREGBEG (VDREGBEG+NVDR)
    #define IRETREG 4
    #define FRETREG FREGBEG
    #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
+/*
+ *    NOTE: Looks like, we can use all 16 register as 32-bit registers...
+ *    Why are we using only 8 for 32 bit in X86_64 then... It solves the problem
+ *    of running out of SREG (where we must use sreg for the inst) 
+ */   
+      /*char *archsregs[NSR] = 
+      {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx"};*/
       char *archsregs[NSR] = 
-      {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx"};
+      {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx", 
+       "@r8d", "@r9d", "@r10d", "@r11d", "@r12d", "@r13d", "@r14d", "@r15d"};
       int  icallersave[NIR] = {0, 1,1,1,1,1,0,0, 1,1,1,1, 0,0,0,0};
       int  icalleesave[NIR] = {0, 0,0,0,0,0,1,1, 0,0,0,0, 1,1,1,1};
 /*
@@ -446,9 +516,36 @@
       char *archiregs[NIR] = 
       {"@rsp", "@rdx", "@rcx", "@rax", "@rsi", "@rdi", "@rbp", "@rbx",
        "@r8", "@r9", "@r10", "@r11", "@r12", "@r13", "@r14", "@r15"};
-      int  fcallersave[NFR] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
-      int  fcalleesave[NFR] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-      #ifdef AVX
+      #ifdef AVX512
+         int  fcallersave[NFR] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+                                  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+         int  fcalleesave[NFR] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+      #else
+         int  fcallersave[NFR] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+         int  fcalleesave[NFR] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+      #endif
+      #if defined(AVX512)
+         char *archfregs[NFR] = 
+         {"@zmm0", "@zmm1", "@zmm2", "@zmm3", "@zmm4", "@zmm5", "@zmm6", "@zmm7",
+         "@zmm8", "@zmm9", "@zmm10", "@zmm11", "@zmm12", "@zmm13", "@zmm14", 
+         "@zmm15", "@zmm16", "@zmm17", "@zmm18", "@zmm19", "@zmm20", "@zmm21", 
+         "@zmm22", "@zmm23", "@zmm24", "@zmm25", "@zmm26", "@zmm27", "@zmm28", 
+         "@zmm29", "@zmm30", "@zmm31"};
+         char *archymmregs[NFR] = 
+         {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6", "@ymm7",
+         "@ymm8", "@ymm9", "@ymm10", "@ymm11", "@ymm12", "@ymm13", "@ymm14", 
+         "@ymm15", "@ymm16", "@ymm17", "@ymm18", "@ymm19", "@ymm20", "@ymm21", 
+         "@ymm22", "@ymm23", "@ymm24", "@ymm25", "@ymm26", "@ymm27", "@ymm28", 
+         "@ymm29", "@ymm30", "@ymm31"};
+         char *archxmmregs[NFR] = 
+         {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
+         "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
+         "@xmm15", "@xmm16", "@xmm17", "@xmm18", "@xmm19", "@xmm20", "@xmm21", 
+         "@xmm22", "@xmm23", "@xmm24", "@xmm25", "@xmm26", "@xmm27", "@xmm28", 
+         "@xmm29", "@xmm30", "@xmm31"};
+         char *VCCREGS[NVCC] = {"@k1", "@k2", "@k3", "@k4", "@k5", "@k6", "@k7"};
+      #elif defined(AVX)
          char *archfregs[NFR] = 
          {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6", "@ymm7",
          "@ymm8", "@ymm9", "@ymm10", "@ymm11", "@ymm12", "@ymm13", "@ymm14", 
@@ -457,7 +554,7 @@
          {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
          "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
          "@xmm15"};
-      #else
+      #else /* SSE */
          char *archfregs[NFR] = 
          {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
          "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
@@ -467,6 +564,9 @@
       extern char *archiregs[NIR], *archfregs[NFR], *archsregs[NSR];
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
                  fcalleesave[NFR], fcallersave[NFR];
+      #ifdef AVX512
+         extern char *VCCREGS[NVCC];
+      #endif
       /*extern char *archxmmregs[NFR];*/
    #endif
    #define archvdregs archfregs
@@ -475,7 +575,6 @@
    #define archviregs archfregs
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
-   
 #endif
 
 #ifdef PPC
@@ -606,6 +705,11 @@
 #ifndef NFCC
    #define NFCC 1
 #endif
+#ifdef AVX512
+   #ifndef NVCC
+      #define NVCC 1
+   #endif
+#endif
 #ifndef LASTREG
    #ifdef VIREGBEG   /* added at last to support T_VINT */
       #define LASTREG (VIREGBEG+NVIR)
@@ -623,8 +727,22 @@
 #ifndef FCC0
    #define FCC0 (ICC0+NICC+1)
 #endif
-#ifndef PCREG
-   #define PCREG (FCC0 + NFCC)
+/*
+ * Added to introduce VCC to support K-regs in AVX512
+ * FIXME: we can generalize the idea of VCC for all systems... just alias with
+ * FCC which doesn't have this seprately 
+ */
+#ifdef AVX512
+   #ifndef VCC0
+      #define VCC0 (FCC0+NFCC+1)
+   #endif
+   #ifndef PCREG
+      #define PCREG (VCC0 + NVCC)
+   #endif
+#else /* no need of VCC for all other systems */
+   #ifndef PCREG
+      #define PCREG (FCC0 + NFCC)
+   #endif
 #endif
 #ifndef TNREG
    #define TNREG (PCREG+1)
@@ -660,7 +778,14 @@
 #ifndef FCCEND
    #define FCCEND (FCCBEG + NFCC)
 #endif
-
+#ifdef AVX512
+   #ifndef VCCBEG
+      #define VCCBEG VCC0
+   #endif
+   #ifndef VCCEND
+      #define VCCEND (VCCBEG + NVCC)
+   #endif
+#endif
 #ifndef ICCDONE
    #if NICC != 1
       #error "if ICCREGS is undefined, NICC must be 1!!"
@@ -679,6 +804,18 @@
       char *FCCREGS[1] = {"fcc"};
    #else
       extern char *FCCREGS[1];
+   #endif
+#endif
+#ifdef AVX512
+   #ifndef VCCDONE
+      #if VFCC != 1
+         #error "if FCCREGS is undefined, NFCC must be 1!!"
+      #endif
+      #ifdef ARCH_DECLARE
+         char *VCCREGS[1] = {"vcc"};
+      #else
+         extern char *VCCREGS[1];
+      #endif
    #endif
 #endif
 
@@ -780,6 +917,8 @@ short type2shift(int type);
 void FeedbackArchInfo(FILE *fpout);
 int RevealArchMemUses(void);
 short vtype2elem(int type);
+short Type2Vlen(int type);
 short iName2Reg(char *rname);
 short GetVecAlignByte();
+short GetVecAlignTestB();
 #endif

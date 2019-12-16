@@ -65,6 +65,10 @@ short Reg2Int(char *regname)
       if (!strcmp(ICCREGS[i], regname)) return(-i);
    for (i=FCC0; i < NFCC; i++)
       if (!strcmp(FCCREGS[i], regname)) return(-i);
+#ifdef VCCBEG
+   for (i=VCC0; i < NVCC; i++)
+      if (!strcmp(VCCREGS[i], regname)) return(-i);
+#endif
    return(0);
 }
 
@@ -92,6 +96,10 @@ char *Int2Reg0(int i)
       sprintf(ln, "%s", ICCREGS[i-ICCBEG]);
    else if (i >= FCCBEG && i < FCCEND)
       sprintf(ln, "%s", FCCREGS[i-FCCBEG]);
+#ifdef VCCBEG 
+   else if (i >= VCCBEG && i < VCCEND)
+      sprintf(ln, "%s", VCCREGS[i-VCCBEG]);
+#endif
    else if (i == PCREG)
       sprintf(ln, "%s", "PC");
 #ifdef VFREGBEG
@@ -548,6 +556,10 @@ void CalcBlockIG(BBLOCK *bp)
       SetVecBit(imask, k-1, 1);
    for (k=FCCBEG; k < FCCEND; k++)
       SetVecBit(imask, k-1, 1);
+   #ifdef VCCBEG 
+      for (k=VCCBEG; k < VCCEND; k++)
+         SetVecBit(imask, k-1, 1);
+   #endif
    #ifdef X86_32
       SetVecBit(imask, -Reg2Int("@st")-1, 1);
    #endif

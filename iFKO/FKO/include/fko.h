@@ -43,6 +43,7 @@
 #include "fko_optsimd.h"  
 #include "fko_optreg.h"
 #include "fko_h2l.h"
+#include "fko_l2a.h"
 
 #ifdef IFKO_DECLARE
    BBLOCK *bbbase=NULL;

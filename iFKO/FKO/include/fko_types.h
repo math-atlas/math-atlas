@@ -11,11 +11,14 @@
  * enough to index bit vector 
  */
 /*
- * custom types for bvec
+ * custom types for bvec... 
+ * FIXME: for INT32, need to make sure it is always 32 bit on every OS and
+ * architecture... Normally, int is 32 bit on both 32bit and 64bit platform (OSX, 
+ * Linux, Windows, etc). One exception: Cray/UNICOS!!! 
+ * want to use stdint.h supported from C99, (not supported on ANSI/ISO C89) ??? 
  */
 #define INT_BVI unsigned int
 #define INT32  int
-
 #define INT_DTC int
 
 union valoff

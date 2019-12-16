@@ -24,7 +24,7 @@
 #define STN_VEC_SV 100
 #define STN_VEC_SLP 1000
 
-int Type2Vlen(int type);
+/*int Type2Vlen(int type);*/
 BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down);
 void UnalignLoopSpecialization(LOOPQ *lp);
 short FindReadUseType(INSTQ *ip, short var, INT_BVI blkvec);
